@@ -1,0 +1,653 @@
+// VirtueStack NodeAgentService - gRPC API Definition
+// 
+// This service provides the primary interface for managing virtual machines
+// on individual compute nodes within the VirtueStack infrastructure.
+
+syntax = "proto3";
+
+package virtuestack.nodeagent;
+
+option go_package = "github.com/AbuGosok/VirtueStack/internal/shared/proto/nodeagent";
+
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// ENUMERATIONS
+// ============================================================================
+
+// VMStatus represents the current operational state of a virtual machine.
+enum VMStatus {
+  // The VM status cannot be determined
+  VM_STATUS_UNKNOWN = 0;
+  // The VM is currently running and operational
+  VM_STATUS_RUNNING = 1;
+  // The VM is stopped and not consuming resources
+  VM_STATUS_STOPPED = 2;
+  // The VM is paused, preserving memory state
+  VM_STATUS_PAUSED = 3;
+  // The VM is in the process of shutting down (ACPI triggered)
+  VM_STATUS_SHUTTING_DOWN = 4;
+  // The VM has crashed unexpectedly
+  VM_STATUS_CRASHED = 5;
+  // The VM is being migrated to another node
+  VM_STATUS_MIGRATING = 6;
+}
+
+// TaskStatus represents the outcome of an async operation.
+enum TaskStatus {
+  // Task status is unknown
+  TASK_STATUS_UNKNOWN = 0;
+  // Task is pending execution
+  TASK_STATUS_PENDING = 1;
+  // Task is currently in progress
+  TASK_STATUS_IN_PROGRESS = 2;
+  // Task completed successfully
+  TASK_STATUS_SUCCESS = 3;
+  // Task failed with an error
+  TASK_STATUS_FAILED = 4;
+}
+
+// IPType represents the type of IP address (IPv4 or IPv6).
+enum IPType {
+  // IP type is unknown
+  IP_TYPE_UNKNOWN = 0;
+  // IPv4 address
+  IP_TYPE_IPV4 = 1;
+  // IPv6 address
+  IP_TYPE_IPV6 = 2;
+}
+
+// ============================================================================
+// SERVICE DEFINITION
+// ============================================================================
+
+// NodeAgentService provides VM lifecycle management and monitoring capabilities
+// for a single compute node in the VirtueStack cluster.
+service NodeAgentService {
+  // ========================================================================
+  // VM Lifecycle Operations
+  // ========================================================================
+
+  // CreateVM provisions a new virtual machine with the specified configuration.
+  // This includes disk provisioning from a template and network configuration.
+  rpc CreateVM(CreateVMRequest) returns (CreateVMResponse);
+
+  // StartVM powers on a stopped virtual machine.
+  // The VM must be in STOPPED or CRASHED state to be started.
+  rpc StartVM(VMIdentifier) returns (VMOperationResponse);
+
+  // StopVM gracefully shuts down a running virtual machine using ACPI.
+  // The operation will wait for the specified timeout before returning.
+  rpc StopVM(StopVMRequest) returns (VMOperationResponse);
+
+  // ForceStopVM immediately terminates a virtual machine (power off).
+  // Use with caution as this may cause data loss.
+  rpc ForceStopVM(VMIdentifier) returns (VMOperationResponse);
+
+  // DeleteVM permanently removes a virtual machine and its disk image.
+  // The VM must be stopped before deletion.
+  rpc DeleteVM(VMIdentifier) returns (VMOperationResponse);
+
+  // ReinstallVM reimages a virtual machine from a new template.
+  // All existing data on the VM will be lost.
+  rpc ReinstallVM(ReinstallVMRequest) returns (CreateVMResponse);
+
+  // ResizeVM modifies the resource allocation for a virtual machine.
+  // Some changes may require a VM restart to take effect.
+  rpc ResizeVM(ResizeVMRequest) returns (VMOperationResponse);
+
+  // ========================================================================
+  // Migration Operations
+  // ========================================================================
+
+  // MigrateVM transfers a running VM to another compute node.
+  // Supports both live migration and offline migration.
+  rpc MigrateVM(MigrateVMRequest) returns (MigrateVMResponse);
+
+  // AbortMigration cancels an in-progress VM migration.
+  // The VM will remain on the source node.
+  rpc AbortMigration(VMIdentifier) returns (VMOperationResponse);
+
+  // NEW: Post-migration hook for bandwidth re-application
+  rpc PostMigrateSetup(PostMigrateSetupRequest) returns (VMOperationResponse);
+
+  // ========================================================================
+  // Console Operations (Bidirectional Streaming)
+  // ========================================================================
+
+  // StreamVNCConsole establishes a bidirectional VNC console stream.
+  // Used for graphical console access to the VM.
+  rpc StreamVNCConsole(stream VNCFrame) returns (stream VNCFrame);
+
+  // StreamSerialConsole establishes a bidirectional serial console stream.
+  // Used for text-based console access to the VM.
+  rpc StreamSerialConsole(stream SerialData) returns (stream SerialData);
+
+  // ========================================================================
+  // Metrics & Status Operations
+  // ========================================================================
+
+  // GetVMStatus retrieves the current operational state of a virtual machine.
+  rpc GetVMStatus(VMIdentifier) returns (VMStatusResponse);
+
+  // GetVMMetrics retrieves real-time resource utilization metrics for a VM.
+  rpc GetVMMetrics(VMIdentifier) returns (VMMetricsResponse);
+
+  // GetNodeResources retrieves aggregate resource information for the node.
+  rpc GetNodeResources(Empty) returns (NodeResourcesResponse);
+
+  // ========================================================================
+  // Snapshot Operations
+  // ========================================================================
+
+  // CreateSnapshot creates a point-in-time snapshot of a VM's disk.
+  // The VM can be running or stopped during snapshot creation.
+  rpc CreateSnapshot(SnapshotRequest) returns (SnapshotResponse);
+
+  // DeleteSnapshot removes a previously created disk snapshot.
+  rpc DeleteSnapshot(SnapshotIdentifier) returns (VMOperationResponse);
+
+  // RevertSnapshot restores a VM to a previous snapshot state.
+  // The VM must be stopped before reverting.
+  rpc RevertSnapshot(SnapshotIdentifier) returns (VMOperationResponse);
+
+  // ListSnapshots retrieves all snapshots for a given virtual machine.
+  rpc ListSnapshots(VMIdentifier) returns (SnapshotListResponse);
+
+  // ========================================================================
+  // Guest Agent Operations
+  // ========================================================================
+
+  // GuestExecCommand executes a command inside the VM via the QEMU guest agent.
+  // Requires the guest agent to be installed and running in the VM.
+  rpc GuestExecCommand(GuestExecRequest) returns (GuestExecResponse);
+
+  // GuestSetPassword changes a user password inside the VM.
+  // Requires the QEMU guest agent to be installed and running.
+  rpc GuestSetPassword(GuestPasswordRequest) returns (VMOperationResponse);
+
+  // GuestFreezeFilesystems freezes all filesystems in the VM.
+  // Used for consistent backup operations.
+  rpc GuestFreezeFilesystems(VMIdentifier) returns (VMOperationResponse);
+
+  // GuestThawFilesystems unfreezes all filesystems in the VM.
+  // Used after backup operations are complete.
+  rpc GuestThawFilesystems(VMIdentifier) returns (VMOperationResponse);
+
+  // GuestGetNetworkInterfaces retrieves network interface information from the VM.
+  // Requires the QEMU guest agent to be installed and running.
+  rpc GuestGetNetworkInterfaces(VMIdentifier) returns (GuestNetworkResponse);
+
+  // ========================================================================
+  // Bandwidth Operations
+  // ========================================================================
+
+  // GetBandwidthUsage retrieves current network bandwidth usage for a VM.
+  rpc GetBandwidthUsage(VMIdentifier) returns (BandwidthUsageResponse);
+
+  // SetBandwidthLimit applies a bandwidth cap to a VM's network interface.
+  rpc SetBandwidthLimit(BandwidthLimitRequest) returns (VMOperationResponse);
+
+  // ResetBandwidthCounters resets the bandwidth usage counters for a VM.
+  rpc ResetBandwidthCounters(VMIdentifier) returns (VMOperationResponse);
+
+  // ========================================================================
+  // Health Operations
+  // ========================================================================
+
+  // Ping verifies the node agent service is responsive.
+  rpc Ping(Empty) returns (PingResponse);
+
+  // GetNodeHealth retrieves comprehensive health status of the node.
+  rpc GetNodeHealth(Empty) returns (NodeHealthResponse);
+}
+
+// ============================================================================
+// BASIC MESSAGE TYPES
+// ============================================================================
+
+// Empty is an empty message used for requests/responses that don't require parameters.
+message Empty {
+}
+
+// VMIdentifier uniquely identifies a virtual machine within the cluster.
+message VMIdentifier {
+  // UUID of the virtual machine
+  string vm_id = 1;
+}
+
+// VMOperationResponse is the standard response for VM operations that don't
+// return complex data.
+message VMOperationResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Whether the operation completed successfully
+  bool success = 2;
+  // Error message if the operation failed
+  string error_message = 3;
+}
+
+// ============================================================================
+// VM LIFECYCLE MESSAGES
+// ============================================================================
+
+// CreateVMRequest contains all parameters needed to provision a new VM.
+message CreateVMRequest {
+  // Unique identifier for the new VM (UUID)
+  string vm_id = 1;
+  // Hostname for the VM
+  string hostname = 2;
+  // Number of virtual CPUs to allocate
+  int32 vcpu = 3;
+  // Amount of memory in megabytes
+  int32 memory_mb = 4;
+  // Disk size in gigabytes
+  int32 disk_gb = 5;
+  // RBD image name for the template
+  string template_rbd_image = 6;
+  // RBD snapshot name for the template
+  string template_rbd_snapshot = 7;
+  // Hashed root password for the VM
+  string root_password_hash = 8;
+  // SSH public keys to inject into the VM
+  repeated string ssh_public_keys = 9;
+  // IPv4 address for the VM (empty for DHCP)
+  string ipv4_address = 10;
+  // IPv4 gateway address
+  string ipv4_gateway = 11;
+  // IPv4 subnet mask
+  string ipv4_netmask = 12;
+  // IPv6 address for the VM (empty for SLAAC/DHCPv6)
+  string ipv6_address = 13;
+  // IPv6 gateway address
+  string ipv6_gateway = 14;
+  // MAC address for the primary network interface
+  string mac_address = 15;
+  // Port speed limit in megabits per second
+  int32 port_speed_mbps = 16;
+  // Monthly bandwidth limit in gigabytes (0 for unlimited)
+  int64 bandwidth_limit_gb = 17;
+  // List of Ceph monitor addresses
+  repeated string ceph_monitors = 18;
+  // Ceph user name for authentication
+  string ceph_user = 19;
+  // UUID of the Ceph secret for authentication
+  string ceph_secret_uuid = 20;
+  // Ceph pool name for the VM disk
+  string ceph_pool = 21;
+  // DNS nameserver addresses
+  repeated string nameservers = 22;
+}
+
+// CreateVMResponse is returned after a VM creation attempt.
+message CreateVMResponse {
+  // UUID of the created virtual machine
+  string vm_id = 1;
+  // Whether the VM was created successfully
+  bool success = 2;
+  // Name assigned by libvirt to the domain
+  string libvirt_domain_name = 3;
+  // VNC port assigned for console access
+  int32 vnc_port = 4;
+  // Error message if creation failed
+  string error_message = 5;
+}
+
+// StopVMRequest specifies parameters for a graceful VM shutdown.
+message StopVMRequest {
+  // UUID of the virtual machine to stop
+  string vm_id = 1;
+  // Seconds to wait for graceful ACPI shutdown before timing out
+  // Default: 120 seconds
+  int32 timeout_seconds = 2;
+}
+
+// ReinstallVMRequest contains parameters for reimaging a VM.
+message ReinstallVMRequest {
+  // UUID of the virtual machine to reinstall
+  string vm_id = 1;
+  // New RBD image name for the template
+  string template_rbd_image = 2;
+  // New RBD snapshot name for the template
+  string template_rbd_snapshot = 3;
+  // New hashed root password
+  string root_password_hash = 4;
+  // New SSH public keys
+  repeated string ssh_public_keys = 5;
+  // New IPv4 address (empty to keep current)
+  string ipv4_address = 6;
+  // New IPv4 gateway
+  string ipv4_gateway = 7;
+  // New IPv4 subnet mask
+  string ipv4_netmask = 8;
+  // New IPv6 address (empty to keep current)
+  string ipv6_address = 9;
+  // New IPv6 gateway
+  string ipv6_gateway = 10;
+  // New DNS nameservers
+  repeated string nameservers = 11;
+  // New hostname for the VM
+  string hostname = 12;
+}
+
+// ResizeVMRequest contains the new resource allocation for a VM.
+message ResizeVMRequest {
+  // UUID of the virtual machine to resize
+  string vm_id = 1;
+  // New number of virtual CPUs (0 to keep current)
+  int32 new_vcpu = 2;
+  // New memory allocation in megabytes (0 to keep current)
+  int32 new_memory_mb = 3;
+  // New disk size in gigabytes (0 to keep current, must be larger than current)
+  int32 new_disk_gb = 4;
+}
+
+// ============================================================================
+// MIGRATION MESSAGES
+// ============================================================================
+
+// MigrateVMRequest specifies the parameters for VM migration.
+message MigrateVMRequest {
+  // UUID of the virtual machine to migrate
+  string vm_id = 1;
+  // gRPC address of the destination node (host:port)
+  string destination_node_address = 2;
+  // Whether to perform live migration (VM remains running during transfer)
+  bool live = 3;
+}
+
+// MigrateVMResponse is returned after a migration attempt.
+message MigrateVMResponse {
+  // UUID of the migrated virtual machine
+  string vm_id = 1;
+  // Whether the migration completed successfully
+  bool success = 2;
+  // Error message if migration failed
+  string error_message = 3;
+  // Total downtime in milliseconds during live migration
+  int64 downtime_ms = 4;
+}
+
+// BandwidthLimits defines traffic shaping parameters for a VM.
+message BandwidthLimits {
+  // Average bandwidth in kilobits per second
+  int32 average_kbps = 1;
+  // Peak bandwidth in kilobits per second
+  int32 peak_kbps = 2;
+  // Burst size in kilobytes
+  int32 burst_kb = 3;
+}
+
+// PostMigrateSetupRequest contains parameters for post-migration setup.
+message PostMigrateSetupRequest {
+  // UUID of the virtual machine
+  string vm_uuid = 1;
+  // Customer identifier for billing/accounting
+  string customer_id = 2;
+  // Bandwidth limits to apply to the VM
+  BandwidthLimits bandwidth = 3;
+  // Whether the VM is currently throttled
+  bool is_throttled = 4;
+  // Current throttle rate in kilobits per second (if throttled)
+  int32 throttle_rate_kbps = 5;
+}
+
+// ============================================================================
+// CONSOLE MESSAGES
+// ============================================================================
+
+// VNCFrame represents a single frame of VNC console data.
+message VNCFrame {
+  // Raw VNC protocol data
+  bytes data = 1;
+}
+
+// SerialData represents a chunk of serial console data.
+message SerialData {
+  // Raw serial console data
+  bytes data = 1;
+}
+
+// ============================================================================
+// STATUS & METRICS MESSAGES
+// ============================================================================
+
+// VMStatusResponse contains the current state of a virtual machine.
+message VMStatusResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Current operational status of the VM
+  VMStatus status = 2;
+  // Number of allocated virtual CPUs
+  int32 vcpu = 3;
+  // Allocated memory in megabytes
+  int32 memory_mb = 4;
+  // VM uptime in seconds (0 if stopped)
+  int64 uptime_seconds = 5;
+}
+
+// VMMetricsResponse contains real-time resource utilization for a VM.
+message VMMetricsResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Current CPU utilization as a percentage (0-100)
+  double cpu_usage_percent = 2;
+  // Current memory usage in bytes
+  int64 memory_usage_bytes = 3;
+  // Total allocated memory in bytes
+  int64 memory_total_bytes = 4;
+  // Total bytes read from disk since VM start
+  int64 disk_read_bytes = 5;
+  // Total bytes written to disk since VM start
+  int64 disk_write_bytes = 6;
+  // Total bytes received on network interfaces since VM start
+  int64 network_rx_bytes = 7;
+  // Total bytes transmitted on network interfaces since VM start
+  int64 network_tx_bytes = 8;
+  // Timestamp when these metrics were collected
+  google.protobuf.Timestamp timestamp = 9;
+}
+
+// NodeResourcesResponse contains aggregate resource information for the node.
+message NodeResourcesResponse {
+  // Total vCPUs available on the node
+  int32 total_vcpu = 1;
+  // vCPUs currently allocated to VMs
+  int32 used_vcpu = 2;
+  // Total memory available in megabytes
+  int64 total_memory_mb = 3;
+  // Memory currently allocated to VMs in megabytes
+  int64 used_memory_mb = 4;
+  // Total disk space available in gigabytes
+  int64 total_disk_gb = 5;
+  // Disk space currently used in gigabytes
+  int64 used_disk_gb = 6;
+  // Number of VMs on this node
+  int32 vm_count = 7;
+  // Load average over 1, 5, and 15 minutes
+  repeated double load_average = 8;
+  // Node uptime in seconds
+  int64 uptime_seconds = 9;
+}
+
+// ============================================================================
+// SNAPSHOT MESSAGES
+// ============================================================================
+
+// SnapshotRequest specifies parameters for creating a disk snapshot.
+message SnapshotRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Human-readable name for the snapshot
+  string name = 2;
+}
+
+// SnapshotResponse is returned after a snapshot creation attempt.
+message SnapshotResponse {
+  // UUID of the created snapshot
+  string snapshot_id = 1;
+  // UUID of the virtual machine
+  string vm_id = 2;
+  // Human-readable name of the snapshot
+  string name = 3;
+  // Internal RBD snapshot name
+  string rbd_snapshot_name = 4;
+  // Size of the snapshot in bytes
+  int64 size_bytes = 5;
+  // Timestamp when the snapshot was created
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// SnapshotIdentifier uniquely identifies a VM snapshot.
+message SnapshotIdentifier {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // UUID of the snapshot
+  string snapshot_id = 2;
+}
+
+// Snapshot represents a point-in-time disk snapshot.
+message Snapshot {
+  // UUID of the snapshot
+  string snapshot_id = 1;
+  // UUID of the virtual machine
+  string vm_id = 2;
+  // Human-readable name of the snapshot
+  string name = 3;
+  // Internal RBD snapshot name
+  string rbd_snapshot_name = 4;
+  // Size of the snapshot in bytes
+  int64 size_bytes = 5;
+  // Timestamp when the snapshot was created
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// SnapshotListResponse contains a list of snapshots for a VM.
+message SnapshotListResponse {
+  // List of snapshots for the virtual machine
+  repeated Snapshot snapshots = 1;
+}
+
+// ============================================================================
+// GUEST AGENT MESSAGES
+// ============================================================================
+
+// GuestExecRequest specifies a command to execute inside the VM.
+message GuestExecRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Command to execute
+  string command = 2;
+  // Arguments to pass to the command
+  repeated string args = 3;
+  // Timeout in seconds for command execution
+  int32 timeout_seconds = 4;
+}
+
+// GuestExecResponse contains the result of a guest command execution.
+message GuestExecResponse {
+  // Exit code of the executed command
+  int32 exit_code = 1;
+  // Standard output from the command
+  bytes stdout = 2;
+  // Standard error from the command
+  bytes stderr = 3;
+}
+
+// GuestPasswordRequest specifies a password change inside the VM.
+message GuestPasswordRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Username to change the password for
+  string username = 2;
+  // Hashed password to set
+  string password_hash = 3;
+}
+
+// IPAddress represents an IP address assignment on a network interface.
+message IPAddress {
+  // The IP address
+  string ip = 1;
+  // Network prefix length
+  int32 prefix = 2;
+  // Type of IP address (IPv4 or IPv6)
+  IPType type = 3;
+}
+
+// GuestNetworkInterface represents a network interface inside the VM.
+message GuestNetworkInterface {
+  // Interface name (e.g., eth0, ens3)
+  string name = 1;
+  // MAC address of the interface
+  string mac_address = 2;
+  // IP addresses assigned to this interface
+  repeated IPAddress ip_addresses = 3;
+}
+
+// GuestNetworkResponse contains network interface information from the VM.
+message GuestNetworkResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // List of network interfaces in the VM
+  repeated GuestNetworkInterface interfaces = 2;
+}
+
+// ============================================================================
+// BANDWIDTH MESSAGES
+// ============================================================================
+
+// BandwidthUsageResponse contains network bandwidth usage for a VM.
+message BandwidthUsageResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Total bytes received since counter start
+  int64 rx_bytes = 2;
+  // Total bytes transmitted since counter start
+  int64 tx_bytes = 3;
+  // Timestamp when bandwidth counting started
+  google.protobuf.Timestamp period_start = 4;
+}
+
+// BandwidthLimitRequest specifies a bandwidth cap for a VM.
+message BandwidthLimitRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Bandwidth limit in megabits per second
+  int32 limit_mbps = 2;
+}
+
+// ============================================================================
+// HEALTH MESSAGES
+// ============================================================================
+
+// PingResponse verifies that the node agent is responsive.
+message PingResponse {
+  // Identifier of the responding node
+  string node_id = 1;
+  // Timestamp of the ping response
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// NodeHealthResponse contains comprehensive health information for the node.
+message NodeHealthResponse {
+  // Identifier of the node
+  string node_id = 1;
+  // Overall health status of the node
+  bool healthy = 2;
+  // CPU utilization as a percentage (0-100)
+  double cpu_percent = 3;
+  // Memory utilization as a percentage (0-100)
+  double memory_percent = 4;
+  // Disk utilization as a percentage (0-100)
+  double disk_percent = 5;
+  // Number of VMs running on this node
+  int32 vm_count = 6;
+  // Load average over 1, 5, and 15 minutes
+  repeated double load_average = 7;
+  // Node uptime in seconds
+  int64 uptime_seconds = 8;
+  // Whether libvirt connection is established
+  bool libvirt_connected = 9;
+  // Whether Ceph cluster connection is established
+  bool ceph_connected = 10;
+}

@@ -1,0 +1,678 @@
+// Package network provides network management for the VirtueStack Node Agent.
+// This file implements DHCP server management using dnsmasq for VMs.
+package network
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
+)
+
+// Constants for DHCP management.
+const (
+	// DefaultBridgeInterface is the default bridge interface for VMs.
+	DefaultBridgeInterface = "vs-br0"
+	// DefaultDNS is the default DNS server for DHCP clients.
+	DefaultDNS = "8.8.8.8"
+	// DHCPConfigSuffix is the suffix for DHCP config files.
+	DHCPConfigSuffix = ".conf"
+	// DHCPLeaseSuffix is the suffix for DHCP lease files.
+	DHCPLeaseSuffix = ".lease"
+	// DHCPPIDSuffix is the suffix for DHCP PID files.
+	DHCPPIDSuffix = ".pid"
+	// DHCPLogSuffix is the suffix for DHCP log files.
+	DHCPLogSuffix = ".log"
+	// DHCPStatusFileSuffix is the suffix for DHCP status files.
+	DHCPStatusFileSuffix = ".status"
+)
+
+// DHCPManager manages dnsmasq-based DHCP servers for VMs.
+// Each VM gets its own dnsmasq instance with a static IP lease.
+// This provides per-VM DHCP isolation and prevents broadcast domain issues.
+type DHCPManager struct {
+	configDir    string // /var/lib/virtuestack/dhcp
+	leaseDir     string // /var/lib/virtuestack/dhcp/leases
+	pidDir       string // /var/lib/virtuestack/dhcp/pid
+	logDir       string // /var/lib/virtuestack/dhcp/logs
+	statusDir    string // /var/lib/virtuestack/dhcp/status
+	logger       *slog.Logger
+	mu           sync.RWMutex
+	runningProcs map[string]*dnsmasqProcess // vmID -> process info
+}
+
+// dnsmasqProcess tracks a running dnsmasq instance.
+type dnsmasqProcess struct {
+	cmd       *exec.Cmd
+	startTime time.Time
+	pid       int
+}
+
+// DHCPLease represents a DHCP lease for a VM.
+type DHCPLease struct {
+	VMID       string    `json:"vm_id"`
+	VMName     string    `json:"vm_name"`
+	MACAddress string    `json:"mac_address"`
+	IPAddress  string    `json:"ip_address"`
+	Gateway    string    `json:"gateway"`
+	DNS        string    `json:"dns"`
+	StartedAt  time.Time `json:"started_at"`
+	PID        int       `json:"pid"`
+	Status     string    `json:"status"` // "running", "stopped"
+}
+
+// DHCPConfig contains configuration for starting a DHCP server for a VM.
+type DHCPConfig struct {
+	VMID           string
+	VMName         string
+	MACAddress     string
+	IPAddress      string
+	Gateway        string
+	DNS            string
+	BridgeInterface string
+}
+
+// NewDHCPManager creates a new DHCPManager with the given directories.
+func NewDHCPManager(configDir, leaseDir, pidDir string, logger *slog.Logger) *DHCPManager {
+	return &DHCPManager{
+		configDir:    configDir,
+		leaseDir:     leaseDir,
+		pidDir:       pidDir,
+		logDir:       filepath.Join(configDir, "logs"),
+		statusDir:    filepath.Join(configDir, "status"),
+		logger:       logger.With("component", "dhcp-manager"),
+		runningProcs: make(map[string]*dnsmasqProcess),
+	}
+}
+
+// Initialize creates the necessary directories for DHCP management.
+func (m *DHCPManager) Initialize(ctx context.Context) error {
+	logger := m.logger.With("operation", "initialize")
+	logger.Info("initializing DHCP manager")
+
+	dirs := []string{
+		m.configDir,
+		m.leaseDir,
+		m.pidDir,
+		m.logDir,
+		m.statusDir,
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("creating directory %s: %w", dir, err)
+		}
+	}
+
+	logger.Info("DHCP manager initialized successfully")
+	return nil
+}
+
+// StartDHCPForVM starts a dnsmasq instance for a specific VM.
+// It generates the configuration, writes the lease file, and starts the dnsmasq process.
+// Returns an error if DHCP is already running for this VM.
+func (m *DHCPManager) StartDHCPForVM(ctx context.Context, vmID, vmName, macAddress, ipAddress, gateway string) error {
+	return m.StartDHCPForVMWithConfig(ctx, DHCPConfig{
+		VMID:            vmID,
+		VMName:          vmName,
+		MACAddress:      macAddress,
+		IPAddress:       ipAddress,
+		Gateway:         gateway,
+		DNS:             DefaultDNS,
+		BridgeInterface: DefaultBridgeInterface,
+	})
+}
+
+// StartDHCPForVMWithConfig starts a dnsmasq instance with full configuration.
+func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConfig) error {
+	logger := m.logger.With("vm_id", cfg.VMID, "vm_name", cfg.VMName, "operation", "start_dhcp")
+	logger.Info("starting DHCP for VM", "mac", cfg.MACAddress, "ip", cfg.IPAddress, "gateway", cfg.Gateway)
+
+	// Check if dnsmasq is available
+	if err := m.checkDNSMasqAvailable(); err != nil {
+		return fmt.Errorf("dnsmasq not available: %w", err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if already running
+	if proc, exists := m.runningProcs[cfg.VMID]; exists {
+		// Check if process is actually running
+		if m.isProcessRunning(proc.pid) {
+			logger.Warn("DHCP already running for VM")
+			return fmt.Errorf("DHCP already running for VM %s: %w", cfg.VMID, errors.ErrAlreadyExists)
+		}
+		// Process is dead, clean up
+		delete(m.runningProcs, cfg.VMID)
+	}
+
+	// Check PID file as well
+	pidFile := m.pidFilePath(cfg.VMID)
+	if pidData, err := os.ReadFile(pidFile); err == nil {
+		pid, _ := strconv.Atoi(string(pidData))
+		if pid > 0 && m.isProcessRunning(pid) {
+			logger.Warn("DHCP already running for VM (from PID file)")
+			return fmt.Errorf("DHCP already running for VM %s: %w", cfg.VMID, errors.ErrAlreadyExists)
+		}
+	}
+
+	// Set defaults
+	if cfg.DNS == "" {
+		cfg.DNS = DefaultDNS
+	}
+	if cfg.BridgeInterface == "" {
+		cfg.BridgeInterface = DefaultBridgeInterface
+	}
+
+	// Generate config file content
+	configContent := m.GenerateDNSMasqConfig(cfg)
+	configPath := m.configFilePath(cfg.VMID)
+
+	// Write config file
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("writing DHCP config file: %w", err)
+	}
+
+	// Create lease file path
+	leasePath := m.leaseFilePath(cfg.VMID)
+
+	// Ensure log directory exists
+	logPath := m.logFilePath(cfg.VMID)
+	logDir := filepath.Dir(logPath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("creating log directory: %w", err)
+	}
+
+	// Create empty lease file
+	if err := os.WriteFile(leasePath, []byte{}, 0644); err != nil {
+		return fmt.Errorf("creating lease file: %w", err)
+	}
+
+	// Test config before starting
+	if err := m.testDNSMasqConfig(configPath); err != nil {
+		os.Remove(configPath)
+		os.Remove(leasePath)
+		return fmt.Errorf("invalid dnsmasq config: %w", err)
+	}
+
+	// Start dnsmasq
+	cmd := exec.CommandContext(ctx, "dnsmasq",
+		"-C", configPath,
+		"--keep-in-foreground",
+		"--no-daemon",
+	)
+
+	// Set up log file for dnsmasq output
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("opening log file: %w", err)
+	}
+
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("starting dnsmasq: %w", err)
+	}
+
+	// Get the PID
+	pid := cmd.Process.Pid
+
+	// Write PID file
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		// Kill the process if we can't write PID file
+		cmd.Process.Kill()
+		logFile.Close()
+		return fmt.Errorf("writing PID file: %w", err)
+	}
+
+	// Save status
+	lease := &DHCPLease{
+		VMID:       cfg.VMID,
+		VMName:     cfg.VMName,
+		MACAddress: cfg.MACAddress,
+		IPAddress:  cfg.IPAddress,
+		Gateway:    cfg.Gateway,
+		DNS:        cfg.DNS,
+		StartedAt:  time.Now(),
+		PID:        pid,
+		Status:     "running",
+	}
+	if err := m.saveLeaseStatus(cfg.VMID, lease); err != nil {
+		logger.Warn("failed to save lease status", "error", err)
+	}
+
+	// Track the process
+	m.runningProcs[cfg.VMID] = &dnsmasqProcess{
+		cmd:       cmd,
+		startTime: time.Now(),
+		pid:       pid,
+	}
+
+	// Start goroutine to wait for process exit and clean up
+	go m.monitorProcess(cfg.VMID, cmd, logFile)
+
+	logger.Info("DHCP started successfully", "pid", pid)
+	return nil
+}
+
+// StopDHCPForVM stops the dnsmasq instance for a specific VM.
+// It gracefully terminates the process and cleans up config and lease files.
+func (m *DHCPManager) StopDHCPForVM(ctx context.Context, vmID string) error {
+	logger := m.logger.With("vm_id", vmID, "operation", "stop_dhcp")
+	logger.Info("stopping DHCP for VM")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Get the PID
+	pid := m.getPID(vmID)
+	if pid == 0 {
+		logger.Info("DHCP not running for VM")
+		return nil // Not running, nothing to stop
+	}
+
+	// Send SIGTERM for graceful shutdown
+	if err := m.sendSignal(pid, syscall.SIGTERM); err != nil {
+		logger.Warn("failed to send SIGTERM, trying SIGKILL", "error", err)
+		// Force kill if SIGTERM fails
+		m.sendSignal(pid, syscall.SIGKILL)
+	}
+
+	// Wait for process to exit (with timeout)
+	m.waitForProcessExit(pid, 10*time.Second)
+
+	// Clean up files
+	m.cleanupVMFiles(vmID)
+
+	// Remove from tracking
+	delete(m.runningProcs, vmID)
+
+	logger.Info("DHCP stopped successfully")
+	return nil
+}
+
+// RestartDHCPForVM restarts the dnsmasq instance for a specific VM.
+// It stops the existing instance and starts a new one with the same configuration.
+func (m *DHCPManager) RestartDHCPForVM(ctx context.Context, vmID string) error {
+	logger := m.logger.With("vm_id", vmID, "operation", "restart_dhcp")
+	logger.Info("restarting DHCP for VM")
+
+	// Get current lease info
+	lease, err := m.GetVMLease(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("getting current DHCP lease: %w", err)
+	}
+
+	if lease == nil {
+		return fmt.Errorf("no DHCP lease found for VM %s: %w", vmID, errors.ErrNotFound)
+	}
+
+	// Stop existing
+	if err := m.StopDHCPForVM(ctx, vmID); err != nil {
+		logger.Warn("error stopping DHCP during restart", "error", err)
+	}
+
+	// Small delay to ensure cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Start new with same config
+	return m.StartDHCPForVM(ctx, vmID, lease.VMName, lease.MACAddress, lease.IPAddress, lease.Gateway)
+}
+
+// GetVMLease retrieves the current DHCP lease status for a VM.
+func (m *DHCPManager) GetVMLease(ctx context.Context, vmID string) (*DHCPLease, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	statusPath := m.statusFilePath(vmID)
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No lease found
+		}
+		return nil, fmt.Errorf("reading lease status: %w", err)
+	}
+
+	var lease DHCPLease
+	if err := json.Unmarshal(data, &lease); err != nil {
+		return nil, fmt.Errorf("parsing lease status: %w", err)
+	}
+
+	// Update status based on process state
+	pid := m.getPID(vmID)
+	if pid > 0 && m.isProcessRunning(pid) {
+		lease.Status = "running"
+	} else {
+		lease.Status = "stopped"
+	}
+
+	return &lease, nil
+}
+
+// ListActiveDHCP lists all active dnsmasq instances.
+func (m *DHCPManager) ListActiveDHCP(ctx context.Context) ([]DHCPLease, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var leases []DHCPLease
+
+	// Read all status files
+	entries, err := os.ReadDir(m.statusDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return leases, nil
+		}
+		return nil, fmt.Errorf("reading status directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), DHCPStatusFileSuffix) {
+			continue
+		}
+
+		vmID := strings.TrimSuffix(entry.Name(), DHCPStatusFileSuffix)
+		lease, err := m.GetVMLease(ctx, vmID)
+		if err != nil {
+			m.logger.Warn("failed to get lease", "vm_id", vmID, "error", err)
+			continue
+		}
+
+		if lease != nil && lease.Status == "running" {
+			leases = append(leases, *lease)
+		}
+	}
+
+	return leases, nil
+}
+
+// GenerateDNSMasqConfig generates the dnsmasq configuration content for a VM.
+// The configuration sets up a static DHCP lease for the VM's MAC address.
+func (m *DHCPManager) GenerateDNSMasqConfig(vmName, mac, ip, gateway string) string {
+	return m.GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, DefaultDNS)
+}
+
+// GenerateDNSMasqConfigWithDNS generates dnsmasq config with custom DNS server.
+func (m *DHCPManager) GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, dns string) string {
+	return m.GenerateDNSMasqConfigFull(DHCPConfig{
+		VMName:          vmName,
+		MACAddress:      mac,
+		IPAddress:       ip,
+		Gateway:         gateway,
+		DNS:             dns,
+		BridgeInterface: DefaultBridgeInterface,
+	})
+}
+
+// GenerateDNSMasqConfigFull generates the full dnsmasq configuration for a VM.
+func (m *DHCPManager) GenerateDNSMasqConfigFull(cfg DHCPConfig) string {
+	var sb strings.Builder
+
+	// Header comment
+	sb.WriteString(fmt.Sprintf("# dnsmasq.conf for VM: %s\n", cfg.VMName))
+	sb.WriteString(fmt.Sprintf("# Generated by VirtueStack DHCP Manager\n"))
+	sb.WriteString(fmt.Sprintf("# VM ID: %s\n\n", cfg.VMID))
+
+	// Interface binding
+	sb.WriteString(fmt.Sprintf("interface=%s\n", cfg.BridgeInterface))
+	sb.WriteString("bind-interfaces\n")
+	sb.WriteString("except-interface=lo\n\n")
+
+	// DHCP configuration - single IP range for static lease
+	sb.WriteString(fmt.Sprintf("# DHCP range (single IP for static lease)\n"))
+	sb.WriteString(fmt.Sprintf("dhcp-range=%s,%s,255.255.255.0,12h\n", cfg.IPAddress, cfg.IPAddress))
+	sb.WriteString(fmt.Sprintf("dhcp-host=%s,%s,%s,infinite\n\n", cfg.MACAddress, cfg.IPAddress, sanitizeHostname(cfg.VMName)))
+
+	// Gateway and DNS options
+	sb.WriteString(fmt.Sprintf("# Gateway and DNS\n"))
+	sb.WriteString(fmt.Sprintf("dhcp-option=3,%s\n", cfg.Gateway))
+	sb.WriteString(fmt.Sprintf("dhcp-option=6,%s\n\n", cfg.DNS))
+
+	// Lease file configuration
+	leaseFile := m.leaseFilePath(cfg.VMID)
+	sb.WriteString(fmt.Sprintf("# Lease file\n"))
+	sb.WriteString("leasefile-ro\n")
+	sb.WriteString(fmt.Sprintf("dhcp-leasefile=%s\n\n", leaseFile))
+
+	// Logging
+	logFile := m.logFilePath(cfg.VMID)
+	sb.WriteString(fmt.Sprintf("# Logging\n"))
+	sb.WriteString(fmt.Sprintf("log-facility=%s\n", logFile))
+	sb.WriteString("log-dhcp\n\n")
+
+	// Run as non-root for security
+	sb.WriteString(fmt.Sprintf("# Run as non-root\n"))
+	sb.WriteString("user=virtuestack\n")
+	sb.WriteString("group=virtuestack\n\n")
+
+	// PID file
+	pidFile := m.pidFilePath(cfg.VMID)
+	sb.WriteString(fmt.Sprintf("# PID file\n"))
+	sb.WriteString(fmt.Sprintf("pid-file=%s\n", pidFile))
+
+	return sb.String()
+}
+
+// CheckDNSMasqInstalled checks if dnsmasq is installed and available.
+func (m *DHCPManager) CheckDNSMasqInstalled() error {
+	return m.checkDNSMasqAvailable()
+}
+
+// CleanupStaleProcesses cleans up any stale dnsmasq processes.
+// This should be called during node agent startup.
+func (m *DHCPManager) CleanupStaleProcesses(ctx context.Context) error {
+	logger := m.logger.With("operation", "cleanup_stale")
+	logger.Info("cleaning up stale DHCP processes")
+
+	// Read all PID files
+	entries, err := os.ReadDir(m.pidDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading PID directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), DHCPPIDSuffix) {
+			continue
+		}
+
+		vmID := strings.TrimSuffix(entry.Name(), DHCPPIDSuffix)
+		pidPath := filepath.Join(m.pidDir, entry.Name())
+
+		pidData, err := os.ReadFile(pidPath)
+		if err != nil {
+			continue
+		}
+
+		pid, _ := strconv.Atoi(string(pidData))
+		if pid > 0 && m.isProcessRunning(pid) {
+			logger.Info("killing stale dnsmasq process", "vm_id", vmID, "pid", pid)
+			m.sendSignal(pid, syscall.SIGTERM)
+			m.waitForProcessExit(pid, 5*time.Second)
+		}
+
+		// Clean up files
+		m.cleanupVMFiles(vmID)
+	}
+
+	return nil
+}
+
+// Helper methods
+
+// configFilePath returns the path to the config file for a VM.
+func (m *DHCPManager) configFilePath(vmID string) string {
+	return filepath.Join(m.configDir, vmID+DHCPConfigSuffix)
+}
+
+// leaseFilePath returns the path to the lease file for a VM.
+func (m *DHCPManager) leaseFilePath(vmID string) string {
+	return filepath.Join(m.leaseDir, vmID+DHCPLeaseSuffix)
+}
+
+// pidFilePath returns the path to the PID file for a VM.
+func (m *DHCPManager) pidFilePath(vmID string) string {
+	return filepath.Join(m.pidDir, vmID+DHCPPIDSuffix)
+}
+
+// logFilePath returns the path to the log file for a VM.
+func (m *DHCPManager) logFilePath(vmID string) string {
+	return filepath.Join(m.logDir, vmID+DHCPLogSuffix)
+}
+
+// statusFilePath returns the path to the status file for a VM.
+func (m *DHCPManager) statusFilePath(vmID string) string {
+	return filepath.Join(m.statusDir, vmID+DHCPStatusFileSuffix)
+}
+
+// checkDNSMasqAvailable checks if dnsmasq is installed.
+func (m *DHCPManager) checkDNSMasqAvailable() error {
+	cmd := exec.Command("dnsmasq", "--version")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("dnsmasq not found or not executable: %w", err)
+	}
+	return nil
+}
+
+// testDNSMasqConfig tests a dnsmasq configuration file for validity.
+func (m *DHCPManager) testDNSMasqConfig(configPath string) error {
+	cmd := exec.Command("dnsmasq", "-C", configPath, "--test")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("config test failed: %w, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// isProcessRunning checks if a process with the given PID is running.
+func (m *DHCPManager) isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// On Unix, FindProcess always succeeds. Send signal 0 to check if running.
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// getPID reads the PID for a VM from the PID file.
+func (m *DHCPManager) getPID(vmID string) int {
+	pidFile := m.pidFilePath(vmID)
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(string(pidData))
+	return pid
+}
+
+// sendSignal sends a signal to a process.
+func (m *DHCPManager) sendSignal(pid int, sig syscall.Signal) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(sig)
+}
+
+// waitForProcessExit waits for a process to exit with a timeout.
+func (m *DHCPManager) waitForProcessExit(pid int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !m.isProcessRunning(pid) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Force kill if still running
+	m.sendSignal(pid, syscall.SIGKILL)
+}
+
+// cleanupVMFiles removes all DHCP-related files for a VM.
+func (m *DHCPManager) cleanupVMFiles(vmID string) {
+	files := []string{
+		m.configFilePath(vmID),
+		m.leaseFilePath(vmID),
+		m.pidFilePath(vmID),
+		m.logFilePath(vmID),
+		m.statusFilePath(vmID),
+	}
+
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			m.logger.Warn("failed to remove file", "file", f, "error", err)
+		}
+	}
+}
+
+// saveLeaseStatus saves the lease status to a file.
+func (m *DHCPManager) saveLeaseStatus(vmID string, lease *DHCPLease) error {
+	statusPath := m.statusFilePath(vmID)
+	data, err := json.MarshalIndent(lease, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling lease status: %w", err)
+	}
+	return os.WriteFile(statusPath, data, 0644)
+}
+
+// monitorProcess monitors a dnsmasq process and cleans up when it exits.
+func (m *DHCPManager) monitorProcess(vmID string, cmd *exec.Cmd, logFile *os.File) {
+	defer logFile.Close()
+
+	err := cmd.Wait()
+	if err != nil {
+		m.logger.Warn("dnsmasq process exited with error", "vm_id", vmID, "error", err)
+	} else {
+		m.logger.Info("dnsmasq process exited normally", "vm_id", vmID)
+	}
+
+	// Update status
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Update status file to stopped
+	lease, err := m.GetVMLease(context.Background(), vmID)
+	if err == nil && lease != nil {
+		lease.Status = "stopped"
+		if saveErr := m.saveLeaseStatus(vmID, lease); saveErr != nil {
+			m.logger.Warn("failed to update lease status on exit", "vm_id", vmID, "error", saveErr)
+		}
+	}
+
+	// Remove from running processes
+	delete(m.runningProcs, vmID)
+}
+
+// sanitizeHostname sanitizes a VM name for use as a DHCP hostname.
+func sanitizeHostname(name string) string {
+	// Replace spaces and special characters
+	result := strings.ReplaceAll(name, " ", "-")
+	result = strings.ReplaceAll(result, ".", "-")
+	result = strings.ReplaceAll(result, "_", "-")
+	// Remove any remaining non-alphanumeric characters except dash
+	var sb strings.Builder
+	for _, r := range result {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}

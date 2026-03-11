@@ -1,0 +1,117 @@
+package provisioning
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// ResizeVM handles POST /vms/:id/resize - resizes VM resources.
+// This endpoint is called by WHMCS when a service is upgraded.
+// Supports upgrading vCPU, memory, and disk (shrinking not supported).
+func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
+	vmID := c.Param("id")
+
+	// Validate UUID format
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Parse request body
+	var req ResizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate at least one field is provided
+	if req.VCPU == nil && req.MemoryMB == nil && req.DiskGB == nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "At least one resize parameter (vcpu, memory_mb, or disk_gb) must be provided")
+		return
+	}
+
+	// Get the VM
+	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		return
+	}
+
+	// Check if VM is already deleted
+	if vm.IsDeleted() {
+		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
+		return
+	}
+
+	// Check if VM is suspended
+	if vm.Status == models.VMStatusSuspended {
+		respondWithError(c, http.StatusBadRequest, "VM_SUSPENDED", "Cannot resize a suspended VM. Unsuspend first.")
+		return
+	}
+
+	// Use current values for unspecified parameters
+	newVCPU := vm.VCPU
+	newMemoryMB := vm.MemoryMB
+	newDiskGB := vm.DiskGB
+
+	if req.VCPU != nil {
+		newVCPU = *req.VCPU
+	}
+	if req.MemoryMB != nil {
+		newMemoryMB = *req.MemoryMB
+	}
+	if req.DiskGB != nil {
+		newDiskGB = *req.DiskGB
+	}
+
+	// Validate resource changes (only upgrades allowed for disk)
+	if newDiskGB < vm.DiskGB {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", 
+			fmt.Sprintf("Disk shrinking is not supported. Current: %d GB, Requested: %d GB", vm.DiskGB, newDiskGB))
+		return
+	}
+
+	// Perform resize (admin=true to bypass plan limits)
+	err = h.vmService.ResizeVM(c.Request.Context(), vmID, vm.CustomerID, newVCPU, newMemoryMB, newDiskGB, true)
+	if err != nil {
+		h.logger.Error("failed to resize VM",
+			"vm_id", vmID,
+			"vcpu", newVCPU,
+			"memory_mb", newMemoryMB,
+			"disk_gb", newDiskGB,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RESIZE_FAILED", err.Error())
+		return
+	}
+
+	h.logger.Info("VM resized via provisioning API",
+		"vm_id", vmID,
+		"customer_id", vm.CustomerID,
+		"old_vcpu", vm.VCPU,
+		"new_vcpu", newVCPU,
+		"old_memory_mb", vm.MemoryMB,
+		"new_memory_mb", newMemoryMB,
+		"old_disk_gb", vm.DiskGB,
+		"new_disk_gb", newDiskGB,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{
+		Data: gin.H{
+			"vm_id":     vmID,
+			"vcpu":      newVCPU,
+			"memory_mb": newMemoryMB,
+			"disk_gb":   newDiskGB,
+		},
+	})
+}

@@ -1,0 +1,423 @@
+"use client";
+
+import { useState } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Network,
+  MapPin,
+  Plus,
+  Upload,
+  Search,
+  HardDrive,
+  Database,
+  FileSpreadsheet,
+} from "lucide-react";
+
+interface IPSet {
+  id: string;
+  name: string;
+  type: "ipv4" | "ipv6";
+  location: string;
+  total_ips: number;
+  available_ips: number;
+  cidr: string;
+}
+
+const mockIPSets: IPSet[] = [
+  {
+    id: "1",
+    name: "production-pool-01",
+    type: "ipv4",
+    location: "US-East-1",
+    total_ips: 1024,
+    available_ips: 342,
+    cidr: "10.0.0.0/22",
+  },
+  {
+    id: "2",
+    name: "production-pool-02",
+    type: "ipv4",
+    location: "US-West-2",
+    total_ips: 512,
+    available_ips: 128,
+    cidr: "10.0.4.0/23",
+  },
+  {
+    id: "3",
+    name: "dev-pool-01",
+    type: "ipv4",
+    location: "EU-Central-1",
+    total_ips: 256,
+    available_ips: 89,
+    cidr: "10.1.0.0/24",
+  },
+  {
+    id: "4",
+    name: "staging-pool-01",
+    type: "ipv4",
+    location: "US-East-1",
+    total_ips: 128,
+    available_ips: 45,
+    cidr: "10.2.0.0/25",
+  },
+  {
+    id: "5",
+    name: "ipv6-global-pool",
+    type: "ipv6",
+    location: "Global",
+    total_ips: 65536,
+    available_ips: 42000,
+    cidr: "2001:db8::/32",
+  },
+  {
+    id: "6",
+    name: "ipv6-eu-pool",
+    type: "ipv6",
+    location: "EU-Central-1",
+    total_ips: 32768,
+    available_ips: 18500,
+    cidr: "2001:db8:1::/33",
+  },
+  {
+    id: "7",
+    name: "backup-pool-01",
+    type: "ipv4",
+    location: "AP-South-1",
+    total_ips: 512,
+    available_ips: 256,
+    cidr: "10.3.0.0/23",
+  },
+  {
+    id: "8",
+    name: "gpu-cluster-pool",
+    type: "ipv4",
+    location: "US-West-2",
+    total_ips: 64,
+    available_ips: 12,
+    cidr: "10.4.0.0/26",
+  },
+];
+
+function getTypeBadge(type: IPSet["type"]) {
+  const variants = {
+    ipv4: "default" as const,
+    ipv6: "secondary" as const,
+  };
+
+  return (
+    <Badge variant={variants[type]} className="font-mono">
+      {type.toUpperCase()}
+    </Badge>
+  );
+}
+
+function getUsagePercentage(available: number, total: number) {
+  return ((total - available) / total) * 100;
+}
+
+function getUsageColor(percentage: number) {
+  if (percentage > 90) return "bg-red-500";
+  if (percentage > 70) return "bg-yellow-500";
+  return "bg-green-500";
+}
+
+function formatNumber(num: number): string {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
+  if (num >= 1000) return (num / 1000).toFixed(1) + "K";
+  return num.toString();
+}
+
+export default function IPSetsPage() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [ipSets] = useState<IPSet[]>(mockIPSets);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  const filteredIPSets = ipSets.filter(
+    (ipSet) =>
+      ipSet.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      ipSet.location.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleImport = (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log("Import IPs submitted");
+    setImportDialogOpen(false);
+  };
+
+  const handleCreate = () => {
+    console.log("Create IP Set");
+    // TODO: Implement create action
+  };
+
+  const totalSets = ipSets.length;
+  const totalIPs = ipSets.reduce((acc, set) => acc + set.total_ips, 0);
+  const availableIPs = ipSets.reduce((acc, set) => acc + set.available_ips, 0);
+  const ipv4Sets = ipSets.filter((set) => set.type === "ipv4").length;
+  const ipv6Sets = ipSets.filter((set) => set.type === "ipv6").length;
+
+  return (
+    <div className="min-h-screen bg-background p-6 md:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {/* Header */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">IP Address Pools</h1>
+            <p className="text-muted-foreground">
+              Manage IP address sets and allocations
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="default">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import IPs
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[525px]">
+                <DialogHeader>
+                  <DialogTitle>Import IP Addresses</DialogTitle>
+                  <DialogDescription>
+                    Upload a CSV or text file containing IP addresses to add to a pool.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleImport}>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium" htmlFor="file-upload">
+                        Select File
+                      </label>
+                      <div className="flex items-center gap-4">
+                        <Input
+                          id="file-upload"
+                          type="file"
+                          accept=".csv,.txt"
+                          className="flex-1"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Supported formats: CSV, TXT (one IP per line)
+                      </p>
+                    </div>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium" htmlFor="target-pool">
+                        Target Pool
+                      </label>
+                      <select
+                        id="target-pool"
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        <option value="">Select a pool...</option>
+                        {ipSets.map((set) => (
+                          <option key={set.id} value={set.id}>
+                            {set.name} ({set.cidr})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">
+                      <Upload className="mr-2 h-4 w-4" />
+                      Import
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+            <Button size="default" onClick={handleCreate}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create IP Set
+            </Button>
+          </div>
+        </div>
+
+        {/* Summary Stats */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10">
+                  <Database className="h-5 w-5 text-blue-500" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{totalSets}</div>
+                  <p className="text-xs text-muted-foreground">Total Sets</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
+                  <Network className="h-5 w-5 text-green-500" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{formatNumber(totalIPs)}</div>
+                  <p className="text-xs text-muted-foreground">Total IPs</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-500/10">
+                  <HardDrive className="h-5 w-5 text-purple-500" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{formatNumber(availableIPs)}</div>
+                  <p className="text-xs text-muted-foreground">Available IPs</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-500/10">
+                  <FileSpreadsheet className="h-5 w-5 text-orange-500" />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{ipv4Sets}/{ipv6Sets}</div>
+                  <p className="text-xs text-muted-foreground">IPv4 / IPv6 Sets</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Search and Filter */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by name or location..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* IP Sets Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Network className="h-5 w-5" />
+              All IP Sets
+            </CardTitle>
+            <CardDescription>
+              {filteredIPSets.length} of {ipSets.length} IP sets displayed
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>CIDR</TableHead>
+                    <TableHead>Total IPs</TableHead>
+                    <TableHead>Available IPs</TableHead>
+                    <TableHead>Usage</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredIPSets.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="h-24 text-center">
+                        No IP sets found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredIPSets.map((ipSet) => {
+                      const usagePercentage = getUsagePercentage(ipSet.available_ips, ipSet.total_ips);
+                      return (
+                        <TableRow key={ipSet.id}>
+                          <TableCell>
+                            <div className="font-medium">{ipSet.name}</div>
+                          </TableCell>
+                          <TableCell>{getTypeBadge(ipSet.type)}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <MapPin className="h-3 w-3" />
+                              {ipSet.location}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {ipSet.cidr}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatNumber(ipSet.total_ips)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatNumber(ipSet.available_ips)}
+                          </TableCell>
+                          <TableCell className="w-[180px]">
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-muted-foreground">
+                                  {usagePercentage.toFixed(0)}% used
+                                </span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                                <div
+                                  className={`h-full transition-all ${getUsageColor(usagePercentage)}`}
+                                  style={{ width: `${usagePercentage}%` }}
+                                />
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm">
+                                View
+                              </Button>
+                              <Button variant="outline" size="sm">
+                                Edit
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

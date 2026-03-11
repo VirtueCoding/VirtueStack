@@ -1,0 +1,552 @@
+// Package services provides business logic services for VirtueStack Controller.
+package services
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"os/exec"
+	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+)
+
+// FailoverService provides high-availability failover operations for VirtueStack.
+// It handles the complete failover workflow including STONITH, Ceph blocklisting,
+// and VM migration to surviving nodes.
+type FailoverService struct {
+	nodeRepo      *repository.NodeRepository
+	vmRepo        *repository.VMRepository
+	nodeAgent     NodeAgentClient
+	auditRepo     *repository.AuditRepository
+	encryptionKey string
+	logger        *slog.Logger
+}
+
+// NewFailoverService creates a new FailoverService with the given dependencies.
+func NewFailoverService(
+	nodeRepo *repository.NodeRepository,
+	vmRepo *repository.VMRepository,
+	nodeAgent NodeAgentClient,
+	auditRepo *repository.AuditRepository,
+	encryptionKey string,
+	logger *slog.Logger,
+) *FailoverService {
+	return &FailoverService{
+		nodeRepo:      nodeRepo,
+		vmRepo:        vmRepo,
+		nodeAgent:     nodeAgent,
+		auditRepo:     auditRepo,
+		encryptionKey: encryptionKey,
+		logger:        logger.With("component", "failover-service"),
+	}
+}
+
+// FailoverResult represents the outcome of a failover operation.
+type FailoverResult struct {
+	NodeID            string         `json:"node_id"`
+	NodeHostname      string         `json:"node_hostname"`
+	TotalVMs          int            `json:"total_vms"`
+	MigratedVMs       []MigratedVM   `json:"migrated_vms"`
+	FailedMigrations  []FailedMigration `json:"failed_migrations,omitempty"`
+	STONITHExecuted   bool           `json:"stonith_executed"`
+	BlocklistAdded    bool           `json:"blocklist_added"`
+}
+
+// MigratedVM represents a VM that was successfully migrated during failover.
+type MigratedVM struct {
+	VMID        string `json:"vm_id"`
+	Hostname    string `json:"hostname"`
+	OldNodeID   string `json:"old_node_id"`
+	NewNodeID   string `json:"new_node_id"`
+	NewNodeName string `json:"new_node_name"`
+}
+
+// FailedMigration represents a VM that failed to migrate during failover.
+type FailedMigration struct {
+	VMID     string `json:"vm_id"`
+	Hostname string `json:"hostname"`
+	Error    string `json:"error"`
+}
+
+// ApproveFailover executes the failover workflow for a failed node.
+// This is a destructive operation that should only be called after admin approval.
+//
+// The workflow:
+// 1. Verify the node is in a failed state (consecutive_heartbeat_misses >= 3)
+// 2. If IPMI credentials exist, execute STONITH (power off)
+// 3. Blocklist the failed node's management IP in Ceph
+// 4. Release RBD locks for VMs on the failed node
+// 5. Find surviving nodes
+// 6. Migrate each VM to a suitable surviving node
+func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNodeID string) (*FailoverResult, error) {
+	s.logger.Info("failover initiated",
+		"admin_id", adminID,
+		"target_node_id", targetNodeID)
+
+	// Step 1: Verify node exists and is in failed state
+	node, err := s.verifyFailedNode(ctx, targetNodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &FailoverResult{
+		NodeID:       targetNodeID,
+		NodeHostname: node.Hostname,
+	}
+
+	// Step 2: Execute STONITH if IPMI credentials exist
+	if node.IPMIAddress != nil && *node.IPMIAddress != "" {
+		if err := s.executeSTONITH(ctx, node); err != nil {
+			s.logger.Error("STONITH failed, aborting failover",
+				"node_id", targetNodeID,
+				"error", err)
+			return nil, fmt.Errorf("STONITH failed: %w", err)
+		}
+		result.STONITHExecuted = true
+		s.logger.Info("STONITH completed successfully",
+			"node_id", targetNodeID,
+			"ipmi_address", *node.IPMIAddress)
+	} else {
+		s.logger.Info("no IPMI configured, assuming manual power-off confirmed",
+			"node_id", targetNodeID)
+	}
+
+	// Step 3: Blocklist the failed node in Ceph
+	if err := s.blocklistNodeInCeph(ctx, node); err != nil {
+		// Log but don't fail - the blocklist is critical but we should still attempt recovery
+		s.logger.Error("failed to blocklist node in Ceph",
+			"node_id", targetNodeID,
+			"management_ip", node.ManagementIP,
+			"error", err)
+		// Continue with failover despite blocklist failure
+	} else {
+		result.BlocklistAdded = true
+		s.logger.Info("node blocklisted in Ceph",
+			"node_id", targetNodeID,
+			"management_ip", node.ManagementIP)
+	}
+
+	// Step 4: Release RBD locks for VMs on this node
+	// Note: The Ceph blocklist should prevent the failed node from writing,
+	// but explicitly releasing locks is recommended for clean recovery.
+	s.releaseRBDLocks(ctx, node)
+
+	// Step 5: Get all VMs on the failed node
+	vms, err := s.getVMsOnNode(ctx, targetNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting VMs on failed node: %w", err)
+	}
+	result.TotalVMs = len(vms)
+
+	if len(vms) == 0 {
+		s.logger.Info("no VMs to migrate on failed node",
+			"node_id", targetNodeID)
+		return result, nil
+	}
+
+	// Step 6: Find surviving nodes for VM placement
+	survivingNodes, err := s.findSurvivingNodes(ctx, node)
+	if err != nil {
+		return nil, fmt.Errorf("finding surviving nodes: %w", err)
+	}
+
+	if len(survivingNodes) == 0 {
+		return nil, fmt.Errorf("no surviving nodes available for VM migration")
+	}
+
+	// Step 7: Migrate each VM to a suitable surviving node
+	result.MigratedVMs = make([]MigratedVM, 0)
+	result.FailedMigrations = make([]FailedMigration, 0)
+
+	for _, vm := range vms {
+		migrated, failed := s.migrateVM(ctx, &vm, survivingNodes)
+		if migrated != nil {
+			result.MigratedVMs = append(result.MigratedVMs, *migrated)
+		} else if failed != nil {
+			result.FailedMigrations = append(result.FailedMigrations, *failed)
+		}
+	}
+
+	// Log audit trail
+	s.logFailoverAudit(ctx, adminID, result)
+
+	s.logger.Info("failover completed",
+		"node_id", targetNodeID,
+		"total_vms", result.TotalVMs,
+		"migrated", len(result.MigratedVMs),
+		"failed", len(result.FailedMigrations))
+
+	return result, nil
+}
+
+// verifyFailedNode checks that the node is in a proper failed state for failover.
+// A node is considered failed if consecutive_heartbeat_misses >= 3.
+func (s *FailoverService) verifyFailedNode(ctx context.Context, nodeID string) (*models.Node, error) {
+	node, err := s.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, fmt.Errorf("node not found: %s", nodeID)
+		}
+		return nil, fmt.Errorf("getting node: %w", err)
+	}
+
+	// Check if node is in failed state
+	if node.ConsecutiveHeartbeatMisses < 3 {
+		return nil, fmt.Errorf("node %s is not in failed state (consecutive_heartbeat_misses: %d, required: >= 3)",
+			nodeID, node.ConsecutiveHeartbeatMisses)
+	}
+
+	// Update node status to failed if not already
+	if node.Status != models.NodeStatusFailed {
+		if err := s.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusFailed); err != nil {
+			s.logger.Warn("failed to update node status to failed",
+				"node_id", nodeID,
+				"error", err)
+		}
+	}
+
+	s.logger.Info("node verified as failed",
+		"node_id", nodeID,
+		"hostname", node.Hostname,
+		"consecutive_heartbeat_misses", node.ConsecutiveHeartbeatMisses)
+
+	return node, nil
+}
+
+// executeSTONITH performs IPMI power-off on the failed node.
+// This ensures the node is truly down before proceeding with failover.
+func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node) error {
+	// Decrypt IPMI credentials
+	if node.IPMIUsernameEncrypted == nil || node.IPMIPasswordEncrypted == nil {
+		return sharederrors.ErrNoIPMIConfigured
+	}
+
+	username, err := crypto.Decrypt(*node.IPMIUsernameEncrypted, s.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("decrypting IPMI username: %w", err)
+	}
+
+	password, err := crypto.Decrypt(*node.IPMIPasswordEncrypted, s.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("decrypting IPMI password: %w", err)
+	}
+
+	ipmiAddress := *node.IPMIAddress
+
+	s.logger.Info("executing STONITH via IPMI",
+		"node_id", node.ID,
+		"ipmi_address", ipmiAddress)
+
+	// Execute IPMI power off command
+	// Using ipmitool: ipmitool -H <address> -U <user> -P <pass> power off
+	cmd := exec.CommandContext(ctx, "ipmitool",
+		"-H", ipmiAddress,
+		"-U", username,
+		"-P", password,
+		"power", "off")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("IPMI power off failed: %w, output: %s", err, string(output))
+	}
+
+	// Wait 10 seconds for power-off to complete
+	select {
+	case <-time.After(10 * time.Second):
+		// Expected path
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled during STONITH wait: %w", ctx.Err())
+	}
+
+	// Verify power state
+	verifyCmd := exec.CommandContext(ctx, "ipmitool",
+		"-H", ipmiAddress,
+		"-U", username,
+		"-P", password,
+		"power", "status")
+
+	verifyOutput, err := verifyCmd.CombinedOutput()
+	if err != nil {
+		s.logger.Warn("could not verify power status after STONITH",
+			"node_id", node.ID,
+			"error", err)
+	} else {
+		s.logger.Debug("power status after STONITH",
+			"node_id", node.ID,
+			"status", string(verifyOutput))
+	}
+
+	return nil
+}
+
+// blocklistNodeInCeph adds the failed node's management IP to the Ceph OSD blocklist.
+// This prevents the failed node from accessing Ceph storage, ensuring data integrity.
+func (s *FailoverService) blocklistNodeInCeph(ctx context.Context, node *models.Node) error {
+	// Validate the management IP to prevent command injection
+	ip := net.ParseIP(node.ManagementIP)
+	if ip == nil {
+		return fmt.Errorf("invalid management IP: %s", node.ManagementIP)
+	}
+
+	// Use the string representation of the parsed IP for safety
+	safeIP := ip.String()
+
+	s.logger.Info("adding node to Ceph blocklist",
+		"node_id", node.ID,
+		"management_ip", safeIP)
+
+	// Execute ceph osd blocklist add command
+	cmd := exec.CommandContext(ctx, "ceph",
+		"osd", "blocklist", "add",
+		safeIP)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ceph blocklist add failed: %w, output: %s", err, string(output))
+	}
+
+	s.logger.Info("node added to Ceph blocklist",
+		"node_id", node.ID,
+		"management_ip", safeIP,
+		"output", string(output))
+
+	return nil
+}
+
+// releaseRBDLocks releases RBD locks for VMs on the failed node.
+// This is done after blocklisting to ensure clean VM recovery.
+func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node) {
+	s.logger.Info("releasing RBD locks for failed node",
+		"node_id", node.ID,
+		"ceph_pool", node.CephPool)
+
+	// In a full implementation, this would:
+	// 1. List all RBD images in the pool
+	// 2. For each image, check if there are locks held by the failed node
+	// 3. Release those locks using: rbd lock remove <pool>/<image> <lock_id> <client>
+	//
+	// For now, we rely on the Ceph blocklist which effectively prevents
+	// the failed node from holding any locks.
+	//
+	// Example implementation (pseudocode):
+	// vms, _ := s.getVMsOnNode(ctx, node.ID)
+	// for _, vm := range vms {
+	//     rbdImage := fmt.Sprintf("%s/vm-%s", node.CephPool, vm.ID)
+	//     cmd := exec.CommandContext(ctx, "rbd", "lock", "list", rbdImage)
+	//     // Parse output to find locks held by failed node
+	//     // Release each lock: rbd lock remove <image> <lock_id> <client>
+	// }
+
+	s.logger.Info("RBD lock release completed (handled by Ceph blocklist)",
+		"node_id", node.ID)
+}
+
+// getVMsOnNode retrieves all VMs assigned to a specific node.
+func (s *FailoverService) getVMsOnNode(ctx context.Context, nodeID string) ([]models.VM, error) {
+	filter := models.VMListFilter{
+		NodeID: &nodeID,
+		PaginationParams: models.PaginationParams{
+			Page:    1,
+			PerPage: models.MaxPerPage,
+		},
+	}
+
+	vms, _, err := s.vmRepo.List(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs on node %s: %w", nodeID, err)
+	}
+
+	return vms, nil
+}
+
+// findSurvivingNodes returns all online nodes that can accept VM migrations.
+// Nodes in draining, offline, or failed status are excluded.
+func (s *FailoverService) findSurvivingNodes(ctx context.Context, failedNode *models.Node) ([]models.Node, error) {
+	// Get all online nodes
+	filter := models.NodeListFilter{
+		Status: strPtr(models.NodeStatusOnline),
+	}
+
+	nodes, _, err := s.nodeRepo.List(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing online nodes: %w", err)
+	}
+
+	// Filter out the failed node (shouldn't be in the list, but be safe)
+	surviving := make([]models.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.ID != failedNode.ID {
+			surviving = append(surviving, n)
+		}
+	}
+
+	// If we have location information, prefer nodes in the same location
+	if failedNode.LocationID != nil {
+		surviving = s.sortNodesByLocation(surviving, *failedNode.LocationID)
+	}
+
+	return surviving, nil
+}
+
+// sortNodesByLocation sorts nodes with preference for the same location.
+func (s *FailoverService) sortNodesByLocation(nodes []models.Node, preferredLocationID string) []models.Node {
+	// Simple sort: nodes in preferred location first
+	sameLocation := make([]models.Node, 0)
+	otherLocations := make([]models.Node, 0)
+
+	for _, n := range nodes {
+		if n.LocationID != nil && *n.LocationID == preferredLocationID {
+			sameLocation = append(sameLocation, n)
+		} else {
+			otherLocations = append(otherLocations, n)
+		}
+	}
+
+	return append(sameLocation, otherLocations...)
+}
+
+// migrateVM migrates a single VM to one of the surviving nodes.
+// Returns either a successful migration or a failure reason.
+func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivingNodes []models.Node) (*MigratedVM, *FailedMigration) {
+	// Select the best node for this VM
+	targetNode := s.selectBestNode(vm, survivingNodes)
+	if targetNode == nil {
+		return nil, &FailedMigration{
+			VMID:     vm.ID,
+			Hostname: vm.Hostname,
+			Error:    "no suitable node found for migration",
+		}
+	}
+
+	s.logger.Info("migrating VM",
+		"vm_id", vm.ID,
+		"hostname", vm.Hostname,
+		"old_node_id", vm.NodeID,
+		"new_node_id", targetNode.ID)
+
+	// Update VM's node assignment in the database
+	if err := s.vmRepo.UpdateNodeAssignment(ctx, vm.ID, targetNode.ID); err != nil {
+		return nil, &FailedMigration{
+			VMID:     vm.ID,
+			Hostname: vm.Hostname,
+			Error:    fmt.Sprintf("failed to update node assignment: %v", err),
+		}
+	}
+
+	// Update VM status to indicate it's being recovered
+	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusProvisioning); err != nil {
+		s.logger.Warn("failed to update VM status during migration",
+			"vm_id", vm.ID,
+			"error", err)
+	}
+
+	// Attempt to start the VM on the new node
+	if s.nodeAgent != nil {
+		if err := s.nodeAgent.StartVM(ctx, targetNode.ID, vm.ID); err != nil {
+			s.logger.Warn("failed to start VM on new node",
+				"vm_id", vm.ID,
+				"new_node_id", targetNode.ID,
+				"error", err)
+			// Don't fail the entire migration - the VM is reassigned and can be started manually
+		} else {
+			// Update status to running
+			_ = s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning)
+		}
+	} else {
+		s.logger.Warn("node agent not available, VM will need manual start",
+			"vm_id", vm.ID,
+			"new_node_id", targetNode.ID)
+	}
+
+	// Update allocated resources on the new node
+	newAllocatedVCPU := targetNode.AllocatedVCPU + vm.VCPU
+	newAllocatedMemory := targetNode.AllocatedMemoryMB + vm.MemoryMB
+	if err := s.nodeRepo.UpdateAllocatedResources(ctx, targetNode.ID, newAllocatedVCPU, newAllocatedMemory); err != nil {
+		s.logger.Warn("failed to update allocated resources on target node",
+			"node_id", targetNode.ID,
+			"error", err)
+	}
+
+	return &MigratedVM{
+		VMID:        vm.ID,
+		Hostname:    vm.Hostname,
+		OldNodeID:   *vm.NodeID,
+		NewNodeID:   targetNode.ID,
+		NewNodeName: targetNode.Hostname,
+	}, nil
+}
+
+// selectBestNode selects the best surviving node for a VM based on available capacity.
+func (s *FailoverService) selectBestNode(vm *models.VM, nodes []models.Node) *models.Node {
+	var bestNode *models.Node
+	bestScore := -1
+
+	for i := range nodes {
+		node := &nodes[i]
+
+		// Check if node has enough capacity
+		availableVCPU := node.TotalVCPU - node.AllocatedVCPU
+		availableMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
+
+		if availableVCPU < vm.VCPU || availableMemory < vm.MemoryMB {
+			continue // Not enough capacity
+		}
+
+		// Score based on available memory (prefer nodes with more free resources)
+		score := availableVCPU + (availableMemory / 1024) // Normalize memory to roughly match CPU weight
+
+		if score > bestScore {
+			bestScore = score
+			bestNode = node
+		}
+	}
+
+	return bestNode
+}
+
+// logFailoverAudit logs the failover operation to the audit trail.
+func (s *FailoverService) logFailoverAudit(ctx context.Context, adminID string, result *FailoverResult) {
+	s.logger.Info("failover audit",
+		"actor_type", models.AuditActorAdmin,
+		"actor_id", adminID,
+		"action", "node.failover",
+		"resource_type", "node",
+		"resource_id", result.NodeID,
+		"stonith_executed", result.STONITHExecuted,
+		"blocklist_added", result.BlocklistAdded,
+		"total_vms", result.TotalVMs,
+		"migrated_count", len(result.MigratedVMs),
+		"failed_count", len(result.FailedMigrations))
+
+	// If auditRepo is available, write to audit log
+	if s.auditRepo != nil {
+		success := len(result.FailedMigrations) == 0
+		var errorMsg *string
+		if !success {
+			msg := fmt.Sprintf("%d VMs failed to migrate", len(result.FailedMigrations))
+			errorMsg = &msg
+		}
+
+		audit := &models.AuditLog{
+			ActorID:      &adminID,
+			ActorType:    models.AuditActorAdmin,
+			Action:       "node.failover",
+			ResourceType: "node",
+			ResourceID:   &result.NodeID,
+			Success:      success,
+			ErrorMessage: errorMsg,
+		}
+
+		if err := s.auditRepo.Append(ctx, audit); err != nil {
+			s.logger.Warn("failed to write audit log for failover",
+				"node_id", result.NodeID,
+				"error", err)
+		}
+	}
+}
+

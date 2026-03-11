@@ -1,0 +1,60 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build
+*.o
+*.a
+*.test
+*.out
+*.prof
+
+# Dependency directories
+vendor/
+node_modules/
+.pnpm-store/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# TLS certificates (generated)
+certs/
+*.pem
+*.key
+*.crt
+*.csr
+
+# Cloud-init artifacts
+cloud-init/
+
+# ISO storage
+iso/
+
+# Backup artifacts
+backups/
+
+# Coverage
+coverage.out
+coverage.html
+
+# Build artifacts
+dist/
+.next/
+*.tsbuildinfo

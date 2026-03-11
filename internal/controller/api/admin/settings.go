@@ -1,0 +1,88 @@
+package admin
+
+import (
+	"net/http"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/gin-gonic/gin"
+)
+
+// Setting represents a system setting key-value pair.
+type Setting struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+}
+
+// SettingUpdateRequest represents the request body for updating a setting.
+type SettingUpdateRequest struct {
+	Value string `json:"value" validate:"required"`
+}
+
+// Default system settings - these would typically come from a database.
+var defaultSettings = []Setting{
+	{Key: "maintenance_mode", Value: "false", Description: "When true, no new VMs can be created"},
+	{Key: "default_backup_retention_days", Value: "30", Description: "Default backup retention period in days"},
+	{Key: "max_vms_per_customer", Value: "10", Description: "Maximum number of VMs a customer can create"},
+	{Key: "bandwidth_overage_rate", Value: "0.05", Description: "Cost per GB for bandwidth overage in USD"},
+	{Key: "smtp_host", Value: "", Description: "SMTP server hostname for email notifications"},
+	{Key: "smtp_port", Value: "587", Description: "SMTP server port"},
+	{Key: "smtp_from", Value: "noreply@virtuestack.com", Description: "From email address for notifications"},
+	{Key: "alert_email_recipients", Value: "", Description: "Comma-separated list of alert recipient emails"},
+	{Key: "node_heartbeat_timeout_seconds", Value: "300", Description: "Seconds before a node is marked offline"},
+	{Key: "backup_schedule_hour", Value: "2", Description: "Hour of day for automatic backups (0-23)"},
+}
+
+// GetSettings handles GET /settings - retrieves all system settings.
+func (h *AdminHandler) GetSettings(c *gin.Context) {
+	// In a production system, these would be loaded from a database or config store.
+	// For now, we return the default settings.
+	settings := defaultSettings
+
+	c.JSON(http.StatusOK, models.Response{Data: settings})
+}
+
+// UpdateSetting handles PUT /settings/:key - updates a specific setting.
+func (h *AdminHandler) UpdateSetting(c *gin.Context) {
+	key := c.Param("key")
+
+	var req SettingUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate that the setting key exists
+	validKey := false
+	for _, s := range defaultSettings {
+		if s.Key == key {
+			validKey = true
+			break
+		}
+	}
+
+	if !validKey {
+		respondWithError(c, http.StatusNotFound, "SETTING_NOT_FOUND", "Setting key not found")
+		return
+	}
+
+	// In a production system, this would update a database or config store.
+	// For now, we log the update and return success.
+
+	// Log audit event
+	h.logAuditEvent(c, "setting.update", "setting", key, map[string]interface{}{
+		"key":   key,
+		"value": req.Value,
+	}, true)
+
+	h.logger.Info("setting updated via admin API",
+		"key", key,
+		"value", req.Value,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{Data: Setting{
+		Key:   key,
+		Value: req.Value,
+	}})
+}

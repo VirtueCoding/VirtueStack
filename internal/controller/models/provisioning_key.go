@@ -1,0 +1,54 @@
+// Package models provides data model types for VirtueStack Controller.
+package models
+
+import "time"
+
+// ProvisioningKey represents an API key for WHMCS provisioning integration.
+// Keys are hashed using SHA-256 before storage - the plaintext key is never stored.
+type ProvisioningKey struct {
+	ID          string    `json:"id" db:"id"`
+	Name        string    `json:"name" db:"name"`
+	KeyHash     string    `json:"-" db:"key_hash"` // Never expose in JSON
+	AllowedIPs  []string  `json:"allowed_ips,omitempty" db:"allowed_ips"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	CreatedBy   string    `json:"created_by" db:"created_by"`
+	Description string    `json:"description,omitempty" db:"description"`
+}
+
+// IsActive returns true if the key has not been revoked.
+func (k *ProvisioningKey) IsActive() bool {
+	return k.RevokedAt == nil
+}
+
+// IsAllowedIP checks if the given IP is in the allowed list.
+// An empty allowed list means all IPs are permitted.
+func (k *ProvisioningKey) IsAllowedIP(ip string) bool {
+	if len(k.AllowedIPs) == 0 {
+		return true
+	}
+	for _, allowed := range k.AllowedIPs {
+		if allowed == ip {
+			return true
+		}
+	}
+	return false
+}
+
+// ProvisioningKeyCreateRequest represents a request to create a new provisioning key.
+type ProvisioningKeyCreateRequest struct {
+	Name        string   `json:"name" validate:"required,min=1,max=100"`
+	AllowedIPs  []string `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
+	Description string   `json:"description,omitempty" validate:"max=500"`
+	CreatedBy   string   `json:"created_by" validate:"required,uuid"`
+}
+
+// ProvisioningKeyResponse is returned when creating a new key.
+// The raw key is only returned once and cannot be retrieved again.
+type ProvisioningKeyResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Key       string    `json:"key"` // Only returned on creation
+	CreatedAt time.Time `json:"created_at"`
+}

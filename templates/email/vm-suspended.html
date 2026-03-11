@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your VM has been suspended</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 0;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding: 32px 40px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">VirtueStack</h1>
+                        </td>
+                    </tr>
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">⏸️ VM Suspended</h2>
+                            <p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
+                            <p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your virtual machine has been suspended.</p>
+                            <table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
+                                <tr>
+                                    <td style="padding: 12px 16px; background-color: #fffbeb; border-radius: 4px; border-left: 4px solid #f59e0b;">
+                                        <p style="margin: 0; color: #6b7280; font-size: 14px;">Suspended VM</p>
+                                        <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin: 0; color: #374151; font-size: 16px;">Please contact support to resolve this issue.</p>
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 24px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
+                            <p style="margin: 0; color: #6b7280; font-size: 14px;">
+                                © {{.Year}} VirtueStack. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -1,0 +1,192 @@
+package customer
+
+import (
+	"net/http"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// CreateVMRequest represents the request body for creating a VM.
+// Customers can create VMs by specifying a plan and template.
+type CreateVMRequest struct {
+	PlanID     string   `json:"plan_id" validate:"required,uuid"`
+	TemplateID string   `json:"template_id" validate:"required,uuid"`
+	Hostname   string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
+	Password   string   `json:"password" validate:"required,min=8,max=128"`
+	SSHKeys    []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
+}
+
+// ListVMs handles GET /vms - lists all VMs owned by the authenticated customer.
+// Supports pagination via query parameters (page, per_page).
+func (h *CustomerHandler) ListVMs(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+
+	// Parse pagination
+	pagination := models.ParsePagination(c)
+
+	// Build filter with customer isolation
+	filter := models.VMListFilter{
+		CustomerID:       &customerID,
+		PaginationParams: pagination,
+	}
+
+	// Optional status filter
+	if status := c.Query("status"); status != "" {
+		filter.Status = &status
+	}
+
+	// Optional search filter
+	if search := c.Query("search"); search != "" {
+		filter.Search = &search
+	}
+
+	vms, total, err := h.vmService.ListVMs(c.Request.Context(), filter, customerID, false)
+	if err != nil {
+		h.logger.Error("failed to list VMs",
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LIST_FAILED", "Failed to retrieve VMs")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: vms,
+		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+	})
+}
+
+// CreateVM handles POST /vms - creates a new VM for the customer.
+// This is an async operation that returns a task_id for polling.
+func (h *CustomerHandler) CreateVM(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+
+	var req CreateVMRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate UUIDs
+	if _, err := uuid.Parse(req.PlanID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+		return
+	}
+	if _, err := uuid.Parse(req.TemplateID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		return
+	}
+
+	// Get idempotency key from header if present
+	idempotencyKey := c.GetHeader("Idempotency-Key")
+
+	// Build VM create request
+	vmReq := &models.VMCreateRequest{
+		CustomerID:     customerID,
+		PlanID:         req.PlanID,
+		TemplateID:     req.TemplateID,
+		Hostname:       req.Hostname,
+		Password:       req.Password,
+		SSHKeys:        req.SSHKeys,
+		IdempotencyKey: idempotencyKey,
+	}
+
+	// Create VM through service layer
+	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, customerID)
+	if err != nil {
+		h.logger.Error("failed to create VM",
+			"customer_id", customerID,
+			"hostname", req.Hostname,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", err.Error())
+		return
+	}
+
+	h.logger.Info("VM creation initiated via customer API",
+		"vm_id", vm.ID,
+		"task_id", taskID,
+		"customer_id", customerID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: gin.H{
+			"vm_id":   vm.ID,
+			"task_id": taskID,
+		},
+	})
+}
+
+// GetVM handles GET /vms/:id - retrieves details for a specific VM.
+// Enforces customer isolation - returns 404 if VM doesn't belong to customer.
+func (h *CustomerHandler) GetVM(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+
+	// Validate UUID
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Get VM with ownership verification (isAdmin=false)
+	vm, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, customerID, false)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to get VM",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: vm})
+}
+
+// DeleteVM handles DELETE /vms/:id - initiates async VM deletion.
+// Returns 202 Accepted with a task_id for polling.
+func (h *CustomerHandler) DeleteVM(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+
+	// Validate UUID
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Delete VM with ownership verification (isAdmin=false)
+	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, customerID, false)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to delete VM",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", err.Error())
+		return
+	}
+
+	h.logger.Info("VM deletion initiated via customer API",
+		"vm_id", vmID,
+		"task_id", taskID,
+		"customer_id", customerID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: TaskResponse{TaskID: taskID},
+	})
+}
