@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -56,14 +57,14 @@ func main() {
 	defer closeNATS(nc, logger)
 
 	// Create task worker
-	worker, err := tasks.NewWorker(js, dbPool, logger.Logger)
+	worker, err := tasks.NewWorker(js, dbPool, logger)
 	if err != nil {
 		logger.Error("Failed to create task worker", "error", err)
 		os.Exit(1)
 	}
 
 	// Create HTTP server
-	server, err := controller.NewServer(cfg.ControllerConfig, dbPool, js, logger.Logger)
+	server, err := controller.NewServer(cfg.ControllerConfig, dbPool, js, logger)
 	if err != nil {
 		logger.Error("Failed to create server", "error", err)
 		os.Exit(1)
@@ -87,7 +88,7 @@ func main() {
 		TemplateRepo: repository.NewTemplateRepository(dbPool),
 		IPAMService:  server.GetIPAMService(),
 		NodeClient:   nil, // NodeClient will be set up in a future phase
-		Logger:       logger.Logger,
+		Logger:       logger,
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)
 
@@ -144,7 +145,7 @@ func main() {
 }
 
 // connectDatabase creates a connection pool to PostgreSQL.
-func connectDatabase(ctx context.Context, databaseURL string, logger *logging.Logger) (*pgxpool.Pool, error) {
+func connectDatabase(ctx context.Context, databaseURL string, logger *slog.Logger) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parsing database URL: %w", err)
@@ -173,7 +174,7 @@ func connectDatabase(ctx context.Context, databaseURL string, logger *logging.Lo
 }
 
 // connectNATS connects to NATS and returns the connection and JetStream context.
-func connectNATS(natsURL string, logger *logging.Logger) (*nats.Conn, nats.JetStreamContext, error) {
+func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStreamContext, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("VirtueStack-Controller"),
 		nats.ReconnectWait(2*time.Second),
@@ -206,13 +207,13 @@ func connectNATS(natsURL string, logger *logging.Logger) (*nats.Conn, nats.JetSt
 }
 
 // closeDBPool closes the database connection pool.
-func closeDBPool(pool *pgxpool.Pool, logger *logging.Logger) {
+func closeDBPool(pool *pgxpool.Pool, logger *slog.Logger) {
 	logger.Info("Closing database connection pool")
 	pool.Close()
 }
 
 // closeNATS closes the NATS connection.
-func closeNATS(nc *nats.Conn, logger *logging.Logger) {
+func closeNATS(nc *nats.Conn, logger *slog.Logger) {
 	logger.Info("Closing NATS connection")
 	nc.Close()
 }

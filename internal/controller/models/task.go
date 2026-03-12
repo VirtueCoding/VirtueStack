@@ -1,15 +1,12 @@
-// Package tasks provides task types and worker for async job processing.
-package tasks
+package models
 
 import (
 	"encoding/json"
 	"time"
 )
 
-// TaskStatus represents the status of a task.
 type TaskStatus string
 
-// Task status constants.
 const (
 	TaskStatusPending   TaskStatus = "pending"
 	TaskStatusRunning   TaskStatus = "running"
@@ -18,20 +15,19 @@ const (
 	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
-// Task type constants.
 const (
-	TaskTypeVMCreate        = "vm.create"
-	TaskTypeVMReinstall     = "vm.reinstall"
-	TaskTypeVMMigrate       = "vm.migrate"
-	TaskTypeVMResize        = "vm.resize"
-	TaskTypeBackupCreate    = "backup.create"
-	TaskTypeBackupRestore   = "backup.restore"
-	TaskTypeSnapshotCreate  = "snapshot.create"
-	TaskTypeSnapshotRevert  = "snapshot.revert"
-	TaskTypeSnapshotDelete  = "snapshot.delete"
+	TaskTypeVMCreate       = "vm.create"
+	TaskTypeVMReinstall    = "vm.reinstall"
+	TaskTypeVMMigrate      = "vm.migrate"
+	TaskTypeVMResize       = "vm.resize"
+	TaskTypeVMDelete       = "vm.delete"
+	TaskTypeBackupCreate   = "backup.create"
+	TaskTypeBackupRestore  = "backup.restore"
+	TaskTypeSnapshotCreate = "snapshot.create"
+	TaskTypeSnapshotRevert = "snapshot.revert"
+	TaskTypeSnapshotDelete = "snapshot.delete"
 )
 
-// Task represents an async task to be processed.
 type Task struct {
 	ID             string          `json:"id"`
 	Type           string          `json:"type"`
@@ -47,21 +43,18 @@ type Task struct {
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 }
 
-// IsTerminal returns true if the task is in a terminal state.
 func (t *Task) IsTerminal() bool {
 	return t.Status == TaskStatusCompleted ||
 		t.Status == TaskStatusFailed ||
 		t.Status == TaskStatusCancelled
 }
 
-// SetRunning updates the task to running status.
 func (t *Task) SetRunning() {
 	t.Status = TaskStatusRunning
 	now := time.Now().UTC()
 	t.StartedAt = &now
 }
 
-// SetCompleted updates the task to completed status with an optional result.
 func (t *Task) SetCompleted(result json.RawMessage) {
 	t.Status = TaskStatusCompleted
 	t.Progress = 100
@@ -72,7 +65,6 @@ func (t *Task) SetCompleted(result json.RawMessage) {
 	}
 }
 
-// SetFailed updates the task to failed status with an error message.
 func (t *Task) SetFailed(errMsg string) {
 	t.Status = TaskStatusFailed
 	t.ErrorMessage = errMsg
@@ -80,7 +72,6 @@ func (t *Task) SetFailed(errMsg string) {
 	t.CompletedAt = &now
 }
 
-// SetProgress updates the task progress (0-100).
 func (t *Task) SetProgress(progress int) {
 	if progress < 0 {
 		progress = 0
@@ -90,7 +81,6 @@ func (t *Task) SetProgress(progress int) {
 	t.Progress = progress
 }
 
-// NewTask creates a new task with the given type and payload.
 func NewTask(id, taskType string, payload json.RawMessage) *Task {
 	return &Task{
 		ID:        id,
@@ -102,20 +92,14 @@ func NewTask(id, taskType string, payload json.RawMessage) *Task {
 	}
 }
 
-// NewTaskWithCreator creates a new task with creator information.
 func NewTaskWithCreator(id, taskType string, payload json.RawMessage, createdBy string) *Task {
 	task := NewTask(id, taskType, payload)
 	task.CreatedBy = createdBy
 	return task
 }
 
-// TaskPayload is a helper for constructing task payloads.
 type TaskPayload map[string]any
 
-// ToJSON converts the payload to JSON RawMessage.
 func (p TaskPayload) ToJSON() (json.RawMessage, error) {
 	return json.Marshal(p)
 }
-
-
-

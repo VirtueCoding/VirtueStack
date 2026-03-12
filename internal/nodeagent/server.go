@@ -197,7 +197,7 @@ func (s *Server) Stop() {
 	}
 
 	if s.libvirtConn != nil {
-		if err := s.libvirtConn.Close(); err != nil {
+		if _, err := s.libvirtConn.Close(); err != nil {
 			s.logger.Error("error closing libvirt connection", "error", err)
 		}
 	}
@@ -240,6 +240,14 @@ func (s *Server) isCephConnected() bool {
 		return false
 	}
 	return s.rbdManager.IsConnected()
+}
+
+func (s *Server) isLibvirtAlive() bool {
+	alive, err := s.libvirtConn.IsAlive()
+	if err != nil {
+		return false
+	}
+	return alive
 }
 
 // grpcHandler implements the NodeAgentService gRPC service.
@@ -289,7 +297,7 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *Empty) (*NodeHealt
 		VMCount:         resources.VMCount,
 		LoadAverage:     resources.LoadAverage[:],
 		UptimeSeconds:   resources.UptimeSeconds,
-		LibvirtConnected: h.server.libvirtConn != nil && h.server.libvirtConn.IsAlive() == 1,
+		LibvirtConnected: h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
 		CephConnected:   h.server.isCephConnected(),
 	}, nil
 }
@@ -505,6 +513,9 @@ func mapStatusToProto(status string) int32 {
 
 // Empty represents an empty message.
 type Empty struct{}
+
+// PingRequest is an empty request for ping operations.
+type PingRequest struct{}
 
 // VMIdentifier uniquely identifies a virtual machine.
 type VMIdentifier struct {

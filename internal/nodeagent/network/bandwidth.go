@@ -279,7 +279,7 @@ func (m *NodeBandwidthManager) ListThrottledVMs(ctx context.Context) ([]string, 
 		}
 
 		// Check if throttled
-		ifaceName, err := m.getInterfaceNameFromDomain(domain)
+		ifaceName, err := m.getInterfaceNameFromDomain(&domain)
 		if err != nil {
 			domain.Free()
 			continue

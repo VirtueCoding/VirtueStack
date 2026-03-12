@@ -4,8 +4,6 @@ package services
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 )
@@ -445,9 +444,7 @@ func (s *WebhookService) decryptSecret(encryptedSecret string) (string, error) {
 // GenerateSignature generates an HMAC-SHA256 signature for a webhook payload.
 // The signature is used to verify the authenticity of webhook deliveries.
 func GenerateSignature(secret string, payload []byte) string {
-	signature := hmac.New(sha256.New, []byte(secret))
-	signature.Write(payload)
-	return hex.EncodeToString(signature.Sum(nil))
+	return crypto.GenerateHMACSignature(secret, payload)
 }
 
 // VerifySignature verifies an HMAC-SHA256 signature for a webhook payload.
@@ -469,4 +466,37 @@ func ToResponse(webhook *repository.Webhook) WebhookResponse {
 		CreatedAt:     webhook.CreatedAt,
 		UpdatedAt:     webhook.UpdatedAt,
 	}
+}
+// DeliveryStats holds statistics for webhook deliveries.
+type DeliveryStats struct {
+	TotalDeliveries int
+	SuccessRate     float64
+}
+
+func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerWebhook) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func (s *WebhookService) ListByCustomer(ctx context.Context, customerID string) ([]repository.Webhook, error) {
+	return s.List(ctx, customerID)
+}
+
+func (s *WebhookService) GetPendingRetries(ctx context.Context, before time.Time) ([]repository.WebhookDelivery, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *WebhookService) CalculateNextRetry(attemptCount int) time.Duration {
+	return time.Duration(1<<uint(attemptCount-1)) * time.Minute
+}
+
+func (s *WebhookService) VerifySignature(payload []byte, signature, secret string) bool {
+	return GenerateSignature(secret, payload) == signature
+}
+
+func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, event string) ([]repository.Webhook, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *WebhookService) GetDeliveryStats(ctx context.Context, webhookID string) (*DeliveryStats, error) {
+	return nil, fmt.Errorf("not implemented")
 }

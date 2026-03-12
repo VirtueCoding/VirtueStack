@@ -37,8 +37,8 @@ const (
 //
 // Idempotency: If the task is already in a terminal state (completed/failed),
 // the handler returns nil without re-processing.
-func handleBackupCreate(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeBackupCreate)
+func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeBackupCreate)
 
 	// Parse payload
 	var payload BackupCreatePayload

@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 )
 
@@ -47,7 +47,7 @@ type WebhookDeliveryDeps struct {
 
 // RegisterWebhookDeliveryHandler registers the webhook delivery task handler.
 func RegisterWebhookDeliveryHandler(worker *Worker, deps *WebhookDeliveryDeps) {
-	worker.RegisterHandler(TaskTypeWebhookDeliver, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(TaskTypeWebhookDeliver, func(ctx context.Context, task *models.Task) error {
 		return handleWebhookDeliver(ctx, task, deps)
 	})
 
@@ -63,7 +63,7 @@ func RegisterWebhookDeliveryHandler(worker *Worker, deps *WebhookDeliveryDeps) {
 //  5. Send HTTP POST request
 //  6. Update delivery status
 //  7. Update webhook fail_count
-func handleWebhookDeliver(ctx context.Context, task *Task, deps *WebhookDeliveryDeps) error {
+func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookDeliveryDeps) error {
 	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeWebhookDeliver)
 
 	// Parse payload
@@ -177,7 +177,7 @@ func deliverWebhook(ctx context.Context, client *http.Client, webhook *repositor
 		return false, 0, "", fmt.Sprintf("decrypting webhook secret: %s", err.Error())
 	}
 	
-	signature := services.GenerateSignature(decryptedSecret, delivery.Payload)
+	signature := crypto.GenerateHMACSignature(decryptedSecret, delivery.Payload)
 	req.Header.Set("X-Signature-SHA256", signature)
 
 	// Send request
@@ -268,7 +268,7 @@ func ProcessPendingDeliveries(ctx context.Context, deps *WebhookDeliveryDeps, ba
 		}
 
 		// Perform delivery
-		success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, &delivery, logger)
+		success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, &delivery, logger, deps.EncryptionKey)
 
 		// Calculate next retry time if failed
 		var nextRetryAt *time.Time

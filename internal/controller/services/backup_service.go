@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
@@ -400,7 +398,7 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 			"customer_id": customerID,
 		}
 
-		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotCreate, payload)
+		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSnapshotCreate, payload)
 		if err != nil {
 			// Clean up the pending snapshot record
 			_ = s.snapshotRepo.DeleteSnapshot(ctx, snapshotID)
@@ -447,7 +445,7 @@ func (s *BackupService) RevertSnapshotAsync(ctx context.Context, snapshotID, cus
 			"customer_id": customerID,
 		}
 
-		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotRevert, payload)
+		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSnapshotRevert, payload)
 		if err != nil {
 			return "", fmt.Errorf("publishing snapshot revert task: %w", err)
 		}
@@ -482,7 +480,7 @@ func (s *BackupService) DeleteSnapshotAsync(ctx context.Context, snapshotID, cus
 			"customer_id": customerID,
 		}
 
-		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotDelete, payload)
+		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSnapshotDelete, payload)
 		if err != nil {
 			return "", fmt.Errorf("publishing snapshot delete task: %w", err)
 		}
@@ -631,4 +629,32 @@ func (s *BackupService) getVMBackupDay(vmID string) int {
 	day := int(hashValue%staggerDays) + 1
 
 	return day
+}
+
+func (s *BackupService) CreateSchedule(ctx context.Context, schedule *models.BackupSchedule) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*models.BackupSchedule, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) UpdateSchedule(ctx context.Context, scheduleID string, enabled bool) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) DeleteSchedule(ctx context.Context, scheduleID string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) ApplyRetentionPolicy(ctx context.Context, vmID string, retention int) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) ProcessExpiredBackups(ctx context.Context) (int, error) {
+	return 0, fmt.Errorf("not implemented")
+}
+
+func (s *BackupService) RestoreSnapshot(ctx context.Context, snapshotID string) error {
+	return fmt.Errorf("not implemented")
 }

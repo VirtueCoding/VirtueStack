@@ -21,8 +21,8 @@ import (
 //
 // Idempotency: If the VM is already on the target node, the task is considered
 // successfully completed without performing migration operations.
-func handleVMMigrate(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeVMMigrate)
+func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMMigrate)
 
 	// Parse payload
 	var payload VMMigratePayload

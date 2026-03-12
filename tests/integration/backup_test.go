@@ -4,7 +4,6 @@ package integration
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -28,7 +27,7 @@ func TestBackupCreation(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a full backup
-		backup, err := suite.BackupService.CreateBackup(ctx, vmID, "full", nil)
+		backup, err := suite.BackupService.CreateBackup(ctx, vmID, "full")
 
 		require.NoError(t, err, "Backup creation should succeed")
 		assert.NotEmpty(t, backup.ID, "Backup ID should be generated")
@@ -43,14 +42,14 @@ func TestBackupCreation(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a full backup first
-		fullBackup, err := suite.BackupService.CreateBackup(ctx, vmID, "full", nil)
+		fullBackup, err := suite.BackupService.CreateBackup(ctx, vmID, "full")
 		require.NoError(t, err)
 
 		// Update full backup to completed
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, fullBackup.ID)
 
 		// Create an incremental backup
-		incBackup, err := suite.BackupService.CreateBackup(ctx, vmID, "incremental", &fullBackup.ID)
+		incBackup, err := suite.BackupService.CreateBackup(ctx, vmID, "incremental")
 
 		require.NoError(t, err, "Incremental backup creation should succeed")
 		assert.Equal(t, "incremental", incBackup.Type, "Backup type should be incremental")
@@ -69,7 +68,7 @@ func TestBackupCreation(t *testing.T) {
 		}
 
 		// List backups
-		backups, err := suite.BackupRepo.ListByVM(ctx, vmID)
+		backups, err := suite.BackupRepo.ListBackupsByVM(ctx, vmID)
 
 		require.NoError(t, err, "Listing backups should succeed")
 		assert.GreaterOrEqual(t, len(backups), 3, "Should have at least 3 backups")
@@ -77,7 +76,7 @@ func TestBackupCreation(t *testing.T) {
 
 	t.Run("BackupWithNonExistentVM", func(t *testing.T) {
 		// Try to create backup for non-existent VM
-		_, err := suite.BackupService.CreateBackup(ctx, "non-existent-vm-id", "full", nil)
+		_, err := suite.BackupService.CreateBackup(ctx, "non-existent-vm-id", "full")
 
 		assert.Error(t, err, "Backup creation should fail for non-existent VM")
 	})
@@ -108,13 +107,13 @@ func TestBackupRestore(t *testing.T) {
 		`, models.BackupStatusCompleted, "/backups/"+backupID+".img", int64(1024*1024*100), backupID)
 
 		// Initiate restore
-		err = suite.BackupService.RestoreBackup(ctx, backupID, vmID)
+		err = suite.BackupService.RestoreBackup(ctx, backupID)
 		// Note: This might fail in test without actual storage backend
 		// The test verifies the flow, not the actual restore
 
 		// Verify backup status changed to restoring (if it succeeded)
 		if err == nil {
-			backup, _ := suite.BackupRepo.GetByID(ctx, backupID)
+			backup, _ := suite.BackupRepo.GetBackupByID(ctx, backupID)
 			assert.Contains(t, []string{models.BackupStatusRestoring, models.BackupStatusCompleted}, backup.Status)
 		}
 	})
@@ -123,9 +122,8 @@ func TestBackupRestore(t *testing.T) {
 		// Create a VM
 		vmID, err := CreateTestVM(ctx, TestCustomerID, TestPlanID, TestNodeID)
 		require.NoError(t, err)
-
-		// Try to restore from non-existent backup
-		err = suite.BackupService.RestoreBackup(ctx, "non-existent-backup-id", vmID)
+		_ = vmID
+		err = suite.BackupService.RestoreBackup(ctx, "non-existent-backup-id")
 
 		assert.Error(t, err, "Restore should fail for non-existent backup")
 	})
@@ -137,8 +135,7 @@ func TestBackupRestore(t *testing.T) {
 
 		vmID2, err := CreateTestVM(ctx, TestCustomerID, TestPlanID, TestNodeID)
 		require.NoError(t, err)
-
-		// Create backup for first VM
+		_ = vmID2
 		backupID, err := CreateTestBackup(ctx, vmID1)
 		require.NoError(t, err)
 
@@ -146,7 +143,7 @@ func TestBackupRestore(t *testing.T) {
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, backupID)
 
 		// Restore to different VM (should fail if not allowed, or succeed if cross-restore is allowed)
-		err = suite.BackupService.RestoreBackup(ctx, backupID, vmID2)
+		err = suite.BackupService.RestoreBackup(ctx, backupID)
 		// Behavior depends on business logic - adjust assertion as needed
 		// For now, we just check it doesn't panic
 		assert.True(t, true, "Cross-VM restore handled")
@@ -329,7 +326,7 @@ func TestBackupRetention(t *testing.T) {
 		assert.GreaterOrEqual(t, expired, 1, "Should have expired at least 1 backup")
 
 		// Verify backup is marked deleted
-		backup, err := suite.BackupRepo.GetByID(ctx, backupID)
+		backup, err := suite.BackupRepo.GetBackupByID(ctx, backupID)
 		require.NoError(t, err)
 		assert.Equal(t, models.BackupStatusDeleted, backup.Status, "Expired backup should be deleted")
 	})
@@ -358,7 +355,7 @@ func TestBackupStatusTransitions(t *testing.T) {
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, backupID)
 
 		// Verify
-		backup, err := suite.BackupRepo.GetByID(ctx, backupID)
+		backup, err := suite.BackupRepo.GetBackupByID(ctx, backupID)
 		require.NoError(t, err)
 		assert.Equal(t, models.BackupStatusCompleted, backup.Status)
 	})
@@ -373,11 +370,11 @@ func TestBackupStatusTransitions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Mark as failed
-		err = suite.BackupRepo.UpdateStatus(ctx, backupID, models.BackupStatusFailed, "Storage error")
+		err = suite.BackupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
 		require.NoError(t, err)
 
 		// Verify
-		backup, err := suite.BackupRepo.GetByID(ctx, backupID)
+		backup, err := suite.BackupRepo.GetBackupByID(ctx, backupID)
 		require.NoError(t, err)
 		assert.Equal(t, models.BackupStatusFailed, backup.Status)
 	})
@@ -395,11 +392,11 @@ func TestBackupStatusTransitions(t *testing.T) {
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID)
 
 		// Update to completed
-		err = suite.BackupRepo.UpdateStatus(ctx, backupID, models.BackupStatusCompleted, "")
+		err = suite.BackupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusCompleted)
 		require.NoError(t, err)
 
 		// Verify
-		backup, err := suite.BackupRepo.GetByID(ctx, backupID)
+		backup, err := suite.BackupRepo.GetBackupByID(ctx, backupID)
 		require.NoError(t, err)
 		assert.Equal(t, models.BackupStatusCompleted, backup.Status)
 	})
@@ -476,7 +473,7 @@ func TestSnapshotOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		// Restore from snapshot
-		err = suite.BackupService.RestoreSnapshot(ctx, snapshot.ID, vmID)
+		err = suite.BackupService.RestoreSnapshot(ctx, snapshot.ID)
 		// Note: This might fail without actual storage backend
 		// The test verifies the flow
 		_ = err // Accept error for now
@@ -565,7 +562,7 @@ func TestBackupConcurrency(t *testing.T) {
 		done := make(chan error, 5)
 		for i := 0; i < 5; i++ {
 			go func() {
-				_, err := suite.BackupService.CreateBackup(ctx, vmID, "full", nil)
+				_, err := suite.BackupService.CreateBackup(ctx, vmID, "full")
 				done <- err
 			}()
 		}
@@ -595,7 +592,7 @@ func TestBackupConcurrency(t *testing.T) {
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID)
 
 		// Try to create another backup (behavior depends on business logic)
-		_, err = suite.BackupService.CreateBackup(ctx, vmID, "full", nil)
+		_, err = suite.BackupService.CreateBackup(ctx, vmID, "full")
 		// May succeed or fail depending on implementation
 		_ = err
 	})

@@ -58,16 +58,22 @@ var DestructiveActions = []string{
 // ReAuthWindow is the time window within which a re-authentication is considered valid.
 const ReAuthWindow = 5 * time.Minute
 
+// SessionReauthStore abstracts session re-authentication timestamp operations.
+type SessionReauthStore interface {
+	GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error)
+	UpdateSessionLastReauthAt(ctx context.Context, sessionID string, timestamp time.Time) error
+}
+
 // RBACService provides Role-Based Access Control for VirtueStack.
 // It enforces permissions based on user roles and logs denied access attempts.
 type RBACService struct {
 	auditRepo    *repository.AuditRepository
-	customerRepo *repository.CustomerRepository
+	customerRepo SessionReauthStore
 	logger       *slog.Logger
 }
 
 // NewRBACService creates a new RBACService with the given dependencies.
-func NewRBACService(auditRepo *repository.AuditRepository, customerRepo *repository.CustomerRepository, logger *slog.Logger) *RBACService {
+func NewRBACService(auditRepo *repository.AuditRepository, customerRepo SessionReauthStore, logger *slog.Logger) *RBACService {
 	return &RBACService{
 		auditRepo:    auditRepo,
 		customerRepo: customerRepo,

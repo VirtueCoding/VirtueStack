@@ -109,30 +109,24 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 
 // createConnection creates a new gRPC connection with mTLS.
 func (nc *NodeClient) createConnection(ctx context.Context, address string) (*grpc.ClientConn, error) {
-	// Create TLS credentials
 	creds, err := nc.createTLSCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("creating TLS credentials: %w", err)
 	}
 
-	// Configure keepalive
 	kaParams := keepalive.ClientParameters{
 		Time:    KeepaliveTime,
 		Timeout: KeepaliveTimeout,
 	}
 
-	// Create dial options
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(kaParams),
-		grpc.WithBlock(),
-		grpc.WithTimeout(DefaultCallTimeout),
 	}
 
-	// Dial the connection
-	conn, err := grpc.DialContext(ctx, address, opts...)
+	conn, err := grpc.NewClient(address, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("dialing %s: %w", address, err)
+		return nil, fmt.Errorf("connecting to %s: %w", address, err)
 	}
 
 	return conn, nil
@@ -233,7 +227,7 @@ func (nc *NodeClient) GetInsecureConnection(ctx context.Context, nodeID, address
 		grpc.WithKeepaliveParams(kaParams),
 	}
 
-	conn, err := grpc.Dial(address, opts...)
+	conn, err := grpc.NewClient(address, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dialing %s: %w", address, err)
 	}

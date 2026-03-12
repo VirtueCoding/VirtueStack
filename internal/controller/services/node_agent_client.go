@@ -9,6 +9,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"google.golang.org/grpc"
 )
 
 // NodeAgentGRPCClient implements NodeAgentClient interface with gRPC communication
@@ -22,7 +23,7 @@ type NodeAgentGRPCClient struct {
 
 // GRPCConnectionPool defines the interface for managing gRPC connections to nodes.
 type GRPCConnectionPool interface {
-	GetConnection(ctx context.Context, nodeID, address string) (any, error)
+	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
 }
 
 // metricsCache holds cached node metrics with expiration.
@@ -119,7 +120,7 @@ func (c *NodeAgentGRPCClient) GetNodeMetrics(ctx context.Context, nodeID string)
 
 // fetchMetricsFromNode makes the actual gRPC call to get node metrics.
 // This is a placeholder that will be replaced with actual gRPC calls when proto is generated.
-func (c *NodeAgentGRPCClient) fetchMetricsFromNode(ctx context.Context, conn any, nodeID string) (*models.NodeHeartbeat, error) {
+func (c *NodeAgentGRPCClient) fetchMetricsFromNode(ctx context.Context, conn *grpc.ClientConn, nodeID string) (*models.NodeHeartbeat, error) {
 	// TODO: When protobuf is generated, implement actual gRPC call:
 	// client := nodeagentpb.NewNodeAgentServiceClient(conn.(*grpc.ClientConn))
 	// resp, err := client.GetNodeHealth(ctx, &nodeagentpb.Empty{})
@@ -238,4 +239,39 @@ func convertHealthResponse(resp *NodeHealthResponse) *models.NodeHeartbeat {
 		VMCount:       int(resp.VMCount),
 		LoadAverage:   loadAvg,
 	}
+}
+
+func (c *NodeAgentGRPCClient) StartVM(ctx context.Context, nodeID, vmID string) error {
+	c.logger.Warn("StartVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) StopVM(ctx context.Context, nodeID, vmID string, timeoutSeconds int) error {
+	c.logger.Warn("StopVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) ForceStopVM(ctx context.Context, nodeID, vmID string) error {
+	c.logger.Warn("ForceStopVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string) error {
+	c.logger.Warn("DeleteVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error {
+	c.logger.Warn("ResizeVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) GetVMMetrics(ctx context.Context, nodeID, vmID string) (*models.VMMetrics, error) {
+	c.logger.Warn("GetVMMetrics not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return nil, fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+}
+
+func (c *NodeAgentGRPCClient) GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error) {
+	c.logger.Warn("GetVMStatus not fully implemented", "node_id", nodeID, "vm_id", vmID)
+	return "", fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
 }

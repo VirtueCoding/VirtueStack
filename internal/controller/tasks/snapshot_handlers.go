@@ -46,8 +46,8 @@ type SnapshotDeletePayload struct {
 //  4. Create RBD snapshot via Node Agent
 //  5. Update snapshot record in database with RBD snapshot name
 //  6. Update task progress to completed
-func handleSnapshotCreate(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeSnapshotCreate)
+func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotCreate)
 
 	// Parse payload
 	var payload SnapshotCreatePayload
@@ -108,7 +108,7 @@ func handleSnapshotCreate(ctx context.Context, task *Task, deps *HandlerDeps) er
 	}
 
 	// Get existing snapshot record and update it
-	snapshot, err := deps.BackupRepo.GetSnapshotByID(ctx, payload.SnapshotID)
+	_, err = deps.BackupRepo.GetSnapshotByID(ctx, payload.SnapshotID)
 	if err != nil {
 		logger.Error("failed to get snapshot record", "error", err)
 		// Attempt to clean up the created snapshot
@@ -171,8 +171,8 @@ func handleSnapshotCreate(ctx context.Context, task *Task, deps *HandlerDeps) er
 //  5. Restore from RBD snapshot via Node Agent
 //  6. Start VM
 //  7. Update task progress to completed
-func handleSnapshotRevert(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeSnapshotRevert)
+func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotRevert)
 
 	// Parse payload
 	var payload SnapshotRevertPayload
@@ -296,8 +296,8 @@ func handleSnapshotRevert(ctx context.Context, task *Task, deps *HandlerDeps) er
 //  4. Delete RBD snapshot via Node Agent
 //  5. Delete snapshot record from database
 //  6. Update task progress to completed
-func handleSnapshotDelete(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeSnapshotDelete)
+func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotDelete)
 
 	// Parse payload
 	var payload SnapshotDeletePayload

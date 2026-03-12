@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"time"
 	"unicode"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -189,45 +188,45 @@ type BackupRestorePayload struct {
 
 // RegisterAllHandlers registers all task handlers with the worker.
 func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
-	worker.RegisterHandler(TaskTypeVMCreate, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeVMCreate, func(ctx context.Context, task *models.Task) error {
 		return handleVMCreate(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeVMReinstall, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeVMReinstall, func(ctx context.Context, task *models.Task) error {
 		return handleVMReinstall(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeVMMigrate, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeVMMigrate, func(ctx context.Context, task *models.Task) error {
 		return handleVMMigrate(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeBackupCreate, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeBackupCreate, func(ctx context.Context, task *models.Task) error {
 		return handleBackupCreate(ctx, task, deps)
 	})
-	worker.RegisterHandler("vm.delete", func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler("vm.delete", func(ctx context.Context, task *models.Task) error {
 		return handleVMDelete(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeBackupRestore, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeBackupRestore, func(ctx context.Context, task *models.Task) error {
 		return handleBackupRestore(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeSnapshotCreate, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeSnapshotCreate, func(ctx context.Context, task *models.Task) error {
 		return handleSnapshotCreate(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeSnapshotRevert, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeSnapshotRevert, func(ctx context.Context, task *models.Task) error {
 		return handleSnapshotRevert(ctx, task, deps)
 	})
-	worker.RegisterHandler(TaskTypeSnapshotDelete, func(ctx context.Context, task *Task) error {
+	worker.RegisterHandler(models.TaskTypeSnapshotDelete, func(ctx context.Context, task *models.Task) error {
 		return handleSnapshotDelete(ctx, task, deps)
 	})
 
 	deps.Logger.Info("all task handlers registered",
 		"handlers", []string{
-			TaskTypeVMCreate,
-			TaskTypeVMReinstall,
-			TaskTypeVMMigrate,
-			TaskTypeBackupCreate,
+			models.TaskTypeVMCreate,
+			models.TaskTypeVMReinstall,
+			models.TaskTypeVMMigrate,
+			models.TaskTypeBackupCreate,
 			"vm.delete",
-			TaskTypeBackupRestore,
-			TaskTypeSnapshotCreate,
-			TaskTypeSnapshotRevert,
-			TaskTypeSnapshotDelete,
+			models.TaskTypeBackupRestore,
+			models.TaskTypeSnapshotCreate,
+			models.TaskTypeSnapshotRevert,
+			models.TaskTypeSnapshotDelete,
 		})
 }
 
@@ -239,8 +238,8 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 //  4. Define and start VM via gRPC
 //  5. Allocate IP addresses
 //  6. Update VM status
-func handleVMCreate(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeVMCreate)
+func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMCreate)
 
 	// Parse payload
 	var payload VMCreatePayload
@@ -450,7 +449,7 @@ func handleVMCreate(ctx context.Context, task *Task, deps *HandlerDeps) error {
 //  5. Delete RBD volume
 //  6. Release IP addresses
 //  7. Soft delete VM record
-func handleVMDelete(ctx context.Context, task *Task, deps *HandlerDeps) error {
+func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
 	logger := deps.Logger.With("task_id", task.ID, "task_type", "vm.delete")
 
 	// Parse payload
@@ -571,8 +570,8 @@ func handleVMDelete(ctx context.Context, task *Task, deps *HandlerDeps) error {
 //  4. Delete current RBD volume
 //  5. Clone from backup snapshot
 //  6. Start VM
-func handleBackupRestore(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeBackupRestore)
+func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeBackupRestore)
 
 	// Parse payload
 	var payload BackupRestorePayload

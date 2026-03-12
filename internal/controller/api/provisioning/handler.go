@@ -7,9 +7,9 @@ import (
 	"log/slog"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
-	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 )
 
 // ProvisioningHandler handles WHMCS provisioning API requests.
@@ -62,7 +62,7 @@ type CreateVMResponse struct {
 type TaskStatusResponse struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`
-	Status    tasks.TaskStatus `json:"status"`
+	Status    models.TaskStatus `json:"status"`
 	Progress  int             `json:"progress"`
 	Message   string          `json:"message,omitempty"`
 	Result    any             `json:"result,omitempty"`

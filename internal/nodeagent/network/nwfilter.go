@@ -263,14 +263,6 @@ func escapeXML(s string) string {
 	return s
 }
 
-// isLibvirtError checks if an error is a specific libvirt error code.
-func isLibvirtError(err error, code libvirt.ErrorNumber) bool {
-	if lerr, ok := err.(libvirt.Error); ok {
-		return lerr.Code == code
-	}
-	return false
-}
-
 // EnsureBaseFilters ensures that the base nwfilter templates exist in libvirt.
 // This should be called during node agent initialization to create the
 // clean-traffic base filter if it doesn't exist.

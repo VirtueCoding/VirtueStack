@@ -641,8 +641,12 @@ func (m *Manager) getNetworkStats(domain *libvirt.Domain) (int64, int64, error) 
 
 	var totalRX, totalTX int64
 	for _, iface := range ifaces {
-		totalRX += iface.RxBytes
-		totalTX += iface.TxBytes
+		stats, err := domain.InterfaceStats(iface.Name)
+		if err != nil {
+			continue
+		}
+		totalRX += stats.RxBytes
+		totalTX += stats.TxBytes
 	}
 
 	return totalRX, totalTX, nil

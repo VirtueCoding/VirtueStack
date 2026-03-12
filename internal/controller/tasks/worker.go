@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
@@ -17,15 +18,15 @@ import (
 
 // JetStream constants.
 const (
-	StreamName     = "TASKS"
-	StreamSubject  = "tasks.>"
-	ConsumerName   = "task-worker"
-	AckWait        = 5 * time.Minute
-	MaxDeliver     = 3
+	StreamName    = "TASKS"
+	StreamSubject = "tasks.>"
+	ConsumerName  = "task-worker"
+	AckWait       = 5 * time.Minute
+	MaxDeliver    = 3
 )
 
 // TaskHandler processes a task of a specific type.
-type TaskHandler func(ctx context.Context, task *Task) error
+type TaskHandler func(ctx context.Context, task *models.Task) error
 
 // Worker processes tasks from NATS JetStream.
 type Worker struct {
@@ -40,19 +41,17 @@ type Worker struct {
 
 // NewWorker creates a new task worker.
 func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logger) (*Worker, error) {
-	// Ensure the stream exists
 	streamConfig := &nats.StreamConfig{
-		Name:     StreamName,
-		Subjects: []string{StreamSubject},
-		Storage:  nats.FileStorage,
+		Name:      StreamName,
+		Subjects:  []string{StreamSubject},
+		Storage:   nats.FileStorage,
 		Retention: nats.LimitsPolicy,
-		MaxAge:   7 * 24 * time.Hour, // 7 days retention
-		Replicas: 1,
+		MaxAge:    7 * 24 * time.Hour,
+		Replicas:  1,
 	}
 
 	_, err := js.AddStream(streamConfig)
 	if err != nil {
-		// Check if stream already exists
 		if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
 			return nil, fmt.Errorf("creating JetStream stream: %w", err)
 		}
@@ -67,7 +66,6 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 }
 
 // RegisterHandler registers a handler for a task type.
-// Example: worker.RegisterHandler("vm.create", handleVMCreate)
 func (w *Worker) RegisterHandler(taskType string, handler TaskHandler) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -76,30 +74,26 @@ func (w *Worker) RegisterHandler(taskType string, handler TaskHandler) {
 }
 
 // Start begins consuming tasks from the NATS JetStream stream.
-// It runs numWorkers goroutines processing tasks concurrently.
 func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	ctx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 
-	// Create durable consumer
 	consumerConfig := &nats.ConsumerConfig{
-		Durable:    ConsumerName,
-		AckPolicy:  nats.AckExplicit,
-		AckWait:    AckWait,
-		MaxDeliver: MaxDeliver,
+		Durable:        ConsumerName,
+		AckPolicy:      nats.AckExplicitPolicy,
+		AckWait:        AckWait,
+		MaxDeliver:     MaxDeliver,
 		DeliverSubject: fmt.Sprintf("%s.%s.deliver", StreamName, ConsumerName),
 		DeliverGroup:   ConsumerName,
 	}
 
 	_, err := w.js.AddConsumer(StreamName, consumerConfig)
 	if err != nil {
-		// Check if consumer already exists
 		if !errors.Is(err, nats.ErrConsumerNameAlreadyInUse) {
 			return fmt.Errorf("creating JetStream consumer: %w", err)
 		}
 	}
 
-	// Subscribe to tasks
 	sub, err := w.js.QueueSubscribe(
 		StreamSubject,
 		ConsumerName,
@@ -118,7 +112,6 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 		"consumer", ConsumerName,
 	)
 
-	// Start worker goroutines for concurrent processing
 	g, gctx := errgroup.WithContext(ctx)
 	for i := 0; i < numWorkers; i++ {
 		workerID := i
@@ -129,7 +122,6 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 		})
 	}
 
-	// Wait for context cancellation
 	go func() {
 		<-ctx.Done()
 		w.logger.Info("stopping task worker")
@@ -154,14 +146,12 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 		w.wg.Add(1)
 		defer w.wg.Done()
 
-		// Parse task from message
-		var task Task
+		var task models.Task
 		if err := json.Unmarshal(msg.Data, &task); err != nil {
 			w.logger.Error("failed to unmarshal task",
 				"error", err,
 				"subject", msg.Subject,
 			)
-			// Acknowledge invalid messages to prevent redelivery
 			msg.Ack()
 			return
 		}
@@ -173,15 +163,12 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 
 		logger.Info("processing task")
 
-		// Update task status to running
-		if err := w.updateTaskStatus(ctx, &task, TaskStatusRunning, nil, ""); err != nil {
+		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusRunning, nil, ""); err != nil {
 			logger.Error("failed to update task status to running", "error", err)
-			// NAK for retry
 			msg.Nak()
 			return
 		}
 
-		// Look up handler
 		w.mu.RLock()
 		handler, ok := w.handlers[task.Type]
 		w.mu.RUnlock()
@@ -189,23 +176,20 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 		if !ok {
 			errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
 			logger.Error(errMsg)
-			w.updateTaskStatus(ctx, &task, TaskStatusFailed, nil, errMsg)
+			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, errMsg)
 			msg.Ack()
 			return
 		}
 
-		// Execute handler
 		err := handler(ctx, &task)
 		if err != nil {
 			logger.Error("task handler failed", "error", err)
-			w.updateTaskStatus(ctx, &task, TaskStatusFailed, nil, err.Error())
-			// NAK for retry
+			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, err.Error())
 			msg.Nak()
 			return
 		}
 
-		// Update task status to completed
-		if err := w.updateTaskStatus(ctx, &task, TaskStatusCompleted, task.Result, ""); err != nil {
+		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
 			logger.Error("failed to update task status to completed", "error", err)
 		}
 
@@ -215,7 +199,7 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 }
 
 // PublishTask publishes a new task to the stream.
-func (w *Worker) PublishTask(ctx context.Context, task *Task) error {
+func (w *Worker) PublishTask(ctx context.Context, task *models.Task) error {
 	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("marshaling task: %w", err)
@@ -235,7 +219,7 @@ func (w *Worker) PublishTask(ctx context.Context, task *Task) error {
 }
 
 // updateTaskStatus updates the task status in the database.
-func (w *Worker) updateTaskStatus(ctx context.Context, task *Task, status TaskStatus, result json.RawMessage, errMsg string) error {
+func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status models.TaskStatus, result json.RawMessage, errMsg string) error {
 	now := time.Now().UTC()
 
 	query := `
@@ -250,9 +234,9 @@ func (w *Worker) updateTaskStatus(ctx context.Context, task *Task, status TaskSt
 	`
 
 	var startedAt, completedAt *time.Time
-	if status == TaskStatusRunning {
+	if status == models.TaskStatusRunning {
 		startedAt = &now
-	} else if status == TaskStatusCompleted || status == TaskStatusFailed {
+	} else if status == models.TaskStatusCompleted || status == models.TaskStatusFailed {
 		completedAt = &now
 	}
 
@@ -274,7 +258,7 @@ func (w *Worker) updateTaskStatus(ctx context.Context, task *Task, status TaskSt
 }
 
 // CreateTaskRecord creates a new task record in the database.
-func (w *Worker) CreateTaskRecord(ctx context.Context, task *Task) error {
+func (w *Worker) CreateTaskRecord(ctx context.Context, task *models.Task) error {
 	query := `
 		INSERT INTO tasks (id, type, status, payload, idempotency_key, created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -298,7 +282,7 @@ func (w *Worker) CreateTaskRecord(ctx context.Context, task *Task) error {
 }
 
 // GetTask retrieves a task by ID from the database.
-func (w *Worker) GetTask(ctx context.Context, taskID string) (*Task, error) {
+func (w *Worker) GetTask(ctx context.Context, taskID string) (*models.Task, error) {
 	query := `
 		SELECT id, type, status, payload, result, error_message, progress, 
 		       idempotency_key, created_by, created_at, started_at, completed_at
@@ -306,7 +290,7 @@ func (w *Worker) GetTask(ctx context.Context, taskID string) (*Task, error) {
 		WHERE id = $1
 	`
 
-	var task Task
+	var task models.Task
 	err := w.dbPool.QueryRow(ctx, query, taskID).Scan(
 		&task.ID,
 		&task.Type,
