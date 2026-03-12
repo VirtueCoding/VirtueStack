@@ -58,3 +58,15 @@ coverage.html
 dist/
 .next/
 *.tsbuildinfo
+
+# SSL certificates (generated locally)
+ssl/
+
+# Temporary files
+tmp/
+find_catches.js
+find_empty_catches.js
+list_all_catches.js
+
+# Sisyphus orchestration
+.sisyphus/
