@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -34,16 +35,20 @@ func HashAPIKey(rawKey string) string {
 func ProvisioningAuditLogger(auditRepo *repository.AuditRepository) middleware.AuditLogger {
 	return func(ctx context.Context, entry *middleware.AuditEntry) error {
 		audit := &models.AuditLog{
-			ActorID:       entry.ActorID,
+			ActorID:       &entry.ActorID,
 			ActorType:     entry.ActorType,
-			ActorIP:       entry.ActorIP,
+			ActorIP:       &entry.ActorIP,
 			Action:        entry.Action,
 			ResourceType:  entry.ResourceType,
-			ResourceID:    entry.ResourceID,
-			Changes:       entry.Changes,
-			CorrelationID: entry.CorrelationID,
+			ResourceID:    &entry.ResourceID,
+			CorrelationID: &entry.CorrelationID,
 			Success:       entry.Success,
-			ErrorMessage:  entry.ErrorMessage,
+			ErrorMessage:  &entry.ErrorMessage,
+		}
+		if entry.Changes != nil {
+			if data, err := json.Marshal(entry.Changes); err == nil {
+				audit.Changes = data
+			}
 		}
 		return auditRepo.Append(ctx, audit)
 	}

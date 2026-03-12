@@ -14,13 +14,14 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	"github.com/alexedwards/argon2id"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nats-io/nats.go"
+	natsclient "github.com/nats-io/nats.go"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/nats"
+	natsmodule "github.com/testcontainers/testcontainers-go/modules/nats"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -28,8 +29,8 @@ import (
 // TestSuite holds all dependencies needed for integration tests.
 type TestSuite struct {
 	DBPool         *pgxpool.Pool
-	NATSConn       *nats.Conn
-	JetStream      nats.JetStreamContext
+	NATSConn       *natsclient.Conn
+	JetStream      natsclient.JetStreamContext
 	Logger         *slog.Logger
 	JWTSecret      string
 	EncryptionKey  string
@@ -55,7 +56,7 @@ type TestSuite struct {
 
 	// Container references for cleanup
 	pgContainer   *postgres.PostgresContainer
-	natsContainer *nats.NatsContainer
+	natsContainer *natsmodule.NATSContainer
 }
 
 // Test fixture IDs
@@ -156,7 +157,7 @@ func TestMain(m *testing.M) {
 		_ = pgContainer.Terminate(ctx)
 		os.Exit(1)
 	}
-	_ = migrator.Close()
+	_, _ = migrator.Close()
 
 	// Create connection pool
 	dbPool, err := pgxpool.New(ctx, connStr)
@@ -167,7 +168,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Start NATS container
-	natsContainer, err := nats.Run(ctx, "nats:2.10-alpine")
+	natsContainer, err := natsmodule.Run(ctx, "nats:2.10-alpine")
 	if err != nil {
 		logger.Error("failed to start nats container", "error", err)
 		dbPool.Close()
@@ -185,7 +186,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Connect to NATS
-	natsConn, err := nats.Connect(natsURL)
+	natsConn, err := natsclient.Connect(natsURL)
 	if err != nil {
 		logger.Error("failed to connect to nats", "error", err)
 		_ = natsContainer.Terminate(ctx)
@@ -206,7 +207,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Create test stream
-	_, err = js.AddStream(&nats.StreamConfig{
+	_, err = js.AddStream(&natsclient.StreamConfig{
 		Name:     "VIRTUESTACK_TASKS",
 		Subjects: []string{"virtuestack.tasks.>"},
 	})
@@ -340,14 +341,14 @@ func SetupTest(t *testing.T) {
 	`, TestNodeID)
 
 	// Create test customer with hashed password
-	passwordHash, _ := services.Argon2idParams.HashPassword(TestCustomerPass)
+	passwordHash, _ := argon2id.CreateHash(TestCustomerPass, services.Argon2idParams)
 	_, _ = suite.DBPool.Exec(ctx, `
 		INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 		VALUES ($1, 'test@example.com', $2, 'Test Customer', 'active', NOW(), NOW())
 	`, TestCustomerID, passwordHash)
 
 	// Create test admin with hashed password
-	adminPasswordHash, _ := services.Argon2idParams.HashPassword(TestAdminPass)
+	adminPasswordHash, _ := argon2id.CreateHash(TestAdminPass, services.Argon2idParams)
 	encryptedTOTP, _ := crypto.Encrypt(TestTOTPSecret, suite.EncryptionKey)
 	_, _ = suite.DBPool.Exec(ctx, `
 		INSERT INTO admins (id, email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)

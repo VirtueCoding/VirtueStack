@@ -17,8 +17,7 @@ import (
 type CreateWebhookRequest struct {
 	URL    string   `json:"url" validate:"required,url,max=2048"`
 	Secret string   `json:"secret" validate:"required,min=16,max=128"`
-	Events []string `json:"events" ` +
-	`validate:"required,min=1,dive,max=100"`
+	Events []string `json:"events" validate:"required,min=1,dive,max=100"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook.

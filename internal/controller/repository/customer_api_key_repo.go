@@ -110,7 +110,9 @@ func (r *CustomerAPIKeyRepository) ListByCustomer(ctx context.Context, customerI
 	}
 	q += ` ORDER BY created_at DESC`
 
-	keys, err := ScanRows(ctx, r.db, q, []any{customerID}, scanCustomerAPIKey)
+	keys, err := ScanRows(ctx, r.db, q, []any{customerID}, func(rows pgx.Rows) (models.CustomerAPIKey, error) {
+		return scanCustomerAPIKey(rows)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing customer API keys for customer %s: %w", customerID, err)
 	}

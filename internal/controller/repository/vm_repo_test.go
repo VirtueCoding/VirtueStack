@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -87,9 +88,9 @@ func TestVMRepository_UpdatePassword(t *testing.T) {
 			mock := &mockDB{
 				execFunc: func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
 					if tt.execErr != nil {
-						return nil, tt.execErr
+						return pgconn.CommandTag{}, tt.execErr
 					}
-					return mockCommandTag{rowsAffected: tt.rowsAffected}, nil
+					return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", tt.rowsAffected)), nil
 				},
 			}
 
@@ -101,7 +102,7 @@ func TestVMRepository_UpdatePassword(t *testing.T) {
 					t.Errorf("UpdatePassword() expected error but got none")
 					return
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !containsStr(err.Error(), tt.errContains) {
 					t.Errorf("UpdatePassword() error = %v, should contain %q", err, tt.errContains)
 				}
 				return
@@ -114,7 +115,7 @@ func TestVMRepository_UpdatePassword(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
+func containsStr(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || containsSubstring(s, substr))
 }
 

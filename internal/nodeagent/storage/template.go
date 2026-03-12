@@ -257,23 +257,14 @@ func (m *TemplateManager) convertToRaw(ctx context.Context, sourcePath, rawPath 
 	return nil
 }
 
-// importRawToRBD imports a raw image file into RBD.
+// importRawToRBD imports a raw image file into RBD using the rbd CLI.
 func (m *TemplateManager) importRawToRBD(ctx context.Context, rawPath, imageName string, logger *slog.Logger) error {
 	logger.Info("importing raw image to RBD", "path", rawPath, "image", imageName)
 
-	ioctx, err := m.openIOContext(TemplatePool)
+	cmd := exec.CommandContext(ctx, "rbd", "import", rawPath, TemplatePool+"/"+imageName)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("importing image %s: %w", imageName, err)
-	}
-	defer ioctx.Destroy()
-
-	// Import options (use default features)
-	opts := rbd.NewRbdImageOptions()
-	defer opts.Destroy()
-
-	// Create image from file
-	if err := rbd.ImportImage(ioctx, rawPath, imageName, opts); err != nil {
-		return fmt.Errorf("importing image %s: %w", imageName, err)
+		return fmt.Errorf("importing image %s: %w (output: %s)", imageName, err, string(out))
 	}
 
 	logger.Info("raw image imported to RBD successfully")

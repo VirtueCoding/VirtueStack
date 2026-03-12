@@ -130,7 +130,7 @@ func (r *NotificationPreferenceRepository) GetOrCreate(ctx context.Context, cust
 	}
 
 	// Check if it's a "not found" error
-	if err.Error() == fmt.Sprintf("getting notification preferences for customer %s: %w", customerID, err) {
+	if err.Error() == fmt.Sprintf("getting notification preferences for customer %s: %v", customerID, err) {
 		// Create default preferences
 		prefs = &models.NotificationPreferences{
 			CustomerID:     customerID,
@@ -237,5 +237,4 @@ type NotificationEventFilter struct {
 	models.PaginationParams
 }
 
-// ErrNoRowsAffected is returned when an update/delete affects no rows.
-var ErrNoRowsAffected = fmt.Errorf("no rows affected")
+// notificationRepoSentinel is unused, keeps the declaration section clean.

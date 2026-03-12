@@ -93,7 +93,9 @@ func (r *ProvisioningKeyRepository) List(ctx context.Context, includeRevoked boo
 	}
 	q += ` ORDER BY created_at DESC`
 
-	keys, err := ScanRows(ctx, r.db, q, nil, scanProvisioningKey)
+	keys, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.ProvisioningKey, error) {
+		return scanProvisioningKey(rows)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing provisioning keys: %w", err)
 	}

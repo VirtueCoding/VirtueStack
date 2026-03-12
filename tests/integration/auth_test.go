@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/alexedwards/argon2id"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -545,7 +547,7 @@ func TestPermissionVerification(t *testing.T) {
 	t.Run("CustomerCannotAccessOtherCustomerVMs", func(t *testing.T) {
 		// Create another customer
 		otherCustomerID := "00000000-0000-0000-0000-000000000099"
-		passwordHash, _ := services.Argon2idParams.HashPassword(TestCustomerPass)
+		passwordHash, _ := argon2id.CreateHash(TestCustomerPass, services.Argon2idParams)
 		_, _ = suite.DBPool.Exec(ctx, `
 			INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 			VALUES ($1, 'other@example.com', $2, 'Other Customer', 'active', NOW(), NOW())

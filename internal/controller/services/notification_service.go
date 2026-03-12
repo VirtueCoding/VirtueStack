@@ -18,8 +18,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 )
 
-// NotificationConfig holds configuration for notification channels.
-type NotificationConfig struct {
+// AlertConfig holds configuration for notification channels.
+type AlertConfig struct {
 	// SMTP configuration for email notifications
 	SMTPHost     string
 	SMTPPort     int
@@ -59,22 +59,22 @@ type Alert struct {
 	NodeHostname string
 }
 
-// NotificationService handles sending alert notifications through various channels.
+// AlertService handles sending alert notifications through various channels.
 // Supports email (SMTP) and webhook notifications for operational alerts.
-type NotificationService struct {
-	config      *NotificationConfig
+type AlertService struct {
+	config      *AlertConfig
 	webhookRepo *repository.WebhookRepository
 	httpClient  *http.Client
 	logger      *slog.Logger
 }
 
-// NewNotificationService creates a new NotificationService with the given configuration.
-func NewNotificationService(
-	config *NotificationConfig,
+// NewAlertService creates a new NotificationService with the given configuration.
+func NewAlertService(
+	config *AlertConfig,
 	webhookRepo *repository.WebhookRepository,
 	logger *slog.Logger,
-) *NotificationService {
-	return &NotificationService{
+) *AlertService {
+	return &AlertService{
 		config:      config,
 		webhookRepo: webhookRepo,
 		httpClient: &http.Client{
@@ -87,7 +87,7 @@ func NewNotificationService(
 // SendAlert sends an alert notification through all enabled channels.
 // This is the primary entry point for sending alerts.
 // Returns an error only if ALL channels fail; partial failures are logged but don't return error.
-func (s *NotificationService) SendAlert(ctx context.Context, alert *Alert) error {
+func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 	if alert.Timestamp.IsZero() {
 		alert.Timestamp = time.Now()
 	}
@@ -131,7 +131,7 @@ func (s *NotificationService) SendAlert(ctx context.Context, alert *Alert) error
 }
 
 // sendEmailAlert sends an email notification to configured admin addresses.
-func (s *NotificationService) sendEmailAlert(ctx context.Context, alert *Alert) error {
+func (s *AlertService) sendEmailAlert(ctx context.Context, alert *Alert) error {
 	if s.config.SMTPHost == "" {
 		return fmt.Errorf("SMTP host not configured")
 	}
@@ -160,7 +160,7 @@ func (s *NotificationService) sendEmailAlert(ctx context.Context, alert *Alert) 
 }
 
 // sendEmail sends a single email via SMTP.
-func (s *NotificationService) sendEmail(to, subject, body string) error {
+func (s *AlertService) sendEmail(to, subject, body string) error {
 	// Build message
 	msg := fmt.Sprintf("From: %s\r\n", s.config.SMTPFrom)
 	msg += fmt.Sprintf("To: %s\r\n", to)
@@ -184,7 +184,7 @@ func (s *NotificationService) sendEmail(to, subject, body string) error {
 }
 
 // buildEmailBody creates the email body text from an alert.
-func (s *NotificationService) buildEmailBody(alert *Alert) string {
+func (s *AlertService) buildEmailBody(alert *Alert) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("Alert Type: %s\n", alert.Type))
@@ -211,7 +211,7 @@ func (s *NotificationService) buildEmailBody(alert *Alert) string {
 }
 
 // sendWebhookAlert sends a webhook notification to configured URLs.
-func (s *NotificationService) sendWebhookAlert(ctx context.Context, alert *Alert) error {
+func (s *AlertService) sendWebhookAlert(ctx context.Context, alert *Alert) error {
 	if len(s.config.AdminWebhooks) == 0 {
 		return nil
 	}
@@ -246,7 +246,7 @@ func (s *NotificationService) sendWebhookAlert(ctx context.Context, alert *Alert
 
 // sendWebhook sends a POST request to a webhook URL with the given payload.
 // If secret is provided, adds an HMAC-SHA256 signature header.
-func (s *NotificationService) sendWebhook(ctx context.Context, url, secret string, payload interface{}) error {
+func (s *AlertService) sendWebhook(ctx context.Context, url, secret string, payload interface{}) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshaling webhook payload: %w", err)
@@ -284,7 +284,7 @@ func (s *NotificationService) sendWebhook(ctx context.Context, url, secret strin
 
 // SendCustomerWebhook sends a webhook to a customer-configured endpoint.
 // This is used for customer-specific notifications like VM events.
-func (s *NotificationService) SendCustomerWebhook(ctx context.Context, event string, customerID string, payload map[string]interface{}) error {
+func (s *AlertService) SendCustomerWebhook(ctx context.Context, event string, customerID string, payload map[string]interface{}) error {
 	if s.webhookRepo == nil {
 		return fmt.Errorf("webhook repository not configured")
 	}
@@ -329,7 +329,7 @@ func (s *NotificationService) SendCustomerWebhook(ctx context.Context, event str
 }
 
 // NotifyNodeFailure sends alerts for a node failure event.
-func (s *NotificationService) NotifyNodeFailure(ctx context.Context, nodeID, hostname string, affectedVMs int, ipmiConfigured bool) error {
+func (s *AlertService) NotifyNodeFailure(ctx context.Context, nodeID, hostname string, affectedVMs int, ipmiConfigured bool) error {
 	alert := &Alert{
 		Type:         AlertTypeNodeFailure,
 		Subject:      fmt.Sprintf("Node Failure: %s", hostname),
@@ -346,7 +346,7 @@ func (s *NotificationService) NotifyNodeFailure(ctx context.Context, nodeID, hos
 }
 
 // NotifyIPMIAttempt sends alerts for IPMI power cycle attempts.
-func (s *NotificationService) NotifyIPMIAttempt(ctx context.Context, nodeID, hostname string, success bool, errMsg string) error {
+func (s *AlertService) NotifyIPMIAttempt(ctx context.Context, nodeID, hostname string, success bool, errMsg string) error {
 	subject := fmt.Sprintf("IPMI Power Cycle Success: %s", hostname)
 	message := fmt.Sprintf("IPMI power cycle succeeded for node %s", hostname)
 	alertType := AlertTypeNodeRecovery
@@ -373,7 +373,7 @@ func (s *NotificationService) NotifyIPMIAttempt(ctx context.Context, nodeID, hos
 }
 
 // NotifyVMMigration sends alerts for VM migration events.
-func (s *NotificationService) NotifyVMMigration(ctx context.Context, nodeID, hostname string, migratedVMs, failedVMs int) error {
+func (s *AlertService) NotifyVMMigration(ctx context.Context, nodeID, hostname string, migratedVMs, failedVMs int) error {
 	alert := &Alert{
 		Type:         AlertTypeVMMigration,
 		Subject:      fmt.Sprintf("VM Migration: %s", hostname),

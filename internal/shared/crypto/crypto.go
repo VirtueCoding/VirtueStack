@@ -6,6 +6,7 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,6 +20,8 @@ import (
 const (
 	// AESKeySize is the required key size in bytes for AES-256 (32 bytes).
 	AESKeySize = 32
+
+	EncryptionKeySize = AESKeySize
 
 	// GCMNonceSize is the size of the GCM nonce in bytes (12 bytes is standard for GCM).
 	GCMNonceSize = 12
@@ -120,6 +123,16 @@ func Decrypt(ciphertext string, hexKey string) (string, error) {
 	return string(plaintext), nil
 }
 
+// GenerateRandomString generates a random hex string of the given byte length.
+// Panics on failure (suitable for init-time use).
+func GenerateRandomString(byteLength int) string {
+	token, err := GenerateRandomToken(byteLength)
+	if err != nil {
+		panic(fmt.Sprintf("generating random string: %v", err))
+	}
+	return token
+}
+
 // GenerateRandomToken generates a cryptographically secure random token.
 // Returns a hex-encoded string of the specified byte length.
 // For example, GenerateRandomToken(32) returns a 64-character hex string.
@@ -149,6 +162,29 @@ func GenerateRandomBytes(length int) ([]byte, error) {
 	}
 
 	return bytes, nil
+}
+
+// GenerateRandomHex generates a random hex string of the given number of hex characters.
+func GenerateRandomHex(hexChars int) string {
+	byteLen := (hexChars + 1) / 2
+	token, err := GenerateRandomToken(byteLen)
+	if err != nil {
+		panic(fmt.Sprintf("generating random hex: %v", err))
+	}
+	return token[:hexChars]
+}
+
+// GenerateRandomDigits generates a string of random decimal digits.
+func GenerateRandomDigits(count int) string {
+	b, err := GenerateRandomBytes(count)
+	if err != nil {
+		panic(fmt.Sprintf("generating random digits: %v", err))
+	}
+	digits := make([]byte, count)
+	for i := range digits {
+		digits[i] = '0' + b[i]%10
+	}
+	return string(digits)
 }
 
 // GenerateUUID generates a new UUID v4.
@@ -236,4 +272,10 @@ func subtleConstantTimeCompare(a, b []byte) bool {
 		result |= a[i] ^ b[i]
 	}
 	return result == 0
+}
+
+func GenerateHMACSignature(secret string, payload []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
 }

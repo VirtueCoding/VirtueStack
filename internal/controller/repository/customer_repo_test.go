@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
-	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -60,12 +59,14 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 func TestCustomerUpdate(t *testing.T) {
 	now := time.Now()
 	validCustomer := models.Customer{
-		ID:        "550e8400-e29b-41d4-a716-446655440000",
-		Email:     "test@example.com",
-		Name:      "Test User",
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:     "550e8400-e29b-41d4-a716-446655440000",
+		Email:  "test@example.com",
+		Name:   "Test User",
+		Status: "active",
+		Timestamps: models.Timestamps{
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	}
 
 	tests := []struct {

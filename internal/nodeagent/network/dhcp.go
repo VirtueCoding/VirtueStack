@@ -176,7 +176,7 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 	}
 
 	// Generate config file content
-	configContent := m.GenerateDNSMasqConfig(cfg)
+	configContent := m.GenerateDNSMasqConfigFull(cfg)
 	configPath := m.configFilePath(cfg.VMID)
 
 	// Write config file

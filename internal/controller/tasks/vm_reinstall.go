@@ -25,8 +25,8 @@ import (
 //   - If VM is already stopped, skip stopping
 //   - If disk matches expected template, skip disk recreation
 //   - If VM is already running with correct template, task is complete
-func handleVMReinstall(ctx context.Context, task *Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeVMReinstall)
+func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMReinstall)
 
 	// Parse payload
 	var payload VMReinstallPayload

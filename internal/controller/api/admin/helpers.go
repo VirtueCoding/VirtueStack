@@ -2,7 +2,6 @@ package admin
 
 import (
 	"encoding/json"
-	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"

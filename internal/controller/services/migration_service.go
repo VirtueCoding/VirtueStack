@@ -8,13 +8,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
-)
-
-// Task type for VM migration.
-const (
-	TaskTypeVMMigrate = "vm.migrate"
 )
 
 // MigrationService provides live migration operations for VirtueStack.
@@ -161,7 +155,7 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 		"initiated_by":    adminID,
 	}
 
-	taskID, err := s.taskPublisher.PublishTask(ctx, TaskTypeVMMigrate, taskPayload)
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
 	if err != nil {
 		// Revert status on failure
 		_ = s.vmRepo.UpdateStatus(ctx, vm.ID, vm.Status)
@@ -309,7 +303,7 @@ func (s *MigrationService) checkNodeCapacity(node *models.Node, vm *models.VM) e
 }
 
 // GetMigrationStatus retrieves the status of a migration task.
-func (s *MigrationService) GetMigrationStatus(ctx context.Context, taskID string) (*tasks.Task, error) {
+func (s *MigrationService) GetMigrationStatus(ctx context.Context, taskID string) (*models.Task, error) {
 	// This would typically use the taskRepo, but we can use the task publisher's
 	// underlying repository or inject a TaskRepository dependency
 	// For now, we return an error indicating this needs to be implemented

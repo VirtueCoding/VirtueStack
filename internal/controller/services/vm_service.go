@@ -12,17 +12,8 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
-)
-
-// Task types for VM operations.
-const (
-	TaskTypeVMCreate    = "vm.create"
-	TaskTypeVMDelete    = "vm.delete"
-	TaskTypeVMReinstall = "vm.reinstall"
-	TaskTypeVMResize    = "vm.resize"
 )
 
 // TaskPublisher abstracts NATS task publishing for async operations.
@@ -34,34 +25,11 @@ type TaskPublisher interface {
 	PublishTask(ctx context.Context, taskType string, payload map[string]any) (string, error)
 }
 
-// NodeAgentClient abstracts gRPC communication with node agents.
-// This interface allows the VMService to call node agent methods without
-// depending directly on generated protobuf code.
-type NodeAgentClient interface {
-	// StartVM starts a VM on the specified node.
-	StartVM(ctx context.Context, nodeID, vmID string) error
-	// StopVM gracefully stops a VM on the specified node.
-	StopVM(ctx context.Context, nodeID, vmID string, timeoutSeconds int) error
-	// ForceStopVM forcefully stops a VM on the specified node.
-	ForceStopVM(ctx context.Context, nodeID, vmID string) error
-	// DeleteVM deletes a VM on the specified node.
-	DeleteVM(ctx context.Context, nodeID, vmID string) error
-	// ResizeVM resizes a VM on the specified node.
-	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
-	// GetVMMetrics retrieves real-time metrics for a VM.
-	GetVMMetrics(ctx context.Context, nodeID, vmID string) (*models.VMMetrics, error)
-	// GetVMStatus retrieves the current status of a VM.
-	GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error)
-}
-
-// IPAMService abstracts IP Address Management operations.
+// IPAllocator abstracts IP Address Management operations.
 // This interface provides methods for allocating and releasing IP addresses.
-type IPAMService interface {
-	// AllocateIPv4 allocates an IPv4 address for a VM in the specified location.
+type IPAllocator interface {
 	AllocateIPv4(ctx context.Context, locationID, vmID, customerID string) (*models.IPAddress, error)
-	// ReleaseIPsByVM releases all IP addresses assigned to a VM.
 	ReleaseIPsByVM(ctx context.Context, vmID string) error
-	// GetIPsByVM returns all IP addresses assigned to a VM.
 	GetIPsByVM(ctx context.Context, vmID string) ([]models.IPAddress, error)
 }
 
@@ -77,7 +45,7 @@ type VMService struct {
 	taskRepo     *repository.TaskRepository
 	taskPublisher TaskPublisher
 	nodeAgent    NodeAgentClient
-	ipamService  IPAMService
+	ipamService  IPAllocator
 	encryptionKey string // For encrypting root passwords
 	logger       *slog.Logger
 }
@@ -92,7 +60,7 @@ func NewVMService(
 	taskRepo *repository.TaskRepository,
 	taskPublisher TaskPublisher,
 	nodeAgent NodeAgentClient,
-	ipamService IPAMService,
+	ipamService IPAllocator,
 	encryptionKey string,
 	logger *slog.Logger,
 ) *VMService {
@@ -251,7 +219,7 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		taskPayload["ipv4_address"] = ipv4Address.Address
 	}
 
-	taskID, err := s.taskPublisher.PublishTask(ctx, TaskTypeVMCreate, taskPayload)
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMCreate, taskPayload)
 	if err != nil {
 		// Attempt to clean up
 		_ = s.vmRepo.SoftDelete(ctx, vm.ID)
@@ -407,7 +375,7 @@ func (s *VMService) DeleteVM(ctx context.Context, vmID, customerID string, isAdm
 		"hostname": vm.Hostname,
 	}
 
-	taskID, err := s.taskPublisher.PublishTask(ctx, TaskTypeVMDelete, taskPayload)
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMDelete, taskPayload)
 	if err != nil {
 		return "", fmt.Errorf("publishing delete task: %w", err)
 	}
@@ -487,7 +455,7 @@ func (s *VMService) ReinstallVM(ctx context.Context, vmID, templateID, customerI
 		"mac_address":          vm.MACAddress,
 	}
 
-	taskID, err := s.taskPublisher.PublishTask(ctx, TaskTypeVMReinstall, taskPayload)
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMReinstall, taskPayload)
 	if err != nil {
 		return nil, "", fmt.Errorf("publishing reinstall task: %w", err)
 	}
@@ -726,12 +694,12 @@ func (s *VMService) UpdateVMHostname(ctx context.Context, vmID, newHostname, cus
 }
 
 // GetTaskStatus retrieves the status of an async task.
-func (s *VMService) GetTaskStatus(ctx context.Context, taskID string) (*tasks.Task, error) {
+func (s *VMService) GetTaskStatus(ctx context.Context, taskID string) (*models.Task, error) {
 	return s.taskRepo.GetByID(ctx, taskID)
 }
 
 // ListTasks lists tasks with optional filtering.
-func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]tasks.Task, int, error) {
+func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]models.Task, int, error) {
 	return s.taskRepo.List(ctx, filter)
 }
 
@@ -771,11 +739,6 @@ func generateLibvirtDomainName(hostname, vmID string) string {
 	return fmt.Sprintf("vm-%s-%s", hostname, shortID)
 }
 
-// strPtr returns a pointer to a string.
-func strPtr(s string) *string {
-	return &s
-}
-
 // DefaultTaskPublisher is a basic implementation of TaskPublisher that creates
 // tasks directly in the database. For production, use a NATS-based implementation.
 type DefaultTaskPublisher struct {
@@ -800,10 +763,10 @@ func (p *DefaultTaskPublisher) PublishTask(ctx context.Context, taskType string,
 		return "", fmt.Errorf("marshaling task payload: %w", err)
 	}
 
-	task := &tasks.Task{
+	task := &models.Task{
 		ID:        taskID,
 		Type:      taskType,
-		Status:    tasks.TaskStatusPending,
+		Status:    models.TaskStatusPending,
 		Payload:   payloadJSON,
 		Progress:  0,
 		CreatedAt: time.Now().UTC(),

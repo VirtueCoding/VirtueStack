@@ -20,12 +20,16 @@ import (
 // This interface allows the NodeService to call node agent methods without
 // depending directly on generated protobuf code.
 type NodeAgentClient interface {
-	// GetNodeMetrics retrieves real-time metrics from a node.
 	GetNodeMetrics(ctx context.Context, nodeID string) (*models.NodeHeartbeat, error)
-	// PingNode checks if a node is reachable.
 	PingNode(ctx context.Context, nodeID string) error
-	// EvacuateNode evacuates all VMs from a node (for maintenance).
 	EvacuateNode(ctx context.Context, nodeID string) error
+	StartVM(ctx context.Context, nodeID, vmID string) error
+	StopVM(ctx context.Context, nodeID, vmID string, timeoutSeconds int) error
+	ForceStopVM(ctx context.Context, nodeID, vmID string) error
+	DeleteVM(ctx context.Context, nodeID, vmID string) error
+	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
+	GetVMMetrics(ctx context.Context, nodeID, vmID string) (*models.VMMetrics, error)
+	GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error)
 }
 
 // NodeService provides node management operations for VirtueStack.
@@ -36,7 +40,7 @@ type NodeService struct {
 	vmRepo         *repository.VMRepository
 	auditRepo      *repository.AuditRepository
 	nodeAgent      NodeAgentClient
-	notification   *NotificationService
+	notification   *AlertService
 	circuitBreaker *FailoverCircuitBreaker
 	encryptionKey  string
 	logger         *slog.Logger
@@ -47,7 +51,7 @@ func NewNodeService(
 	vmRepo *repository.VMRepository,
 	auditRepo *repository.AuditRepository,
 	nodeAgent NodeAgentClient,
-	notification *NotificationService,
+	notification *AlertService,
 	encryptionKey string,
 	logger *slog.Logger,
 ) *NodeService {

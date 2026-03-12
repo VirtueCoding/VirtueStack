@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -251,13 +252,13 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 }
 
 // verifyBackupOwnership verifies that a VM belongs to the customer.
-func (h *CustomerHandler) verifyBackupOwnership(ctx interface{}, vmID, customerID string) bool {
+func (h *CustomerHandler) verifyBackupOwnership(ctx context.Context, vmID, customerID string) bool {
 	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
 	return err == nil
 }
 
 // filterBackupsByCustomer filters backups to only include those for VMs owned by the customer.
-func (h *CustomerHandler) filterBackupsByCustomer(ctx interface{}, backups []models.Backup, customerID string) []models.Backup {
+func (h *CustomerHandler) filterBackupsByCustomer(ctx context.Context, backups []models.Backup, customerID string) []models.Backup {
 	var result []models.Backup
 	for _, backup := range backups {
 		if h.verifyBackupOwnership(ctx, backup.VMID, customerID) {

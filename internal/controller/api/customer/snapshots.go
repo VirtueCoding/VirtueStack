@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -241,13 +242,13 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 }
 
 // verifySnapshotOwnership verifies that a VM belongs to the customer.
-func (h *CustomerHandler) verifySnapshotOwnership(ctx interface{}, vmID, customerID string) bool {
+func (h *CustomerHandler) verifySnapshotOwnership(ctx context.Context, vmID, customerID string) bool {
 	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
 	return err == nil
 }
 
 // filterSnapshotsByCustomer filters snapshots to only include those for VMs owned by the customer.
-func (h *CustomerHandler) filterSnapshotsByCustomer(ctx interface{}, snapshots []models.Snapshot, customerID string) []models.Snapshot {
+func (h *CustomerHandler) filterSnapshotsByCustomer(ctx context.Context, snapshots []models.Snapshot, customerID string) []models.Snapshot {
 	var result []models.Snapshot
 	for _, snapshot := range snapshots {
 		if h.verifySnapshotOwnership(ctx, snapshot.VMID, customerID) {

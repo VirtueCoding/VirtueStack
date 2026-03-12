@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -181,7 +182,7 @@ func (m *IPv6Manager) extractSubnetIndex(subnet netip.Prefix) int {
 // calculations - it is NOT configured on the local bridge interface.
 func (m *IPv6Manager) SetNodePrefix(prefix string) error {
 	// Validate the prefix
-	pfx, err := netip.ParsePrefix(prefix)
+	_, err := netip.ParsePrefix(prefix)
 	if err != nil {
 		return fmt.Errorf("invalid prefix %s: %w", prefix, err)
 	}
@@ -372,15 +373,12 @@ func (m *IPv6Manager) GenerateEUI64Address(subnetCIDR, macAddress string) (strin
 	}
 
 	// Parse the MAC address
-	mac, err := netip.ParseMAC(macAddress)
+	mac, err := net.ParseMAC(macAddress)
 	if err != nil {
 		return "", fmt.Errorf("invalid MAC address: %w", err)
 	}
 
-	// Convert MAC to EUI-64
-	// MAC: 52:54:00:12:34:56
-	// EUI-64: 52:54:00:FF:FE:12:34:56
-	macBytes := mac.AsSlice()
+	macBytes := mac
 
 	// Insert 0xFFFE in the middle
 	eui64 := make([]byte, 8)

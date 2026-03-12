@@ -6,7 +6,6 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
-	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -50,7 +49,7 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 	}
 
 	// Include result if task is completed
-	if task.Status == tasks.TaskStatusCompleted && task.Result != nil {
+	if task.Status == models.TaskStatusCompleted && task.Result != nil {
 		var result any
 		if err := json.Unmarshal(task.Result, &result); err == nil {
 			resp.Result = result
@@ -58,7 +57,7 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 	}
 
 	// Include error message if task failed
-	if task.Status == tasks.TaskStatusFailed && task.ErrorMessage != "" {
+	if task.Status == models.TaskStatusFailed && task.ErrorMessage != "" {
 		resp.Message = task.ErrorMessage
 	}
 
@@ -68,40 +67,40 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 }
 
 // getTaskMessage returns a human-readable message for a task based on its type and status.
-func getTaskMessage(task *tasks.Task) string {
+func getTaskMessage(task *models.Task) string {
 	if task.ErrorMessage != "" {
 		return task.ErrorMessage
 	}
 
 	switch task.Type {
-	case tasks.TaskTypeVMCreate:
+	case models.TaskTypeVMCreate:
 		return getVMCreateMessage(task)
-	case tasks.TaskTypeVMDelete:
+	case models.TaskTypeVMDelete:
 		return getVMDeleteMessage(task)
-	case tasks.TaskTypeVMReinstall:
+	case models.TaskTypeVMReinstall:
 		return getVMReinstallMessage(task)
-	case tasks.TaskTypeVMResize:
+	case models.TaskTypeVMResize:
 		return getVMResizeMessage(task)
-	case tasks.TaskTypeBackupCreate:
+	case models.TaskTypeBackupCreate:
 		return getBackupCreateMessage(task)
-	case tasks.TaskTypeBackupRestore:
+	case models.TaskTypeBackupRestore:
 		return getBackupRestoreMessage(task)
-	case tasks.TaskTypeSnapshotCreate:
+	case models.TaskTypeSnapshotCreate:
 		return getSnapshotCreateMessage(task)
-	case tasks.TaskTypeSnapshotRevert:
+	case models.TaskTypeSnapshotRevert:
 		return getSnapshotRevertMessage(task)
-	case tasks.TaskTypeSnapshotDelete:
+	case models.TaskTypeSnapshotDelete:
 		return getSnapshotDeleteMessage(task)
 	default:
 		return getGenericTaskMessage(task)
 	}
 }
 
-func getVMCreateMessage(task *tasks.Task) string {
+func getVMCreateMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "VM creation queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Validating parameters...",
 			"Allocating IP addresses...",
@@ -113,40 +112,40 @@ func getVMCreateMessage(task *tasks.Task) string {
 			"Starting VM...",
 			"Verifying VM is running...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "VM created successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getVMDeleteMessage(task *tasks.Task) string {
+func getVMDeleteMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "VM deletion queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Stopping VM...",
 			"Deleting disk image...",
 			"Releasing IP addresses...",
 			"Removing VM definition...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "VM deleted successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getVMReinstallMessage(task *tasks.Task) string {
+func getVMReinstallMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "VM reinstallation queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Stopping VM...",
 			"Deleting disk image...",
@@ -154,128 +153,128 @@ func getVMReinstallMessage(task *tasks.Task) string {
 			"Regenerating cloud-init...",
 			"Starting VM...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "VM reinstalled successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getVMResizeMessage(task *tasks.Task) string {
+func getVMResizeMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "VM resize queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return "Resizing VM resources..."
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "VM resized successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getBackupCreateMessage(task *tasks.Task) string {
+func getBackupCreateMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Backup creation queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return "Creating backup..."
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Backup created successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getBackupRestoreMessage(task *tasks.Task) string {
+func getBackupRestoreMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Backup restore queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return "Restoring from backup..."
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Backup restored successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getSnapshotCreateMessage(task *tasks.Task) string {
+func getSnapshotCreateMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Snapshot creation queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Validating parameters...",
 			"Creating disk snapshot...",
 			"Updating snapshot record...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Snapshot created successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getSnapshotRevertMessage(task *tasks.Task) string {
+func getSnapshotRevertMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Snapshot revert queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Stopping VM...",
 			"Restoring from snapshot...",
 			"Starting VM...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Snapshot reverted successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getSnapshotDeleteMessage(task *tasks.Task) string {
+func getSnapshotDeleteMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Snapshot deletion queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		return getProgressMessage(task.Progress, []string{
 			"Deleting from storage...",
 			"Removing snapshot record...",
 		})
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Snapshot deleted successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"
 	}
 }
 
-func getGenericTaskMessage(task *tasks.Task) string {
+func getGenericTaskMessage(task *models.Task) string {
 	switch task.Status {
-	case tasks.TaskStatusPending:
+	case models.TaskStatusPending:
 		return "Task queued"
-	case tasks.TaskStatusRunning:
+	case models.TaskStatusRunning:
 		if task.Progress > 0 {
 			return "Processing..."
 		}
 		return "Task running"
-	case tasks.TaskStatusCompleted:
+	case models.TaskStatusCompleted:
 		return "Task completed successfully"
-	case tasks.TaskStatusFailed:
+	case models.TaskStatusFailed:
 		return task.ErrorMessage
 	default:
 		return "Unknown status"

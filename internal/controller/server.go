@@ -160,7 +160,7 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
-	s.nodeService = services.NewNodeService(
+	s.nodeService = services.NewNodeServiceWithDefaults(
 		nodeRepo,
 		vmRepo,
 		nodeAgentClient,
@@ -265,7 +265,7 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// API v1 routes
-	v1 := s.router.Group("/api/v1")
+	_ = s.router.Group("/api/v1")
 
 	// Provisioning API (WHMCS) - requires API key authentication
 	// Note: Handlers are nil until InitializeServices is called
@@ -286,7 +286,7 @@ func (s *Server) RegisterAPIRoutes() {
 
 	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo(), auditRepo)
 
-	customer.RegisterCustomerRoutes(v1, s.customerHandler)
+	customer.RegisterCustomerRoutes(v1, s.customerHandler, nil)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
 
