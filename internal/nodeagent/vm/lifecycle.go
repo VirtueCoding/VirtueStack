@@ -10,10 +10,24 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"libvirt.org/go/libvirt"
+)
+
+type cpuUsageCacheEntry struct {
+	UsagePercent float64
+	LastCPUTime  uint64
+	LastSampleAt time.Time
+	Initialized  bool
+	Sampling     bool
+}
+
+var (
+	cpuUsageCacheMu sync.RWMutex
+	cpuUsageCache   = make(map[string]cpuUsageCacheEntry)
 )
 
 // Constants for VM lifecycle operations.
@@ -463,7 +477,7 @@ func (m *Manager) getVNCPort(domain *libvirt.Domain) (int32, error) {
 
 // uptimeData represents the persisted uptime data for a VM.
 type uptimeData struct {
-	StartTimeUnix int64 `json:"start_time_unix"`
+	StartTimeUnix int64  `json:"start_time_unix"`
 	VMID          string `json:"vm_id"`
 }
 
@@ -517,7 +531,7 @@ func (m *Manager) recordVMStartTime(vmID string) error {
 // Returns 0 if no start time is recorded (VM never started or data lost).
 func (m *Manager) getVMStartTime(vmID string) int64 {
 	filePath := m.getUptimeFilePath(vmID)
-	
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -572,37 +586,109 @@ func (m *Manager) getDomainUptime(domain *libvirt.Domain) (int64, error) {
 	// Calculate uptime in seconds
 	startTime := time.Unix(startTimeUnix, 0)
 	uptime := time.Since(startTime).Seconds()
-	
+
 	return int64(uptime), nil
 }
 
 // getCPUUsage calculates the CPU usage percentage for a domain.
 func (m *Manager) getCPUUsage(domain *libvirt.Domain) (float64, error) {
-	// Get CPU time at two points and calculate usage
-	cpuTime1, err := domain.GetInfo()
+	domainName, err := domain.GetName()
 	if err != nil {
 		return 0, err
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	m.ensureCPUSampler(domainName)
 
-	cpuTime2, err := domain.GetInfo()
+	cpuUsageCacheMu.RLock()
+	entry, ok := cpuUsageCache[domainName]
+	cpuUsageCacheMu.RUnlock()
+	if ok {
+		return entry.UsagePercent, nil
+	}
+
+	info, err := domain.GetInfo()
 	if err != nil {
 		return 0, err
 	}
-
-	// Calculate CPU usage percentage
-	// cpuTime is in nanoseconds
-	cpuDelta := cpuTime2.CpuTime - cpuTime1.CpuTime
-	timeDelta := 100 * 1e6 // 100ms in nanoseconds
-
-	// CPU usage = (cpu_delta / time_delta) * 100 / num_cpus
-	cpuPercent := float64(cpuDelta) / float64(timeDelta) * 100 / float64(cpuTime1.NrVirtCpu)
-	if cpuPercent > 100 {
-		cpuPercent = 100
+	if info.NrVirtCpu == 0 {
+		return 0, nil
 	}
 
-	return cpuPercent, nil
+	cpuUsageCacheMu.Lock()
+	cpuUsageCache[domainName] = cpuUsageCacheEntry{
+		UsagePercent: 0,
+		LastCPUTime:  info.CpuTime,
+		LastSampleAt: time.Now(),
+		Initialized:  true,
+	}
+	cpuUsageCacheMu.Unlock()
+
+	return 0, nil
+}
+
+func (m *Manager) ensureCPUSampler(domainName string) {
+	cpuUsageCacheMu.Lock()
+	entry := cpuUsageCache[domainName]
+	if entry.Sampling {
+		cpuUsageCacheMu.Unlock()
+		return
+	}
+	entry.Sampling = true
+	cpuUsageCache[domainName] = entry
+	cpuUsageCacheMu.Unlock()
+
+	go m.runCPUSampler(domainName)
+}
+
+func (m *Manager) runCPUSampler(domainName string) {
+	m.sampleCPUUsage(domainName)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		m.sampleCPUUsage(domainName)
+	}
+}
+
+func (m *Manager) sampleCPUUsage(domainName string) {
+	domain, err := m.conn.LookupDomainByName(domainName)
+	if err != nil {
+		return
+	}
+	defer domain.Free()
+
+	info, err := domain.GetInfo()
+	if err != nil {
+		return
+	}
+
+	now := time.Now()
+	if info.NrVirtCpu == 0 {
+		return
+	}
+
+	cpuUsageCacheMu.Lock()
+	entry := cpuUsageCache[domainName]
+	if entry.Initialized && !entry.LastSampleAt.IsZero() && info.CpuTime >= entry.LastCPUTime {
+		cpuDelta := info.CpuTime - entry.LastCPUTime
+		timeDelta := now.Sub(entry.LastSampleAt).Nanoseconds()
+		if timeDelta > 0 {
+			cpuPercent := float64(cpuDelta) / float64(timeDelta) * 100 / float64(info.NrVirtCpu)
+			if cpuPercent < 0 {
+				cpuPercent = 0
+			}
+			if cpuPercent > 100 {
+				cpuPercent = 100
+			}
+			entry.UsagePercent = cpuPercent
+		}
+	}
+	entry.LastCPUTime = info.CpuTime
+	entry.LastSampleAt = now
+	entry.Initialized = true
+	entry.Sampling = true
+	cpuUsageCache[domainName] = entry
+	cpuUsageCacheMu.Unlock()
 }
 
 // getMemoryUsage returns the memory usage and total for a domain.
@@ -613,10 +699,91 @@ func (m *Manager) getMemoryUsage(domain *libvirt.Domain) (int64, int64, error) {
 	}
 
 	totalBytes := int64(info.Memory) * 1024 // Convert from KB to bytes
-	// libvirt doesn't provide actual memory usage directly
-	// In production, use memory balloon or guest agent
+
+	domainName, err := domain.GetName()
+	if err == nil {
+		if usage, readErr := readDomainMemoryUsage(domainName); readErr == nil {
+			return usage, totalBytes, nil
+		}
+	}
+
+	stats, statsErr := domain.MemoryStats(uint32(libvirt.DOMAIN_MEMORY_STAT_NR), 0)
+	if statsErr == nil {
+		var available, unused, rss uint64
+		for _, stat := range stats {
+			switch libvirt.DomainMemoryStatTags(stat.Tag) {
+			case libvirt.DOMAIN_MEMORY_STAT_AVAILABLE:
+				available = stat.Val
+			case libvirt.DOMAIN_MEMORY_STAT_UNUSED:
+				unused = stat.Val
+			case libvirt.DOMAIN_MEMORY_STAT_RSS:
+				rss = stat.Val
+			}
+		}
+
+		if available > 0 && available >= unused {
+			usedBytes := int64((available - unused) * 1024)
+			if usedBytes >= 0 {
+				return usedBytes, totalBytes, nil
+			}
+		}
+
+		if rss > 0 {
+			return int64(rss * 1024), totalBytes, nil
+		}
+	}
 
 	return 0, totalBytes, nil
+}
+
+func readDomainMemoryUsage(domainName string) (int64, error) {
+	escaped := strings.ReplaceAll(domainName, "-", "\\x2d")
+	v2Paths := []string{
+		filepath.Join("/sys/fs/cgroup/machine.slice", "machine-qemu\\x2d"+escaped+".scope", "memory.current"),
+		filepath.Join("/sys/fs/cgroup/system.slice/libvirt-qemu.service/machine.slice", "machine-qemu\\x2d"+escaped+".scope", "memory.current"),
+	}
+
+	for _, p := range v2Paths {
+		if val, err := readInt64File(p); err == nil {
+			return val, nil
+		}
+	}
+
+	v1Paths := []string{
+		filepath.Join("/sys/fs/cgroup/memory/machine.slice", "machine-qemu\\x2d"+escaped+".scope", "memory.usage_in_bytes"),
+		filepath.Join("/sys/fs/cgroup/memory/libvirt/qemu", domainName, "memory.usage_in_bytes"),
+	}
+
+	for _, p := range v1Paths {
+		if val, err := readInt64File(p); err == nil {
+			return val, nil
+		}
+	}
+
+	return 0, fmt.Errorf("memory usage not found")
+}
+
+func readInt64File(path string) (int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+
+	valueStr := strings.TrimSpace(string(data))
+	if valueStr == "" {
+		return 0, fmt.Errorf("empty value")
+	}
+
+	value, err := strconv.ParseInt(valueStr, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	if value < 0 {
+		return 0, fmt.Errorf("negative value")
+	}
+
+	return value, nil
 }
 
 // getDiskStats returns the disk read and write bytes for a domain.

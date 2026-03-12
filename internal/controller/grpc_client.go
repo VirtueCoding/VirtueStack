@@ -29,12 +29,13 @@ const (
 
 // NodeClient manages gRPC connections to Node Agents with mTLS.
 type NodeClient struct {
-	conns   map[string]*grpc.ClientConn // nodeID -> connection
-	mu      sync.RWMutex
-	caCert  []byte
-	logger  *slog.Logger
-	tlsCert string
-	tlsKey  string
+	conns    map[string]*grpc.ClientConn // nodeID -> connection
+	mu       sync.RWMutex
+	caCert   []byte
+	logger   *slog.Logger
+	tlsCert  string
+	tlsKey   string
+	insecure bool
 }
 
 // NewNodeClient creates a new NodeClient for managing gRPC connections.
@@ -105,6 +106,11 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	nc.logger.Info("created gRPC connection to node", "node_id", nodeID, "address", address)
 
 	return conn, nil
+}
+
+func (nc *NodeClient) ReleaseConnection(nodeID string, conn *grpc.ClientConn) {
+	_ = nodeID
+	_ = conn
 }
 
 // createConnection creates a new gRPC connection with mTLS.
@@ -195,9 +201,16 @@ func (nc *NodeClient) ConnectionCount() int {
 // InsecureNodeClient creates a NodeClient without mTLS for development/testing.
 func InsecureNodeClient(logger *slog.Logger) *NodeClient {
 	return &NodeClient{
-		conns:  make(map[string]*grpc.ClientConn),
-		logger: logger.With("component", "grpc-client"),
+		conns:    make(map[string]*grpc.ClientConn),
+		logger:   logger.With("component", "grpc-client"),
+		insecure: true,
 	}
+}
+
+func (nc *NodeClient) IsInsecure() bool {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	return nc.insecure
 }
 
 // GetInsecureConnection creates an insecure connection for development.

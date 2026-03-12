@@ -70,9 +70,8 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	// Determine listen address
 	listenAddr := DefaultListenAddr
 	if cfg.ControllerGRPCAddr != "" {
-		// Use the configured address if available
-		// Note: In production, you may want a separate ListenAddr config
-		listenAddr = DefaultListenAddr
+		logger.Warn("ControllerGRPCAddr is configured but reverse connection to controller is not yet implemented",
+			"addr", cfg.ControllerGRPCAddr)
 	}
 
 	s := &Server{
