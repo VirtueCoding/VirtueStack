@@ -71,13 +71,21 @@ import (
 //	  GET    /backups              - List all backups (all customers)
 //	  POST   /backups/:id/restore  - Restore backup (admin override)
 func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
-	// Create the admin API group with JWT auth and admin role requirement
 	admin := router.Group("/admin")
-	admin.Use(middleware.JWTAuth(handler.authConfig))
-	admin.Use(middleware.RequireRole("admin"))
+
+	auth := admin.Group("/auth")
+	{
+		auth.POST("/login", handler.Login)
+		auth.POST("/verify-2fa", handler.Verify2FA)
+		auth.POST("/refresh", handler.RefreshToken)
+	}
+
+	protected := admin.Group("")
+	protected.Use(middleware.JWTAuth(handler.authConfig))
+	protected.Use(middleware.RequireRole("admin", "super_admin"))
 	{
 		// Node management
-		nodes := admin.Group("/nodes")
+		nodes := protected.Group("/nodes")
 		{
 			nodes.GET("", handler.ListNodes)
 			nodes.POST("", handler.RegisterNode)
@@ -89,7 +97,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// VM management
-		vms := admin.Group("/vms")
+		vms := protected.Group("/vms")
 		{
 			vms.GET("", handler.ListVMs)
 			vms.POST("", handler.CreateVM)
@@ -100,7 +108,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// Plan management
-		plans := admin.Group("/plans")
+		plans := protected.Group("/plans")
 		{
 			plans.GET("", handler.ListPlans)
 			plans.POST("", handler.CreatePlan)
@@ -109,7 +117,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// Template management
-		templates := admin.Group("/templates")
+		templates := protected.Group("/templates")
 		{
 			templates.GET("", handler.ListTemplates)
 			templates.POST("", handler.CreateTemplate)
@@ -119,7 +127,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// IP Set management
-		ipSets := admin.Group("/ip-sets")
+		ipSets := protected.Group("/ip-sets")
 		{
 			ipSets.GET("", handler.ListIPSets)
 			ipSets.POST("", handler.CreateIPSet)
@@ -130,7 +138,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// Customer management
-		customers := admin.Group("/customers")
+		customers := protected.Group("/customers")
 		{
 			customers.GET("", handler.ListCustomers)
 			customers.GET("/:id", handler.GetCustomer)
@@ -140,17 +148,17 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// Audit logs
-		admin.GET("/audit-logs", handler.ListAuditLogs)
+		protected.GET("/audit-logs", handler.ListAuditLogs)
 
 		// Settings
-		settings := admin.Group("/settings")
+		settings := protected.Group("/settings")
 		{
 			settings.GET("", handler.GetSettings)
 			settings.PUT("/:key", handler.UpdateSetting)
 		}
 
 		// Backup management
-		backups := admin.Group("/backups")
+		backups := protected.Group("/backups")
 		{
 			backups.GET("", handler.ListBackups)
 			backups.POST("/:id/restore", handler.RestoreBackup)

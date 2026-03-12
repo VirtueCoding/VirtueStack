@@ -24,8 +24,10 @@ type AdminHandler struct {
 	ipamService      *services.IPAMService
 	customerService  *services.CustomerService
 	backupService    *services.BackupService
+	authService      *services.AuthService
 	auditRepo        *repository.AuditRepository
 	ipRepo           *repository.IPRepository
+	settingsRepo     *repository.SettingsRepository
 	authConfig       middleware.AuthConfig
 	logger           *slog.Logger
 }
@@ -40,8 +42,10 @@ func NewAdminHandler(
 	ipamService *services.IPAMService,
 	customerService *services.CustomerService,
 	backupService *services.BackupService,
+	authService *services.AuthService,
 	auditRepo *repository.AuditRepository,
 	ipRepo *repository.IPRepository,
+	settingsRepo *repository.SettingsRepository,
 	jwtSecret string,
 	issuer string,
 	logger *slog.Logger,
@@ -55,8 +59,10 @@ func NewAdminHandler(
 		ipamService:      ipamService,
 		customerService:  customerService,
 		backupService:    backupService,
+		authService:      authService,
 		auditRepo:        auditRepo,
 		ipRepo:           ipRepo,
+		settingsRepo:     settingsRepo,
 		authConfig:       middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		logger:           logger.With("component", "admin-handler"),
 	}

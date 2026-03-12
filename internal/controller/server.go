@@ -25,6 +25,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+type fallbackTemplateStorage struct{}
+
+func (fallbackTemplateStorage) ImportTemplate(ctx context.Context, name, sourcePath string) (string, string, error) {
+	return "", "", fmt.Errorf("template storage backend is not configured")
+}
+
+func (fallbackTemplateStorage) DeleteTemplate(ctx context.Context, rbdImage, rbdSnapshot string) error {
+	return fmt.Errorf("template storage backend is not configured")
+}
+
+func (fallbackTemplateStorage) GetTemplateSize(ctx context.Context, rbdImage, rbdSnapshot string) (int64, error) {
+	return 0, fmt.Errorf("template storage backend is not configured")
+}
+
 // HTTP server constants.
 const (
 	ReadTimeout  = 10 * time.Second
@@ -43,6 +57,7 @@ type Server struct {
 	taskWorker *tasks.Worker
 	logger     *slog.Logger
 	nodeClient *NodeClient
+	storage    services.TemplateStorage
 	// Services
 	vmService        *services.VMService
 	authService      *services.AuthService
@@ -73,6 +88,7 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 		dbPool:    dbPool,
 		jetstream: js,
 		logger:    logger.With("component", "controller"),
+		storage:   fallbackTemplateStorage{},
 	}
 
 	// Setup middlewares
@@ -119,6 +135,7 @@ func (s *Server) InitializeServices() error {
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
+	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 
 	// Create task publisher using the worker
 	var taskPublisher services.TaskPublisher
@@ -127,8 +144,11 @@ func (s *Server) InitializeServices() error {
 	}
 
 	var nodeAgentClient services.NodeAgentClient
+	var backupNodeAgentClient services.BackupNodeAgentClient
 	if s.nodeClient != nil {
-		nodeAgentClient = services.NewNodeAgentGRPCClient(nodeRepo, s.nodeClient, s.logger)
+		nodeAgentGRPCClient := services.NewNodeAgentGRPCClient(nodeRepo, s.nodeClient, s.logger)
+		nodeAgentClient = nodeAgentGRPCClient
+		backupNodeAgentClient = services.NewBackupNodeAgentAdapter(nodeAgentGRPCClient, vmRepo)
 	}
 
 	// Suppress unused variable warning for provisioningKeyRepo (used in route registration)
@@ -173,7 +193,7 @@ func (s *Server) InitializeServices() error {
 
 	s.templateService = services.NewTemplateService(
 		templateRepo,
-		nil, // storage - not implemented yet
+		s.storage,
 		s.logger,
 	)
 
@@ -183,7 +203,7 @@ func (s *Server) InitializeServices() error {
 		backupRepo,
 		backupRepo, // Same repo handles snapshots
 		vmRepo,
-		nil, // nodeAgent - will be set up in future phase
+		backupNodeAgentClient,
 		taskPublisher,
 		s.logger,
 	)
@@ -232,6 +252,7 @@ func (s *Server) InitializeServices() error {
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.config.EncryptionKey,
+		s.config.ConsoleBaseURL,
 		s.logger,
 	)
 
@@ -244,8 +265,10 @@ func (s *Server) InitializeServices() error {
 		s.ipamService,
 		s.customerService,
 		s.backupService,
+		s.authService,
 		auditRepo,
 		ipRepo,
+		settingsRepo,
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.logger,
