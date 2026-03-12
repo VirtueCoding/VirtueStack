@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
-ARG GO_VERSION=1.25.4
+ARG GO_VERSION=1.24
 FROM golang:${GO_VERSION}-alpine AS builder
 
 # Install build dependencies
@@ -26,22 +26,20 @@ ENV CGO_ENABLED=0 \
     GOOS=linux \
     GOARCH=amd64 \
     GOPROXY=https://proxy.golang.org,direct \
-    GOSUMDB=sum.golang.org
+    GOSUMDB=sum.golang.org \
+    GOTOOLCHAIN=local
 
 # Copy go.mod and go.sum first for caching
 COPY go.mod go.sum ./
 
-# Run mod tidy to ensure dependencies are correct
-RUN go mod tidy
-
-# Download dependencies
-RUN go mod download && go mod verify
+# Download dependencies (go.mod and go.sum are pre-validated)
+RUN GONOSUMCHECK=* GOFLAGS=-mod=mod go mod download && go mod verify
 
 # Copy source code
 COPY . .
 
 # Build the binary with optimizations
-RUN go build \
+RUN GOFLAGS=-mod=mod go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \
     -o /build/controller \
