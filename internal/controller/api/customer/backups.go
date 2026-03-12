@@ -50,10 +50,7 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		filter.Status = &status
 	}
 
-	// Get backups
-	// Note: This returns all backups for the customer's VMs
-	// In a full implementation, we'd have a customer-scoped list method
-	backups, total, err := h.backupRepo.ListBackups(c.Request.Context(), filter)
+	backups, total, err := h.backupRepo.ListBackupsByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		h.logger.Error("failed to list backups",
 			"customer_id", customerID,
@@ -63,12 +60,8 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
-	// Filter backups to only include those for VMs owned by the customer
-	// In production, this would be handled at the database level with RLS
-	customerBackups := h.filterBackupsByCustomer(c.Request.Context(), backups, customerID)
-
 	c.JSON(http.StatusOK, models.ListResponse{
-		Data: customerBackups,
+		Data: backups,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
 	})
 }
@@ -255,15 +248,4 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 func (h *CustomerHandler) verifyBackupOwnership(ctx context.Context, vmID, customerID string) bool {
 	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
 	return err == nil
-}
-
-// filterBackupsByCustomer filters backups to only include those for VMs owned by the customer.
-func (h *CustomerHandler) filterBackupsByCustomer(ctx context.Context, backups []models.Backup, customerID string) []models.Backup {
-	var result []models.Backup
-	for _, backup := range backups {
-		if h.verifyBackupOwnership(ctx, backup.VMID, customerID) {
-			result = append(result, backup)
-		}
-	}
-	return result
 }

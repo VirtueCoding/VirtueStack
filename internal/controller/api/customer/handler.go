@@ -30,6 +30,7 @@ type CustomerHandler struct {
 	bandwidthRepo   *repository.BandwidthRepository
 	authConfig      middleware.AuthConfig
 	encryptionKey   string
+	consoleBaseURL  string
 	logger          *slog.Logger
 }
 
@@ -50,6 +51,7 @@ func NewCustomerHandler(
 	jwtSecret string,
 	issuer string,
 	encryptionKey string,
+	consoleBaseURL string,
 	logger *slog.Logger,
 ) *CustomerHandler {
 	return &CustomerHandler{
@@ -67,6 +69,7 @@ func NewCustomerHandler(
 		bandwidthRepo:   bandwidthRepo,
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey:   encryptionKey,
+		consoleBaseURL:  consoleBaseURL,
 		logger:          logger.With("component", "customer-handler"),
 	}
 }
@@ -85,8 +88,8 @@ type ConsoleTokenResponse struct {
 
 // BandwidthResponse represents bandwidth usage data.
 type BandwidthResponse struct {
-	UsedBytes     int64  `json:"used_bytes"`
-	LimitBytes    int64  `json:"limit_bytes"`
-	ResetAt       string `json:"reset_at"`
-	PercentUsed   int    `json:"percent_used"`
+	UsedBytes   int64  `json:"used_bytes"`
+	LimitBytes  int64  `json:"limit_bytes"`
+	ResetAt     string `json:"reset_at"`
+	PercentUsed int    `json:"percent_used"`
 }

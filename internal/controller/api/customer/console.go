@@ -1,8 +1,11 @@
 package customer
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -66,7 +69,8 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 
 	// Construct the NoVNC URL
 	// In production, this would include the actual websocket proxy URL
-	consoleURL := fmt.Sprintf("https://console.virtuestack.io/vnc?token=%s", token)
+	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
+	consoleURL := fmt.Sprintf("%s/vnc?token=%s", baseURL, token)
 
 	h.logger.Info("console token generated",
 		"vm_id", vmID,
@@ -128,7 +132,8 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	expiresAt := time.Now().Add(ConsoleTokenDuration)
 
 	// Construct the serial console URL
-	serialURL := fmt.Sprintf("wss://console.virtuestack.io/serial?token=%s", token)
+	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
+	serialURL := fmt.Sprintf("%s/serial?token=%s", baseURL, token)
 
 	h.logger.Info("serial console token generated",
 		"vm_id", vmID,
@@ -148,7 +153,9 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 // generateConsoleToken generates a secure token for console access.
 // In production, this would integrate with the node agent's ticketing system.
 func generateConsoleToken(vmID, customerID string) string {
-	// Generate a random token using UUID
-	// In production, this would be a signed JWT or a ticket from the node agent
-	return fmt.Sprintf("console-%s-%s", vmID[:8], uuid.New().String()[:16])
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return uuid.New().String()
+	}
+	return hex.EncodeToString(b)
 }

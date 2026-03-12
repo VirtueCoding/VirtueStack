@@ -53,8 +53,7 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		filter.VMID = &vmID
 	}
 
-	// Get snapshots
-	snapshots, total, err := h.backupRepo.ListSnapshots(c.Request.Context(), filter)
+	snapshots, total, err := h.backupRepo.ListSnapshotsByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		h.logger.Error("failed to list snapshots",
 			"customer_id", customerID,
@@ -64,11 +63,8 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		return
 	}
 
-	// Filter snapshots to only include those for VMs owned by the customer
-	customerSnapshots := h.filterSnapshotsByCustomer(c.Request.Context(), snapshots, customerID)
-
 	c.JSON(http.StatusOK, models.ListResponse{
-		Data: customerSnapshots,
+		Data: snapshots,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
 	})
 }
@@ -245,15 +241,4 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 func (h *CustomerHandler) verifySnapshotOwnership(ctx context.Context, vmID, customerID string) bool {
 	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
 	return err == nil
-}
-
-// filterSnapshotsByCustomer filters snapshots to only include those for VMs owned by the customer.
-func (h *CustomerHandler) filterSnapshotsByCustomer(ctx context.Context, snapshots []models.Snapshot, customerID string) []models.Snapshot {
-	var result []models.Snapshot
-	for _, snapshot := range snapshots {
-		if h.verifySnapshotOwnership(ctx, snapshot.VMID, customerID) {
-			result = append(result, snapshot)
-		}
-	}
-	return result
 }

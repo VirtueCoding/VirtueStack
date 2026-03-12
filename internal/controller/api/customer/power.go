@@ -2,6 +2,8 @@ package customer
 
 import (
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -36,7 +38,9 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 
 		// Check for specific error conditions
 		errMsg := err.Error()
-		if contains(errMsg, "cannot start VM in status") {
+		if slices.ContainsFunc([]string{"cannot start VM in status"}, func(needle string) bool {
+			return strings.Contains(errMsg, needle)
+		}) {
 			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
 			return
 		}
@@ -81,7 +85,9 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		errMsg := err.Error()
-		if contains(errMsg, "cannot stop VM in status") {
+		if slices.ContainsFunc([]string{"cannot stop VM in status"}, func(needle string) bool {
+			return strings.Contains(errMsg, needle)
+		}) {
 			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
 			return
 		}
@@ -126,7 +132,9 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		errMsg := err.Error()
-		if contains(errMsg, "cannot restart VM in status") {
+		if slices.ContainsFunc([]string{"cannot restart VM in status"}, func(needle string) bool {
+			return strings.Contains(errMsg, needle)
+		}) {
 			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
 			return
 		}
@@ -171,7 +179,9 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		errMsg := err.Error()
-		if contains(errMsg, "cannot stop VM in status") {
+		if slices.ContainsFunc([]string{"cannot stop VM in status"}, func(needle string) bool {
+			return strings.Contains(errMsg, needle)
+		}) {
 			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
 			return
 		}
@@ -188,18 +198,4 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "VM force stopped successfully",
 	})
-}
-
-// contains checks if a string contains a substring (case-sensitive).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
