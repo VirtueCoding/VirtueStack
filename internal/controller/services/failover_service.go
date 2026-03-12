@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -48,13 +49,13 @@ func NewFailoverService(
 
 // FailoverResult represents the outcome of a failover operation.
 type FailoverResult struct {
-	NodeID            string         `json:"node_id"`
-	NodeHostname      string         `json:"node_hostname"`
-	TotalVMs          int            `json:"total_vms"`
-	MigratedVMs       []MigratedVM   `json:"migrated_vms"`
-	FailedMigrations  []FailedMigration `json:"failed_migrations,omitempty"`
-	STONITHExecuted   bool           `json:"stonith_executed"`
-	BlocklistAdded    bool           `json:"blocklist_added"`
+	NodeID           string            `json:"node_id"`
+	NodeHostname     string            `json:"node_hostname"`
+	TotalVMs         int               `json:"total_vms"`
+	MigratedVMs      []MigratedVM      `json:"migrated_vms"`
+	FailedMigrations []FailedMigration `json:"failed_migrations,omitempty"`
+	STONITHExecuted  bool              `json:"stonith_executed"`
+	BlocklistAdded   bool              `json:"blocklist_added"`
 }
 
 // MigratedVM represents a VM that was successfully migrated during failover.
@@ -134,7 +135,9 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 	// Step 4: Release RBD locks for VMs on this node
 	// Note: The Ceph blocklist should prevent the failed node from writing,
 	// but explicitly releasing locks is recommended for clean recovery.
-	s.releaseRBDLocks(ctx, node)
+	if err := s.releaseRBDLocks(ctx, node); err != nil {
+		return nil, fmt.Errorf("releasing RBD locks: %w", err)
+	}
 
 	// Step 5: Get all VMs on the failed node
 	vms, err := s.getVMsOnNode(ctx, targetNodeID)
@@ -320,30 +323,97 @@ func (s *FailoverService) blocklistNodeInCeph(ctx context.Context, node *models.
 
 // releaseRBDLocks releases RBD locks for VMs on the failed node.
 // This is done after blocklisting to ensure clean VM recovery.
-func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node) {
+func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node) error {
 	s.logger.Info("releasing RBD locks for failed node",
 		"node_id", node.ID,
 		"ceph_pool", node.CephPool)
 
-	// In a full implementation, this would:
-	// 1. List all RBD images in the pool
-	// 2. For each image, check if there are locks held by the failed node
-	// 3. Release those locks using: rbd lock remove <pool>/<image> <lock_id> <client>
-	//
-	// For now, we rely on the Ceph blocklist which effectively prevents
-	// the failed node from holding any locks.
-	//
-	// Example implementation (pseudocode):
-	// vms, _ := s.getVMsOnNode(ctx, node.ID)
-	// for _, vm := range vms {
-	//     rbdImage := fmt.Sprintf("%s/vm-%s", node.CephPool, vm.ID)
-	//     cmd := exec.CommandContext(ctx, "rbd", "lock", "list", rbdImage)
-	//     // Parse output to find locks held by failed node
-	//     // Release each lock: rbd lock remove <image> <lock_id> <client>
-	// }
+	vms, err := s.getVMsOnNode(ctx, node.ID)
+	if err != nil {
+		return fmt.Errorf("listing VMs on failed node: %w", err)
+	}
 
-	s.logger.Info("RBD lock release completed (handled by Ceph blocklist)",
-		"node_id", node.ID)
+	for _, vm := range vms {
+		image := fmt.Sprintf("%s/vm-%s", node.CephPool, vm.ID)
+
+		listCmd := exec.CommandContext(ctx, "rbd", "lock", "list", image, "--format", "json")
+		listOut, err := listCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("listing RBD locks for %s: %w, output: %s", image, err, string(listOut))
+		}
+
+		locks, err := parseRBDLocks(listOut)
+		if err != nil {
+			return fmt.Errorf("parsing RBD lock list for %s: %w", image, err)
+		}
+
+		for _, lock := range locks {
+			if lock.ID == "" || lock.Locker == "" {
+				continue
+			}
+
+			removeCmd := exec.CommandContext(ctx, "rbd", "lock", "remove", image, lock.ID, lock.Locker)
+			removeOut, err := removeCmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("removing RBD lock for %s (id=%s, locker=%s): %w, output: %s", image, lock.ID, lock.Locker, err, string(removeOut))
+			}
+
+			s.logger.Info("released RBD lock",
+				"node_id", node.ID,
+				"vm_id", vm.ID,
+				"image", image,
+				"lock_id", lock.ID,
+				"locker", lock.Locker)
+		}
+	}
+
+	s.logger.Info("RBD lock release completed", "node_id", node.ID, "vm_count", len(vms))
+	return nil
+}
+
+type rbdLock struct {
+	ID     string
+	Locker string
+}
+
+func parseRBDLocks(raw []byte) ([]rbdLock, error) {
+	var wrapped struct {
+		Locks []struct {
+			ID     string `json:"id"`
+			Locker string `json:"locker"`
+			Client string `json:"client"`
+		} `json:"locks"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err == nil && len(wrapped.Locks) > 0 {
+		locks := make([]rbdLock, 0, len(wrapped.Locks))
+		for _, l := range wrapped.Locks {
+			locker := l.Locker
+			if locker == "" {
+				locker = l.Client
+			}
+			locks = append(locks, rbdLock{ID: l.ID, Locker: locker})
+		}
+		return locks, nil
+	}
+
+	var arr []struct {
+		ID     string `json:"id"`
+		Locker string `json:"locker"`
+		Client string `json:"client"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		locks := make([]rbdLock, 0, len(arr))
+		for _, l := range arr {
+			locker := l.Locker
+			if locker == "" {
+				locker = l.Client
+			}
+			locks = append(locks, rbdLock{ID: l.ID, Locker: locker})
+		}
+		return locks, nil
+	}
+
+	return nil, fmt.Errorf("unexpected lock list format")
 }
 
 // getVMsOnNode retrieves all VMs assigned to a specific node.
@@ -549,4 +619,3 @@ func (s *FailoverService) logFailoverAudit(ctx context.Context, adminID string, 
 		}
 	}
 }
-

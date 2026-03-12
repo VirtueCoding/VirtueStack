@@ -620,6 +620,30 @@ func (s *NodeService) DeleteNode(ctx context.Context, nodeID string) error {
 	return nil
 }
 
+func (s *NodeService) UpdateNode(ctx context.Context, node *models.Node) error {
+	if node == nil {
+		return fmt.Errorf("node is required")
+	}
+	if node.ID == "" {
+		return fmt.Errorf("node ID is required")
+	}
+	if node.GRPCAddress == "" {
+		return fmt.Errorf("grpc_address is required")
+	}
+	if node.TotalVCPU < 1 {
+		return fmt.Errorf("total_vcpu must be at least 1")
+	}
+	if node.TotalMemoryMB < 1024 {
+		return fmt.Errorf("total_memory_mb must be at least 1024")
+	}
+
+	if err := s.nodeRepo.Update(ctx, node); err != nil {
+		return fmt.Errorf("updating node: %w", err)
+	}
+
+	return nil
+}
+
 // isNodeHealthy determines if a node is healthy based on its status and heartbeat.
 func (s *NodeService) isNodeHealthy(node *models.Node) bool {
 	// Node must be online

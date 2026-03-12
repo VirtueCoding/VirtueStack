@@ -69,6 +69,33 @@ func (s *TemplateService) List(ctx context.Context, filter repository.TemplateLi
 	return templates, total, nil
 }
 
+func (s *TemplateService) Create(ctx context.Context, template *models.Template) error {
+	if template == nil {
+		return fmt.Errorf("template is required")
+	}
+	if template.Name == "" || template.OSFamily == "" || template.OSVersion == "" || template.RBDImage == "" || template.RBDSnapshot == "" {
+		return fmt.Errorf("missing required template fields")
+	}
+	if template.MinDiskGB < 1 {
+		return fmt.Errorf("min_disk_gb must be at least 1")
+	}
+	if template.SortOrder < 0 {
+		return fmt.Errorf("sort_order cannot be negative")
+	}
+
+	existing, err := s.templateRepo.GetByName(ctx, template.Name)
+	if err == nil && existing != nil {
+		return fmt.Errorf("template with name %s already exists", template.Name)
+	}
+
+	if err := s.templateRepo.Create(ctx, template); err != nil {
+		return fmt.Errorf("creating template: %w", err)
+	}
+
+	s.logger.Info("template created", "template_id", template.ID, "name", template.Name)
+	return nil
+}
+
 // GetByID retrieves a template by its UUID.
 // Returns ErrNotFound if the template doesn't exist.
 func (s *TemplateService) GetByID(ctx context.Context, id string) (*models.Template, error) {
@@ -120,7 +147,7 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 		sizeBytes, err := s.storage.GetTemplateSize(ctx, rbdImage, rbdSnapshot)
 		if err == nil && sizeBytes > 0 {
 			// Convert to GB and add 20% buffer
-			minDiskGB = int(float64(sizeBytes)/(1024*1024*1024) * 1.2)
+			minDiskGB = int(float64(sizeBytes) / (1024 * 1024 * 1024) * 1.2)
 			if minDiskGB < 10 {
 				minDiskGB = 10
 			}
@@ -268,9 +295,4 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 		"version", template.Version)
 
 	return template, nil
-}
-
-// generateTemplateID generates a unique UUID for a new template.
-func generateTemplateID() string {
-	return uuid.New().String()
 }

@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -147,18 +148,19 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 
 	// 9. Publish migration task
 	taskPayload := map[string]any{
-		"vm_id":            vm.ID,
-		"source_node_id":   sourceNodeID,
-		"target_node_id":   targetNode.ID,
-		"hostname":         vm.Hostname,
-		"vcpu":             vm.VCPU,
-		"memory_mb":        vm.MemoryMB,
-		"disk_gb":          vm.DiskGB,
-		"mac_address":      vm.MACAddress,
-		"live":             req.Live,
-		"source_ceph_pool": sourceNode.CephPool,
-		"target_ceph_pool": targetNode.CephPool,
-		"initiated_by":     adminID,
+		"vm_id":               vm.ID,
+		"source_node_id":      sourceNodeID,
+		"target_node_id":      targetNode.ID,
+		"hostname":            vm.Hostname,
+		"vcpu":                vm.VCPU,
+		"memory_mb":           vm.MemoryMB,
+		"disk_gb":             vm.DiskGB,
+		"mac_address":         vm.MACAddress,
+		"live":                req.Live,
+		"source_ceph_pool":    sourceNode.CephPool,
+		"target_ceph_pool":    targetNode.CephPool,
+		"initiated_by":        adminID,
+		"pre_migration_state": vm.Status,
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
@@ -348,9 +350,34 @@ func (s *MigrationService) CancelMigration(ctx context.Context, vmID, adminID st
 		}
 	}
 
-	// 4. Revert VM status to running (assume it was running before migration)
-	// In a full implementation, you'd track the previous state
-	if err := s.vmRepo.UpdateStatus(ctx, vmID, models.VMStatusRunning); err != nil {
+	restoreStatus := models.VMStatusRunning
+	filter := repository.TaskListFilter{
+		Type: strPtr(models.TaskTypeVMMigrate),
+		PaginationParams: models.PaginationParams{
+			Page:    1,
+			PerPage: 20,
+		},
+	}
+	if tasks, _, listErr := s.taskRepo.List(ctx, filter); listErr == nil {
+		for _, task := range tasks {
+			var payload struct {
+				VMID              string `json:"vm_id"`
+				PreMigrationState string `json:"pre_migration_state"`
+			}
+			if err := json.Unmarshal(task.Payload, &payload); err != nil {
+				continue
+			}
+			if payload.VMID != vmID {
+				continue
+			}
+			if payload.PreMigrationState != "" {
+				restoreStatus = payload.PreMigrationState
+			}
+			break
+		}
+	}
+
+	if err := s.vmRepo.UpdateStatus(ctx, vmID, restoreStatus); err != nil {
 		return fmt.Errorf("reverting VM status: %w", err)
 	}
 

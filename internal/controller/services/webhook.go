@@ -4,6 +4,8 @@ package services
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +23,10 @@ import (
 
 // WebhookService provides business logic for managing webhook endpoints and deliveries.
 type WebhookService struct {
-	webhookRepo    *repository.WebhookRepository
-	taskPublisher  TaskPublisher
-	logger         *slog.Logger
-	encryptionKey  string
+	webhookRepo   *repository.WebhookRepository
+	taskPublisher TaskPublisher
+	logger        *slog.Logger
+	encryptionKey string
 }
 
 // NewWebhookService creates a new WebhookService with the given dependencies.
@@ -59,12 +61,12 @@ const MaxWebhooksPerCustomer = 5
 
 // Errors returned by the webhook service.
 var (
-	ErrInvalidURL        = errors.New("webhook URL must be HTTPS")
-	ErrInvalidEvent      = errors.New("invalid webhook event")
-	ErrTooManyWebhooks   = errors.New("maximum webhook limit reached")
-	ErrWebhookNotFound   = errors.New("webhook not found")
-	ErrSecretTooShort    = errors.New("secret must be at least 16 characters")
-	ErrSecretTooLong     = errors.New("secret must be at most 128 characters")
+	ErrInvalidURL      = errors.New("webhook URL must be HTTPS")
+	ErrInvalidEvent    = errors.New("invalid webhook event")
+	ErrTooManyWebhooks = errors.New("maximum webhook limit reached")
+	ErrWebhookNotFound = errors.New("webhook not found")
+	ErrSecretTooShort  = errors.New("secret must be at least 16 characters")
+	ErrSecretTooLong   = errors.New("secret must be at most 128 characters")
 )
 
 // CreateWebhookRequest contains parameters for creating a webhook.
@@ -467,6 +469,7 @@ func ToResponse(webhook *repository.Webhook) WebhookResponse {
 		UpdatedAt:     webhook.UpdatedAt,
 	}
 }
+
 // DeliveryStats holds statistics for webhook deliveries.
 type DeliveryStats struct {
 	TotalDeliveries int
@@ -482,7 +485,7 @@ func (s *WebhookService) ListByCustomer(ctx context.Context, customerID string) 
 }
 
 func (s *WebhookService) GetPendingRetries(ctx context.Context, before time.Time) ([]repository.WebhookDelivery, error) {
-	return nil, fmt.Errorf("not implemented")
+	return s.webhookRepo.GetPendingRetries(ctx, before)
 }
 
 func (s *WebhookService) CalculateNextRetry(attemptCount int) time.Duration {
@@ -490,13 +493,142 @@ func (s *WebhookService) CalculateNextRetry(attemptCount int) time.Duration {
 }
 
 func (s *WebhookService) VerifySignature(payload []byte, signature, secret string) bool {
-	return GenerateSignature(secret, payload) == signature
+	expected := GenerateSignature(secret, payload)
+	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
 func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, event string) ([]repository.Webhook, error) {
-	return nil, fmt.Errorf("not implemented")
+	if customerID == "" {
+		return s.webhookRepo.ListActiveForEvent(ctx, event)
+	}
+
+	webhooks, err := s.webhookRepo.ListByCustomer(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("listing customer webhooks: %w", err)
+	}
+
+	filtered := make([]repository.Webhook, 0, len(webhooks))
+	for _, w := range webhooks {
+		if !w.Active {
+			continue
+		}
+		for _, e := range w.Events {
+			if e == event {
+				filtered = append(filtered, w)
+				break
+			}
+		}
+	}
+
+	return filtered, nil
 }
 
 func (s *WebhookService) GetDeliveryStats(ctx context.Context, webhookID string) (*DeliveryStats, error) {
-	return nil, fmt.Errorf("not implemented")
+	filter := repository.DeliveryListFilter{}
+	filter.WebhookID = &webhookID
+	filter.PaginationParams = repository.PaginationParams{Page: 1, PerPage: 1000}
+	deliveries, total, err := s.webhookRepo.ListDeliveries(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing deliveries: %w", err)
+	}
+
+	if total == 0 {
+		return &DeliveryStats{TotalDeliveries: 0, SuccessRate: 0}, nil
+	}
+
+	successCount := 0
+	for _, d := range deliveries {
+		if d.Status == repository.DeliveryStatusDelivered {
+			successCount++
+		}
+	}
+
+	return &DeliveryStats{
+		TotalDeliveries: total,
+		SuccessRate:     float64(successCount) / float64(total),
+	}, nil
+}
+
+func (s *WebhookService) RetryDelivery(ctx context.Context, deliveryID string) error {
+	delivery, err := s.webhookRepo.GetDeliveryByID(ctx, deliveryID)
+	if err != nil {
+		return fmt.Errorf("getting delivery: %w", err)
+	}
+
+	if err := s.webhookRepo.ResetDeliveryForRetry(ctx, deliveryID); err != nil {
+		return fmt.Errorf("resetting delivery: %w", err)
+	}
+
+	if s.taskPublisher != nil {
+		if _, err := s.taskPublisher.PublishTask(ctx, "webhook.deliver", map[string]any{
+			"delivery_id": deliveryID,
+			"webhook_id":  delivery.WebhookID,
+		}); err != nil {
+			return fmt.Errorf("publishing retry delivery task: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, page, perPage int) ([]repository.WebhookDelivery, int, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if perPage <= 0 {
+		perPage = 20
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+
+	filter := repository.DeliveryListFilter{
+		PaginationParams: repository.PaginationParams{Page: page, PerPage: perPage},
+	}
+	if webhookID != "" {
+		filter.WebhookID = &webhookID
+	}
+
+	return s.webhookRepo.ListDeliveries(ctx, filter)
+}
+
+func (s *WebhookService) TestWebhook(ctx context.Context, webhookID string) error {
+	webhook, err := s.webhookRepo.GetByID(ctx, webhookID)
+	if err != nil {
+		return fmt.Errorf("getting webhook: %w", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"test":       true,
+		"webhook_id": webhookID,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("marshaling test payload: %w", err)
+	}
+
+	if err := s.queueDelivery(ctx, webhook, "webhook.test", payload); err != nil {
+		return fmt.Errorf("queueing test delivery: %w", err)
+	}
+
+	return nil
+}
+
+func (s *WebhookService) RotateSecret(ctx context.Context, webhookID string) (string, error) {
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return "", fmt.Errorf("generating secret: %w", err)
+	}
+
+	plainSecret := hex.EncodeToString(secretBytes)
+	encrypted, err := s.encryptSecret(plainSecret)
+	if err != nil {
+		return "", fmt.Errorf("encrypting secret: %w", err)
+	}
+
+	if err := s.webhookRepo.UpdateSecret(ctx, webhookID, encrypted); err != nil {
+		return "", fmt.Errorf("updating webhook secret: %w", err)
+	}
+
+	return plainSecret, nil
 }

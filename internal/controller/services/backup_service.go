@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,6 +49,47 @@ type BackupService struct {
 	nodeAgent     BackupNodeAgentClient
 	taskPublisher TaskPublisher
 	logger        *slog.Logger
+}
+
+type BackupNodeAgentAdapter struct {
+	nodeAgent *NodeAgentGRPCClient
+	vmRepo    *repository.VMRepository
+}
+
+func NewBackupNodeAgentAdapter(nodeAgent *NodeAgentGRPCClient, vmRepo *repository.VMRepository) *BackupNodeAgentAdapter {
+	return &BackupNodeAgentAdapter{
+		nodeAgent: nodeAgent,
+		vmRepo:    vmRepo,
+	}
+}
+
+func (a *BackupNodeAgentAdapter) CreateSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	_, err := a.nodeAgent.CreateSnapshot(ctx, nodeID, vmID, snapshotName)
+	return err
+}
+
+func (a *BackupNodeAgentAdapter) DeleteSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	return a.nodeAgent.DeleteSnapshot(ctx, nodeID, vmID, snapshotName)
+}
+
+func (a *BackupNodeAgentAdapter) RestoreSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	return a.nodeAgent.RestoreSnapshot(ctx, nodeID, vmID, snapshotName)
+}
+
+func (a *BackupNodeAgentAdapter) CloneSnapshot(ctx context.Context, nodeID, vmID, snapshotName, backupPath string) error {
+	_, err := a.nodeAgent.CloneSnapshot(ctx, nodeID, vmID, snapshotName, backupPath)
+	return err
+}
+
+func (a *BackupNodeAgentAdapter) GetVMNodeID(ctx context.Context, vmID string) (string, error) {
+	vm, err := a.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		return "", fmt.Errorf("getting VM %s: %w", vmID, err)
+	}
+	if vm.NodeID == nil {
+		return "", fmt.Errorf("VM %s has no node assigned", vmID)
+	}
+	return *vm.NodeID, nil
 }
 
 // NewBackupService creates a new BackupService with the given dependencies.
@@ -156,6 +198,13 @@ func (s *BackupService) ListBackups(ctx context.Context, vmID string) ([]models.
 		return nil, fmt.Errorf("listing backups: %w", err)
 	}
 	return backups, nil
+}
+
+func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *string, filter repository.BackupListFilter) ([]models.Backup, int, error) {
+	if customerID != nil && *customerID != "" {
+		return s.backupRepo.ListBackupsByCustomer(ctx, *customerID, filter)
+	}
+	return s.backupRepo.ListBackups(ctx, filter)
 }
 
 // RestoreBackup restores a VM from a backup.
@@ -648,29 +697,183 @@ func (s *BackupService) getVMBackupDay(vmID string) int {
 }
 
 func (s *BackupService) CreateSchedule(ctx context.Context, schedule *models.BackupSchedule) (string, error) {
-	return "", fmt.Errorf("not implemented")
+	if schedule == nil {
+		return "", fmt.Errorf("schedule is required")
+	}
+	if schedule.VMID == "" || schedule.CustomerID == "" {
+		return "", fmt.Errorf("vm_id and customer_id are required")
+	}
+
+	frequency := strings.ToLower(strings.TrimSpace(schedule.Frequency))
+	if frequency != "daily" && frequency != "weekly" && frequency != "monthly" {
+		return "", fmt.Errorf("invalid frequency: %s", schedule.Frequency)
+	}
+
+	if schedule.RetentionCount <= 0 {
+		schedule.RetentionCount = 30
+	}
+
+	schedule.Frequency = frequency
+	schedule.NextRunAt = computeNextRun(time.Now().UTC(), frequency)
+	schedule.Active = true
+
+	if err := s.backupRepo.CreateBackupSchedule(ctx, schedule); err != nil {
+		return "", fmt.Errorf("creating schedule: %w", err)
+	}
+
+	s.logger.Info("backup schedule created",
+		"schedule_id", schedule.ID,
+		"vm_id", schedule.VMID,
+		"customer_id", schedule.CustomerID,
+		"frequency", schedule.Frequency)
+
+	return schedule.ID, nil
 }
 
 func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*models.BackupSchedule, error) {
-	return nil, fmt.Errorf("not implemented")
+	filter := repository.BackupScheduleListFilter{}
+	if vmID != "" {
+		filter.VMID = &vmID
+	}
+
+	schedules, _, err := s.backupRepo.ListBackupSchedules(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing schedules: %w", err)
+	}
+
+	result := make([]*models.BackupSchedule, 0, len(schedules))
+	for i := range schedules {
+		sched := schedules[i]
+		result = append(result, &sched)
+	}
+
+	return result, nil
 }
 
 func (s *BackupService) UpdateSchedule(ctx context.Context, scheduleID string, enabled bool) error {
-	return fmt.Errorf("not implemented")
+	if err := s.backupRepo.UpdateBackupScheduleActive(ctx, scheduleID, enabled); err != nil {
+		return fmt.Errorf("updating schedule: %w", err)
+	}
+	return nil
 }
 
 func (s *BackupService) DeleteSchedule(ctx context.Context, scheduleID string) error {
-	return fmt.Errorf("not implemented")
+	if err := s.backupRepo.DeleteBackupSchedule(ctx, scheduleID); err != nil {
+		return fmt.Errorf("deleting schedule: %w", err)
+	}
+	return nil
 }
 
 func (s *BackupService) ApplyRetentionPolicy(ctx context.Context, vmID string, retention int) error {
-	return fmt.Errorf("not implemented")
+	if retention < 0 {
+		return fmt.Errorf("retention must be >= 0")
+	}
+
+	backups, err := s.backupRepo.ListBackupsByVM(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("listing backups: %w", err)
+	}
+
+	if retention >= len(backups) {
+		return nil
+	}
+
+	for i := retention; i < len(backups); i++ {
+		if err := s.backupRepo.DeleteBackup(ctx, backups[i].ID); err != nil {
+			return fmt.Errorf("deleting backup %s: %w", backups[i].ID, err)
+		}
+	}
+
+	return nil
 }
 
 func (s *BackupService) ProcessExpiredBackups(ctx context.Context) (int, error) {
-	return 0, fmt.Errorf("not implemented")
+	expired, err := s.backupRepo.ListExpiredBackups(ctx, time.Now().UTC())
+	if err != nil {
+		return 0, fmt.Errorf("listing expired backups: %w", err)
+	}
+
+	deleted := 0
+	for _, b := range expired {
+		if err := s.backupRepo.DeleteBackup(ctx, b.ID); err != nil {
+			s.logger.Warn("failed to delete expired backup", "backup_id", b.ID, "error", err)
+			continue
+		}
+		deleted++
+	}
+
+	return deleted, nil
+}
+
+func (s *BackupService) BackupRepo() *repository.BackupRepository {
+	return s.backupRepo
 }
 
 func (s *BackupService) RestoreSnapshot(ctx context.Context, snapshotID string) error {
-	return fmt.Errorf("not implemented")
+	snapshot, err := s.snapshotRepo.GetSnapshotByID(ctx, snapshotID)
+	if err != nil {
+		return fmt.Errorf("getting snapshot: %w", err)
+	}
+
+	vm, err := s.vmRepo.GetByID(ctx, snapshot.VMID)
+	if err != nil {
+		return fmt.Errorf("getting VM: %w", err)
+	}
+
+	if vm.NodeID == nil {
+		return fmt.Errorf("VM has no node assigned")
+	}
+
+	if s.nodeAgent != nil {
+		if err := s.nodeAgent.RestoreSnapshot(ctx, *vm.NodeID, vm.ID, snapshot.RBDSnapshot); err != nil {
+			return fmt.Errorf("restoring snapshot: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *BackupService) ScheduleBackup(ctx context.Context, schedule *models.BackupSchedule) (string, error) {
+	return s.CreateSchedule(ctx, schedule)
+}
+
+func (s *BackupService) GetSchedule(ctx context.Context, scheduleID string) (*models.BackupSchedule, error) {
+	schedule, err := s.backupRepo.GetBackupScheduleByID(ctx, scheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("getting schedule: %w", err)
+	}
+	return schedule, nil
+}
+
+func (s *BackupService) PauseSchedule(ctx context.Context, scheduleID string) error {
+	return s.UpdateSchedule(ctx, scheduleID, false)
+}
+
+func (s *BackupService) ResumeSchedule(ctx context.Context, scheduleID string) error {
+	return s.UpdateSchedule(ctx, scheduleID, true)
+}
+
+func (s *BackupService) UpdateScheduleFrequency(ctx context.Context, scheduleID, frequency string) error {
+	f := strings.ToLower(strings.TrimSpace(frequency))
+	if f != "daily" && f != "weekly" && f != "monthly" {
+		return fmt.Errorf("invalid frequency: %s", frequency)
+	}
+	nextRun := computeNextRun(time.Now().UTC(), f)
+	if err := s.backupRepo.UpdateBackupScheduleFrequency(ctx, scheduleID, f, nextRun); err != nil {
+		return fmt.Errorf("updating schedule frequency: %w", err)
+	}
+	return nil
+}
+
+func computeNextRun(now time.Time, frequency string) time.Time {
+	switch frequency {
+	case "daily":
+		return now.Add(24 * time.Hour)
+	case "weekly":
+		return now.Add(7 * 24 * time.Hour)
+	case "monthly":
+		return now.AddDate(0, 1, 0)
+	default:
+		return now.Add(24 * time.Hour)
+	}
 }

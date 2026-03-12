@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
-
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -149,9 +147,4 @@ func (s *PlanService) Delete(ctx context.Context, id string) error {
 
 	s.logger.Info("plan deleted", "plan_id", id)
 	return nil
-}
-
-// generatePlanID generates a unique UUID for a new plan.
-func generatePlanID() string {
-	return uuid.New().String()
 }

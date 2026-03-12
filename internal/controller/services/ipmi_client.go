@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -105,5 +106,25 @@ func (c *IPMIClient) GetPowerStatus(ctx context.Context) (bool, error) {
 }
 
 func containsPowerOn(s string) bool {
-	return len(s) > 0 && (s == "Chassis Power is on\n" || s == "Chassis Power is on")
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	if normalized == "" {
+		return false
+	}
+
+	normalized = strings.Join(strings.Fields(normalized), " ")
+
+	powerOnIndicators := []string{
+		"power is on",
+		"chassis power is on",
+		"system power is on",
+		"power on",
+	}
+
+	for _, indicator := range powerOnIndicators {
+		if strings.Contains(normalized, indicator) {
+			return true
+		}
+	}
+
+	return false
 }

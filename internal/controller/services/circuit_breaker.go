@@ -49,20 +49,20 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 
 // CircuitBreakerEntry holds the state for a single circuit breaker instance.
 type CircuitBreakerEntry struct {
-	State          CircuitBreakerState
-	FailureCount   int
-	SuccessCount   int
-	LastFailureAt  time.Time
-	LastAttemptAt  time.Time
-	RetryCount     int
-	LastError      error
+	State         CircuitBreakerState
+	FailureCount  int
+	SuccessCount  int
+	LastFailureAt time.Time
+	LastAttemptAt time.Time
+	RetryCount    int
+	LastError     error
 }
 
 // CircuitBreaker implements the circuit breaker pattern to prevent flapping
 // and cascading failures in distributed systems.
 type CircuitBreaker struct {
-	config CircuitBreakerConfig
-	mu     sync.RWMutex
+	config  CircuitBreakerConfig
+	mu      sync.RWMutex
 	entries map[string]*CircuitBreakerEntry
 }
 
@@ -92,10 +92,14 @@ func (cb *CircuitBreaker) getEntry(key string) *CircuitBreakerEntry {
 // CanAttempt checks if an operation can be attempted for the given key.
 // Returns an error if the circuit is open or in cooldown.
 func (cb *CircuitBreaker) CanAttempt(key string) error {
-	entry := cb.getEntry(key)
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
+	entry, exists := cb.entries[key]
+	if !exists {
+		entry = &CircuitBreakerEntry{State: CircuitBreakerClosed}
+		cb.entries[key] = entry
+	}
 
 	switch entry.State {
 	case CircuitBreakerOpen:
@@ -125,10 +129,14 @@ func (cb *CircuitBreaker) CanAttempt(key string) error {
 
 // RecordSuccess records a successful operation for the given key.
 func (cb *CircuitBreaker) RecordSuccess(key string) {
-	entry := cb.getEntry(key)
-
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	entry, exists := cb.entries[key]
+	if !exists {
+		entry = &CircuitBreakerEntry{State: CircuitBreakerClosed}
+		cb.entries[key] = entry
+	}
 
 	entry.SuccessCount++
 	entry.LastAttemptAt = time.Now()
@@ -154,10 +162,14 @@ func (cb *CircuitBreaker) RecordSuccess(key string) {
 
 // RecordFailure records a failed operation for the given key.
 func (cb *CircuitBreaker) RecordFailure(key string, err error) {
-	entry := cb.getEntry(key)
-
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	entry, exists := cb.entries[key]
+	if !exists {
+		entry = &CircuitBreakerEntry{State: CircuitBreakerClosed}
+		cb.entries[key] = entry
+	}
 
 	entry.FailureCount++
 	entry.LastFailureAt = time.Now()
@@ -222,11 +234,11 @@ func (cb *CircuitBreaker) GetStats(key string) map[string]interface{} {
 	defer cb.mu.RUnlock()
 
 	result := map[string]interface{}{
-		"state":            string(entry.State),
-		"failure_count":    entry.FailureCount,
-		"success_count":    entry.SuccessCount,
-		"retry_count":      entry.RetryCount,
-		"last_attempt_at":  entry.LastAttemptAt,
+		"state":           string(entry.State),
+		"failure_count":   entry.FailureCount,
+		"success_count":   entry.SuccessCount,
+		"retry_count":     entry.RetryCount,
+		"last_attempt_at": entry.LastAttemptAt,
 	}
 
 	if !entry.LastFailureAt.IsZero() {

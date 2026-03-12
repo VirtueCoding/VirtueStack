@@ -283,14 +283,42 @@ func generateIPv6PTRName(addr netip.Addr) (ptrName, zoneName string) {
 	}
 
 	ptrName = strings.Join(nibbles, ".") + ".ip6.arpa"
-
-	// For IPv6, zones are typically delegated at /32 or larger
-	// The zone name would be the last 16 nibbles (for /32) or similar
-	// For simplicity, we use the full ip6.arpa zone
-	// In production, you may want to determine the appropriate zone delegation
-	zoneName = "ip6.arpa"
+	zoneName = generateIPv6ReverseZone(bytes, 48)
 
 	return ptrName, zoneName
+}
+
+func generateIPv6ReverseZone(bytes [16]byte, prefixBits int) string {
+	if prefixBits <= 0 {
+		return "ip6.arpa"
+	}
+
+	nibbleCount := prefixBits / 4
+	if nibbleCount <= 0 {
+		return "ip6.arpa"
+	}
+	if nibbleCount > 32 {
+		nibbleCount = 32
+	}
+
+	full := make([]byte, 0, 32)
+	for i := 0; i < len(bytes); i++ {
+		full = append(full,
+			"0123456789abcdef"[(bytes[i]>>4)&0x0f],
+			"0123456789abcdef"[bytes[i]&0x0f],
+		)
+	}
+
+	reversed := make([]string, 0, nibbleCount)
+	for i := nibbleCount - 1; i >= 0; i-- {
+		reversed = append(reversed, string(full[i]))
+	}
+
+	if len(reversed) == 0 {
+		return "ip6.arpa"
+	}
+
+	return strings.Join(reversed, ".") + ".ip6.arpa"
 }
 
 // generateSOASerial generates a new SOA serial number in YYYYMMDDNN format.

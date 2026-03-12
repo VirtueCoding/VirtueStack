@@ -15,8 +15,8 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
-// IPv6CooldownPeriod is the time an IPv4 address remains in cooldown after release.
-const IPv6CooldownPeriod = 5 * time.Minute
+// IPCooldownPeriod is the time an IP address remains in cooldown after release.
+const IPCooldownPeriod = 5 * time.Minute
 
 // IPAMService provides IP Address Management business logic for VirtueStack.
 // It handles IPv4 allocation/release, IPv6 subnet assignment, and reverse DNS management.
@@ -97,7 +97,7 @@ func (s *IPAMService) ReleaseIPv4(ctx context.Context, ipID string) error {
 	s.logger.Info("IPv4 released",
 		"ip_id", ipID,
 		"address", ip.Address,
-		"cooldown_until", time.Now().Add(IPv6CooldownPeriod))
+		"cooldown_until", time.Now().Add(IPCooldownPeriod))
 
 	return nil
 }
