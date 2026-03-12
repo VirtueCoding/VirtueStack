@@ -165,6 +165,9 @@ export default function IPSetsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [ipSets, setIPSets] = useState<IPSet[]>(mockIPSets);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importTargetPool, setImportTargetPool] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const { toast } = useToast();
@@ -312,10 +315,86 @@ export default function IPSetsPage() {
     }
   };
 
-  const handleImport = (e: React.FormEvent) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    setImportFile(file);
+  };
+
+  const handleImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Implement actual import logic with file processing
-    setImportDialogOpen(false);
+    
+    if (!importFile) {
+      toast({
+        title: "No File Selected",
+        description: "Please select a CSV or text file to import.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (!importTargetPool) {
+      toast({
+        title: "No Pool Selected", 
+        description: "Please select a target pool for the imported IPs.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsImporting(true);
+    
+    try {
+      const text = await importFile.text();
+      const lines = text.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+      
+      // Parse IPs: support "ip" or "ip,subnet,gateway" CSV format
+      const ips: string[] = [];
+      for (const line of lines) {
+        // Skip header rows
+        if (line.toLowerCase().startsWith("ip") || line.startsWith("#")) continue;
+        
+        // Take first column if CSV
+        const ip = line.split(",")[0].trim();
+        
+        // Basic IP validation (v4 or v6)
+        const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+        const ipv6Regex = /^[0-9a-fA-F:]+(::[0-9a-fA-F]*)*?(\/\d{1,3})?$/;
+        
+        if (ipv4Regex.test(ip) || ipv6Regex.test(ip)) {
+          ips.push(ip);
+        }
+      }
+      
+      if (ips.length === 0) {
+        toast({
+          title: "No Valid IPs Found",
+          description: "The file does not contain any valid IP addresses. Ensure one IP per line.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      // Call API to import IPs into the target pool
+      await apiClient.post(`/admin/ip-sets/${importTargetPool}/import`, { addresses: ips });
+      
+      toast({
+        title: "Import Successful",
+        description: `${ips.length} IP address${ips.length !== 1 ? "es" : ""} imported successfully.`,
+      });
+      
+      setImportDialogOpen(false);
+      setImportFile(null);
+      setImportTargetPool("");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to import IP addresses";
+      toast({
+        title: "Import Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const totalSets = ipSets.length;
@@ -361,6 +440,7 @@ export default function IPSetsPage() {
                           id="file-upload"
                           type="file"
                           accept=".csv,.txt"
+                          onChange={handleFileChange}
                           className="flex-1"
                         />
                       </div>
@@ -374,6 +454,8 @@ export default function IPSetsPage() {
                       </label>
                       <select
                         id="target-pool"
+                        value={importTargetPool}
+                        onChange={(e) => setImportTargetPool(e.target.value)}
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
                         <option value="">Select a pool...</option>
@@ -386,12 +468,16 @@ export default function IPSetsPage() {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
+                    <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)} disabled={isImporting}>
                       Cancel
                     </Button>
-                    <Button type="submit">
-                      <Upload className="mr-2 h-4 w-4" />
-                      Import
+                    <Button type="submit" disabled={isImporting}>
+                      {isImporting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 h-4 w-4" />
+                      )}
+                      {isImporting ? "Importing..." : "Import"}
                     </Button>
                   </DialogFooter>
                 </form>

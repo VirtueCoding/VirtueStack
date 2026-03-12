@@ -139,7 +139,8 @@ async function parseError(response: Response): Promise<ApiClientError> {
       message = data.error.message || message;
       correlationId = data.error.correlation_id;
     }
-  } catch {
+  } catch (err) {
+    console.error("Failed to parse error response JSON:", err);
     // If we can't parse JSON, use status-based message
     message = response.statusText || message;
   }
@@ -315,6 +316,10 @@ export const adminNodesApi = {
   /**
    * Get a single node by ID
    */
+  async getNodes(): Promise<any[]> {
+    return apiClient.get<any[]>("/admin/nodes");
+  },
+
   async getNode(id: string): Promise<Node> {
     return apiClient.get<Node>(`/admin/nodes/${id}`);
   },
@@ -351,6 +356,10 @@ export const adminCustomersApi = {
   /**
    * Suspend a customer account
    */
+  async getCustomers(): Promise<any[]> {
+    return apiClient.get<any[]>("/admin/customers");
+  },
+
   async suspendCustomer(id: string): Promise<void> {
     return apiClient.post<void>(`/admin/customers/${id}/suspend`, {});
   },
@@ -408,6 +417,10 @@ export const adminPlansApi = {
   /**
    * Get a single plan by ID
    */
+  async getPlans(): Promise<any[]> {
+    return apiClient.get<any[]>("/admin/plans");
+  },
+
   async getPlan(id: string): Promise<Plan> {
     return apiClient.get<Plan>(`/admin/plans/${id}`);
   },
@@ -432,4 +445,43 @@ export const adminPlansApi = {
   async updatePlan(id: string, plan: UpdatePlanRequest): Promise<Plan> {
     return apiClient.patch<Plan>(`/admin/plans/${id}`, plan);
   },
+};
+
+// ============================================================================
+// Admin Dashboard & Audit Logs API
+// ============================================================================
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  actor_id?: string;
+  actor_type: string;
+  actor_ip?: string;
+  action: string;
+  resource_type: string;
+  resource_id?: string;
+  success: boolean;
+  error_message?: string;
+}
+
+export const adminAuditLogsApi = {
+  async getAuditLogs(): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>('/admin/audit-logs');
+  },
+};
+
+// Also add a VM interface since we need it for VMs count and plans
+export interface VM {
+  id: string;
+  name: string;
+  customer_id: string;
+  node_id: string;
+  status: string;
+  created_at: string;
+}
+
+export const adminVMsApi = {
+  async getVMs(): Promise<VM[]> {
+    return apiClient.get<VM[]>('/admin/vms');
+  }
 };

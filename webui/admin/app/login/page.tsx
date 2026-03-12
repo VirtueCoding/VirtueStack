@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Loader2, Shield } from "lucide-react";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -158,14 +159,15 @@ export default function LoginPage() {
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isLoading ? "Signing in..." : "Sign In"}
               </Button>
-              <Button
-                type="button"
-                variant="link"
-                className="text-sm text-muted-foreground"
-                disabled
-              >
-                Forgot password?
-              </Button>
+              <Link href="/forgot-password" passHref className="w-full">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="w-full text-sm text-muted-foreground"
+                >
+                  Forgot password?
+                </Button>
+              </Link>
             </CardFooter>
           </form>
         )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,102 +36,15 @@ import {
 } from "lucide-react";
 import { adminPlansApi, type Plan } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
-
-const mockPlans: Plan[] = [
-  {
-    id: "1",
-    name: "Starter VM",
-    vcpu: 1,
-    memory_mb: 1024,
-    disk_gb: 20,
-    bandwidth_mbps: 100,
-    price_monthly: 9.99,
-    status: "active",
-  },
-  {
-    id: "2",
-    name: "Developer",
-    vcpu: 2,
-    memory_mb: 4096,
-    disk_gb: 50,
-    bandwidth_mbps: 500,
-    price_monthly: 24.99,
-    status: "active",
-  },
-  {
-    id: "3",
-    name: "Business Pro",
-    vcpu: 4,
-    memory_mb: 8192,
-    disk_gb: 100,
-    bandwidth_mbps: 1000,
-    price_monthly: 49.99,
-    status: "active",
-  },
-  {
-    id: "4",
-    name: "Enterprise",
-    vcpu: 8,
-    memory_mb: 16384,
-    disk_gb: 250,
-    bandwidth_mbps: 5000,
-    price_monthly: 99.99,
-    status: "active",
-  },
-  {
-    id: "5",
-    name: "Memory Optimized",
-    vcpu: 4,
-    memory_mb: 32768,
-    disk_gb: 100,
-    bandwidth_mbps: 2000,
-    price_monthly: 79.99,
-    status: "active",
-  },
-  {
-    id: "6",
-    name: "CPU Powerhouse",
-    vcpu: 16,
-    memory_mb: 32768,
-    disk_gb: 500,
-    bandwidth_mbps: 10000,
-    price_monthly: 149.99,
-    status: "active",
-  },
-  {
-    id: "7",
-    name: "Legacy Basic",
-    vcpu: 1,
-    memory_mb: 512,
-    disk_gb: 10,
-    bandwidth_mbps: 50,
-    price_monthly: 4.99,
-    status: "inactive",
-  },
-  {
-    id: "8",
-    name: "Storage Heavy",
-    vcpu: 2,
-    memory_mb: 4096,
-    disk_gb: 1000,
-    bandwidth_mbps: 500,
-    price_monthly: 59.99,
-    status: "inactive",
-  },
-];
+import { getStatusBadgeVariant } from "@/lib/status-badge";
 
 function getStatusBadge(status: Plan["status"]) {
-  const variants = {
-    active: "success" as const,
-    inactive: "secondary" as const,
-  };
-
   const labels = {
     active: "Active",
     inactive: "Inactive",
   };
 
-  return <Badge variant={variants[status]}>{labels[status]}</Badge>;
+  return <Badge variant={getStatusBadgeVariant(status) as React.ComponentProps<typeof Badge>["variant"]}>{labels[status]}</Badge>;
 }
 
 function formatPrice(price: number) {
@@ -153,12 +66,34 @@ type DialogAction = "edit" | "delete" | null;
 
 export default function PlansPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [plans, setPlans] = useState<Plan[]>(mockPlans);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    async function loadPlans() {
+      try {
+        const data = await adminPlansApi.getPlans();
+        setPlans(data || []);
+      } catch (err) {
+        console.error("Failed to load plans", err);
+        setError("Failed to load plans");
+        toast({
+          title: "Error",
+          description: "Failed to load plans.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPlans();
+  }, [toast]);
 
   const filteredPlans = plans.filter((plan) =>
     plan.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -236,6 +171,22 @@ export default function PlansPage() {
 
   const activePlans = plans.filter((p) => p.status === "active").length;
   const totalPlans = plans.length;
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-destructive">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">

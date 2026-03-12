@@ -55,7 +55,8 @@ function parseJwt(token: string): { sub: string; email?: string; role?: string }
         .join("")
     );
     return JSON.parse(jsonPayload);
-  } catch {
+  } catch (err) {
+    console.error("Failed to parse JWT:", err);
     return null;
   }
 }
@@ -121,7 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated: true,
           isLoading: false,
         });
-      } catch {
+      } catch (err) {
+        console.error("Token refresh failed:", err);
         tokenStorage.clearTokens();
         setState({
           user: null,

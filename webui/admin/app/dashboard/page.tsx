@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -17,7 +18,10 @@ import {
   FileSpreadsheet,
   HardDrive,
   Activity,
+  Loader2,
 } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
+import { adminVMsApi, adminNodesApi, adminCustomersApi, adminAuditLogsApi } from "@/lib/api-client";
 
 interface DashboardStats {
   totalVMs: number;
@@ -34,86 +38,108 @@ interface ActivityItem {
   type: "info" | "warning" | "success" | "error";
 }
 
-const mockStats: DashboardStats = {
-  totalVMs: 247,
-  totalNodes: 12,
-  totalCustomers: 89,
-  activeAlerts: 3,
-};
-
-const mockActivities: ActivityItem[] = [
-  {
-    id: "1",
-    action: "VM created",
-    resource: "vm-prod-web-01",
-    timestamp: "2 minutes ago",
-    type: "success",
-  },
-  {
-    id: "2",
-    action: "Node health check failed",
-    resource: "node-hv-03",
-    timestamp: "15 minutes ago",
-    type: "error",
-  },
-  {
-    id: "3",
-    action: "Customer registered",
-    resource: "Acme Corp",
-    timestamp: "1 hour ago",
-    type: "info",
-  },
-  {
-    id: "4",
-    action: "Backup completed",
-    resource: "vm-db-primary",
-    timestamp: "2 hours ago",
-    type: "success",
-  },
-  {
-    id: "5",
-    action: "High CPU usage detected",
-    resource: "vm-analytics-02",
-    timestamp: "3 hours ago",
-    type: "warning",
-  },
-  {
-    id: "6",
-    action: "VM stopped",
-    resource: "vm-dev-test-05",
-    timestamp: "5 hours ago",
-    type: "info",
-  },
-];
-
-const statCards = [
-  {
-    title: "Total VMs",
-    value: mockStats.totalVMs.toString(),
-    icon: Server,
-    description: "Virtual machines running",
-  },
-  {
-    title: "Total Nodes",
-    value: mockStats.totalNodes.toString(),
-    icon: HardDrive,
-    description: "Hypervisor nodes",
-  },
-  {
-    title: "Total Customers",
-    value: mockStats.totalCustomers.toString(),
-    icon: Users,
-    description: "Active accounts",
-  },
-  {
-    title: "Active Alerts",
-    value: mockStats.activeAlerts.toString(),
-    icon: AlertCircle,
-    description: "Requires attention",
-  },
-];
-
 export default function DashboardPage() {
+  const { toast } = useToast();
+  const [stats, setStats] = useState<DashboardStats>({
+    totalVMs: 0,
+    totalNodes: 0,
+    totalCustomers: 0,
+    activeAlerts: 0,
+  });
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [vms, nodes, customers, logs] = await Promise.all([
+          adminVMsApi.getVMs().catch((err) => { console.error(err); return []; }),
+          adminNodesApi.getNodes().catch((err) => { console.error(err); return []; }),
+          adminCustomersApi.getCustomers().catch((err) => { console.error(err); return []; }),
+          adminAuditLogsApi.getAuditLogs().catch((err) => { console.error(err); return []; }),
+        ]);
+
+        setStats({
+          totalVMs: vms.length,
+          totalNodes: nodes.length,
+          totalCustomers: customers.length,
+          activeAlerts: 0, // Mock for now
+        });
+
+        const mappedActivities: ActivityItem[] = logs.slice(0, 6).map((log) => {
+          let type: "info" | "warning" | "success" | "error" = "info";
+          if (!log.success) type = "error";
+          else if (log.action.includes("create") || log.action.includes("start")) type = "success";
+          else if (log.action.includes("delete") || log.action.includes("stop")) type = "warning";
+
+          return {
+            id: log.id,
+            action: log.action,
+            resource: log.resource_id || log.resource_type,
+            timestamp: new Date(log.timestamp).toLocaleString(),
+            type,
+          };
+        });
+        setActivities(mappedActivities);
+      } catch (error) {
+        console.error("Failed to load dashboard data", error);
+        setError("Failed to load dashboard data");
+        toast({
+          title: "Error",
+          description: "Failed to load dashboard data.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, [toast]);
+
+  const statCards = [
+    {
+      title: "Total VMs",
+      value: stats.totalVMs.toString(),
+      icon: Server,
+      description: "Virtual machines running",
+    },
+    {
+      title: "Total Nodes",
+      value: stats.totalNodes.toString(),
+      icon: HardDrive,
+      description: "Hypervisor nodes",
+    },
+    {
+      title: "Total Customers",
+      value: stats.totalCustomers.toString(),
+      icon: Users,
+      description: "Active accounts",
+    },
+    {
+      title: "Active Alerts",
+      value: stats.activeAlerts.toString(),
+      icon: AlertCircle,
+      description: "Requires attention",
+    },
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-destructive">{error}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
@@ -171,10 +197,13 @@ export default function DashboardPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {mockActivities.map((activity) => (
-                  <div
-                    key={activity.id}
+              {activities.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-4">No recent activity found.</div>
+              ) : (
+                <div className="space-y-4">
+                  {activities.map((activity) => (
+                    <div
+                      key={activity.id}
                     className="flex items-start justify-between gap-4 border-b border-border last:border-0 pb-4 last:pb-0"
                   >
                     <div className="flex items-start gap-3">
@@ -204,6 +233,7 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
 
