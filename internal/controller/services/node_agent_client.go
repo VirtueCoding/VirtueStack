@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,6 +27,7 @@ type NodeAgentGRPCClient struct {
 // GRPCConnectionPool defines the interface for managing gRPC connections to nodes.
 type GRPCConnectionPool interface {
 	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
+	ReleaseConnection(nodeID string, conn *grpc.ClientConn)
 }
 
 // metricsCache holds cached node metrics with expiration.
@@ -430,7 +432,7 @@ func (c *NodeAgentGRPCClient) MigrateVM(ctx context.Context, sourceNodeID, targe
 	if err != nil {
 		return fmt.Errorf("connecting to source node %s: %w", sourceNodeID, err)
 	}
-	defer conn.Close()
+	defer c.connPool.ReleaseConnection(sourceNodeID, conn)
 
 	// Get target node details for address
 	targetNode, err := c.nodeRepo.GetByID(ctx, targetNodeID)
@@ -464,7 +466,7 @@ func (c *NodeAgentGRPCClient) AbortMigration(ctx context.Context, nodeID, vmID s
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer conn.Close()
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.AbortMigration(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -488,7 +490,7 @@ func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer conn.Close()
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 
@@ -520,6 +522,194 @@ func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID
 		return fmt.Errorf("post-migrate setup failed: %s", resp.GetErrorMessage())
 	}
 	return nil
+}
+
+func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *tasks.CreateVMRequest) (*tasks.CreateVMResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
+		VmId:                req.VMID,
+		Hostname:            req.Hostname,
+		Vcpu:                int32(req.VCPU),
+		MemoryMb:            int32(req.MemoryMB),
+		DiskGb:              int32(req.DiskGB),
+		TemplateRbdImage:    req.TemplateRBDImage,
+		TemplateRbdSnapshot: req.TemplateRBDSnapshot,
+		RootPasswordHash:    req.RootPasswordHash,
+		SshPublicKeys:       req.SSHPublicKeys,
+		Ipv4Address:         req.IPv4Address,
+		Ipv4Gateway:         req.IPv4Gateway,
+		Ipv6Address:         req.IPv6Address,
+		Ipv6Gateway:         req.IPv6Gateway,
+		MacAddress:          req.MACAddress,
+		PortSpeedMbps:       int32(req.PortSpeedMbps),
+		CephMonitors:        req.CephMonitors,
+		CephUser:            req.CephUser,
+		CephSecretUuid:      req.CephSecretUUID,
+		CephPool:            req.CephPool,
+		Nameservers:         req.Nameservers,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("calling CreateVM: %w", err)
+	}
+
+	return &tasks.CreateVMResponse{
+		DomainName: resp.GetLibvirtDomainName(),
+		VNCPort:    resp.GetVncPort(),
+	}, nil
+}
+
+func (c *NodeAgentGRPCClient) CreateSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) (*tasks.SnapshotResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{VmId: vmID, Name: snapshotName})
+	if err != nil {
+		return nil, fmt.Errorf("calling CreateSnapshot: %w", err)
+	}
+
+	return &tasks.SnapshotResponse{
+		SnapshotID:      resp.GetSnapshotId(),
+		RBDSnapshotName: resp.GetRbdSnapshotName(),
+		SizeBytes:       resp.GetSizeBytes(),
+	}, nil
+}
+
+func (c *NodeAgentGRPCClient) DeleteSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
+	if err != nil {
+		return fmt.Errorf("calling DeleteSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete snapshot %s for VM %s: %s", snapshotName, vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+func (c *NodeAgentGRPCClient) RestoreSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.RevertSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
+	if err != nil {
+		return fmt.Errorf("calling RevertSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to restore snapshot %s for VM %s: %s", snapshotName, vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+func (c *NodeAgentGRPCClient) CloneFromBackup(ctx context.Context, nodeID, vmID, backupSnapshot string, diskGB int) error {
+	return errors.New("CloneFromBackup is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID string) error {
+	return errors.New("DeleteDisk is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) CloneFromTemplate(ctx context.Context, nodeID, vmID, templateImage, templateSnapshot string, diskGB int) error {
+	return errors.New("CloneFromTemplate is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) GenerateCloudInit(ctx context.Context, nodeID string, cfg *tasks.CloudInitConfig) (string, error) {
+	return "", errors.New("GenerateCloudInit is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID, vmID string) (int, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GuestFreezeFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return 0, fmt.Errorf("calling GuestFreezeFilesystems: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return 0, fmt.Errorf("failed to freeze filesystems for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return 0, nil
+}
+
+func (c *NodeAgentGRPCClient) GuestThawFilesystems(ctx context.Context, nodeID, vmID string) (int, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GuestThawFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return 0, fmt.Errorf("calling GuestThawFilesystems: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return 0, fmt.Errorf("failed to thaw filesystems for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return 0, nil
+}
+
+func (c *NodeAgentGRPCClient) ProtectSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	return errors.New("ProtectSnapshot is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) UnprotectSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
+	return errors.New("UnprotectSnapshot is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) CloneSnapshot(ctx context.Context, nodeID, vmID, snapshotName, targetPool string) (string, error) {
+	return "", errors.New("CloneSnapshot is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) GetVMNodeID(ctx context.Context, vmID string) (string, error) {
+	return "", errors.New("GetVMNodeID is not supported by node agent gRPC client")
 }
 
 func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models.NodeHeartbeat {

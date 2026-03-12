@@ -2,6 +2,7 @@ package customer
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -13,9 +14,9 @@ import (
 
 // NetworkHistoryResponse represents network traffic history data.
 type NetworkHistoryResponse struct {
-	VMID      string          `json:"vm_id"`
+	VMID       string         `json:"vm_id"`
 	DataPoints []NetworkPoint `json:"data_points"`
-	Period    string          `json:"period"`
+	Period     string         `json:"period"`
 }
 
 // NetworkPoint represents a single data point in network history.
@@ -53,7 +54,7 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 
 		// Check if VM is not running
 		errMsg := err.Error()
-		if contains(errMsg, "not running") {
+		if strings.Contains(errMsg, "not running") {
 			respondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to get metrics")
 			return
 		}
@@ -95,8 +96,15 @@ func (h *CustomerHandler) GetBandwidth(c *gin.Context) {
 		percentUsed = int((float64(vm.BandwidthUsedBytes) / float64(limitBytes)) * 100)
 	}
 
-	// Calculate next reset (monthly from the last reset)
-	nextReset := vm.BandwidthResetAt.AddDate(0, 1, 0)
+	resetBase := vm.BandwidthResetAt
+	if resetBase.IsZero() {
+		resetBase = vm.CreatedAt
+	}
+	if resetBase.IsZero() {
+		resetBase = time.Now().UTC()
+	}
+
+	nextReset := resetBase.AddDate(0, 1, 0)
 
 	resp := BandwidthResponse{
 		UsedBytes:   vm.BandwidthUsedBytes,

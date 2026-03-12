@@ -15,6 +15,7 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/alexedwards/argon2id"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -192,8 +193,8 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 	// Verify the TOTP code
 	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
 		Skew:      1, // Allow 1 step tolerance (±30 seconds)
-		Digits:    6,
-		Algorithm: 1, // SHA1
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("validating TOTP: %w", err)
@@ -206,8 +207,10 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 			for i, codeHash := range customer.TOTPBackupCodesHash {
 				if providedHash == codeHash {
 					// Remove used backup code
-					remaining := append(customer.TOTPBackupCodesHash[:i], customer.TOTPBackupCodesHash[i+1:]...)
-					if err := s.customerRepo.UpdateBackupCodes(ctx, customer.ID, remaining); err != nil {
+					codes := customer.TOTPBackupCodesHash
+					codes = append(codes[:i], codes[i+1:]...)
+					customer.TOTPBackupCodesHash = codes
+					if err := s.customerRepo.UpdateBackupCodes(ctx, customer.ID, customer.TOTPBackupCodesHash); err != nil {
 						s.logger.Warn("failed to update backup codes after use", "customer_id", customer.ID, "error", err)
 					}
 					valid = true
@@ -591,8 +594,8 @@ func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, i
 	// Verify the TOTP code
 	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
 		Skew:      1, // Allow 1 step tolerance (±30 seconds)
-		Digits:    6,
-		Algorithm: 1, // SHA1
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("validating TOTP: %w", err)
@@ -605,8 +608,10 @@ func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, i
 			for i, codeHash := range admin.TOTPBackupCodesHash {
 				if providedHash == codeHash {
 					// Remove used backup code
-					remaining := append(admin.TOTPBackupCodesHash[:i], admin.TOTPBackupCodesHash[i+1:]...)
-					if err := s.adminRepo.UpdateBackupCodes(ctx, admin.ID, remaining); err != nil {
+					codes := admin.TOTPBackupCodesHash
+					codes = append(codes[:i], codes[i+1:]...)
+					admin.TOTPBackupCodesHash = codes
+					if err := s.adminRepo.UpdateBackupCodes(ctx, admin.ID, admin.TOTPBackupCodesHash); err != nil {
 						s.logger.Warn("failed to update backup codes after use", "admin_id", admin.ID, "error", err)
 					}
 					valid = true
@@ -695,8 +700,8 @@ func (s *AuthService) ValidateTOTP(totpCode, encryptedSecret string) (bool, erro
 
 	valid, err := totp.ValidateCustom(totpCode, secret, time.Now(), totp.ValidateOpts{
 		Skew:      1,
-		Digits:    6,
-		Algorithm: 1, // SHA1
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
 		return false, fmt.Errorf("validating TOTP: %w", err)
