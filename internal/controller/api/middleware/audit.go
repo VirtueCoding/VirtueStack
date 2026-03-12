@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -81,7 +82,11 @@ func Audit(logger AuditLogger) gin.HandlerFunc {
 		}
 
 		if !success {
-			entry.ErrorMessage = c.Errors.Last().Error()
+			if lastErr := c.Errors.Last(); lastErr != nil {
+				entry.ErrorMessage = lastErr.Error()
+			} else {
+				entry.ErrorMessage = fmt.Sprintf("HTTP %d", status)
+			}
 		}
 
 		if err := logger(c.Request.Context(), entry); err != nil {
