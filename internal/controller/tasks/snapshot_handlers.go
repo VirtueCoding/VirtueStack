@@ -18,24 +18,24 @@ const (
 
 // SnapshotCreatePayload represents the payload for snapshot.create tasks.
 type SnapshotCreatePayload struct {
-	VMID        string `json:"vm_id"`
-	SnapshotID  string `json:"snapshot_id"`
-	Name        string `json:"name"`
-	CustomerID  string `json:"customer_id"`
+	VMID       string `json:"vm_id"`
+	SnapshotID string `json:"snapshot_id"`
+	Name       string `json:"name"`
+	CustomerID string `json:"customer_id"`
 }
 
 // SnapshotRevertPayload represents the payload for snapshot.revert tasks.
 type SnapshotRevertPayload struct {
-	VMID        string `json:"vm_id"`
-	SnapshotID  string `json:"snapshot_id"`
-	CustomerID  string `json:"customer_id"`
+	VMID       string `json:"vm_id"`
+	SnapshotID string `json:"snapshot_id"`
+	CustomerID string `json:"customer_id"`
 }
 
 // SnapshotDeletePayload represents the payload for snapshot.delete tasks.
 type SnapshotDeletePayload struct {
-	VMID        string `json:"vm_id"`
-	SnapshotID  string `json:"snapshot_id"`
-	CustomerID  string `json:"customer_id"`
+	VMID       string `json:"vm_id"`
+	SnapshotID string `json:"snapshot_id"`
+	CustomerID string `json:"customer_id"`
 }
 
 // handleSnapshotCreate handles the snapshot creation flow.
@@ -116,13 +116,6 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 		return fmt.Errorf("getting snapshot record %s: %w", payload.SnapshotID, err)
 	}
 
-	// Update snapshot with RBD info (we need to update the existing record)
-	// Since there's no UpdateSnapshot method, we delete and recreate
-	if err := deps.BackupRepo.DeleteSnapshot(ctx, payload.SnapshotID); err != nil {
-		logger.Warn("failed to delete old snapshot record", "error", err)
-	}
-
-	// Create updated snapshot record
 	updatedSnapshot := &models.Snapshot{
 		ID:          payload.SnapshotID,
 		VMID:        payload.VMID,
@@ -131,7 +124,7 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 		SizeBytes:   &snapshotResp.SizeBytes,
 	}
 
-	if err := deps.BackupRepo.CreateSnapshot(ctx, updatedSnapshot); err != nil {
+	if err := deps.BackupRepo.UpdateSnapshot(ctx, updatedSnapshot); err != nil {
 		logger.Error("failed to update snapshot record", "error", err)
 		// Attempt to clean up the created snapshot
 		_ = deps.NodeClient.DeleteSnapshot(ctx, nodeID, payload.VMID, rbdSnapshotName)
@@ -145,10 +138,10 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 
 	// Set task result
 	result := map[string]any{
-		"snapshot_id":    payload.SnapshotID,
-		"vm_id":          payload.VMID,
-		"rbd_snapshot":   snapshotResp.RBDSnapshotName,
-		"size_bytes":     snapshotResp.SizeBytes,
+		"snapshot_id":  payload.SnapshotID,
+		"vm_id":        payload.VMID,
+		"rbd_snapshot": snapshotResp.RBDSnapshotName,
+		"size_bytes":   snapshotResp.SizeBytes,
 	}
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {

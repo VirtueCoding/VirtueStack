@@ -3,6 +3,8 @@ package tasks
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha512"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -15,15 +17,19 @@ import (
 
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
-	VMRepo       *repository.VMRepository
-	NodeRepo     *repository.NodeRepository
-	IPRepo       *repository.IPRepository
-	BackupRepo   *repository.BackupRepository
-	TaskRepo     *repository.TaskRepository
-	TemplateRepo *repository.TemplateRepository
-	IPAMService  IPAMService
-	NodeClient   NodeAgentClient
-	Logger       *slog.Logger
+	VMRepo         *repository.VMRepository
+	NodeRepo       *repository.NodeRepository
+	IPRepo         *repository.IPRepository
+	BackupRepo     *repository.BackupRepository
+	TaskRepo       *repository.TaskRepository
+	TemplateRepo   *repository.TemplateRepository
+	IPAMService    IPAMService
+	NodeClient     NodeAgentClient
+	DNSNameservers []string
+	CephUser       string
+	CephSecretUUID string
+	CephMonitors   []string
+	Logger         *slog.Logger
 }
 
 // IPAMService defines the interface for IP address management operations.
@@ -170,9 +176,10 @@ type VMDeletePayload struct {
 
 // VMMigratePayload represents the payload for vm.migrate tasks.
 type VMMigratePayload struct {
-	VMID         string `json:"vm_id"`
-	SourceNodeID string `json:"source_node_id"`
-	TargetNodeID string `json:"target_node_id"`
+	VMID              string `json:"vm_id"`
+	SourceNodeID      string `json:"source_node_id"`
+	TargetNodeID      string `json:"target_node_id"`
+	PreMigrationState string `json:"pre_migration_state,omitempty"`
 }
 
 // BackupCreatePayload represents the payload for backup.create tasks.
@@ -202,7 +209,7 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 	worker.RegisterHandler(models.TaskTypeBackupCreate, func(ctx context.Context, task *models.Task) error {
 		return handleBackupCreate(ctx, task, deps)
 	})
-	worker.RegisterHandler("vm.delete", func(ctx context.Context, task *models.Task) error {
+	worker.RegisterHandler(models.TaskTypeVMDelete, func(ctx context.Context, task *models.Task) error {
 		return handleVMDelete(ctx, task, deps)
 	})
 	worker.RegisterHandler(models.TaskTypeBackupRestore, func(ctx context.Context, task *models.Task) error {
@@ -224,7 +231,7 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 			models.TaskTypeVMReinstall,
 			models.TaskTypeVMMigrate,
 			models.TaskTypeBackupCreate,
-			"vm.delete",
+			models.TaskTypeVMDelete,
 			models.TaskTypeBackupRestore,
 			models.TaskTypeSnapshotCreate,
 			models.TaskTypeSnapshotRevert,
@@ -249,6 +256,13 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		logger.Error("failed to parse vm.create payload", "error", err)
 		return fmt.Errorf("parsing vm.create payload: %w", err)
 	}
+
+	passwordHash, err := hashPasswordForCloudInit(payload.Password)
+	if err != nil {
+		logger.Error("failed to hash root password", "error", err)
+		return fmt.Errorf("hashing password: %w", err)
+	}
+	payload.Password = ""
 
 	logger = logger.With("vm_id", payload.VMID)
 	logger.Info("vm.create task started",
@@ -331,12 +345,6 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		ipv6Gateway = ipv6Subnet.Gateway
 	}
 
-	// Hash the password using Argon2id
-	passwordHash, err := hashPassword(payload.Password)
-	if err != nil {
-		return fmt.Errorf("hashing password: %w", err)
-	}
-
 	// Generate cloud-init ISO
 	cloudInitCfg := &CloudInitConfig{
 		VMID:             payload.VMID,
@@ -347,7 +355,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		IPv4Gateway:      ipv4Gateway,
 		IPv6Address:      ipv6Addr,
 		IPv6Gateway:      ipv6Gateway,
-		Nameservers:      []string{"8.8.8.8", "8.8.4.4"}, // Default nameservers
+		Nameservers:      append([]string(nil), deps.DNSNameservers...),
 	}
 
 	cloudInitPath, err := deps.NodeClient.GenerateCloudInit(ctx, payload.NodeID, cloudInitCfg)
@@ -381,9 +389,9 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		MACAddress:          macAddress,
 		PortSpeedMbps:       vm.PortSpeedMbps,
 		CephPool:            node.CephPool,
-		CephUser:            "virtuestack", // Default Ceph user
-		CephSecretUUID:      "",            // Would be configured per-cluster
-		CephMonitors:        []string{},    // Would be configured per-cluster
+		CephUser:            deps.CephUser,
+		CephSecretUUID:      deps.CephSecretUUID,
+		CephMonitors:        append([]string(nil), deps.CephMonitors...),
 		Nameservers:         cloudInitCfg.Nameservers,
 	}
 
@@ -452,7 +460,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 //  6. Release IP addresses
 //  7. Soft delete VM record
 func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", "vm.delete")
+	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMDelete)
 
 	// Parse payload
 	var payload VMDeletePayload
@@ -743,6 +751,173 @@ func hashPassword(password string) (string, error) {
 		return "", fmt.Errorf("creating password hash: %w", err)
 	}
 	return hash, nil
+}
+
+func hashPasswordForCloudInit(password string) (string, error) {
+	if password == "" {
+		return "", nil
+	}
+
+	if err := validatePasswordStrength(password); err != nil {
+		return "", err
+	}
+
+	salt, err := generateShadowSalt(16)
+	if err != nil {
+		return "", fmt.Errorf("generating SHA-512 crypt salt: %w", err)
+	}
+	return sha512Crypt(password, salt, 5000), nil
+}
+
+func generateShadowSalt(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("salt length must be positive")
+	}
+
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./"
+	buf := make([]byte, length)
+	randBytes := make([]byte, length)
+	if _, err := rand.Read(randBytes); err != nil {
+		return "", fmt.Errorf("reading random bytes: %w", err)
+	}
+
+	for i, b := range randBytes {
+		buf[i] = alphabet[int(b)%len(alphabet)]
+	}
+
+	return string(buf), nil
+}
+
+func sha512Crypt(password, salt string, rounds int) string {
+	passBytes := []byte(password)
+	saltBytes := []byte(salt)
+
+	altCtx := sha512.New()
+	altCtx.Write(passBytes)
+	altCtx.Write(saltBytes)
+	altCtx.Write(passBytes)
+	altSum := altCtx.Sum(nil)
+
+	ctx := sha512.New()
+	ctx.Write(passBytes)
+	ctx.Write(saltBytes)
+
+	for i := len(passBytes); i > 0; i -= len(altSum) {
+		n := len(altSum)
+		if i < n {
+			n = i
+		}
+		ctx.Write(altSum[:n])
+	}
+
+	for i := len(passBytes); i > 0; i >>= 1 {
+		if i&1 != 0 {
+			ctx.Write(altSum)
+		} else {
+			ctx.Write(passBytes)
+		}
+	}
+
+	sum := ctx.Sum(nil)
+
+	dpCtx := sha512.New()
+	for i := 0; i < len(passBytes); i++ {
+		dpCtx.Write(passBytes)
+	}
+	dpSum := dpCtx.Sum(nil)
+	pSeq := repeatToLength(dpSum, len(passBytes))
+
+	dsCtx := sha512.New()
+	for i := 0; i < 16+int(sum[0]); i++ {
+		dsCtx.Write(saltBytes)
+	}
+	dsSum := dsCtx.Sum(nil)
+	sSeq := repeatToLength(dsSum, len(saltBytes))
+
+	for i := 0; i < rounds; i++ {
+		rCtx := sha512.New()
+
+		if i&1 != 0 {
+			rCtx.Write(pSeq)
+		} else {
+			rCtx.Write(sum)
+		}
+
+		if i%3 != 0 {
+			rCtx.Write(sSeq)
+		}
+
+		if i%7 != 0 {
+			rCtx.Write(pSeq)
+		}
+
+		if i&1 != 0 {
+			rCtx.Write(sum)
+		} else {
+			rCtx.Write(pSeq)
+		}
+
+		sum = rCtx.Sum(nil)
+	}
+
+	return fmt.Sprintf("$6$rounds=%d$%s$%s", rounds, salt, sha512CryptEncode(sum))
+}
+
+func repeatToLength(src []byte, length int) []byte {
+	out := make([]byte, 0, length)
+	for len(out) < length {
+		remaining := length - len(out)
+		if remaining >= len(src) {
+			out = append(out, src...)
+		} else {
+			out = append(out, src[:remaining]...)
+		}
+	}
+	return out
+}
+
+func sha512CryptEncode(sum []byte) string {
+	const alphabet = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	encode24 := func(b2, b1, b0 byte, n int) string {
+		v := uint32(b2)<<16 | uint32(b1)<<8 | uint32(b0)
+		out := make([]byte, n)
+		for i := 0; i < n; i++ {
+			out[i] = alphabet[v&0x3f]
+			v >>= 6
+		}
+		return string(out)
+	}
+
+	pairs := [][4]int{
+		{0, 21, 42, 4},
+		{22, 43, 1, 4},
+		{44, 2, 23, 4},
+		{3, 24, 45, 4},
+		{25, 46, 4, 4},
+		{47, 5, 26, 4},
+		{6, 27, 48, 4},
+		{28, 49, 7, 4},
+		{50, 8, 29, 4},
+		{9, 30, 51, 4},
+		{31, 52, 10, 4},
+		{53, 11, 32, 4},
+		{12, 33, 54, 4},
+		{34, 55, 13, 4},
+		{56, 14, 35, 4},
+		{15, 36, 57, 4},
+		{37, 58, 16, 4},
+		{59, 17, 38, 4},
+		{18, 39, 60, 4},
+		{40, 61, 19, 4},
+		{62, 20, 41, 4},
+	}
+
+	out := ""
+	for _, p := range pairs {
+		out += encode24(sum[p[0]], sum[p[1]], sum[p[2]], p[3])
+	}
+	out += encode24(0, 0, sum[63], 2)
+	return out
 }
 
 // verifyPassword verifies a password against an Argon2id hash.

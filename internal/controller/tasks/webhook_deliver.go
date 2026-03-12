@@ -142,10 +142,14 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 			"error", errMsg,
 			"next_retry_at", nextRetryAt)
 
-		// Check if webhook should be auto-disabled
-		if !success {
-			newFailCount := webhook.FailCount + 1
-			if newFailCount >= MaxConsecutiveFailures {
+		newFailCount := webhook.FailCount + 1
+		if newFailCount >= MaxConsecutiveFailures {
+			disable := false
+			if err := deps.WebhookRepo.Update(ctx, webhook.ID, nil, nil, &disable); err != nil {
+				logger.Error("failed to persist webhook disable state",
+					"webhook_id", webhook.ID,
+					"error", err)
+			} else {
 				logger.Warn("webhook auto-disabled due to consecutive failures",
 					"fail_count", newFailCount)
 			}
@@ -176,7 +180,7 @@ func deliverWebhook(ctx context.Context, client *http.Client, webhook *repositor
 	if err != nil {
 		return false, 0, "", fmt.Sprintf("decrypting webhook secret: %s", err.Error())
 	}
-	
+
 	signature := crypto.GenerateHMACSignature(decryptedSecret, delivery.Payload)
 	req.Header.Set("X-Signature-SHA256", signature)
 

@@ -191,7 +191,7 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		IPv4Gateway:      ipv4Gateway,
 		IPv6Address:      ipv6Addr,
 		IPv6Gateway:      ipv6Gateway,
-		Nameservers:      []string{"8.8.8.8", "8.8.4.4"},
+		Nameservers:      append([]string(nil), deps.DNSNameservers...),
 	}
 
 	_, err = deps.NodeClient.GenerateCloudInit(ctx, nodeID, cloudInitCfg)
