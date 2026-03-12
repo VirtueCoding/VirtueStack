@@ -12,6 +12,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,6 +70,21 @@ func main() {
 		logger.Error("Failed to create server", "error", err)
 		os.Exit(1)
 	}
+
+	var nodeClient *controller.NodeClient
+	if tlsCAFile := os.Getenv("TLS_CA_FILE"); tlsCAFile != "" {
+		nodeClient, err = controller.NewNodeClient(tlsCAFile, logger)
+		if err != nil {
+			logger.Error("Failed to create node client", "error", err, "tls_ca_file", tlsCAFile)
+			os.Exit(1)
+		}
+		logger.Info("Configured secure node client", "tls_ca_file", tlsCAFile)
+	} else {
+		logger.Warn("TLS_CA_FILE is not set, using insecure node client")
+		nodeClient = controller.InsecureNodeClient(logger)
+	}
+	server.SetNodeClient(nodeClient)
+
 	server.SetTaskWorker(worker)
 	server.SetNATSConnection(nc)
 
@@ -80,15 +96,19 @@ func main() {
 
 	// Register task handlers
 	handlerDeps := &tasks.HandlerDeps{
-		VMRepo:       repository.NewVMRepository(dbPool),
-		NodeRepo:     repository.NewNodeRepository(dbPool),
-		IPRepo:       repository.NewIPRepository(dbPool),
-		BackupRepo:   repository.NewBackupRepository(dbPool),
-		TaskRepo:     repository.NewTaskRepository(dbPool),
-		TemplateRepo: repository.NewTemplateRepository(dbPool),
-		IPAMService:  server.GetIPAMService(),
-		NodeClient:   nil, // NodeClient will be set up in a future phase
-		Logger:       logger,
+		VMRepo:         repository.NewVMRepository(dbPool),
+		NodeRepo:       repository.NewNodeRepository(dbPool),
+		IPRepo:         repository.NewIPRepository(dbPool),
+		BackupRepo:     repository.NewBackupRepository(dbPool),
+		TaskRepo:       repository.NewTaskRepository(dbPool),
+		TemplateRepo:   repository.NewTemplateRepository(dbPool),
+		IPAMService:    server.GetIPAMService(),
+		NodeClient:     services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), nodeClient, logger),
+		DNSNameservers: cfg.DNSNameservers,
+		CephUser:       cfg.CephUser,
+		CephSecretUUID: cfg.CephSecretUUID,
+		CephMonitors:   cfg.CephMonitors,
+		Logger:         logger,
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)
 

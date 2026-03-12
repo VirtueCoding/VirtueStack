@@ -24,12 +24,14 @@ var weakPasswords = map[string]bool{
 // Default configuration values.
 const (
 	defaultListenAddr     = ":8080"
-	defaultLogLevel      = "info"
-	defaultCephPool      = "vs-vms"
-	defaultCephUser      = "virtuestack"
-	defaultCephConf      = "/etc/ceph/ceph.conf"
-	defaultCloudInitPath = "/var/lib/virtuestack/cloud-init"
+	defaultLogLevel       = "info"
+	defaultConsoleBaseURL = "https://console.virtuestack.io"
+	defaultCephPool       = "vs-vms"
+	defaultCephUser       = "virtuestack"
+	defaultCephConf       = "/etc/ceph/ceph.conf"
+	defaultCloudInitPath  = "/var/lib/virtuestack/cloud-init"
 	defaultISOStoragePath = "/var/lib/virtuestack/iso"
+	defaultDNSNameservers = "8.8.8.8,8.8.4.4"
 )
 
 // SMTPConfig holds SMTP email configuration.
@@ -49,32 +51,37 @@ type TelegramConfig struct {
 
 // BackupConfig holds backup configuration.
 type BackupConfig struct {
-	Enabled      bool   `yaml:"enabled" env:"BACKUP_ENABLED"`
-	Schedule     string `yaml:"schedule" env:"BACKUP_SCHEDULE"`
-	Retention    int    `yaml:"retention" env:"BACKUP_RETENTION"`
-	StoragePath  string `yaml:"storage_path" env:"BACKUP_STORAGE_PATH"`
-	RemoteHost   string `yaml:"remote_host" env:"BACKUP_REMOTE_HOST"`
-	RemoteUser   string `yaml:"remote_user" env:"BACKUP_REMOTE_USER"`
-	RemotePath   string `yaml:"remote_path" env:"BACKUP_REMOTE_PATH"`
+	Enabled     bool   `yaml:"enabled" env:"BACKUP_ENABLED"`
+	Schedule    string `yaml:"schedule" env:"BACKUP_SCHEDULE"`
+	Retention   int    `yaml:"retention" env:"BACKUP_RETENTION"`
+	StoragePath string `yaml:"storage_path" env:"BACKUP_STORAGE_PATH"`
+	RemoteHost  string `yaml:"remote_host" env:"BACKUP_REMOTE_HOST"`
+	RemoteUser  string `yaml:"remote_user" env:"BACKUP_REMOTE_USER"`
+	RemotePath  string `yaml:"remote_path" env:"BACKUP_REMOTE_PATH"`
 }
 
 // PowerDNSConfig holds PowerDNS integration configuration.
 type PowerDNSConfig struct {
-	APIURL    string `yaml:"api_url" env:"POWERDNS_API_URL"`
-	APIKey    string `yaml:"api_key" env:"POWERDNS_API_KEY"`
-	ServerID  string `yaml:"server_id" env:"POWERDNS_SERVER_ID"`
-	ZoneName  string `yaml:"zone_name" env:"POWERDNS_ZONE_NAME"`
+	APIURL   string `yaml:"api_url" env:"POWERDNS_API_URL"`
+	APIKey   string `yaml:"api_key" env:"POWERDNS_API_KEY"`
+	ServerID string `yaml:"server_id" env:"POWERDNS_SERVER_ID"`
+	ZoneName string `yaml:"zone_name" env:"POWERDNS_ZONE_NAME"`
 }
 
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
-	DatabaseURL   string `yaml:"database_url" env:"DATABASE_URL"`
-	NatsURL       string `yaml:"nats_url" env:"NATS_URL"`
-	JWTSecret     string `yaml:"jwt_secret" env:"JWT_SECRET"`
-	EncryptionKey string `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
-	ListenAddr    string `yaml:"listen_addr" env:"LISTEN_ADDR"`
-	LogLevel      string `yaml:"log_level" env:"LOG_LEVEL"`
-	Environment   string `yaml:"environment" env:"APP_ENV"`
+	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
+	NatsURL        string   `yaml:"nats_url" env:"NATS_URL"`
+	JWTSecret      string   `yaml:"jwt_secret" env:"JWT_SECRET"`
+	EncryptionKey  string   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
+	ListenAddr     string   `yaml:"listen_addr" env:"LISTEN_ADDR"`
+	LogLevel       string   `yaml:"log_level" env:"LOG_LEVEL"`
+	Environment    string   `yaml:"environment" env:"APP_ENV"`
+	ConsoleBaseURL string   `yaml:"console_base_url" env:"CONSOLE_BASE_URL"`
+	DNSNameservers []string `yaml:"dns_nameservers" env:"DNS_NAMESERVERS"`
+	CephUser       string   `yaml:"ceph_user" env:"CEPH_USER"`
+	CephSecretUUID string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
+	CephMonitors   []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
 
 	// Optional configurations
 	SMTP     SMTPConfig     `yaml:"smtp"`
@@ -112,8 +119,11 @@ type NodeAgentConfig struct {
 // Required fields: DatabaseURL, NatsURL, JWTSecret, EncryptionKey.
 func LoadControllerConfig() (*ControllerConfig, error) {
 	cfg := &ControllerConfig{
-		ListenAddr: defaultListenAddr,
-		LogLevel:   defaultLogLevel,
+		ListenAddr:     defaultListenAddr,
+		LogLevel:       defaultLogLevel,
+		ConsoleBaseURL: defaultConsoleBaseURL,
+		DNSNameservers: splitAndTrimCSV(defaultDNSNameservers),
+		CephUser:       defaultCephUser,
 	}
 
 	// Load from YAML file if specified
@@ -214,6 +224,21 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	if v := os.Getenv("APP_ENV"); v != "" {
 		cfg.Environment = v
 	}
+	if v := os.Getenv("CONSOLE_BASE_URL"); v != "" {
+		cfg.ConsoleBaseURL = v
+	}
+	if v := os.Getenv("DNS_NAMESERVERS"); v != "" {
+		cfg.DNSNameservers = splitAndTrimCSV(v)
+	}
+	if v := os.Getenv("CEPH_USER"); v != "" {
+		cfg.CephUser = v
+	}
+	if v := os.Getenv("CEPH_SECRET_UUID"); v != "" {
+		cfg.CephSecretUUID = v
+	}
+	if v := os.Getenv("CEPH_MONITORS"); v != "" {
+		cfg.CephMonitors = splitAndTrimCSV(v)
+	}
 
 	// SMTP config
 	if v := os.Getenv("SMTP_HOST"); v != "" {
@@ -311,6 +336,31 @@ func validateControllerConfig(cfg *ControllerConfig) error {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
 
+	if len(cfg.JWTSecret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	}
+	if len(cfg.EncryptionKey) < 32 {
+		return fmt.Errorf("ENCRYPTION_KEY must be at least 32 characters")
+	}
+
+	if strings.EqualFold(cfg.Environment, "production") {
+		knownBadDefaults := map[string]bool{
+			"devpassword":                           true,
+			"dev-jwt-secret-min-32-characters-long": true,
+			"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": true,
+		}
+
+		if knownBadDefaults[cfg.JWTSecret] {
+			return fmt.Errorf("JWT_SECRET must not use a known insecure default in production")
+		}
+		if knownBadDefaults[cfg.EncryptionKey] {
+			return fmt.Errorf("ENCRYPTION_KEY must not use a known insecure default in production")
+		}
+		if strings.Contains(cfg.DatabaseURL, "devpassword") {
+			return fmt.Errorf("DATABASE_URL contains a known insecure default password; use a strong password in production")
+		}
+	}
+
 	return nil
 }
 
@@ -387,4 +437,16 @@ func validateDefaultPasswords() {
 			log.Printf("WARNING: %s is set to a weak default password - please change in production", envVar)
 		}
 	}
+}
+
+func splitAndTrimCSV(input string) []string {
+	parts := strings.Split(input, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
