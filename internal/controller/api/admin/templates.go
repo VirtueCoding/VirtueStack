@@ -78,10 +78,18 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 		SupportsCloudInit: req.SupportsCloudInit,
 		IsActive:          req.IsActive,
 		SortOrder:         req.SortOrder,
+		Description:       req.Description,
 	}
 
-	// Note: Template creation would go through a repository Create method
-	// For now, we use the template service which handles RBD image import
+	err := h.templateService.Create(c.Request.Context(), template)
+	if err != nil {
+		h.logger.Error("failed to create template",
+			"name", req.Name,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_CREATE_FAILED", err.Error())
+		return
+	}
 
 	h.logger.Info("template creation requested via admin API",
 		"name", req.Name,
@@ -90,10 +98,10 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 
 	// Log audit event
 	h.logAuditEvent(c, "template.create", "template", "", map[string]interface{}{
-		"name":        req.Name,
-		"os_family":   req.OSFamily,
-		"os_version":  req.OSVersion,
-		"rbd_image":   req.RBDImage,
+		"name":         req.Name,
+		"os_family":    req.OSFamily,
+		"os_version":   req.OSVersion,
+		"rbd_image":    req.RBDImage,
 		"rbd_snapshot": req.RBDSnapshot,
 	}, true)
 

@@ -20,7 +20,6 @@ type SettingUpdateRequest struct {
 	Value string `json:"value" validate:"required"`
 }
 
-// Default system settings - these would typically come from a database.
 var defaultSettings = []Setting{
 	{Key: "maintenance_mode", Value: "false", Description: "When true, no new VMs can be created"},
 	{Key: "default_backup_retention_days", Value: "30", Description: "Default backup retention period in days"},
@@ -36,9 +35,33 @@ var defaultSettings = []Setting{
 
 // GetSettings handles GET /settings - retrieves all system settings.
 func (h *AdminHandler) GetSettings(c *gin.Context) {
-	// In a production system, these would be loaded from a database or config store.
-	// For now, we return the default settings.
-	settings := defaultSettings
+	settings := make([]Setting, 0, len(defaultSettings))
+	for _, s := range defaultSettings {
+		settings = append(settings, s)
+	}
+
+	if h.settingsRepo != nil {
+		stored, err := h.settingsRepo.List(c.Request.Context())
+		if err != nil {
+			h.logger.Error("failed to list settings",
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "SETTINGS_LIST_FAILED", "Failed to retrieve settings")
+			return
+		}
+
+		for i := range settings {
+			for _, dbSetting := range stored {
+				if settings[i].Key == dbSetting.Key {
+					settings[i].Value = dbSetting.Value
+					if dbSetting.Description != "" {
+						settings[i].Description = dbSetting.Description
+					}
+					break
+				}
+			}
+		}
+	}
 
 	c.JSON(http.StatusOK, models.Response{Data: settings})
 }
@@ -67,8 +90,16 @@ func (h *AdminHandler) UpdateSetting(c *gin.Context) {
 		return
 	}
 
-	// In a production system, this would update a database or config store.
-	// For now, we log the update and return success.
+	if h.settingsRepo != nil {
+		if err := h.settingsRepo.Upsert(c.Request.Context(), key, req.Value); err != nil {
+			h.logger.Error("failed to persist setting",
+				"key", key,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "SETTING_UPDATE_FAILED", "Failed to persist setting")
+			return
+		}
+	}
 
 	// Log audit event
 	h.logAuditEvent(c, "setting.update", "setting", key, map[string]interface{}{

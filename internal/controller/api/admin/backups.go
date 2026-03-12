@@ -5,6 +5,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -44,10 +45,21 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		filter.Status = nil
 	}
 
-	// In a production system, we would query the backup repository with filters.
-	// For now, we return an empty list with proper pagination structure.
-	backups := []models.Backup{}
-	total := 0
+	repoFilter := repository.BackupListFilter{
+		PaginationParams: pagination,
+		VMID:             filter.VMID,
+		Status:           filter.Status,
+	}
+	repoFilter.Type = nil
+
+	backups, total, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
+	if err != nil {
+		h.logger.Error("failed to list backups",
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to retrieve backups")
+		return
+	}
 
 	// Log the filter for debugging
 	h.logger.Debug("listing backups with filter",

@@ -12,11 +12,11 @@ import (
 
 // NodeUpdateRequest represents the request body for updating a node.
 type NodeUpdateRequest struct {
-	GRPCAddress  *string `json:"grpc_address,omitempty" validate:"omitempty,max=255"`
-	LocationID   *string `json:"location_id,omitempty" validate:"omitempty,uuid"`
-	TotalVCPU    *int    `json:"total_vcpu,omitempty" validate:"omitempty,min=1"`
-	TotalMemory  *int    `json:"total_memory_mb,omitempty" validate:"omitempty,min=1024"`
-	IPMIAddress  *string `json:"ipmi_address,omitempty" validate:"omitempty,ip"`
+	GRPCAddress *string `json:"grpc_address,omitempty" validate:"omitempty,max=255"`
+	LocationID  *string `json:"location_id,omitempty" validate:"omitempty,uuid"`
+	TotalVCPU   *int    `json:"total_vcpu,omitempty" validate:"omitempty,min=1"`
+	TotalMemory *int    `json:"total_memory_mb,omitempty" validate:"omitempty,min=1024"`
+	IPMIAddress *string `json:"ipmi_address,omitempty" validate:"omitempty,ip"`
 }
 
 // ListNodes handles GET /nodes - lists all hypervisor nodes with optional filtering.
@@ -166,16 +166,25 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 		node.IPMIAddress = req.IPMIAddress
 	}
 
-	// Note: Node update would require a repository Update method
-	// For now, we log the update request
-	h.logger.Info("node update requested via admin API",
-		"node_id", nodeID,
-		"correlation_id", middleware.GetCorrelationID(c))
+	if err := h.nodeService.UpdateNode(c.Request.Context(), node); err != nil {
+		h.logger.Error("failed to update node",
+			"node_id", nodeID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "NODE_UPDATE_FAILED", err.Error())
+		return
+	}
+
+	updatedNode, err := h.nodeService.GetNode(c.Request.Context(), nodeID)
+	if err != nil {
+		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve updated node")
+		return
+	}
 
 	// Log audit event
 	h.logAuditEvent(c, "node.update", "node", nodeID, req, true)
 
-	c.JSON(http.StatusOK, models.Response{Data: node})
+	c.JSON(http.StatusOK, models.Response{Data: updatedNode})
 }
 
 // DeleteNode handles DELETE /nodes/:id - permanently removes a node.

@@ -20,9 +20,9 @@ type CustomerUpdateRequest struct {
 // CustomerDetail represents a customer with additional statistics.
 type CustomerDetail struct {
 	models.Customer
-	VMCount      int `json:"vm_count"`
-	ActiveVMs    int `json:"active_vms"`
-	BackupCount  int `json:"backup_count"`
+	VMCount     int `json:"vm_count"`
+	ActiveVMs   int `json:"active_vms"`
+	BackupCount int `json:"backup_count"`
 }
 
 // ListCustomers handles GET /customers - lists all customers.
@@ -98,7 +98,7 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	}
 	_ = vms // We don't need the actual VMs, just the count
 
-// Count active VMs
+	// Count active VMs
 	activeFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		Status:     strPtr("running"),
@@ -171,7 +171,16 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	// Apply name update if specified
 	if req.Name != nil {
 		customer.Name = *req.Name
-		// Note: Would need repository Update method
+		actorIP := c.ClientIP()
+		actorID := middleware.GetUserID(c)
+		if err := h.customerService.Update(c.Request.Context(), actorID, actorIP, customer); err != nil {
+			h.logger.Error("failed to update customer profile",
+				"customer_id", customerID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", err.Error())
+			return
+		}
 	}
 
 	// Log audit event
