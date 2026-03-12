@@ -17,7 +17,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>{if $console_type eq 'serial'}Serial{else}VNC{/if} Console - {$vm_id}</title>
+    <title>{if $console_type eq 'serial'}Serial{else}VNC{/if} Console - {$vm_id|escape:'htmlall'}</title>
     
     <style type="text/css">
         * {
@@ -293,7 +293,7 @@
             <i class="fas fa-{if $console_type eq 'serial'}terminal{else}desktop{/if}"></i>
             <span>{if $console_type eq 'serial'}Serial{else}VNC{/if} Console</span>
             <span class="console-info">
-                VM: {if $vm_ip}<code>{$vm_ip}</code>{else}<code>{$vm_id|truncate:8:''}</code>{/if}
+                VM: {if $vm_ip}<code>{$vm_ip|escape:'htmlall'}</code>{else}<code>{$vm_id|escape:'htmlall'|truncate:8:''}</code>{/if}
             </span>
         </div>
         
@@ -337,7 +337,7 @@
         <iframe 
             id="console-iframe"
             class="console-iframe"
-            src="{$iframe_url}"
+            src="{$iframe_url|escape:'htmlall'}"
             sandbox="allow-scripts allow-same-origin allow-forms"
             allow="clipboard-read; clipboard-write"
             loading="eager"
@@ -372,7 +372,7 @@
     </div>
     
     <script type="text/javascript">
-        var consoleType = '{$console_type}';
+        var consoleType = '{$console_type|escape:'javascript'}';
         var consoleIframe = document.getElementById('console-iframe');
         var isLoading = true;
         var connectionStatus = 'connecting';

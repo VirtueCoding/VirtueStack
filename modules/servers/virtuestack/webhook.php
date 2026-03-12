@@ -369,8 +369,8 @@ function verifySignature(string $body, string $signature): bool
 
     $secret = getWebhookSecret();
     if (empty($secret)) {
-        logWebhook('warning', 'Webhook secret not configured');
-        return true; // Allow if not configured
+        logWebhook('warning', 'Webhook secret not configured, rejecting request');
+        return false;
     }
 
     $expectedSignature = hash_hmac('sha256', $body, $secret);

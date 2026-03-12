@@ -866,6 +866,13 @@ function virtuestack_createCustomField(string $fieldName): int
 function virtuestack_ensureCustomer(array $params, ApiClient $client, int $clientId): array
 {
     $serviceId = (int) ($params['serviceid'] ?? 0);
+    $email = (string) ($params['clientsdetails']['email'] ?? $params['clientsdetails']['userid'] ?? '');
+    $firstName = trim((string) ($params['clientsdetails']['firstname'] ?? ''));
+    $lastName = trim((string) ($params['clientsdetails']['lastname'] ?? ''));
+    $name = trim($firstName . ' ' . $lastName);
+    if ($name === '') {
+        $name = (string) ($params['clientsdetails']['fullname'] ?? "WHMCS Client {$clientId}");
+    }
 
     // Check if customer already has VirtueStack credentials
     $customerId = virtuestack_getServiceField($serviceId, 'virtuestack_customer_id');
@@ -878,14 +885,27 @@ function virtuestack_ensureCustomer(array $params, ApiClient $client, int $clien
     $credentials = VirtueStackHelper::getCustomerCredentials($clientId);
     
     if ($credentials) {
-        return ['customer_id' => $credentials['api_id']];
+        virtuestack_updateServiceField($serviceId, 'virtuestack_customer_id', (string) $credentials['api_id']);
+        return ['customer_id' => (string) $credentials['api_id']];
     }
 
-    // In production, you would call the Controller API to create a customer
-    // and store the credentials. For now, return a placeholder.
-    // This should be implemented based on your Controller's customer creation API.
-    
-    return ['customer_id' => '']; // Will be filled by Controller during VM creation
+    if (empty($email)) {
+        throw new \RuntimeException('Customer email is required to create VirtueStack customer');
+    }
+
+    $created = $client->createCustomer([
+        'email' => $email,
+        'name' => $name,
+        'whmcs_client_id' => $clientId,
+    ]);
+
+    $createdCustomerId = (string) ($created['id'] ?? $created['customer_id'] ?? '');
+    if ($createdCustomerId === '') {
+        throw new \RuntimeException('VirtueStack API did not return a customer ID');
+    }
+
+    virtuestack_updateServiceField($serviceId, 'virtuestack_customer_id', $createdCustomerId);
+    return ['customer_id' => $createdCustomerId];
 }
 
 /**

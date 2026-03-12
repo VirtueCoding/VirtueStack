@@ -14,7 +14,7 @@
             <h4><i class="fas fa-spinner fa-spin"></i> Your VPS is being provisioned</h4>
             <p>Your virtual server is currently being created. This usually takes 30-60 seconds.</p>
             {if $task_id}
-            <p><strong>Task ID:</strong> <code>{$task_id}</code></p>
+            <p><strong>Task ID:</strong> <code>{$task_id|escape:'htmlall'}</code></p>
             {/if}
         </div>
         
@@ -42,7 +42,7 @@
     <div class="virtuestack-error">
         <div class="alert alert-danger">
             <h4><i class="fas fa-exclamation-triangle"></i> Error</h4>
-            <p>{$error}</p>
+            <p>{$error|escape:'htmlall'}</p>
         </div>
     </div>
 
@@ -61,12 +61,12 @@
                 <table class="table table-striped">
                     <tr>
                         <th>VM ID</th>
-                        <td><code>{$vm_id}</code></td>
+                        <td><code>{$vm_id|escape:'htmlall'}</code></td>
                     </tr>
                     {if $vm_ip}
                     <tr>
                         <th>IP Address</th>
-                        <td>{$vm_ip}</td>
+                        <td>{$vm_ip|escape:'htmlall'}</td>
                     </tr>
                     {/if}
                     <tr>
@@ -88,21 +88,21 @@
                     <h3>
                         <i class="fas fa-server"></i> VPS Management
                         {if $vm_ip}
-                        <small class="text-muted">{$vm_ip}</small>
+                        <small class="text-muted">{$vm_ip|escape:'htmlall'}</small>
                         {/if}
                     </h3>
                 </div>
                 <div class="col-md-4 text-right">
                     <div class="btn-group" role="group">
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=startVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" 
                            class="btn btn-success btn-sm" title="Start VM">
                             <i class="fas fa-play"></i> Start
                         </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=stopVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" 
                            class="btn btn-warning btn-sm" title="Stop VM">
                             <i class="fas fa-stop"></i> Stop
                         </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=restartVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" 
                            class="btn btn-info btn-sm" title="Restart VM">
                             <i class="fas fa-redo"></i> Restart
                         </a>
@@ -113,7 +113,7 @@
         
         <div class="webui-iframe-wrapper">
             <iframe 
-                src="{$iframe_url}" 
+                src="{$iframe_url|escape:'htmlall'}" 
                 id="virtuestack-webui-frame"
                 class="virtuestack-iframe"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
@@ -129,7 +129,7 @@
         <div class="console-links">
             <div class="btn-group" role="group">
                 {if $console_url}
-                <a href="{$console_url}" target="_blank" class="btn btn-default btn-sm">
+                <a href="{$console_url|escape:'htmlall'}" target="_blank" class="btn btn-default btn-sm">
                     <i class="fas fa-desktop"></i> VNC Console
                 </a>
                 {/if}
@@ -237,12 +237,12 @@
                 <table class="table table-striped">
                     <tr>
                         <th>VM ID</th>
-                        <td><code>{$vm_id}</code></td>
+                        <td><code>{$vm_id|escape:'htmlall'}</code></td>
                     </tr>
                     {if $vm_ip}
                     <tr>
                         <th>IP Address</th>
-                        <td>{$vm_ip}</td>
+                        <td>{$vm_ip|escape:'htmlall'}</td>
                     </tr>
                     {/if}
                     <tr>
@@ -255,7 +255,7 @@
                             {elseif $status eq 'suspended'}
                             <span class="label label-warning">Suspended</span>
                             {else}
-                            <span class="label label-info">{$status|ucfirst}</span>
+                            <span class="label label-info">{$status|escape:'htmlall'|ucfirst}</span>
                             {/if}
                         </td>
                     </tr>
@@ -284,7 +284,7 @@
                     <h4>Console Access</h4>
                     <p>Access your VPS directly through the web-based console.</p>
                     <p>
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=openConsole&type=vnc" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=openConsole&type=vnc" 
                            class="btn btn-primary">
                             <i class="fas fa-desktop"></i> Open VNC Console
                         </a>
@@ -294,15 +294,15 @@
                     <h4>Power Control</h4>
                     <p>Control the power state of your virtual server.</p>
                     <div class="btn-group">
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=startVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" 
                            class="btn btn-success">
                             <i class="fas fa-play"></i> Start
                         </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=stopVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" 
                            class="btn btn-warning">
                             <i class="fas fa-stop"></i> Stop
                         </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id}&modop=custom&a=restartVM" 
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" 
                            class="btn btn-info">
                             <i class="fas fa-redo"></i> Restart
                         </a>

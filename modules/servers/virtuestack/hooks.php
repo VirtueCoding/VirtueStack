@@ -868,15 +868,49 @@ function formatProvisioningStatus(string $status): string
  */
 function getVirtueStackTemplates(): array
 {
-    // This would fetch from Controller API or cache
-    return [
-        'ubuntu-24.04' => 'Ubuntu 24.04 LTS',
-        'ubuntu-22.04' => 'Ubuntu 22.04 LTS',
-        'debian-12' => 'Debian 12',
-        'centos-9' => 'CentOS Stream 9',
-        'rocky-9' => 'Rocky Linux 9',
-        'almalinux-9' => 'AlmaLinux 9',
-    ];
+    $templates = [];
+    
+    $services = getActiveVirtueStackServices();
+    if (empty($services)) {
+        return $templates;
+    }
+
+    foreach ($services as $service) {
+        $serviceId = (int) ($service['service_id'] ?? 0);
+        if ($serviceId <= 0) {
+            continue;
+        }
+
+        $client = getApiClientForService($serviceId);
+        if (!$client) {
+            continue;
+        }
+
+        try {
+            $items = $client->listTemplates();
+
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    $id = (string) ($item['id'] ?? '');
+                    $name = (string) ($item['name'] ?? '');
+                    if ($id !== '' && $name !== '') {
+                        $templates[$id] = $name;
+                    }
+                }
+            }
+
+            if (!empty($templates)) {
+                break;
+            }
+        } catch (\Exception $e) {
+            logActivity('VirtueStack: Failed to fetch templates: ' . $e->getMessage());
+        }
+    }
+
+    return $templates;
 }
 
 /**
@@ -886,14 +920,56 @@ function getVirtueStackTemplates(): array
  */
 function getVirtueStackLocations(): array
 {
-    // This would fetch from Controller API or cache
-    return [
-        'us-east' => 'US East (New York)',
-        'us-west' => 'US West (Los Angeles)',
-        'eu-west' => 'EU West (Amsterdam)',
-        'eu-central' => 'EU Central (Frankfurt)',
-        'ap-southeast' => 'AP Southeast (Singapore)',
-    ];
+    $locations = [];
+
+    $services = getActiveVirtueStackServices();
+    if (empty($services)) {
+        return $locations;
+    }
+
+    foreach ($services as $service) {
+        $serviceId = (int) ($service['service_id'] ?? 0);
+        if ($serviceId <= 0) {
+            continue;
+        }
+
+        $client = getApiClientForService($serviceId);
+        if (!$client) {
+            continue;
+        }
+
+        try {
+            $items = $client->listLocations();
+
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    $id = (string) ($item['id'] ?? '');
+                    if ($id === '') {
+                        continue;
+                    }
+
+                    $name = (string) ($item['name'] ?? $id);
+                    $region = (string) ($item['region'] ?? '');
+                    if ($region !== '' && stripos($name, $region) === false) {
+                        $name = $name . ' (' . $region . ')';
+                    }
+
+                    $locations[$id] = $name;
+                }
+            }
+
+            if (!empty($locations)) {
+                break;
+            }
+        } catch (\Exception $e) {
+            logActivity('VirtueStack: Failed to fetch locations: ' . $e->getMessage());
+        }
+    }
+
+    return $locations;
 }
 
 /**

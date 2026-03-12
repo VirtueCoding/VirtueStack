@@ -98,6 +98,15 @@ final class ApiClient
         ];
     }
 
+    public function createCustomer(array $params): array
+    {
+        $required = ['email', 'name'];
+        $this->validateRequired($params, $required);
+
+        $response = $this->request('POST', '/provisioning/customers', $params);
+        return $response['data'] ?? [];
+    }
+
     /**
      * Suspend a VM.
      *
@@ -411,6 +420,43 @@ final class ApiClient
         return $response['data'] ?? [];
     }
 
+    public function listTemplates(): array
+    {
+        try {
+            $response = $this->request('GET', '/admin/templates');
+            return $this->normalizeListResponse($response['data'] ?? []);
+        } catch (\Throwable $e) {
+        }
+
+        $response = $this->request('GET', '/provisioning/templates');
+        return $this->normalizeListResponse($response['data'] ?? []);
+    }
+
+    public function listLocations(): array
+    {
+        try {
+            $response = $this->request('GET', '/provisioning/locations');
+            return $this->normalizeListResponse($response['data'] ?? []);
+        } catch (\Throwable $e) {
+        }
+
+        $response = $this->request('GET', '/admin/locations');
+        return $this->normalizeListResponse($response['data'] ?? []);
+    }
+
+    private function normalizeListResponse($data): array
+    {
+        if (!is_array($data)) {
+            return [];
+        }
+
+        if (isset($data['data']) && is_array($data['data'])) {
+            return $data['data'];
+        }
+
+        return $data;
+    }
+
     /**
      * Make an HTTP request to the API.
      *
@@ -544,9 +590,9 @@ final class ApiClient
      */
     private function log(string $level, string $message): void
     {
-        // Use WHMCS logModuleCall if available
-        if (function_exists('logModuleCall')) {
-            logModuleCall('virtuestack', $level, $message, '', '', '');
+        $logModuleCall = '\\logModuleCall';
+        if (\is_callable($logModuleCall)) {
+            $logModuleCall('virtuestack', $level, $message, '', '', '');
         }
     }
 }
