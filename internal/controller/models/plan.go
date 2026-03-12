@@ -5,20 +5,21 @@ import "time"
 
 // Plan represents a VPS service plan with resource allocations and pricing information.
 type Plan struct {
-	ID               string    `json:"id" db:"id"`
-	Name             string    `json:"name" db:"name"`
-	Slug             string    `json:"slug" db:"slug"`
-	VCPU             int       `json:"vcpu" db:"vcpu"`
-	MemoryMB         int       `json:"memory_mb" db:"memory_mb"`
-	DiskGB           int       `json:"disk_gb" db:"disk_gb"`
-	BandwidthLimitGB int       `json:"bandwidth_limit_gb" db:"bandwidth_limit_gb"`
-	PortSpeedMbps    int       `json:"port_speed_mbps" db:"port_speed_mbps"`
-	PriceMonthly     float64   `json:"price_monthly" db:"price_monthly"`
-	PriceHourly      float64   `json:"price_hourly" db:"price_hourly"`
-	IsActive         bool      `json:"is_active" db:"is_active"`
-	SortOrder        int       `json:"sort_order" db:"sort_order"`
-	CreatedAt        time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
+	ID               string `json:"id" db:"id"`
+	Name             string `json:"name" db:"name"`
+	Slug             string `json:"slug" db:"slug"`
+	VCPU             int    `json:"vcpu" db:"vcpu"`
+	MemoryMB         int    `json:"memory_mb" db:"memory_mb"`
+	DiskGB           int    `json:"disk_gb" db:"disk_gb"`
+	BandwidthLimitGB int    `json:"bandwidth_limit_gb" db:"bandwidth_limit_gb"`
+	PortSpeedMbps    int    `json:"port_speed_mbps" db:"port_speed_mbps"`
+	// TODO: Store billing amounts in integer minor units to avoid float rounding drift.
+	PriceMonthly float64   `json:"price_monthly" db:"price_monthly"`
+	PriceHourly  float64   `json:"price_hourly" db:"price_hourly"`
+	IsActive     bool      `json:"is_active" db:"is_active"`
+	SortOrder    int       `json:"sort_order" db:"sort_order"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // PlanCreateRequest holds the fields required to create a new service plan.

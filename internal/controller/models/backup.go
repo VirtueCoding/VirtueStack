@@ -5,11 +5,11 @@ import "time"
 
 // Backup status constants define the lifecycle states of a backup.
 const (
-	BackupStatusCreating   = "creating"
-	BackupStatusCompleted  = "completed"
-	BackupStatusFailed     = "failed"
-	BackupStatusRestoring  = "restoring"
-	BackupStatusDeleted    = "deleted"
+	BackupStatusCreating  = "creating"
+	BackupStatusCompleted = "completed"
+	BackupStatusFailed    = "failed"
+	BackupStatusRestoring = "restoring"
+	BackupStatusDeleted   = "deleted"
 )
 
 // Backup represents a full or incremental backup of a VM's disk.
@@ -48,12 +48,14 @@ const (
 
 // BackupSchedule represents a scheduled backup configuration.
 type BackupSchedule struct {
-	ID        string `json:"id" db:"id"`
-	VMID      string `json:"vm_id" db:"vm_id"`
-	Type      string `json:"type" db:"type"`
-	CronExpr  string `json:"cron_expr" db:"cron_expr"`
-	Retention int    `json:"retention" db:"retention"`
-	Enabled   bool   `json:"enabled" db:"enabled"`
+	ID             string    `json:"id" db:"id"`
+	VMID           string    `json:"vm_id" db:"vm_id"`
+	CustomerID     string    `json:"customer_id" db:"customer_id"`
+	Frequency      string    `json:"frequency" db:"frequency"`
+	RetentionCount int       `json:"retention_count" db:"retention_count"`
+	Active         bool      `json:"active" db:"active"`
+	NextRunAt      time.Time `json:"next_run_at" db:"next_run_at"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 }
 
 // CustomerWebhook represents a webhook endpoint registered by a customer.

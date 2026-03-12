@@ -2,6 +2,7 @@
 package models
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -86,13 +87,15 @@ func (p PaginationParams) Limit() int {
 
 // parsePositiveInt parses a string to a positive integer.
 func parsePositiveInt(s string) (int, bool) {
-	var result int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, false
-		}
-		result = result*10 + int(c-'0')
+	result, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
 	}
+
+	if result <= 0 || result > 10000 {
+		return 0, false
+	}
+
 	return result, true
 }
 

@@ -1,20 +1,24 @@
 // Package models provides data model types for VirtueStack Controller.
 package models
 
-import "time"
+import (
+	"net"
+	"strings"
+	"time"
+)
 
 // ProvisioningKey represents an API key for WHMCS provisioning integration.
 // Keys are hashed using SHA-256 before storage - the plaintext key is never stored.
 type ProvisioningKey struct {
-	ID          string    `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	KeyHash     string    `json:"-" db:"key_hash"` // Never expose in JSON
-	AllowedIPs  []string  `json:"allowed_ips,omitempty" db:"allowed_ips"`
+	ID          string     `json:"id" db:"id"`
+	Name        string     `json:"name" db:"name"`
+	KeyHash     string     `json:"-" db:"key_hash"` // Never expose in JSON
+	AllowedIPs  []string   `json:"allowed_ips,omitempty" db:"allowed_ips"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	CreatedBy   string    `json:"created_by" db:"created_by"`
-	Description string    `json:"description,omitempty" db:"description"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	CreatedBy   string     `json:"created_by" db:"created_by"`
+	Description string     `json:"description,omitempty" db:"description"`
 }
 
 // IsActive returns true if the key has not been revoked.
@@ -28,7 +32,21 @@ func (k *ProvisioningKey) IsAllowedIP(ip string) bool {
 	if len(k.AllowedIPs) == 0 {
 		return true
 	}
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+
 	for _, allowed := range k.AllowedIPs {
+		if strings.Contains(allowed, "/") {
+			_, network, err := net.ParseCIDR(allowed)
+			if err == nil && network.Contains(parsedIP) {
+				return true
+			}
+			continue
+		}
+
 		if allowed == ip {
 			return true
 		}
