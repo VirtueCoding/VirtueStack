@@ -13,7 +13,6 @@ import {
   customerAuthApi,
   tokenStorage,
   ApiClientError,
-  type AuthTokens,
   type LoginRequest,
   type Verify2FARequest,
 } from "./api-client";
@@ -57,7 +56,8 @@ function parseJwt(token: string): { sub: string; email?: string; role?: string }
         .join("")
     );
     return JSON.parse(jsonPayload);
-  } catch {
+  } catch (err) {
+    console.error("Failed to parse JWT:", err);
     return null;
   }
 }
@@ -123,7 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated: true,
           isLoading: false,
         });
-      } catch {
+      } catch (error) {
+        console.error("Token refresh failed:", error);
         tokenStorage.clearTokens();
         setState({
           user: null,
@@ -132,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           requires2FA: false,
           tempToken: null,
         });
+        router.push("/login");
       }
     } else {
       const user = buildUserFromToken(accessToken);
@@ -141,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading: false,
       });
     }
-  }, [updateState]);
+  }, [router, updateState]);
 
   useEffect(() => {
     initAuth();

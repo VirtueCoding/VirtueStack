@@ -56,6 +56,8 @@ function formatMemory(mb: number): string {
   return `${mb} MB`;
 }
 
+const ENABLE_VM_CREATION = false;
+
 export default function VMsPage() {
   const [vms, setVms] = useState<VM[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -159,8 +161,8 @@ export default function VMsPage() {
 
   const handleCreateVM = () => {
     toast({
-      title: "Coming Soon",
-      description: "VM creation will be available in a future update.",
+      title: "VM Provisioning",
+      description: "New VMs can be provisioned through your hosting provider's control panel or API.",
     });
   };
 
@@ -197,10 +199,12 @@ export default function VMsPage() {
         </CardHeader>
         <CardContent>
           <div className="flex justify-center">
-            <Button onClick={handleCreateVM}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create VM
-            </Button>
+            {ENABLE_VM_CREATION && (
+              <Button onClick={handleCreateVM}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create VM
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -218,10 +222,12 @@ export default function VMsPage() {
                 Manage and monitor your virtual machines
               </CardDescription>
             </div>
-            <Button onClick={handleCreateVM}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create VM
-            </Button>
+            {ENABLE_VM_CREATION && (
+              <Button onClick={handleCreateVM}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create VM
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>

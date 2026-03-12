@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
+import { settingsApi, ApiKey, Webhook as WebhookType } from "@/lib/api-client";
 import {
   User,
   Shield,
@@ -22,61 +24,50 @@ import {
   Lock,
   Smartphone,
   Calendar,
+  Loader2,
 } from "lucide-react";
-
-// Mock data for API keys
-const mockApiKeys = [
-  {
-    id: "1",
-    name: "Production Key",
-    key: "pk_live_••••••••••••abcd",
-    created: "2024-01-15",
-    lastUsed: "2024-03-10",
-  },
-  {
-    id: "2",
-    name: "Development Key",
-    key: "pk_test_••••••••••••wxyz",
-    created: "2024-02-20",
-    lastUsed: "2024-03-11",
-  },
-  {
-    id: "3",
-    name: "Mobile App Key",
-    key: "pk_live_••••••••••••efgh",
-    created: "2024-03-01",
-    lastUsed: "2024-03-09",
-  },
-];
-
-// Mock data for webhooks
-const mockWebhooks = [
-  {
-    id: "1",
-    url: "https://example.com/webhooks/vms",
-    events: ["vm.created", "vm.deleted", "vm.status_changed"],
-    status: "active",
-    lastTriggered: "2024-03-10T14:30:00Z",
-  },
-  {
-    id: "2",
-    url: "https://api.mysite.com/hooks/billing",
-    events: ["invoice.paid", "invoice.failed"],
-    status: "active",
-    lastTriggered: "2024-03-08T09:15:00Z",
-  },
-  {
-    id: "3",
-    url: "https://staging.example.com/webhooks",
-    events: ["vm.created"],
-    status: "disabled",
-    lastTriggered: "2024-02-28T16:45:00Z",
-  },
-];
 
 export default function SettingsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [loadingKeys, setLoadingKeys] = useState(true);
+  
+  const [webhooks, setWebhooks] = useState<WebhookType[]>([]);
+  const [loadingWebhooks, setLoadingWebhooks] = useState(true);
+
+  const { toast } = useToast();
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [keysData, webhooksData] = await Promise.all([
+          settingsApi.getApiKeys().catch((err) => {
+            console.error(err);
+            return [];
+          }),
+          settingsApi.getWebhooks().catch((err) => {
+            console.error(err);
+            return [];
+          })
+        ]);
+        setApiKeys(keysData);
+        setWebhooks(webhooksData);
+      } catch (error) {
+        console.error("Failed to load settings data", error);
+        toast({
+          title: "Error",
+          description: "Failed to load settings data.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoadingKeys(false);
+        setLoadingWebhooks(false);
+      }
+    }
+    loadData();
+  }, [toast]);
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -288,56 +279,66 @@ export default function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {mockApiKeys.map((apiKey) => (
-                  <div
-                    key={apiKey.id}
-                    className="flex flex-col gap-4 rounded-lg border p-4 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{apiKey.name}</span>
-                        <Badge variant={apiKey.key.includes("live") ? "default" : "secondary"}>
-                          {apiKey.key.includes("live") ? "Production" : "Test"}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          Created: {apiKey.created}
+              {loadingKeys ? (
+                <div className="flex justify-center p-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : apiKeys.length === 0 ? (
+                <div className="text-center p-8 text-muted-foreground">
+                  No API keys found. Create one to get started.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {apiKeys.map((apiKey) => (
+                    <div
+                      key={apiKey.id}
+                      className="flex flex-col gap-4 rounded-lg border p-4 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{apiKey.name}</span>
+                          <Badge variant={apiKey.key.includes("live") ? "default" : "secondary"}>
+                            {apiKey.key.includes("live") ? "Production" : "Test"}
+                          </Badge>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          Last used: {apiKey.lastUsed}
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            Created: {apiKey.created}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            Last used: {apiKey.lastUsed}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <code className="rounded bg-muted px-2 py-1 text-sm">
+                            {apiKey.key}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleCopy(apiKey.key, apiKey.id)}
+                          >
+                            {copiedId === apiKey.id ? (
+                              <Check className="h-4 w-4" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <code className="rounded bg-muted px-2 py-1 text-sm">
-                          {apiKey.key}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleCopy(apiKey.key, apiKey.id)}
-                        >
-                          {copiedId === apiKey.id ? (
-                            <Check className="h-4 w-4" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm">
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Regenerate
                         </Button>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm">
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        Regenerate
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -363,8 +364,17 @@ export default function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {mockWebhooks.map((webhook) => (
+              {loadingWebhooks ? (
+                <div className="flex justify-center p-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : webhooks.length === 0 ? (
+                <div className="text-center p-8 text-muted-foreground">
+                  No webhooks found. Create one to get started.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {webhooks.map((webhook) => (
                   <div
                     key={webhook.id}
                     className="flex flex-col gap-4 rounded-lg border p-4 md:flex-row md:items-start md:justify-between"
@@ -405,6 +415,7 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
+import { VNCConsole } from "@/components/novnc-console/vnc-console";
 import {
   vmApi,
   backupApi,
@@ -57,6 +58,11 @@ import {
   Snapshot,
   ApiClientError,
 } from "@/lib/api-client";
+
+const FEATURE_FLAGS = {
+  enableResourceConfig: false,
+  enableNetworkConfig: false,
+};
 
 function getStatusBadgeVariant(
   status: VM["status"]
@@ -158,6 +164,29 @@ export default function VMDetailPage() {
   const [vmName, setVmName] = useState("");
   const [vmDescription, setVmDescription] = useState("");
   const [isSettingsSaving, setIsSettingsSaving] = useState(false);
+
+  // Console state
+  const [consoleUrl, setConsoleUrl] = useState<string | null>(null);
+  const [isConsoleLoading, setIsConsoleLoading] = useState(false);
+
+  const handleOpenConsole = async () => {
+    setIsConsoleLoading(true);
+    try {
+      const response = await vmApi.getConsoleToken(vmId);
+      setConsoleUrl(response.url);
+    } catch (error) {
+      const message = error instanceof ApiClientError
+        ? error.message
+        : "Failed to get console access token.";
+      toast({
+        title: "Console Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsConsoleLoading(false);
+    }
+  };
 
   const fetchVM = useCallback(async () => {
     if (!vmId) return;
@@ -731,29 +760,49 @@ export default function VMDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                <div className="flex flex-col items-center gap-4 p-8 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                    <Monitor className="h-8 w-8 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold">Console Access</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Coming Soon
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>noVNC integration is under development</span>
-                  </div>
-                  <div className="mt-4 flex items-center gap-2">
+              {vm?.status !== "running" ? (
+                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
+                  <div className="flex flex-col items-center gap-4 p-8 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <Monitor className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Console Unavailable</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        VM must be running to access the console
+                      </p>
+                    </div>
                     <Badge variant="secondary" className="gap-1">
                       <div className="h-2 w-2 rounded-full bg-yellow-500" />
-                      Not Connected
+                      VM {vm?.status || "Unknown"}
                     </Badge>
                   </div>
                 </div>
-              </div>
+              ) : consoleUrl ? (
+                <VNCConsole wsUrl={consoleUrl} vmId={vmId} className="min-h-[500px]" />
+              ) : (
+                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
+                  <div className="flex flex-col items-center gap-4 p-8 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                      <Monitor className="h-8 w-8 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Console Access</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Connect to your VM&apos;s graphical console
+                      </p>
+                    </div>
+                    <Button onClick={handleOpenConsole} disabled={isConsoleLoading}>
+                      {isConsoleLoading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Monitor className="mr-2 h-4 w-4" />
+                      )}
+                      {isConsoleLoading ? "Connecting..." : "Connect to Console"}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -1044,33 +1093,62 @@ export default function VMDetailPage() {
                 </div>
               )}
 
-              {/* Resource Configuration - Coming Soon */}
-              <div className="space-y-4 border-t pt-6">
-                <h3 className="text-sm font-medium">Resource Configuration</h3>
-                <div className="rounded-lg border border-dashed bg-muted/50 p-6">
-                  <div className="flex flex-col items-center gap-2 text-center">
-                    <AlertCircle className="h-8 w-8 text-muted-foreground" />
-                    <p className="font-medium">Coming Soon</p>
-                    <p className="text-sm text-muted-foreground">
-                      Resource adjustment will be available in a future update
-                    </p>
-                  </div>
+              {/* Resource Configuration */}
+              {FEATURE_FLAGS.enableResourceConfig && (
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-sm font-medium">Resource Configuration</h3>
+                  {vm && (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Cpu className="h-4 w-4" />
+                          <span>CPU Cores</span>
+                        </div>
+                        <p className="mt-1 text-2xl font-bold">{vm.vcpu}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <MemoryStick className="h-4 w-4" />
+                          <span>Memory</span>
+                        </div>
+                        <p className="mt-1 text-2xl font-bold">{formatMemory(vm.memory_mb)}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <HardDrive className="h-4 w-4" />
+                          <span>Disk</span>
+                        </div>
+                        <p className="mt-1 text-2xl font-bold">{vm.disk_gb} GB</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Network Configuration - Coming Soon */}
-              <div className="space-y-4 border-t pt-6">
-                <h3 className="text-sm font-medium">Network Configuration</h3>
-                <div className="rounded-lg border border-dashed bg-muted/50 p-6">
-                  <div className="flex flex-col items-center gap-2 text-center">
-                    <AlertCircle className="h-8 w-8 text-muted-foreground" />
-                    <p className="font-medium">Coming Soon</p>
-                    <p className="text-sm text-muted-foreground">
-                      Network configuration will be available in a future update
-                    </p>
-                  </div>
+              {/* Network Configuration */}
+              {FEATURE_FLAGS.enableNetworkConfig && (
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-sm font-medium">Network Configuration</h3>
+                  {vm && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Network className="h-4 w-4" />
+                          <span>Primary IP</span>
+                        </div>
+                        <p className="mt-1 font-mono text-lg font-semibold">{vm.ipv4 || "Not assigned"}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Network className="h-4 w-4" />
+                          <span>Hostname</span>
+                        </div>
+                        <p className="mt-1 font-mono text-lg font-semibold">{vm.hostname || vm.name}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

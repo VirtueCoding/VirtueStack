@@ -139,7 +139,8 @@ async function parseError(response: Response): Promise<ApiClientError> {
       message = data.error.message || message;
       correlationId = data.error.correlation_id;
     }
-  } catch {
+  } catch (err) {
+    console.error("Failed to parse error response JSON:", err);
     // If we can't parse JSON, use status-based message
     message = response.statusText || message;
   }
@@ -307,8 +308,22 @@ export interface VM {
   disk_gb: number;
 }
 
+export interface ConsoleTokenResponse {
+  token: string;
+  url: string;
+  expires_at: string;
+}
+
 // VM API
 export const vmApi = {
+  /**
+   * Get console token for a running VM
+   * POST /customer/vms/:id/console-token
+   */
+  async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
+    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
+  },
+
   /**
    * Start a stopped VM
    * POST /customer/vms/:id/start
@@ -477,3 +492,39 @@ export const snapshotApi = {
 
 // Export types for use in other modules
 export type { AuthTokens as AuthTokensType };
+
+// Settings Types
+export interface ApiKey {
+  id: string;
+  name: string;
+  key: string;
+  created: string;
+  lastUsed: string;
+}
+
+export interface Webhook {
+  id: string;
+  url: string;
+  events: string[];
+  status: string;
+  lastTriggered: string;
+}
+
+// Settings API
+export const settingsApi = {
+  /**
+   * Get customer API keys
+   * GET /customer/api-keys
+   */
+  async getApiKeys(): Promise<ApiKey[]> {
+    return apiClient.get<ApiKey[]>("/customer/api-keys");
+  },
+
+  /**
+   * Get customer Webhooks
+   * GET /customer/webhooks
+   */
+  async getWebhooks(): Promise<Webhook[]> {
+    return apiClient.get<Webhook[]>("/customer/webhooks");
+  }
+};

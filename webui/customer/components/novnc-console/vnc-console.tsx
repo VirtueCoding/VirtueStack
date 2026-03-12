@@ -20,29 +20,13 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
 interface VNCConsoleProps {
   className?: string
-  host?: string
-  port?: number
-  password?: string
+  wsUrl?: string
   vmId?: string
-}
-
-interface ConnectionParams {
-  host: string
-  port: number
-  password: string
-}
-
-const DEFAULT_PARAMS: ConnectionParams = {
-  host: "127.0.0.1",
-  port: 6080,
-  password: "",
 }
 
 export function VNCConsole({
   className,
-  host = DEFAULT_PARAMS.host,
-  port = DEFAULT_PARAMS.port,
-  password = DEFAULT_PARAMS.password,
+  wsUrl,
   vmId,
 }: VNCConsoleProps) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected")
@@ -51,23 +35,48 @@ export function VNCConsole({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<number | undefined>(undefined)
-  const connectTimerRef = useRef<NodeJS.Timeout | undefined>(undefined)
+  const wsRef = useRef<WebSocket | null>(null)
 
-  // Simulate connection with delay
+  // Real WebSocket connection
   const connect = useCallback(() => {
+    if (!wsUrl) {
+      setErrorMessage("Console URL not available")
+      setStatus("error")
+      return
+    }
+
     setStatus("connecting")
     setErrorMessage(null)
 
-    // Mock connection delay (2-3 seconds)
-    const delay = 2000 + Math.random() * 1000
+    try {
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
 
-    connectTimerRef.current = setTimeout(() => {
-      // Simulate successful connection
-      setStatus("connected")
-    }, delay)
-  }, [])
+      ws.onopen = () => {
+        setStatus("connected")
+      }
+
+      ws.onclose = () => {
+        setStatus("disconnected")
+        wsRef.current = null
+      }
+
+      ws.onerror = () => {
+        setErrorMessage("WebSocket connection error")
+        setStatus("error")
+        wsRef.current = null
+      }
+    } catch (error) {
+      setErrorMessage("Failed to initialize WebSocket")
+      setStatus("error")
+    }
+  }, [wsUrl])
 
   const disconnect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
     setStatus("disconnected")
     setIsFullScreen(false)
 
@@ -284,7 +293,7 @@ export function VNCConsole({
             <div>
               <CardTitle className="text-lg">VNC Console</CardTitle>
               <p className="text-sm text-muted-foreground">
-                {host}:{port}
+                {wsUrl ? wsUrl : "No URL provided"}
               </p>
             </div>
           </div>
@@ -314,7 +323,7 @@ export function VNCConsole({
                 Establishing connection...
               </p>
               <p className="text-muted-foreground/70 text-xs mt-1">
-                Connecting to {host}:{port}
+                Connecting to {wsUrl}
               </p>
             </div>
           )}
