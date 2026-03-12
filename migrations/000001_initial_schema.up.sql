@@ -105,7 +105,9 @@ CREATE TABLE provisioning_keys (
     allowed_ips INET[],
     last_used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    revoked_at TIMESTAMPTZ
+    revoked_at TIMESTAMPTZ,
+    created_by UUID,
+    description TEXT
 );
 
 -- System settings table
@@ -334,7 +336,7 @@ CREATE TABLE snapshots (
 
 -- Audit logs table (partitioned by timestamp)
 CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid(),
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     actor_id UUID,
     actor_type VARCHAR(20) NOT NULL,
@@ -345,7 +347,8 @@ CREATE TABLE audit_logs (
     changes JSONB,
     correlation_id UUID,
     success BOOLEAN DEFAULT TRUE,
-    error_message TEXT
+    error_message TEXT,
+    PRIMARY KEY (id, timestamp)
 ) PARTITION BY RANGE (timestamp);
 
 -- Create initial partitions for audit_logs

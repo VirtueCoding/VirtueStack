@@ -25,11 +25,9 @@ CREATE TABLE bandwidth_usage (
     PRIMARY KEY (vm_id, year, month)
 );
 
--- Index for querying current month's usage
-CREATE INDEX idx_bandwidth_usage_current 
-    ON bandwidth_usage(year, month) 
-    WHERE year = EXTRACT(YEAR FROM CURRENT_DATE) 
-    AND month = EXTRACT(MONTH FROM CURRENT_DATE);
+-- Index for querying usage by year/month (covers current month lookups)
+CREATE INDEX idx_bandwidth_usage_year_month 
+    ON bandwidth_usage(year, month);
 
 -- Index for throttled VMs
 CREATE INDEX idx_bandwidth_usage_throttled 

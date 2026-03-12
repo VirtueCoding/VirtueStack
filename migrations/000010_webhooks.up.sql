@@ -4,10 +4,11 @@
 
 BEGIN;
 
--- ============================================================================
--- WEBHOOKS TABLE
--- Stores webhook endpoint configurations for customers
--- ============================================================================
+-- Drop legacy webhook tables from initial schema (migration 1)
+-- Migration 1 created customer_webhooks + webhook_deliveries with a different schema.
+-- This migration replaces them with the redesigned webhook system.
+DROP TABLE IF EXISTS webhook_deliveries CASCADE;
+DROP TABLE IF EXISTS customer_webhooks CASCADE;
 
 CREATE TABLE webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
