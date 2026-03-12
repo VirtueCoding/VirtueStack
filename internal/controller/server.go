@@ -44,14 +44,15 @@ type Server struct {
 	logger     *slog.Logger
 	nodeClient *NodeClient
 	// Services
-	vmService       *services.VMService
-	authService     *services.AuthService
-	nodeService     *services.NodeService
-	ipamService     *services.IPAMService
-	planService     *services.PlanService
-	templateService *services.TemplateService
-	customerService *services.CustomerService
-	backupService   *services.BackupService
+	vmService        *services.VMService
+	authService      *services.AuthService
+	nodeService      *services.NodeService
+	ipamService      *services.IPAMService
+	planService      *services.PlanService
+	templateService  *services.TemplateService
+	customerService  *services.CustomerService
+	backupService    *services.BackupService
+	migrationService *services.MigrationService
 	// API Handlers
 	provisioningHandler *provisioning.ProvisioningHandler
 	customerHandler     *customer.CustomerHandler
@@ -187,6 +188,15 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
+	s.migrationService = services.NewMigrationService(
+		vmRepo,
+		nodeRepo,
+		taskRepo,
+		taskPublisher,
+		nodeAgentClient,
+		s.logger,
+	)
+
 	webhookService := services.NewWebhookService(
 		webhookRepo,
 		taskPublisher,
@@ -206,7 +216,7 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
-s.customerHandler = customer.NewCustomerHandler(
+	s.customerHandler = customer.NewCustomerHandler(
 		s.vmService,
 		s.backupService,
 		s.authService,
@@ -228,6 +238,7 @@ s.customerHandler = customer.NewCustomerHandler(
 	s.adminHandler = admin.NewAdminHandler(
 		s.nodeService,
 		s.vmService,
+		s.migrationService,
 		s.planService,
 		s.templateService,
 		s.ipamService,
@@ -326,10 +337,10 @@ func (s *Server) readinessHandler(c *gin.Context) {
 	}
 
 	respondJSON(c, http.StatusOK, gin.H{
-		"status":      "ready",
-		"database":    "connected",
-		"nats":        natsStatus,
-		"node_count":  nodeCount,
+		"status":     "ready",
+		"database":   "connected",
+		"nats":       natsStatus,
+		"node_count": nodeCount,
 	})
 }
 
@@ -452,8 +463,8 @@ func respondError(c *gin.Context, apiErr *apierrors.APIError) {
 
 	resp := gin.H{
 		"error": gin.H{
-			"code":          apiErr.Code,
-			"message":       apiErr.Message,
+			"code":           apiErr.Code,
+			"message":        apiErr.Message,
 			"correlation_id": correlationID,
 		},
 	}

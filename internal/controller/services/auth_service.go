@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/alexedwards/argon2id"
@@ -51,12 +51,12 @@ var Argon2idParams = &argon2id.Params{
 // AuthService provides authentication business logic for VirtueStack.
 // It handles login flows, 2FA verification, token refresh, and session management.
 type AuthService struct {
-	customerRepo *repository.CustomerRepository
-	adminRepo    *repository.AdminRepository
-	auditRepo    *repository.AuditRepository
-	authConfig   middleware.AuthConfig
+	customerRepo  *repository.CustomerRepository
+	adminRepo     *repository.AdminRepository
+	auditRepo     *repository.AuditRepository
+	authConfig    middleware.AuthConfig
 	encryptionKey string
-	logger       *slog.Logger
+	logger        *slog.Logger
 }
 
 // NewAuthService creates a new AuthService with the given dependencies.
@@ -199,8 +199,27 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 		return nil, "", fmt.Errorf("validating TOTP: %w", err)
 	}
 	if !valid {
-		s.logger.Warn("invalid TOTP code", "customer_id", customer.ID)
-		return nil, "", sharederrors.ErrUnauthorized
+		// Check backup codes
+		if customer.TOTPBackupCodesHash != nil && len(customer.TOTPBackupCodesHash) > 0 {
+			// Hash the provided TOTP code and compare with stored hashes
+			providedHash := crypto.HashSHA256(totpCode)
+			for i, codeHash := range customer.TOTPBackupCodesHash {
+				if providedHash == codeHash {
+					// Remove used backup code
+					remaining := append(customer.TOTPBackupCodesHash[:i], customer.TOTPBackupCodesHash[i+1:]...)
+					if err := s.customerRepo.UpdateBackupCodes(ctx, customer.ID, remaining); err != nil {
+						s.logger.Warn("failed to update backup codes after use", "customer_id", customer.ID, "error", err)
+					}
+					valid = true
+					s.logger.Info("backup code used for authentication", "customer_id", customer.ID)
+					break
+				}
+			}
+		}
+		if !valid {
+			s.logger.Warn("invalid TOTP code and no matching backup code", "customer_id", customer.ID)
+			return nil, "", sharederrors.ErrUnauthorized
+		}
 	}
 
 	// Check for backup code usage if TOTP fails (not implemented in this iteration)
@@ -579,13 +598,38 @@ func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, i
 		return nil, "", fmt.Errorf("validating TOTP: %w", err)
 	}
 	if !valid {
-		s.logger.Warn("invalid admin TOTP code", "admin_id", admin.ID)
-		return nil, "", sharederrors.ErrUnauthorized
+		// Check backup codes
+		if admin.TOTPBackupCodesHash != nil && len(admin.TOTPBackupCodesHash) > 0 {
+			// Hash the provided TOTP code and compare with stored hashes
+			providedHash := crypto.HashSHA256(totpCode)
+			for i, codeHash := range admin.TOTPBackupCodesHash {
+				if providedHash == codeHash {
+					// Remove used backup code
+					remaining := append(admin.TOTPBackupCodesHash[:i], admin.TOTPBackupCodesHash[i+1:]...)
+					if err := s.adminRepo.UpdateBackupCodes(ctx, admin.ID, remaining); err != nil {
+						s.logger.Warn("failed to update backup codes after use", "admin_id", admin.ID, "error", err)
+					}
+					valid = true
+					s.logger.Info("backup code used for authentication", "admin_id", admin.ID)
+					break
+				}
+			}
+		}
+		if !valid {
+			s.logger.Warn("invalid admin TOTP code and no matching backup code", "admin_id", admin.ID)
+			return nil, "", sharederrors.ErrUnauthorized
+		}
 	}
 
 	// Check session limit for admin
-	// In a full implementation, you'd count active sessions and enforce MaxAdminSessions
-	// For now, we proceed with session creation
+	activeSessions, err := s.customerRepo.CountSessionsByUser(ctx, admin.ID, "admin")
+	if err != nil {
+		s.logger.Warn("failed to count admin sessions", "admin_id", admin.ID, "error", err)
+	} else if activeSessions >= MaxAdminSessions {
+		if err := s.customerRepo.DeleteOldestSession(ctx, admin.ID, "admin"); err != nil {
+			s.logger.Warn("failed to delete oldest admin session", "admin_id", admin.ID, "error", err)
+		}
+	}
 
 	// Generate access and refresh tokens
 	accessToken, err := middleware.GenerateAccessToken(s.authConfig, admin.ID, "admin", admin.Role, AccessTokenDuration)

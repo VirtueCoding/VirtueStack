@@ -15,15 +15,15 @@ import (
 
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
-	VMRepo      *repository.VMRepository
-	NodeRepo    *repository.NodeRepository
-	IPRepo      *repository.IPRepository
-	BackupRepo  *repository.BackupRepository
-	TaskRepo    *repository.TaskRepository
+	VMRepo       *repository.VMRepository
+	NodeRepo     *repository.NodeRepository
+	IPRepo       *repository.IPRepository
+	BackupRepo   *repository.BackupRepository
+	TaskRepo     *repository.TaskRepository
 	TemplateRepo *repository.TemplateRepository
-	IPAMService IPAMService
-	NodeClient  NodeAgentClient
-	Logger      *slog.Logger
+	IPAMService  IPAMService
+	NodeClient   NodeAgentClient
+	Logger       *slog.Logger
 }
 
 // IPAMService defines the interface for IP address management operations.
@@ -63,6 +63,8 @@ type NodeAgentClient interface {
 	GenerateCloudInit(ctx context.Context, nodeID string, cfg *CloudInitConfig) (string, error)
 	// MigrateVM initiates a live migration of a VM to a target node.
 	MigrateVM(ctx context.Context, sourceNodeID, targetNodeID, vmID string, opts *MigrateVMOptions) error
+	// AbortMigration aborts an in-progress migration on the specified node.
+	AbortMigration(ctx context.Context, nodeID, vmID string) error
 	// PostMigrateSetup re-applies tc throttling and nwfilter on the target node after migration.
 	PostMigrateSetup(ctx context.Context, nodeID, vmID string, bandwidthMbps int) error
 	// GuestFreezeFilesystems freezes all filesystems in the VM via QEMU guest agent.
@@ -82,26 +84,26 @@ type NodeAgentClient interface {
 
 // CreateVMRequest contains parameters for VM creation via node agent.
 type CreateVMRequest struct {
-	VMID               string
-	Hostname           string
-	VCPU               int
-	MemoryMB           int
-	DiskGB             int
-	TemplateRBDImage   string
+	VMID                string
+	Hostname            string
+	VCPU                int
+	MemoryMB            int
+	DiskGB              int
+	TemplateRBDImage    string
 	TemplateRBDSnapshot string
-	RootPasswordHash   string
-	SSHPublicKeys      []string
-	IPv4Address        string
-	IPv4Gateway        string
-	IPv6Address        string
-	IPv6Gateway        string
-	MACAddress         string
-	PortSpeedMbps      int
-	CephMonitors       []string
-	CephUser           string
-	CephSecretUUID     string
-	CephPool           string
-	Nameservers        []string
+	RootPasswordHash    string
+	SSHPublicKeys       []string
+	IPv4Address         string
+	IPv4Gateway         string
+	IPv6Address         string
+	IPv6Gateway         string
+	MACAddress          string
+	PortSpeedMbps       int
+	CephMonitors        []string
+	CephUser            string
+	CephSecretUUID      string
+	CephPool            string
+	Nameservers         []string
 }
 
 // CreateVMResponse contains the result of a VM creation operation.
@@ -112,30 +114,30 @@ type CreateVMResponse struct {
 
 // SnapshotResponse contains the result of a snapshot creation operation.
 type SnapshotResponse struct {
-	SnapshotID     string
+	SnapshotID      string
 	RBDSnapshotName string
-	SizeBytes      int64
+	SizeBytes       int64
 }
 
 // CloudInitConfig contains parameters for cloud-init ISO generation.
 type CloudInitConfig struct {
-	VMID            string
-	Hostname        string
+	VMID             string
+	Hostname         string
 	RootPasswordHash string
-	SSHPublicKeys   []string
-	IPv4Address     string
-	IPv4Gateway     string
-	IPv6Address     string
-	IPv6Gateway     string
-	Nameservers     []string
+	SSHPublicKeys    []string
+	IPv4Address      string
+	IPv4Gateway      string
+	IPv6Address      string
+	IPv6Gateway      string
+	Nameservers      []string
 }
 
 // MigrateVMOptions contains options for VM live migration.
 type MigrateVMOptions struct {
-	TargetNodeAddress string // gRPC address of the target node
+	TargetNodeAddress  string // gRPC address of the target node
 	BandwidthLimitMbps int    // Bandwidth limit for migration traffic
-	Compression       bool   // Enable compression during migration
-	AutoConverge      bool   // Force convergence if migration stalls
+	Compression        bool   // Enable compression during migration
+	AutoConverge       bool   // Force convergence if migration stalls
 }
 
 // VMCreatePayload represents the payload for vm.create tasks.
@@ -420,12 +422,12 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 	// Set task result
 	result := map[string]any{
-		"vm_id":            payload.VMID,
-		"domain_name":      createResp.DomainName,
-		"vnc_port":         createResp.VNCPort,
-		"ipv4_address":     ipv4Addr,
-		"ipv6_subnet":      ipv6Addr,
-		"cloud_init_path":  cloudInitPath,
+		"vm_id":           payload.VMID,
+		"domain_name":     createResp.DomainName,
+		"vnc_port":        createResp.VNCPort,
+		"ipv4_address":    ipv4Addr,
+		"ipv6_subnet":     ipv6Addr,
+		"cloud_init_path": cloudInitPath,
 	}
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {

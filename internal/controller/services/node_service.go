@@ -12,6 +12,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
@@ -30,6 +31,12 @@ type NodeAgentClient interface {
 	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
 	GetVMMetrics(ctx context.Context, nodeID, vmID string) (*models.VMMetrics, error)
 	GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error)
+	// AbortMigration aborts an in-progress migration on the specified node.
+	AbortMigration(ctx context.Context, nodeID, vmID string) error
+	// MigrateVM initiates a live migration of a VM to a target node.
+	MigrateVM(ctx context.Context, sourceNodeID, targetNodeID, vmID string, opts *tasks.MigrateVMOptions) error
+	// PostMigrateSetup re-applies tc throttling and nwfilter on the target node after migration.
+	PostMigrateSetup(ctx context.Context, nodeID, vmID string, bandwidthMbps int) error
 }
 
 // NodeService provides node management operations for VirtueStack.
@@ -269,9 +276,9 @@ func (s *NodeService) FailoverNode(ctx context.Context, nodeID string) error {
 	}
 
 	s.logAudit(ctx, "node.failover.complete", nodeID, map[string]interface{}{
-		"hostname":      node.Hostname,
-		"migrated_vms":  migrationResults.Migrated,
-		"failed_vms":    migrationResults.Failed,
+		"hostname":       node.Hostname,
+		"migrated_vms":   migrationResults.Migrated,
+		"failed_vms":     migrationResults.Failed,
 		"ipmi_attempted": ipmiConfigured,
 	}, true, "")
 
@@ -493,19 +500,19 @@ func (s *NodeService) GetNodeStatus(ctx context.Context, nodeID string) (*models
 
 	// Build status response
 	status := &models.NodeStatus{
-		NodeID:                   node.ID,
-		Hostname:                 node.Hostname,
-		Status:                   node.Status,
-		LastHeartbeatAt:          node.LastHeartbeatAt,
+		NodeID:                     node.ID,
+		Hostname:                   node.Hostname,
+		Status:                     node.Status,
+		LastHeartbeatAt:            node.LastHeartbeatAt,
 		ConsecutiveHeartbeatMisses: node.ConsecutiveHeartbeatMisses,
-		TotalVCPU:                node.TotalVCPU,
-		AllocatedVCPU:            node.AllocatedVCPU,
-		AvailableVCPU:            node.TotalVCPU - node.AllocatedVCPU,
-		TotalMemoryMB:            node.TotalMemoryMB,
-		AllocatedMemoryMB:        node.AllocatedMemoryMB,
-		AvailableMemoryMB:        node.TotalMemoryMB - node.AllocatedMemoryMB,
-		VMCount:                  vmCount,
-		IsHealthy:                s.isNodeHealthy(node),
+		TotalVCPU:                  node.TotalVCPU,
+		AllocatedVCPU:              node.AllocatedVCPU,
+		AvailableVCPU:              node.TotalVCPU - node.AllocatedVCPU,
+		TotalMemoryMB:              node.TotalMemoryMB,
+		AllocatedMemoryMB:          node.AllocatedMemoryMB,
+		AvailableMemoryMB:          node.TotalMemoryMB - node.AllocatedMemoryMB,
+		VMCount:                    vmCount,
+		IsHealthy:                  s.isNodeHealthy(node),
 	}
 
 	// Try to get real-time metrics from node agent if available
@@ -519,18 +526,18 @@ func (s *NodeService) GetNodeStatus(ctx context.Context, nodeID string) (*models
 			status.UsedDiskGB = metrics.UsedDiskGB
 			status.LoadAverage = metrics.LoadAverage
 
-		if metrics.CephConnected {
-			status.CephStatus = "connected"
-			status.CephTotalGB = metrics.CephTotalGB
-			status.CephUsedGB = metrics.CephUsedGB
+			if metrics.CephConnected {
+				status.CephStatus = "connected"
+				status.CephTotalGB = metrics.CephTotalGB
+				status.CephUsedGB = metrics.CephUsedGB
+			} else {
+				status.CephStatus = "disconnected"
+			}
 		} else {
-			status.CephStatus = "disconnected"
+			s.logger.Debug("failed to get real-time metrics from node agent",
+				"node_id", nodeID, "error", err)
+			status.CephStatus = "unknown"
 		}
-	} else {
-		s.logger.Debug("failed to get real-time metrics from node agent",
-			"node_id", nodeID, "error", err)
-		status.CephStatus = "unknown"
-	}
 	} else {
 		status.CephStatus = "unknown"
 	}
@@ -624,7 +631,7 @@ func (s *NodeService) isNodeHealthy(node *models.Node) bool {
 	if node.LastHeartbeatAt == nil {
 		return false
 	}
-	
+
 	heartbeatAge := time.Since(*node.LastHeartbeatAt)
 	if heartbeatAge > 5*time.Minute {
 		return false

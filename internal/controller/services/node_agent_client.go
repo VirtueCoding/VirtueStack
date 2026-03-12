@@ -9,16 +9,18 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
+	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc"
 )
 
 // NodeAgentGRPCClient implements NodeAgentClient interface with gRPC communication
 // and caching for metrics to reduce load on node agents.
 type NodeAgentGRPCClient struct {
-	nodeRepo  *repository.NodeRepository
-	connPool  GRPCConnectionPool
-	cache     *metricsCache
-	logger    *slog.Logger
+	nodeRepo *repository.NodeRepository
+	connPool GRPCConnectionPool
+	cache    *metricsCache
+	logger   *slog.Logger
 }
 
 // GRPCConnectionPool defines the interface for managing gRPC connections to nodes.
@@ -28,15 +30,15 @@ type GRPCConnectionPool interface {
 
 // metricsCache holds cached node metrics with expiration.
 type metricsCache struct {
-	data   map[string]*cachedMetrics
-	mutex  sync.RWMutex
-	ttl    time.Duration
+	data  map[string]*cachedMetrics
+	mutex sync.RWMutex
+	ttl   time.Duration
 }
 
 // cachedMetrics stores metrics with their expiration time.
 type cachedMetrics struct {
-	metrics    *models.NodeHeartbeat
-	expiresAt  time.Time
+	metrics   *models.NodeHeartbeat
+	expiresAt time.Time
 }
 
 // NodeHealthResponse represents the health response from node agent.
@@ -119,19 +121,13 @@ func (c *NodeAgentGRPCClient) GetNodeMetrics(ctx context.Context, nodeID string)
 }
 
 // fetchMetricsFromNode makes the actual gRPC call to get node metrics.
-// This is a placeholder that will be replaced with actual gRPC calls when proto is generated.
 func (c *NodeAgentGRPCClient) fetchMetricsFromNode(ctx context.Context, conn *grpc.ClientConn, nodeID string) (*models.NodeHeartbeat, error) {
-	// TODO: When protobuf is generated, implement actual gRPC call:
-	// client := nodeagentpb.NewNodeAgentServiceClient(conn.(*grpc.ClientConn))
-	// resp, err := client.GetNodeHealth(ctx, &nodeagentpb.Empty{})
-	// if err != nil { return nil, err }
-	// return convertProtoToHeartbeat(resp), nil
-
-	// For now, return an error to indicate the node agent connection is not fully implemented
-	c.logger.Warn("node agent gRPC not fully implemented, metrics unavailable",
-		"node_id", nodeID,
-		"hint", "proto generation pending")
-	return nil, fmt.Errorf("node agent gRPC not implemented: proto generation pending")
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GetNodeHealth(ctx, &nodeagentpb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("calling GetNodeHealth: %w", err)
+	}
+	return convertProtoHealthToHeartbeat(resp), nil
 }
 
 // PingNode checks if a node is reachable via gRPC.
@@ -146,20 +142,29 @@ func (c *NodeAgentGRPCClient) PingNode(ctx context.Context, nodeID string) error
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
 
-	// TODO: When protobuf is generated, implement actual gRPC ping:
-	// client := nodeagentpb.NewNodeAgentServiceClient(conn.(*grpc.ClientConn))
-	// _, err := client.Ping(ctx, &nodeagentpb.PingRequest{})
-	// return err
-
-	_ = conn // Use the connection to avoid unused variable warning
-	c.logger.Debug("ping node agent not fully implemented", "node_id", nodeID)
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	_, err = client.Ping(ctx, &nodeagentpb.Empty{})
+	if err != nil {
+		return fmt.Errorf("pinging node %s: %w", nodeID, err)
+	}
 	return nil
 }
 
 // EvacuateNode evacuates all VMs from a node via gRPC.
 func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) error {
-	c.logger.Info("evacuate node not fully implemented", "node_id", nodeID)
-	// TODO: Implement when protobuf is generated
+	c.logger.Info("starting node evacuation", "node_id", nodeID)
+
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	node.Status = "draining"
+	if err := c.nodeRepo.UpdateStatus(ctx, nodeID, node.Status); err != nil {
+		return fmt.Errorf("updating node status to draining: %w", err)
+	}
+
+	c.logger.Info("node marked for evacuation, VM migration should be initiated", "node_id", nodeID)
 	return nil
 }
 
@@ -175,10 +180,23 @@ func (c *NodeAgentGRPCClient) GetNodeResources(ctx context.Context, nodeID strin
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
 
-	// TODO: When protobuf is generated, implement actual gRPC call
-	_ = conn
-	c.logger.Warn("get node resources not fully implemented", "node_id", nodeID)
-	return nil, fmt.Errorf("not implemented: proto generation pending")
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GetNodeResources(ctx, &nodeagentpb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("calling GetNodeResources: %w", err)
+	}
+
+	return &NodeResourcesResponse{
+		TotalVCPU:     resp.GetTotalVcpu(),
+		UsedVCPU:      resp.GetUsedVcpu(),
+		TotalMemoryMB: resp.GetTotalMemoryMb(),
+		UsedMemoryMB:  resp.GetUsedMemoryMb(),
+		TotalDiskGB:   resp.GetTotalDiskGb(),
+		UsedDiskGB:    resp.GetUsedDiskGb(),
+		VMCount:       resp.GetVmCount(),
+		LoadAverage:   resp.GetLoadAverage(),
+		UptimeSeconds: resp.GetUptimeSeconds(),
+	}, nil
 }
 
 // cache methods
@@ -242,36 +260,318 @@ func convertHealthResponse(resp *NodeHealthResponse) *models.NodeHeartbeat {
 }
 
 func (c *NodeAgentGRPCClient) StartVM(ctx context.Context, nodeID, vmID string) error {
-	c.logger.Warn("StartVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.StartVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return fmt.Errorf("calling StartVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to start VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) StopVM(ctx context.Context, nodeID, vmID string, timeoutSeconds int) error {
-	c.logger.Warn("StopVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.StopVM(ctx, &nodeagentpb.StopVMRequest{
+		VmId:           vmID,
+		TimeoutSeconds: int32(timeoutSeconds),
+	})
+	if err != nil {
+		return fmt.Errorf("calling StopVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to stop VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) ForceStopVM(ctx context.Context, nodeID, vmID string) error {
-	c.logger.Warn("ForceStopVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.ForceStopVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return fmt.Errorf("calling ForceStopVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to force stop VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string) error {
-	c.logger.Warn("DeleteVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return fmt.Errorf("calling DeleteVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error {
-	c.logger.Warn("ResizeVM not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.ResizeVM(ctx, &nodeagentpb.ResizeVMRequest{
+		VmId:        vmID,
+		NewVcpu:     int32(vcpu),
+		NewMemoryMb: int32(memoryMB),
+		NewDiskGb:   int32(diskGB),
+	})
+	if err != nil {
+		return fmt.Errorf("calling ResizeVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to resize VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) GetVMMetrics(ctx context.Context, nodeID, vmID string) (*models.VMMetrics, error) {
-	c.logger.Warn("GetVMMetrics not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return nil, fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GetVMMetrics(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return nil, fmt.Errorf("calling GetVMMetrics: %w", err)
+	}
+
+	return convertProtoMetrics(resp), nil
 }
 
 func (c *NodeAgentGRPCClient) GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error) {
-	c.logger.Warn("GetVMStatus not fully implemented", "node_id", nodeID, "vm_id", vmID)
-	return "", fmt.Errorf("node agent gRPC not implemented: proto wiring pending")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return "", fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return "", fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GetVMStatus(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return "", fmt.Errorf("calling GetVMStatus: %w", err)
+	}
+
+	return convertProtoStatus(resp.GetStatus()), nil
+}
+
+// MigrateVM initiates a live migration of a VM to a target node.
+func (c *NodeAgentGRPCClient) MigrateVM(ctx context.Context, sourceNodeID, targetNodeID, vmID string, opts *tasks.MigrateVMOptions) error {
+	// Get source node details for connection
+	sourceNode, err := c.nodeRepo.GetByID(ctx, sourceNodeID)
+	if err != nil {
+		return fmt.Errorf("getting source node %s: %w", sourceNodeID, err)
+	}
+
+	// Get connection to source node
+	conn, err := c.connPool.GetConnection(ctx, sourceNodeID, sourceNode.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to source node %s: %w", sourceNodeID, err)
+	}
+	defer conn.Close()
+
+	// Get target node details for address
+	targetNode, err := c.nodeRepo.GetByID(ctx, targetNodeID)
+	if err != nil {
+		return fmt.Errorf("getting target node %s: %w", targetNodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.MigrateVM(ctx, &nodeagentpb.MigrateVMRequest{
+		VmId:                   vmID,
+		DestinationNodeAddress: targetNode.GRPCAddress,
+		Live:                   opts != nil && opts.TargetNodeAddress != "",
+	})
+	if err != nil {
+		return fmt.Errorf("migrating VM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("migration failed: %s", resp.GetErrorMessage())
+	}
+	return nil
+}
+
+// AbortMigration aborts an in-progress migration on the specified node.
+func (c *NodeAgentGRPCClient) AbortMigration(ctx context.Context, nodeID, vmID string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer conn.Close()
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.AbortMigration(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return fmt.Errorf("aborting migration: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("abort migration failed: %s", resp.GetErrorMessage())
+	}
+	return nil
+}
+
+// PostMigrateSetup re-applies tc throttling and nwfilter on the target node after migration.
+func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID string, bandwidthMbps int) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer conn.Close()
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+
+	// Build bandwidth limits from bandwidthMbps
+	var bandwidth *nodeagentpb.BandwidthLimits
+	var isThrottled bool
+	var throttleRateKbps int32
+
+	if bandwidthMbps > 0 {
+		isThrottled = true
+		throttleRateKbps = int32(bandwidthMbps * 1000)
+		bandwidth = &nodeagentpb.BandwidthLimits{
+			AverageKbps: throttleRateKbps,
+			PeakKbps:    throttleRateKbps,
+			BurstKb:     throttleRateKbps,
+		}
+	}
+
+	resp, err := client.PostMigrateSetup(ctx, &nodeagentpb.PostMigrateSetupRequest{
+		VmUuid:           vmID,
+		Bandwidth:        bandwidth,
+		IsThrottled:      isThrottled,
+		ThrottleRateKbps: throttleRateKbps,
+	})
+	if err != nil {
+		return fmt.Errorf("post-migrate setup: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("post-migrate setup failed: %s", resp.GetErrorMessage())
+	}
+	return nil
+}
+
+func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models.NodeHeartbeat {
+	loadAvg := make([]float32, len(resp.GetLoadAverage()))
+	for i, v := range resp.GetLoadAverage() {
+		loadAvg[i] = float32(v)
+	}
+
+	return &models.NodeHeartbeat{
+		CPUPercent:    float32(resp.GetCpuPercent()),
+		MemoryPercent: float32(resp.GetMemoryPercent()),
+		DiskPercent:   float32(resp.GetDiskPercent()),
+		CephConnected: resp.GetCephConnected(),
+		VMCount:       int(resp.GetVmCount()),
+		LoadAverage:   loadAvg,
+	}
+}
+
+func convertProtoMetrics(resp *nodeagentpb.VMMetricsResponse) *models.VMMetrics {
+	var timestamp time.Time
+	if resp.GetTimestamp() != nil {
+		timestamp = resp.GetTimestamp().AsTime()
+	}
+
+	return &models.VMMetrics{
+		VMID:             resp.GetVmId(),
+		CPUUsagePercent:  resp.GetCpuUsagePercent(),
+		MemoryUsageBytes: resp.GetMemoryUsageBytes(),
+		MemoryTotalBytes: resp.GetMemoryTotalBytes(),
+		DiskReadBytes:    resp.GetDiskReadBytes(),
+		DiskWriteBytes:   resp.GetDiskWriteBytes(),
+		NetworkRxBytes:   resp.GetNetworkRxBytes(),
+		NetworkTxBytes:   resp.GetNetworkTxBytes(),
+		Timestamp:        timestamp,
+	}
+}
+
+func convertProtoStatus(status nodeagentpb.VMStatus) string {
+	switch status {
+	case nodeagentpb.VMStatus_VM_STATUS_RUNNING:
+		return models.VMStatusRunning
+	case nodeagentpb.VMStatus_VM_STATUS_STOPPED:
+		return models.VMStatusStopped
+	case nodeagentpb.VMStatus_VM_STATUS_PAUSED:
+		return models.VMStatusSuspended
+	case nodeagentpb.VMStatus_VM_STATUS_SHUTTING_DOWN:
+		return models.VMStatusRunning
+	case nodeagentpb.VMStatus_VM_STATUS_CRASHED:
+		return models.VMStatusError
+	case nodeagentpb.VMStatus_VM_STATUS_MIGRATING:
+		return models.VMStatusMigrating
+	default:
+		return models.VMStatusError
+	}
 }

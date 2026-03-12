@@ -91,10 +91,10 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 
 	// Create backup record
 	backup := &models.Backup{
-		ID:      uuid.New().String(),
-		VMID:    vmID,
-		Type:    "full",
-		Status:  models.BackupStatusCreating,
+		ID:     uuid.New().String(),
+		VMID:   vmID,
+		Type:   "full",
+		Status: models.BackupStatusCreating,
 	}
 
 	if err := s.backupRepo.CreateBackup(ctx, backup); err != nil {
@@ -123,6 +123,10 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 		// Update backup with storage path
 		backup.StoragePath = &backupPath
 		backup.RBDSnapshot = &snapshotName
+	} else {
+		s.logger.Warn("nodeAgent not configured, skipping backup storage operations",
+			"vm_id", vmID,
+			"backup_id", backup.ID)
 	}
 
 	// Mark backup as completed
@@ -191,6 +195,10 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
 			return fmt.Errorf("restoring backup: %w", err)
 		}
+	} else if s.nodeAgent == nil {
+		s.logger.Warn("nodeAgent not configured, skipping backup restore",
+			"backup_id", backupID,
+			"vm_id", backup.VMID)
 	}
 
 	// Mark backup as completed again
@@ -257,6 +265,10 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 		if err := s.nodeAgent.CreateSnapshot(ctx, *vm.NodeID, vmID, rbdSnapshot); err != nil {
 			return nil, fmt.Errorf("creating snapshot: %w", err)
 		}
+	} else {
+		s.logger.Warn("nodeAgent not configured, skipping snapshot storage operation",
+			"vm_id", vmID,
+			"snapshot_id", snapshotID)
 	}
 
 	// Create snapshot record
@@ -318,6 +330,10 @@ func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) e
 				"error", err)
 			// Continue with database deletion
 		}
+	} else if s.nodeAgent == nil {
+		s.logger.Warn("nodeAgent not configured, skipping snapshot storage deletion",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID)
 	}
 
 	// Delete from database

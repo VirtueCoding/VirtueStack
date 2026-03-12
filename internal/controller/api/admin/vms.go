@@ -5,6 +5,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -337,12 +338,26 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 		"target_node_id", req.TargetNodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	// TODO: Implement actual migration logic through VM service
-	// This would involve live migration or shutdown+migrate+start
+	result, err := h.migrationService.MigrateVM(c.Request.Context(), &services.MigrateVMRequest{
+		VMID:         vmID,
+		TargetNodeID: &req.TargetNodeID,
+		Live:         true,
+	}, middleware.GetUserID(c))
+	if err != nil {
+		h.logger.Error("failed to initiate migration",
+			"vm_id", vmID,
+			"target_node_id", req.TargetNodeID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "MIGRATION_FAILED", err.Error())
+		return
+	}
+
 	c.JSON(http.StatusAccepted, models.Response{
 		Data: gin.H{
 			"vm_id":          vmID,
 			"target_node_id": req.TargetNodeID,
+			"task_id":        result.TaskID,
 			"status":         "migration_initiated",
 		},
 	})

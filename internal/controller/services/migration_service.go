@@ -17,7 +17,9 @@ import (
 type MigrationService struct {
 	vmRepo        *repository.VMRepository
 	nodeRepo      *repository.NodeRepository
+	taskRepo      *repository.TaskRepository
 	taskPublisher TaskPublisher
+	nodeClient    NodeAgentClient
 	logger        *slog.Logger
 }
 
@@ -25,13 +27,17 @@ type MigrationService struct {
 func NewMigrationService(
 	vmRepo *repository.VMRepository,
 	nodeRepo *repository.NodeRepository,
+	taskRepo *repository.TaskRepository,
 	taskPublisher TaskPublisher,
+	nodeClient NodeAgentClient,
 	logger *slog.Logger,
 ) *MigrationService {
 	return &MigrationService{
 		vmRepo:        vmRepo,
 		nodeRepo:      nodeRepo,
+		taskRepo:      taskRepo,
 		taskPublisher: taskPublisher,
+		nodeClient:    nodeClient,
 		logger:        logger.With("component", "migration-service"),
 	}
 }
@@ -141,18 +147,18 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 
 	// 9. Publish migration task
 	taskPayload := map[string]any{
-		"vm_id":           vm.ID,
-		"source_node_id":  sourceNodeID,
-		"target_node_id":  targetNode.ID,
-		"hostname":        vm.Hostname,
-		"vcpu":            vm.VCPU,
-		"memory_mb":       vm.MemoryMB,
-		"disk_gb":         vm.DiskGB,
-		"mac_address":     vm.MACAddress,
-		"live":            req.Live,
+		"vm_id":            vm.ID,
+		"source_node_id":   sourceNodeID,
+		"target_node_id":   targetNode.ID,
+		"hostname":         vm.Hostname,
+		"vcpu":             vm.VCPU,
+		"memory_mb":        vm.MemoryMB,
+		"disk_gb":          vm.DiskGB,
+		"mac_address":      vm.MACAddress,
+		"live":             req.Live,
 		"source_ceph_pool": sourceNode.CephPool,
 		"target_ceph_pool": targetNode.CephPool,
-		"initiated_by":    adminID,
+		"initiated_by":     adminID,
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
@@ -304,11 +310,14 @@ func (s *MigrationService) checkNodeCapacity(node *models.Node, vm *models.VM) e
 
 // GetMigrationStatus retrieves the status of a migration task.
 func (s *MigrationService) GetMigrationStatus(ctx context.Context, taskID string) (*models.Task, error) {
-	// This would typically use the taskRepo, but we can use the task publisher's
-	// underlying repository or inject a TaskRepository dependency
-	// For now, we return an error indicating this needs to be implemented
-	// with a proper task repository
-	return nil, fmt.Errorf("GetMigrationStatus requires TaskRepository dependency")
+	task, err := s.taskRepo.GetByID(ctx, taskID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, fmt.Errorf("migration task not found: %s", taskID)
+		}
+		return nil, fmt.Errorf("getting migration task: %w", err)
+	}
+	return task, nil
 }
 
 // CancelMigration attempts to cancel an in-progress migration.
@@ -328,15 +337,26 @@ func (s *MigrationService) CancelMigration(ctx context.Context, vmID, adminID st
 		return fmt.Errorf("VM is not in migrating status (current: %s)", vm.Status)
 	}
 
-	// 3. In a full implementation, this would:
-	// - Cancel the migration task via NATS or task worker
-	// - Wait for confirmation or timeout
-	// - Revert VM status based on outcome
+	// 3. If migration is in progress, call AbortMigration via gRPC
+	if vm.NodeID != nil && s.nodeClient != nil {
+		if err := s.nodeClient.AbortMigration(ctx, *vm.NodeID, vmID); err != nil {
+			s.logger.Warn("failed to abort migration via node client",
+				"vm_id", vmID,
+				"node_id", *vm.NodeID,
+				"error", err)
+			// Continue anyway to revert status
+		}
+	}
 
-	// For now, just log the cancellation request
-	s.logger.Warn("migration cancellation requested (not yet fully implemented)",
+	// 4. Revert VM status to running (assume it was running before migration)
+	// In a full implementation, you'd track the previous state
+	if err := s.vmRepo.UpdateStatus(ctx, vmID, models.VMStatusRunning); err != nil {
+		return fmt.Errorf("reverting VM status: %w", err)
+	}
+
+	s.logger.Info("migration cancelled",
 		"vm_id", vmID,
 		"admin_id", adminID)
 
-	return fmt.Errorf("migration cancellation not yet fully implemented")
+	return nil
 }

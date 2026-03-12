@@ -37,17 +37,17 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo       *repository.VMRepository
-	nodeRepo     *repository.NodeRepository
-	ipRepo       *repository.IPRepository
-	planRepo     *repository.PlanRepository
-	templateRepo *repository.TemplateRepository
-	taskRepo     *repository.TaskRepository
+	vmRepo        *repository.VMRepository
+	nodeRepo      *repository.NodeRepository
+	ipRepo        *repository.IPRepository
+	planRepo      *repository.PlanRepository
+	templateRepo  *repository.TemplateRepository
+	taskRepo      *repository.TaskRepository
 	taskPublisher TaskPublisher
-	nodeAgent    NodeAgentClient
-	ipamService  IPAllocator
+	nodeAgent     NodeAgentClient
+	ipamService   IPAllocator
 	encryptionKey string // For encrypting root passwords
-	logger       *slog.Logger
+	logger        *slog.Logger
 }
 
 // NewVMService creates a new VMService with the given dependencies.
@@ -163,24 +163,24 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 
 	// 8. Create VM record in database
 	vm := &models.VM{
-		ID:                 vmID,
-		CustomerID:         customerID,
-		NodeID:             &node.ID,
-		PlanID:             plan.ID,
-		Hostname:           req.Hostname,
-		Status:             models.VMStatusProvisioning,
-		VCPU:               plan.VCPU,
-		MemoryMB:           plan.MemoryMB,
-		DiskGB:             plan.DiskGB,
-		PortSpeedMbps:      plan.PortSpeedMbps,
-		BandwidthLimitGB:   plan.BandwidthLimitGB,
-		BandwidthUsedBytes: 0,
-		BandwidthResetAt:   time.Now().UTC(),
-		MACAddress:         macAddress,
-		TemplateID:         &template.ID,
-		LibvirtDomainName:  &libvirtDomainName,
+		ID:                    vmID,
+		CustomerID:            customerID,
+		NodeID:                &node.ID,
+		PlanID:                plan.ID,
+		Hostname:              req.Hostname,
+		Status:                models.VMStatusProvisioning,
+		VCPU:                  plan.VCPU,
+		MemoryMB:              plan.MemoryMB,
+		DiskGB:                plan.DiskGB,
+		PortSpeedMbps:         plan.PortSpeedMbps,
+		BandwidthLimitGB:      plan.BandwidthLimitGB,
+		BandwidthUsedBytes:    0,
+		BandwidthResetAt:      time.Now().UTC(),
+		MACAddress:            macAddress,
+		TemplateID:            &template.ID,
+		LibvirtDomainName:     &libvirtDomainName,
 		RootPasswordEncrypted: &encryptedPassword,
-		WHMCSServiceID:     req.WHMCSServiceID,
+		WHMCSServiceID:        req.WHMCSServiceID,
 	}
 
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
@@ -199,20 +199,20 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 
 	// 10. Publish vm.create task
 	taskPayload := map[string]any{
-		"vm_id":              vm.ID,
-		"node_id":            node.ID,
-		"hostname":           vm.Hostname,
-		"vcpu":               vm.VCPU,
-		"memory_mb":          vm.MemoryMB,
-		"disk_gb":            vm.DiskGB,
-		"template_id":        template.ID,
-		"template_rbd_image": template.RBDImage,
+		"vm_id":                 vm.ID,
+		"node_id":               node.ID,
+		"hostname":              vm.Hostname,
+		"vcpu":                  vm.VCPU,
+		"memory_mb":             vm.MemoryMB,
+		"disk_gb":               vm.DiskGB,
+		"template_id":           template.ID,
+		"template_rbd_image":    template.RBDImage,
 		"template_rbd_snapshot": template.RBDSnapshot,
-		"mac_address":        vm.MACAddress,
-		"port_speed_mbps":    vm.PortSpeedMbps,
-		"bandwidth_limit_gb": vm.BandwidthLimitGB,
-		"ssh_keys":           req.SSHKeys,
-		"ceph_pool":          node.CephPool,
+		"mac_address":           vm.MACAddress,
+		"port_speed_mbps":       vm.PortSpeedMbps,
+		"bandwidth_limit_gb":    vm.BandwidthLimitGB,
+		"ssh_keys":              req.SSHKeys,
+		"ceph_pool":             node.CephPool,
 	}
 
 	if ipv4Address != nil {
@@ -443,16 +443,16 @@ func (s *VMService) ReinstallVM(ctx context.Context, vmID, templateID, customerI
 
 	// Publish vm.reinstall task
 	taskPayload := map[string]any{
-		"vm_id":                vm.ID,
-		"node_id":              *vm.NodeID,
-		"hostname":             vm.Hostname,
-		"template_id":          template.ID,
-		"template_rbd_image":   template.RBDImage,
+		"vm_id":                 vm.ID,
+		"node_id":               *vm.NodeID,
+		"hostname":              vm.Hostname,
+		"template_id":           template.ID,
+		"template_rbd_image":    template.RBDImage,
 		"template_rbd_snapshot": template.RBDSnapshot,
-		"vcpu":                 vm.VCPU,
-		"memory_mb":            vm.MemoryMB,
-		"disk_gb":              vm.DiskGB,
-		"mac_address":          vm.MACAddress,
+		"vcpu":                  vm.VCPU,
+		"memory_mb":             vm.MemoryMB,
+		"disk_gb":               vm.DiskGB,
+		"mac_address":           vm.MACAddress,
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMReinstall, taskPayload)
@@ -681,16 +681,20 @@ func (s *VMService) GetVMDetail(ctx context.Context, vmID, customerID string, is
 
 // UpdateVMHostname updates a VM's hostname.
 func (s *VMService) UpdateVMHostname(ctx context.Context, vmID, newHostname, customerID string, isAdmin bool) error {
-	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
 		return err
 	}
 
-	// Update hostname via repository (this would require adding a new method to vmRepo)
-	// For now, we'll log this as not implemented
-	s.logger.Info("VM hostname update requested", "vm_id", vm.ID, "new_hostname", newHostname)
-	return fmt.Errorf("hostname update not yet implemented in repository")
+	if err := s.vmRepo.UpdateHostname(ctx, vm.ID, newHostname); err != nil {
+		return fmt.Errorf("updating VM hostname: %w", err)
+	}
+
+	s.logger.Info("VM hostname updated",
+		"vm_id", vmID,
+		"new_hostname", newHostname)
+
+	return nil
 }
 
 // GetTaskStatus retrieves the status of an async task.

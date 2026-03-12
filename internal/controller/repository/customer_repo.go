@@ -291,6 +291,29 @@ func (r *CustomerRepository) DeleteSessionsByUser(ctx context.Context, userID, u
 	return nil
 }
 
+// CountSessionsByUser returns the count of active sessions for a user.
+func (r *CustomerRepository) CountSessionsByUser(ctx context.Context, userID, userType string) (int, error) {
+	const q = `SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND user_type = $2 AND expires_at > NOW()`
+	var count int
+	err := r.db.QueryRow(ctx, q, userID, userType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting sessions for user %s: %w", userID, err)
+	}
+	return count, nil
+}
+
+// DeleteOldestSession removes the oldest session for a user.
+func (r *CustomerRepository) DeleteOldestSession(ctx context.Context, userID, userType string) error {
+	const q = `DELETE FROM sessions WHERE id = (
+		SELECT id FROM sessions WHERE user_id = $1 AND user_type = $2 ORDER BY created_at ASC LIMIT 1
+	)`
+	_, err := r.db.Exec(ctx, q, userID, userType)
+	if err != nil {
+		return fmt.Errorf("deleting oldest session for user %s: %w", userID, err)
+	}
+	return nil
+}
+
 // GetSessionLastReauthAt returns the last re-authentication timestamp for a session.
 // Returns nil if the session has no last_reauth_at recorded.
 func (r *CustomerRepository) GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error) {
@@ -463,6 +486,16 @@ func (r *AdminRepository) UpdatePasswordHash(ctx context.Context, id, passwordHa
 	return nil
 }
 
+// UpdateBackupCodes updates the TOTP backup codes for an admin.
+func (r *AdminRepository) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
+	const q = `UPDATE admins SET totp_backup_codes_hash = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, q, codes, userID)
+	if err != nil {
+		return fmt.Errorf("updating backup codes for admin %s: %w", userID, err)
+	}
+	return nil
+}
+
 // CustomerListFilter holds query parameters for filtering and paginating customer list results.
 type CustomerListFilter struct {
 	Status *string `form:"status"`
@@ -550,6 +583,16 @@ func (r *CustomerRepository) UpdateCustomerPasswordHash(ctx context.Context, id,
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating customer %s password: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// UpdateBackupCodes updates the TOTP backup codes for a customer.
+func (r *CustomerRepository) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
+	const q = `UPDATE customers SET totp_backup_codes_hash = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, q, codes, userID)
+	if err != nil {
+		return fmt.Errorf("updating backup codes for user %s: %w", userID, err)
 	}
 	return nil
 }

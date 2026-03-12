@@ -11,14 +11,16 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/AbuGosok/VirtueStack/internal/shared/config"
-	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
+	"github.com/AbuGosok/VirtueStack/internal/shared/config"
+	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
+	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"libvirt.org/go/libvirt"
 )
 
@@ -32,13 +34,13 @@ const (
 
 // Server represents the VirtueStack Node Agent gRPC server.
 type Server struct {
-	config        *config.NodeAgentConfig
-	libvirtConn   *libvirt.Connect
-	grpcServer    *grpc.Server
-	vmManager     *vm.Manager
-	rbdManager    *storage.RBDManager
-	logger        *slog.Logger
-	listenAddr    string
+	config      *config.NodeAgentConfig
+	libvirtConn *libvirt.Connect
+	grpcServer  *grpc.Server
+	vmManager   *vm.Manager
+	rbdManager  *storage.RBDManager
+	logger      *slog.Logger
+	listenAddr  string
 }
 
 // NewServer creates a new Node Agent server.
@@ -147,13 +149,9 @@ func (s *Server) loadTLSConfig() (*tls.Config, error) {
 }
 
 // registerServices registers the gRPC services.
-// Note: When proto is generated, this will register the NodeAgentServiceServer.
 func (s *Server) registerServices() {
-	// TODO: Register the generated proto service when available.
-	// The service will be registered like:
-	// nodeagentpb.RegisterNodeAgentServiceServer(s.grpcServer, &grpcHandler{...})
-	//
-	// For now, we prepare the handler that will implement the service interface.
+	handler := newGRPCHandler(s)
+	nodeagentpb.RegisterNodeAgentServiceServer(s.grpcServer, handler)
 }
 
 // Start starts the gRPC server and begins listening for connections.
@@ -251,8 +249,9 @@ func (s *Server) isLibvirtAlive() bool {
 }
 
 // grpcHandler implements the NodeAgentService gRPC service.
-// It will satisfy the generated proto interface when available.
+// It satisfies the generated proto interface.
 type grpcHandler struct {
+	nodeagentpb.UnimplementedNodeAgentServiceServer
 	server *Server
 }
 
@@ -262,15 +261,15 @@ func newGRPCHandler(server *Server) *grpcHandler {
 }
 
 // Ping verifies the node agent service is responsive.
-func (h *grpcHandler) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
-	return &PingResponse{
-		NodeID:    h.server.config.NodeID,
-		Timestamp: nil, // Will be set to current time when proto is generated
+func (h *grpcHandler) Ping(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.PingResponse, error) {
+	return &nodeagentpb.PingResponse{
+		NodeId:    h.server.config.NodeID,
+		Timestamp: timestamppb.Now(),
 	}, nil
 }
 
 // GetNodeHealth retrieves comprehensive health status of the node.
-func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *Empty) (*NodeHealthResponse, error) {
+func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.NodeHealthResponse, error) {
 	resources, err := h.server.vmManager.GetNodeResources(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
@@ -288,65 +287,65 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *Empty) (*NodeHealt
 	// Get local disk usage percentage
 	diskPercent := h.server.getDiskUsage()
 
-	return &NodeHealthResponse{
-		NodeID:          h.server.config.NodeID,
-		Healthy:         true,
-		CPUPercent:      cpuPercent,
-		MemoryPercent:   memoryPercent,
-		DiskPercent:     diskPercent,
-		VMCount:         resources.VMCount,
-		LoadAverage:     resources.LoadAverage[:],
-		UptimeSeconds:   resources.UptimeSeconds,
+	return &nodeagentpb.NodeHealthResponse{
+		NodeId:           h.server.config.NodeID,
+		Healthy:          true,
+		CpuPercent:       cpuPercent,
+		MemoryPercent:    memoryPercent,
+		DiskPercent:      diskPercent,
+		VmCount:          resources.VMCount,
+		LoadAverage:      resources.LoadAverage[:],
+		UptimeSeconds:    resources.UptimeSeconds,
 		LibvirtConnected: h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:   h.server.isCephConnected(),
+		CephConnected:    h.server.isCephConnected(),
 	}, nil
 }
 
 // GetVMStatus retrieves the current operational state of a virtual machine.
-func (h *grpcHandler) GetVMStatus(ctx context.Context, req *VMIdentifier) (*VMStatusResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) GetVMStatus(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMStatusResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	status, err := h.server.vmManager.GetStatus(ctx, req.VMID)
+	status, err := h.server.vmManager.GetStatus(ctx, req.GetVmId())
 	if err != nil {
 		return nil, h.mapError(err, "getting VM status")
 	}
 
-	return &VMStatusResponse{
-		VMID:          status.VMID,
+	return &nodeagentpb.VMStatusResponse{
+		VmId:          status.VMID,
 		Status:        mapStatusToProto(status.Status),
-		VCPU:          status.VCPU,
-		MemoryMB:      status.MemoryMB,
+		Vcpu:          status.VCPU,
+		MemoryMb:      status.MemoryMB,
 		UptimeSeconds: status.UptimeSeconds,
 	}, nil
 }
 
 // GetVMMetrics retrieves real-time resource utilization metrics for a VM.
-func (h *grpcHandler) GetVMMetrics(ctx context.Context, req *VMIdentifier) (*VMMetricsResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) GetVMMetrics(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMMetricsResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	metrics, err := h.server.vmManager.GetMetrics(ctx, req.VMID)
+	metrics, err := h.server.vmManager.GetMetrics(ctx, req.GetVmId())
 	if err != nil {
 		return nil, h.mapError(err, "getting VM metrics")
 	}
 
-	return &VMMetricsResponse{
-		VMID:             metrics.VMID,
-		CPUUsagePercent:  metrics.CPUUsagePercent,
+	return &nodeagentpb.VMMetricsResponse{
+		VmId:             metrics.VMID,
+		CpuUsagePercent:  metrics.CPUUsagePercent,
 		MemoryUsageBytes: metrics.MemoryUsageBytes,
 		MemoryTotalBytes: metrics.MemoryTotalBytes,
 		DiskReadBytes:    metrics.DiskReadBytes,
 		DiskWriteBytes:   metrics.DiskWriteBytes,
-		NetworkRXBytes:   metrics.NetworkRXBytes,
-		NetworkTXBytes:   metrics.NetworkTXBytes,
+		NetworkRxBytes:   metrics.NetworkRXBytes,
+		NetworkTxBytes:   metrics.NetworkTXBytes,
 	}, nil
 }
 
 // GetNodeResources retrieves aggregate resource information for the node.
-func (h *grpcHandler) GetNodeResources(ctx context.Context, req *Empty) (*NodeResourcesResponse, error) {
+func (h *grpcHandler) GetNodeResources(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.NodeResourcesResponse, error) {
 	resources, err := h.server.vmManager.GetNodeResources(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
@@ -354,39 +353,39 @@ func (h *grpcHandler) GetNodeResources(ctx context.Context, req *Empty) (*NodeRe
 
 	totalDiskGB, usedDiskGB := h.server.getCephPoolStats()
 
-	return &NodeResourcesResponse{
-		TotalVCPU:     resources.TotalVCPU,
-		UsedVCPU:      resources.UsedVCPU,
-		TotalMemoryMB: resources.TotalMemoryMB,
-		UsedMemoryMB:  resources.UsedMemoryMB,
-		TotalDiskGB:   totalDiskGB,
-		UsedDiskGB:    usedDiskGB,
-		VMCount:       resources.VMCount,
+	return &nodeagentpb.NodeResourcesResponse{
+		TotalVcpu:     resources.TotalVCPU,
+		UsedVcpu:      resources.UsedVCPU,
+		TotalMemoryMb: resources.TotalMemoryMB,
+		UsedMemoryMb:  resources.UsedMemoryMB,
+		TotalDiskGb:   totalDiskGB,
+		UsedDiskGb:    usedDiskGB,
+		VmCount:       resources.VMCount,
 		LoadAverage:   resources.LoadAverage[:],
 		UptimeSeconds: resources.UptimeSeconds,
 	}, nil
 }
 
 // CreateVM provisions a new virtual machine.
-func (h *grpcHandler) CreateVM(ctx context.Context, req *CreateVMRequest) (*CreateVMResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMRequest) (*nodeagentpb.CreateVMResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
 	// Convert request to DomainConfig
 	cfg := &vm.DomainConfig{
-		VMID:           req.VMID,
-		Hostname:       req.Hostname,
-		VCPU:           int(req.VCPU),
-		MemoryMB:       int(req.MemoryMB),
-		CephPool:       req.CephPool,
-		CephMonitors:   req.CephMonitors,
-		CephUser:       req.CephUser,
-		CephSecretUUID: req.CephSecretUUID,
-		MACAddress:     req.MACAddress,
-		IPv4Address:    req.IPv4Address,
-		IPv6Address:    req.IPv6Address,
-		PortSpeedKbps:  int(req.PortSpeedMbps) * 1000, // Convert Mbps to Kbps
+		VMID:           req.GetVmId(),
+		Hostname:       req.GetHostname(),
+		VCPU:           int(req.GetVcpu()),
+		MemoryMB:       int(req.GetMemoryMb()),
+		CephPool:       req.GetCephPool(),
+		CephMonitors:   req.GetCephMonitors(),
+		CephUser:       req.GetCephUser(),
+		CephSecretUUID: req.GetCephSecretUuid(),
+		MACAddress:     req.GetMacAddress(),
+		IPv4Address:    req.GetIpv4Address(),
+		IPv6Address:    req.GetIpv6Address(),
+		PortSpeedKbps:  int(req.GetPortSpeedMbps()) * 1000, // Convert Mbps to Kbps
 	}
 
 	// Use config defaults if not provided
@@ -402,79 +401,79 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *CreateVMRequest) (*Crea
 		return nil, h.mapError(err, "creating VM")
 	}
 
-	return &CreateVMResponse{
-		VMID:             req.VMID,
-		Success:          true,
+	return &nodeagentpb.CreateVMResponse{
+		VmId:              req.GetVmId(),
+		Success:           true,
 		LibvirtDomainName: result.DomainName,
-		VNCPort:          result.VNCPort,
+		VncPort:           result.VNCPort,
 	}, nil
 }
 
 // StartVM powers on a stopped virtual machine.
-func (h *grpcHandler) StartVM(ctx context.Context, req *VMIdentifier) (*VMOperationResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) StartVM(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	if err := h.server.vmManager.StartVM(ctx, req.VMID); err != nil {
+	if err := h.server.vmManager.StartVM(ctx, req.GetVmId()); err != nil {
 		return nil, h.mapError(err, "starting VM")
 	}
 
-	return &VMOperationResponse{
-		VMID:    req.VMID,
+	return &nodeagentpb.VMOperationResponse{
+		VmId:    req.GetVmId(),
 		Success: true,
 	}, nil
 }
 
 // StopVM gracefully shuts down a running virtual machine using ACPI.
-func (h *grpcHandler) StopVM(ctx context.Context, req *StopVMRequest) (*VMOperationResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) StopVM(ctx context.Context, req *nodeagentpb.StopVMRequest) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	timeout := int(req.TimeoutSeconds)
+	timeout := int(req.GetTimeoutSeconds())
 	if timeout <= 0 {
 		timeout = 120 // Default timeout
 	}
 
-	if err := h.server.vmManager.StopVM(ctx, req.VMID, timeout); err != nil {
+	if err := h.server.vmManager.StopVM(ctx, req.GetVmId(), timeout); err != nil {
 		return nil, h.mapError(err, "stopping VM")
 	}
 
-	return &VMOperationResponse{
-		VMID:    req.VMID,
+	return &nodeagentpb.VMOperationResponse{
+		VmId:    req.GetVmId(),
 		Success: true,
 	}, nil
 }
 
 // ForceStopVM immediately terminates a virtual machine (power off).
-func (h *grpcHandler) ForceStopVM(ctx context.Context, req *VMIdentifier) (*VMOperationResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) ForceStopVM(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	if err := h.server.vmManager.ForceStopVM(ctx, req.VMID); err != nil {
+	if err := h.server.vmManager.ForceStopVM(ctx, req.GetVmId()); err != nil {
 		return nil, h.mapError(err, "force stopping VM")
 	}
 
-	return &VMOperationResponse{
-		VMID:    req.VMID,
+	return &nodeagentpb.VMOperationResponse{
+		VmId:    req.GetVmId(),
 		Success: true,
 	}, nil
 }
 
 // DeleteVM permanently removes a virtual machine and its disk image.
-func (h *grpcHandler) DeleteVM(ctx context.Context, req *VMIdentifier) (*VMOperationResponse, error) {
-	if req.VMID == "" {
+func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	if err := h.server.vmManager.DeleteVM(ctx, req.VMID); err != nil {
+	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
 		return nil, h.mapError(err, "deleting VM")
 	}
 
-	return &VMOperationResponse{
-		VMID:    req.VMID,
+	return &nodeagentpb.VMOperationResponse{
+		VmId:    req.GetVmId(),
 		Success: true,
 	}, nil
 }
@@ -487,139 +486,21 @@ func (h *grpcHandler) mapError(err error, operation string) error {
 }
 
 // mapStatusToProto maps a string status to the proto VMStatus enum.
-// This will use the generated proto enum when available.
-func mapStatusToProto(status string) int32 {
+func mapStatusToProto(status string) nodeagentpb.VMStatus {
 	switch status {
 	case "running":
-		return 1 // VM_STATUS_RUNNING
+		return nodeagentpb.VMStatus_VM_STATUS_RUNNING
 	case "stopped":
-		return 2 // VM_STATUS_STOPPED
+		return nodeagentpb.VMStatus_VM_STATUS_STOPPED
 	case "paused":
-		return 3 // VM_STATUS_PAUSED
+		return nodeagentpb.VMStatus_VM_STATUS_PAUSED
 	case "shutting_down":
-		return 4 // VM_STATUS_SHUTTING_DOWN
+		return nodeagentpb.VMStatus_VM_STATUS_SHUTTING_DOWN
 	case "crashed":
-		return 5 // VM_STATUS_CRASHED
+		return nodeagentpb.VMStatus_VM_STATUS_CRASHED
 	case "migrating":
-		return 6 // VM_STATUS_MIGRATING
+		return nodeagentpb.VMStatus_VM_STATUS_MIGRATING
 	default:
-		return 0 // VM_STATUS_UNKNOWN
+		return nodeagentpb.VMStatus_VM_STATUS_UNKNOWN
 	}
-}
-
-// ============================================================================
-// Local message types (mirrors proto messages until proto is generated)
-// ============================================================================
-
-// Empty represents an empty message.
-type Empty struct{}
-
-// PingRequest is an empty request for ping operations.
-type PingRequest struct{}
-
-// VMIdentifier uniquely identifies a virtual machine.
-type VMIdentifier struct {
-	VMID string
-}
-
-// VMOperationResponse is the standard response for VM operations.
-type VMOperationResponse struct {
-	VMID         string
-	Success      bool
-	ErrorMessage string
-}
-
-// PingResponse verifies that the node agent is responsive.
-type PingResponse struct {
-	NodeID    string
-	Timestamp any // Will be *timestamppb.Timestamp when proto is generated
-}
-
-// NodeHealthResponse contains comprehensive health information for the node.
-type NodeHealthResponse struct {
-	NodeID           string
-	Healthy          bool
-	CPUPercent       float64
-	MemoryPercent    float64
-	DiskPercent      float64
-	VMCount          int32
-	LoadAverage      []float64
-	UptimeSeconds    int64
-	LibvirtConnected bool
-	CephConnected    bool
-}
-
-// VMStatusResponse contains the current state of a virtual machine.
-type VMStatusResponse struct {
-	VMID          string
-	Status        int32
-	VCPU          int32
-	MemoryMB      int32
-	UptimeSeconds int64
-}
-
-// VMMetricsResponse contains real-time resource utilization for a VM.
-type VMMetricsResponse struct {
-	VMID             string
-	CPUUsagePercent  float64
-	MemoryUsageBytes int64
-	MemoryTotalBytes int64
-	DiskReadBytes    int64
-	DiskWriteBytes   int64
-	NetworkRXBytes   int64
-	NetworkTXBytes   int64
-}
-
-// NodeResourcesResponse contains aggregate resource information for the node.
-type NodeResourcesResponse struct {
-	TotalVCPU     int32
-	UsedVCPU      int32
-	TotalMemoryMB int64
-	UsedMemoryMB  int64
-	TotalDiskGB   int64
-	UsedDiskGB    int64
-	VMCount       int32
-	LoadAverage   []float64
-	UptimeSeconds int64
-}
-
-// CreateVMRequest contains all parameters needed to provision a new VM.
-type CreateVMRequest struct {
-	VMID             string
-	Hostname         string
-	VCPU             int32
-	MemoryMB         int32
-	DiskGB           int32
-	TemplateRBDImage string
-	TemplateRBDSnapshot string
-	RootPasswordHash string
-	SSHPublicKeys    []string
-	IPv4Address      string
-	IPv4Gateway      string
-	IPv4Netmask      string
-	IPv6Address      string
-	IPv6Gateway      string
-	MACAddress       string
-	PortSpeedMbps    int32
-	BandwidthLimitGB int64
-	CephMonitors     []string
-	CephUser         string
-	CephSecretUUID   string
-	CephPool         string
-	Nameservers      []string
-}
-
-// CreateVMResponse is returned after a VM creation attempt.
-type CreateVMResponse struct {
-	VMID              string
-	Success           bool
-	LibvirtDomainName string
-	VNCPort           int32
-	ErrorMessage      string
-}
-
-// StopVMRequest specifies parameters for a graceful VM shutdown.
-type StopVMRequest struct {
-	VMID           string
-	TimeoutSeconds int32
 }

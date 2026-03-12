@@ -286,6 +286,19 @@ func (r *VMRepository) UpdatePassword(ctx context.Context, vmID string, encrypte
 	return nil
 }
 
+// UpdateHostname updates the hostname of a VM.
+func (r *VMRepository) UpdateHostname(ctx context.Context, vmID, hostname string) error {
+	const q = `UPDATE vms SET hostname = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, hostname, vmID)
+	if err != nil {
+		return fmt.Errorf("updating hostname for VM %s: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating hostname for VM %s: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
 var ErrNoRowsAffected = fmt.Errorf("no rows affected")
 
