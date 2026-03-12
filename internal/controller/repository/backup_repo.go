@@ -36,6 +36,13 @@ type SnapshotListFilter struct {
 	VMID *string
 }
 
+type BackupScheduleListFilter struct {
+	models.PaginationParams
+	VMID       *string
+	CustomerID *string
+	Active     *bool
+}
+
 // ============================================================================
 // Backup Operations
 // ============================================================================
@@ -134,6 +141,51 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 	return backups, total, nil
 }
 
+func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID string, filter BackupListFilter) ([]models.Backup, int, error) {
+	where := []string{"v.customer_id = $1"}
+	args := []any{customerID}
+	idx := 2
+
+	if filter.VMID != nil {
+		where = append(where, fmt.Sprintf("b.vm_id = $%d", idx))
+		args = append(args, *filter.VMID)
+		idx++
+	}
+	if filter.Status != nil {
+		where = append(where, fmt.Sprintf("b.status = $%d", idx))
+		args = append(args, *filter.Status)
+		idx++
+	}
+	if filter.Type != nil {
+		where = append(where, fmt.Sprintf("b.type = $%d", idx))
+		args = append(args, *filter.Type)
+		idx++
+	}
+
+	clause := strings.Join(where, " AND ")
+	countQ := "SELECT COUNT(*) FROM backups b JOIN vms v ON v.id = b.vm_id WHERE " + clause
+	total, err := CountRows(ctx, r.db, countQ, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting backups by customer: %w", err)
+	}
+
+	limit := filter.Limit()
+	offset := filter.Offset()
+	listQ := fmt.Sprintf(
+		"SELECT %s FROM backups b JOIN vms v ON v.id = b.vm_id WHERE %s ORDER BY b.created_at DESC LIMIT $%d OFFSET $%d",
+		prefixSelectCols(backupSelectCols, "b"), clause, idx, idx+1,
+	)
+	args = append(args, limit, offset)
+
+	backups, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Backup, error) {
+		return scanBackup(rows)
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing backups by customer: %w", err)
+	}
+	return backups, total, nil
+}
+
 // ListBackupsByVM returns all backups for a specific VM.
 func (r *BackupRepository) ListBackupsByVM(ctx context.Context, vmID string) ([]models.Backup, error) {
 	const q = `SELECT ` + backupSelectCols + ` FROM backups WHERE vm_id = $1 ORDER BY created_at DESC`
@@ -183,6 +235,17 @@ func (r *BackupRepository) DeleteBackup(ctx context.Context, id string) error {
 		return fmt.Errorf("deleting backup %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
+}
+
+func (r *BackupRepository) ListExpiredBackups(ctx context.Context, now time.Time) ([]models.Backup, error) {
+	const q = `SELECT ` + backupSelectCols + ` FROM backups WHERE expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC`
+	backups, err := ScanRows(ctx, r.db, q, []any{now}, func(rows pgx.Rows) (models.Backup, error) {
+		return scanBackup(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing expired backups: %w", err)
+	}
+	return backups, nil
 }
 
 // ============================================================================
@@ -267,6 +330,49 @@ func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotLis
 	return snapshots, total, nil
 }
 
+func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customerID string, filter SnapshotListFilter) ([]models.Snapshot, int, error) {
+	where := []string{"v.customer_id = $1"}
+	args := []any{customerID}
+	idx := 2
+
+	if filter.VMID != nil {
+		where = append(where, fmt.Sprintf("s.vm_id = $%d", idx))
+		args = append(args, *filter.VMID)
+		idx++
+	}
+
+	clause := strings.Join(where, " AND ")
+	countQ := "SELECT COUNT(*) FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE " + clause
+	total, err := CountRows(ctx, r.db, countQ, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting snapshots by customer: %w", err)
+	}
+
+	limit := filter.Limit()
+	offset := filter.Offset()
+	listQ := fmt.Sprintf(
+		"SELECT %s FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE %s ORDER BY s.created_at DESC LIMIT $%d OFFSET $%d",
+		prefixSelectCols(snapshotSelectCols, "s"), clause, idx, idx+1,
+	)
+	args = append(args, limit, offset)
+
+	snapshots, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Snapshot, error) {
+		return scanSnapshot(rows)
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing snapshots by customer: %w", err)
+	}
+	return snapshots, total, nil
+}
+
+func prefixSelectCols(cols, alias string) string {
+	parts := strings.Split(cols, ",")
+	for i := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(parts[i])
+	}
+	return strings.Join(parts, ", ")
+}
+
 // ListSnapshotsByVM returns all snapshots for a specific VM.
 func (r *BackupRepository) ListSnapshotsByVM(ctx context.Context, vmID string) ([]models.Snapshot, error) {
 	const q = `SELECT ` + snapshotSelectCols + ` FROM snapshots WHERE vm_id = $1 ORDER BY created_at DESC`
@@ -277,6 +383,27 @@ func (r *BackupRepository) ListSnapshotsByVM(ctx context.Context, vmID string) (
 		return nil, fmt.Errorf("listing snapshots for VM %s: %w", vmID, err)
 	}
 	return snapshots, nil
+}
+
+func (r *BackupRepository) UpdateSnapshot(ctx context.Context, snapshot *models.Snapshot) error {
+	const q = `
+		UPDATE snapshots SET
+			vm_id = $1,
+			name = $2,
+			rbd_snapshot = $3,
+			size_bytes = $4
+		WHERE id = $5
+		RETURNING ` + snapshotSelectCols
+
+	row := r.db.QueryRow(ctx, q,
+		snapshot.VMID, snapshot.Name, snapshot.RBDSnapshot, snapshot.SizeBytes, snapshot.ID,
+	)
+	updated, err := scanSnapshot(row)
+	if err != nil {
+		return fmt.Errorf("updating snapshot %s: %w", snapshot.ID, err)
+	}
+	*snapshot = updated
+	return nil
 }
 
 // DeleteSnapshot permanently removes a snapshot record from the database.
@@ -316,4 +443,127 @@ func (r *BackupRepository) HasBackupInMonth(ctx context.Context, vmID string, ye
 		return false, fmt.Errorf("checking backup existence for VM %s in %d-%d: %w", vmID, year, month, err)
 	}
 	return exists, nil
+}
+
+const backupScheduleSelectCols = `
+	id, vm_id, customer_id, frequency, retention_count,
+	active, next_run_at, created_at`
+
+func scanBackupSchedule(row pgx.Row) (models.BackupSchedule, error) {
+	var s models.BackupSchedule
+	err := row.Scan(
+		&s.ID, &s.VMID, &s.CustomerID, &s.Frequency, &s.RetentionCount,
+		&s.Active, &s.NextRunAt, &s.CreatedAt,
+	)
+	return s, err
+}
+
+func (r *BackupRepository) CreateBackupSchedule(ctx context.Context, schedule *models.BackupSchedule) error {
+	const q = `
+		INSERT INTO backup_schedules (
+			vm_id, customer_id, frequency, retention_count, active, next_run_at
+		) VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING ` + backupScheduleSelectCols
+
+	row := r.db.QueryRow(ctx, q,
+		schedule.VMID, schedule.CustomerID, schedule.Frequency,
+		schedule.RetentionCount, schedule.Active, schedule.NextRunAt,
+	)
+	created, err := scanBackupSchedule(row)
+	if err != nil {
+		return fmt.Errorf("creating backup schedule: %w", err)
+	}
+	*schedule = created
+	return nil
+}
+
+func (r *BackupRepository) GetBackupScheduleByID(ctx context.Context, id string) (*models.BackupSchedule, error) {
+	const q = `SELECT ` + backupScheduleSelectCols + ` FROM backup_schedules WHERE id = $1`
+	schedule, err := ScanRow(ctx, r.db, q, []any{id}, scanBackupSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("getting backup schedule %s: %w", id, err)
+	}
+	return &schedule, nil
+}
+
+func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter BackupScheduleListFilter) ([]models.BackupSchedule, int, error) {
+	where := []string{"1=1"}
+	args := []any{}
+	idx := 1
+
+	if filter.VMID != nil {
+		where = append(where, fmt.Sprintf("vm_id = $%d", idx))
+		args = append(args, *filter.VMID)
+		idx++
+	}
+	if filter.CustomerID != nil {
+		where = append(where, fmt.Sprintf("customer_id = $%d", idx))
+		args = append(args, *filter.CustomerID)
+		idx++
+	}
+	if filter.Active != nil {
+		where = append(where, fmt.Sprintf("active = $%d", idx))
+		args = append(args, *filter.Active)
+		idx++
+	}
+
+	clause := strings.Join(where, " AND ")
+	countQ := "SELECT COUNT(*) FROM backup_schedules WHERE " + clause
+	total, err := CountRows(ctx, r.db, countQ, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting backup schedules: %w", err)
+	}
+
+	limit := filter.Limit()
+	offset := filter.Offset()
+	listQ := fmt.Sprintf(
+		"SELECT %s FROM backup_schedules WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+		backupScheduleSelectCols, clause, idx, idx+1,
+	)
+	args = append(args, limit, offset)
+
+	schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.BackupSchedule, error) {
+		return scanBackupSchedule(rows)
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing backup schedules: %w", err)
+	}
+
+	return schedules, total, nil
+}
+
+func (r *BackupRepository) DeleteBackupSchedule(ctx context.Context, id string) error {
+	const q = `DELETE FROM backup_schedules WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("deleting backup schedule %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("deleting backup schedule %s: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+func (r *BackupRepository) UpdateBackupScheduleActive(ctx context.Context, id string, active bool) error {
+	const q = `UPDATE backup_schedules SET active = $1 WHERE id = $2`
+	tag, err := r.db.Exec(ctx, q, active, id)
+	if err != nil {
+		return fmt.Errorf("updating backup schedule %s active: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating backup schedule %s active: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+func (r *BackupRepository) UpdateBackupScheduleFrequency(ctx context.Context, id, frequency string, nextRunAt time.Time) error {
+	const q = `UPDATE backup_schedules SET frequency = $1, next_run_at = $2 WHERE id = $3`
+	tag, err := r.db.Exec(ctx, q, frequency, nextRunAt, id)
+	if err != nil {
+		return fmt.Errorf("updating backup schedule %s frequency: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating backup schedule %s frequency: %w", id, ErrNoRowsAffected)
+	}
+	return nil
 }

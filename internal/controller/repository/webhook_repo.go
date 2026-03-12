@@ -22,36 +22,36 @@ func NewWebhookRepository(db DB) *WebhookRepository {
 
 // Webhook represents a webhook endpoint configuration.
 type Webhook struct {
-	ID            string    `json:"id"`
-	CustomerID    string    `json:"customer_id"`
-	URL           string    `json:"url"`
-	SecretHash    string    `json:"-"` // Never expose in JSON
-	Events        []string  `json:"events"`
-	Active        bool      `json:"active"`
-	FailCount     int       `json:"fail_count"`
+	ID            string     `json:"id"`
+	CustomerID    string     `json:"customer_id"`
+	URL           string     `json:"url"`
+	SecretHash    string     `json:"-"` // Never expose in JSON
+	Events        []string   `json:"events"`
+	Active        bool       `json:"active"`
+	FailCount     int        `json:"fail_count"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // WebhookDelivery represents a single webhook delivery attempt.
 type WebhookDelivery struct {
-	ID             string          `json:"id"`
-	WebhookID      string          `json:"webhook_id"`
-	Event          string          `json:"event"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	Payload        []byte          `json:"payload"`
-	Status         string          `json:"status"`
-	AttemptCount   int             `json:"attempt_count"`
-	MaxAttempts    int             `json:"max_attempts"`
-	NextRetryAt    *time.Time      `json:"next_retry_at,omitempty"`
-	ResponseStatus *int            `json:"response_status,omitempty"`
-	ResponseBody   string          `json:"response_body,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	DeliveredAt    *time.Time      `json:"delivered_at,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID             string     `json:"id"`
+	WebhookID      string     `json:"webhook_id"`
+	Event          string     `json:"event"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	Payload        []byte     `json:"payload"`
+	Status         string     `json:"status"`
+	AttemptCount   int        `json:"attempt_count"`
+	MaxAttempts    int        `json:"max_attempts"`
+	NextRetryAt    *time.Time `json:"next_retry_at,omitempty"`
+	ResponseStatus *int       `json:"response_status,omitempty"`
+	ResponseBody   string     `json:"response_body,omitempty"`
+	ErrorMessage   string     `json:"error_message,omitempty"`
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // Delivery status constants.
@@ -543,6 +543,43 @@ func (r *WebhookRepository) GetPendingDeliveries(ctx context.Context, limit int)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting pending deliveries: %w", err)
+	}
+	return deliveries, nil
+}
+
+func (r *WebhookRepository) ResetDeliveryForRetry(ctx context.Context, id string) error {
+	const q = `
+		UPDATE webhook_deliveries
+		SET status = $2,
+		    next_retry_at = NULL,
+		    error_message = '',
+		    updated_at = NOW()
+		WHERE id = $1`
+
+	tag, err := r.db.Exec(ctx, q, id, DeliveryStatusPending)
+	if err != nil {
+		return fmt.Errorf("resetting delivery %s for retry: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("resetting delivery %s for retry: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+func (r *WebhookRepository) GetPendingRetries(ctx context.Context, before time.Time) ([]WebhookDelivery, error) {
+	const q = `
+		SELECT ` + deliverySelectCols + `
+		FROM webhook_deliveries
+		WHERE status = $1
+		  AND next_retry_at IS NOT NULL
+		  AND next_retry_at <= $2
+		ORDER BY next_retry_at ASC`
+
+	deliveries, err := ScanRows(ctx, r.db, q, []any{DeliveryStatusRetrying, before}, func(rows pgx.Rows) (WebhookDelivery, error) {
+		return scanDelivery(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting pending retries: %w", err)
 	}
 	return deliveries, nil
 }

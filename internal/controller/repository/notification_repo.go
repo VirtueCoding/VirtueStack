@@ -3,11 +3,13 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // NotificationPreferenceRepository provides database operations for notification preferences.
@@ -130,13 +132,13 @@ func (r *NotificationPreferenceRepository) GetOrCreate(ctx context.Context, cust
 	}
 
 	// Check if it's a "not found" error
-	if err.Error() == fmt.Sprintf("getting notification preferences for customer %s: %v", customerID, err) {
+	if errors.Is(err, apierrors.ErrNotFound) {
 		// Create default preferences
 		prefs = &models.NotificationPreferences{
-			CustomerID:     customerID,
-			EmailEnabled:   true,
+			CustomerID:      customerID,
+			EmailEnabled:    true,
 			TelegramEnabled: false,
-			Events:         []string{"vm.created", "vm.deleted", "vm.suspended", "backup.failed"},
+			Events:          []string{"vm.created", "vm.deleted", "vm.suspended", "backup.failed"},
 		}
 		if createErr := r.Create(ctx, prefs); createErr != nil {
 			return nil, fmt.Errorf("creating default notification preferences: %w", createErr)

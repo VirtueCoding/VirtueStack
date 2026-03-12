@@ -230,3 +230,32 @@ func (r *NodeRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
+	const q = `
+		UPDATE nodes SET
+			grpc_address = $1,
+			location_id = $2,
+			total_vcpu = $3,
+			total_memory_mb = $4,
+			ipmi_address = $5
+		WHERE id = $6
+		RETURNING ` + nodeSelectCols
+
+	row := r.db.QueryRow(ctx, q,
+		node.GRPCAddress,
+		node.LocationID,
+		node.TotalVCPU,
+		node.TotalMemoryMB,
+		node.IPMIAddress,
+		node.ID,
+	)
+
+	updated, err := scanNode(row)
+	if err != nil {
+		return fmt.Errorf("updating node %s: %w", node.ID, err)
+	}
+
+	*node = updated
+	return nil
+}
