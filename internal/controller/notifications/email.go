@@ -10,21 +10,20 @@ import (
 	"log/slog"
 	"net/smtp"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
 
 // EmailConfig holds configuration for the email provider.
 type EmailConfig struct {
-	Enabled   bool
-	Host      string
-	Port      int
-	Username  string
-	Password  string
-	From      string
-	UseTLS    bool
-	FromName  string
+	Enabled  bool
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	UseTLS   bool
+	FromName string
 }
 
 // EmailPayload contains data for an email notification.
@@ -306,7 +305,7 @@ func (p *EmailProvider) Send(ctx context.Context, payload *EmailPayload) error {
 	msg := p.buildMessage(from, payload.To, payload.Subject, body)
 
 	// Send email
-	if err := p.sendEmail(msg); err != nil {
+	if err := p.sendEmail(payload.To, msg); err != nil {
 		return fmt.Errorf("sending email: %w", err)
 	}
 
@@ -375,7 +374,7 @@ func (p *EmailProvider) buildMessage(from, to, subject, body string) string {
 }
 
 // sendEmail sends the email via SMTP.
-func (p *EmailProvider) sendEmail(msg string) error {
+func (p *EmailProvider) sendEmail(to, msg string) error {
 	addr := fmt.Sprintf("%s:%d", p.config.Host, p.config.Port)
 
 	var auth smtp.Auth
@@ -385,20 +384,20 @@ func (p *EmailProvider) sendEmail(msg string) error {
 
 	// For TLS connections (port 587), we need to handle STARTTLS
 	if p.config.UseTLS && p.config.Port == 587 {
-		return p.sendWithSTARTTLS(addr, auth, msg)
+		return p.sendWithSTARTTLS(addr, auth, to, msg)
 	}
 
 	// For SSL connections (port 465) or non-TLS
 	if p.config.Port == 465 {
-		return p.sendWithTLS(addr, auth, msg)
+		return p.sendWithTLS(addr, auth, to, msg)
 	}
 
 	// Standard SMTP (port 25)
-	return smtp.SendMail(addr, auth, p.config.From, []string{strings.Split(msg, "\r\nTo: ")[1][:strings.Index(msg, "\r\n")]}, []byte(msg))
+	return smtp.SendMail(addr, auth, p.config.From, []string{to}, []byte(msg))
 }
 
 // sendWithSTARTTLS sends email using STARTTLS.
-func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, msg string) error {
+func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, to, msg string) error {
 	conn, err := smtp.Dial(addr)
 	if err != nil {
 		return fmt.Errorf("connecting to SMTP server: %w", err)
@@ -431,16 +430,6 @@ func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, msg string
 		return fmt.Errorf("setting sender: %w", err)
 	}
 
-	// Extract recipient from message
-	lines := strings.Split(msg, "\r\n")
-	var to string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "To: ") {
-			to = strings.TrimPrefix(line, "To: ")
-			break
-		}
-	}
-
 	if err := conn.Rcpt(to); err != nil {
 		return fmt.Errorf("setting recipient: %w", err)
 	}
@@ -461,7 +450,7 @@ func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, msg string
 }
 
 // sendWithTLS sends email using implicit TLS (port 465).
-func (p *EmailProvider) sendWithTLS(addr string, auth smtp.Auth, msg string) error {
+func (p *EmailProvider) sendWithTLS(addr string, auth smtp.Auth, to, msg string) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,
 		ServerName:         p.config.Host,
@@ -487,16 +476,6 @@ func (p *EmailProvider) sendWithTLS(addr string, auth smtp.Auth, msg string) err
 
 	if err := client.Mail(p.config.From); err != nil {
 		return fmt.Errorf("setting sender: %w", err)
-	}
-
-	// Extract recipient from message
-	lines := strings.Split(msg, "\r\n")
-	var to string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "To: ") {
-			to = strings.TrimPrefix(line, "To: ")
-			break
-		}
 	}
 
 	if err := client.Rcpt(to); err != nil {

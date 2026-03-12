@@ -14,10 +14,10 @@ import (
 
 // TelegramConfig holds configuration for the Telegram provider.
 type TelegramConfig struct {
-	Enabled     bool
-	BotToken    string
+	Enabled      bool
+	BotToken     string
 	AdminChatIDs []string
-	Timeout     time.Duration
+	Timeout      time.Duration
 }
 
 // TelegramPayload contains data for a Telegram notification.
@@ -205,21 +205,7 @@ func EscapeMarkdown(text string) string {
 		"_", "\\_",
 		"*", "\\*",
 		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
 		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
 	)
 	return replacer.Replace(text)
 }
