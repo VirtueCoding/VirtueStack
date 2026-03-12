@@ -5,11 +5,21 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Weak passwords that should be rejected.
+var weakPasswords = map[string]bool{
+	"changeme": true,
+	"password": true,
+	"123456":   true,
+	"admin":    true,
+	"root":     true,
+}
 
 // Default configuration values.
 const (
@@ -64,6 +74,7 @@ type ControllerConfig struct {
 	EncryptionKey string `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
 	ListenAddr    string `yaml:"listen_addr" env:"LISTEN_ADDR"`
 	LogLevel      string `yaml:"log_level" env:"LOG_LEVEL"`
+	Environment   string `yaml:"environment" env:"APP_ENV"`
 
 	// Optional configurations
 	SMTP     SMTPConfig     `yaml:"smtp"`
@@ -120,6 +131,14 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 	if err := validateControllerConfig(cfg); err != nil {
 		return nil, fmt.Errorf("validating controller config: %w", err)
 	}
+
+	// Validate passwords
+	if err := validatePasswords(); err != nil {
+		return nil, fmt.Errorf("password validation failed: %w", err)
+	}
+
+	// Log warnings for weak default passwords
+	validateDefaultPasswords()
 
 	return cfg, nil
 }
@@ -191,6 +210,9 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
+	}
+	if v := os.Getenv("APP_ENV"); v != "" {
+		cfg.Environment = v
 	}
 
 	// SMTP config
@@ -317,4 +339,52 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 	}
 
 	return nil
+}
+
+// isWeakPassword checks if a password is in the weak password list.
+func isWeakPassword(password string) bool {
+	return weakPasswords[strings.ToLower(password)]
+}
+
+// validatePasswords checks password environment variables for weak values.
+func validatePasswords() error {
+	passwordEnvVars := []string{
+		"DB_PASSWORD",
+		"ADMIN_PASSWORD",
+		"CUSTOMER_PASSWORD",
+	}
+
+	var weakFound []string
+
+	for _, envVar := range passwordEnvVars {
+		password := os.Getenv(envVar)
+		if password == "" {
+			continue
+		}
+		if isWeakPassword(password) {
+			weakFound = append(weakFound, envVar)
+		}
+	}
+
+	if len(weakFound) > 0 {
+		return fmt.Errorf("weak password detected in: %s", strings.Join(weakFound, ", "))
+	}
+
+	return nil
+}
+
+// validateDefaultPasswords logs warnings for default/placeholder passwords.
+func validateDefaultPasswords() {
+	defaultPasswordEnvVars := []string{
+		"DB_PASSWORD",
+		"ADMIN_PASSWORD",
+		"CUSTOMER_PASSWORD",
+	}
+
+	for _, envVar := range defaultPasswordEnvVars {
+		password := os.Getenv(envVar)
+		if password != "" && isWeakPassword(password) {
+			log.Printf("WARNING: %s is set to a weak default password - please change in production", envVar)
+		}
+	}
 }

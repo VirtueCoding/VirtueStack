@@ -45,6 +45,7 @@ type TestSuite struct {
 	IPRepo        *repository.IPRepository
 	AdminRepo     *repository.AdminRepository
 	TaskRepo      *repository.TaskRepository
+	AuditRepo     *repository.AuditRepository
 
 	// Services
 	AuthService   *services.AuthService
@@ -67,6 +68,44 @@ const (
 	TestVMID       = "00000000-0000-0000-0000-000000000006"
 )
 
+// Test credentials - can be overridden via environment variables
+var (
+	TestDBUser       = getEnvOrDefault("TEST_DB_USER", "test")
+	TestDBPassword   = getEnvOrDefault("TEST_DB_PASSWORD", "") // Will be generated if empty
+	TestCustomerPass = getEnvOrDefault("TEST_CUSTOMER_PASSWORD", "") // Will be generated if empty
+	TestAdminPass    = getEnvOrDefault("TEST_ADMIN_PASSWORD", "")   // Will be generated if empty
+	TestWebhookSecret = getEnvOrDefault("TEST_WEBHOOK_SECRET", "")   // Will be generated if empty
+	TestTOTPSecret    = getEnvOrDefault("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXP") // Keep default for test stability
+	TestVMPassword   = getEnvOrDefault("TEST_VM_PASSWORD", "")      // Will be generated if empty
+	TestWrongPassword = getEnvOrDefault("TEST_WRONG_PASSWORD", "WrongPassword123!")
+)
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// init generates random credentials if not provided via environment variables
+func init() {
+	if TestDBPassword == "" {
+		TestDBPassword = crypto.GenerateRandomString(16)
+	}
+	if TestCustomerPass == "" {
+		TestCustomerPass = crypto.GenerateRandomString(16)
+	}
+	if TestAdminPass == "" {
+		TestAdminPass = crypto.GenerateRandomString(16)
+	}
+	if TestWebhookSecret == "" {
+		TestWebhookSecret = crypto.GenerateRandomString(32)
+	}
+	if TestVMPassword == "" {
+		TestVMPassword = crypto.GenerateRandomString(16)
+	}
+}
+
 var suite *TestSuite
 
 // TestMain sets up the test suite and runs all tests.
@@ -81,8 +120,8 @@ func TestMain(m *testing.M) {
 	// Start PostgreSQL container
 	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
 		postgres.WithDatabase("virtuestack_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
+		postgres.WithUsername(TestDBUser),
+		postgres.WithPassword(TestDBPassword),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -210,11 +249,13 @@ func TestMain(m *testing.M) {
 	suite.IPRepo = repository.NewIPRepository(dbPool)
 	suite.AdminRepo = repository.NewAdminRepository(dbPool)
 	suite.TaskRepo = repository.NewTaskRepository(dbPool)
+	suite.AuditRepo = repository.NewAuditRepository(dbPool)
 
 	// Initialize services
 	suite.AuthService = services.NewAuthService(
 		suite.CustomerRepo,
 		suite.AdminRepo,
+		suite.AuditRepo,
 		suite.JWTSecret,
 		"virtuestack-test",
 		suite.EncryptionKey,
@@ -299,15 +340,15 @@ func SetupTest(t *testing.T) {
 	`, TestNodeID)
 
 	// Create test customer with hashed password
-	passwordHash, _ := services.Argon2idParams.HashPassword("TestPassword123!")
+	passwordHash, _ := services.Argon2idParams.HashPassword(TestCustomerPass)
 	_, _ = suite.DBPool.Exec(ctx, `
 		INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 		VALUES ($1, 'test@example.com', $2, 'Test Customer', 'active', NOW(), NOW())
 	`, TestCustomerID, passwordHash)
 
 	// Create test admin with hashed password
-	adminPasswordHash, _ := services.Argon2idParams.HashPassword("AdminPassword123!")
-	encryptedTOTP, _ := crypto.Encrypt("JBSWY3DPEHPK3PXP", suite.EncryptionKey)
+	adminPasswordHash, _ := services.Argon2idParams.HashPassword(TestAdminPass)
+	encryptedTOTP, _ := crypto.Encrypt(TestTOTPSecret, suite.EncryptionKey)
 	_, _ = suite.DBPool.Exec(ctx, `
 		INSERT INTO admins (id, email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)
 		VALUES ($1, 'admin@example.com', $2, 'Test Admin', 'admin', true, $3, NOW())
@@ -389,7 +430,7 @@ func CreateTestBackup(ctx context.Context, vmID string) (string, error) {
 // CreateTestWebhook creates a test webhook for a customer.
 func CreateTestWebhook(ctx context.Context, customerID string) (string, error) {
 	webhookID := crypto.GenerateUUID()
-	secretHash := crypto.HashSHA256("test-webhook-secret")
+	secretHash := crypto.HashSHA256(TestWebhookSecret)
 
 	query := `
 		INSERT INTO webhooks (id, customer_id, url, secret_hash, events, is_active, created_at, updated_at)

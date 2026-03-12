@@ -47,6 +47,7 @@ type Session struct {
 	IPAddress        *string    `json:"ip_address,omitempty" db:"ip_address"`
 	UserAgent        *string    `json:"user_agent,omitempty" db:"user_agent"`
 	ExpiresAt        time.Time  `json:"expires_at" db:"expires_at"`
+	LastReauthAt     *time.Time `json:"last_reauth_at,omitempty" db:"last_reauth_at"`
 	CreatedAt        time.Time  `json:"created_at" db:"created_at"`
 }
 
@@ -69,4 +70,15 @@ type AuthTokens struct {
 	ExpiresIn   int    `json:"expires_in"`          // seconds
 	Requires2FA bool   `json:"requires_2fa,omitempty"`
 	TempToken   string `json:"temp_token,omitempty"`
+}
+
+// PasswordReset represents a password reset token stored in the database.
+type PasswordReset struct {
+	ID        string     `json:"id" db:"id"`
+	UserID    string     `json:"user_id" db:"user_id"`
+	UserType  string     `json:"user_type" db:"user_type"`
+	TokenHash string     `json:"-" db:"token_hash"`
+	ExpiresAt time.Time  `json:"expires_at" db:"expires_at"`
+	UsedAt    *time.Time `json:"used_at,omitempty" db:"used_at"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 }

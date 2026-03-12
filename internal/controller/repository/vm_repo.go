@@ -271,6 +271,21 @@ func (r *VMRepository) UpdateTemplateID(ctx context.Context, vmID, templateID st
 	return nil
 }
 
+// UpdatePassword updates the root_password_encrypted field of a VM.
+// The encryptedPassword should already be hashed/encrypted before calling this method.
+// Returns ErrNoRowsAffected if the VM does not exist or is already deleted.
+func (r *VMRepository) UpdatePassword(ctx context.Context, vmID string, encryptedPassword string) error {
+	const q = `UPDATE vms SET root_password_encrypted = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, encryptedPassword, vmID)
+	if err != nil {
+		return fmt.Errorf("updating VM %s password: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating VM %s password: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
 var ErrNoRowsAffected = fmt.Errorf("no rows affected")
 

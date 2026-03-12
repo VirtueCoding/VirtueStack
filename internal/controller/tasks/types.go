@@ -20,12 +20,15 @@ const (
 
 // Task type constants.
 const (
-	TaskTypeVMCreate      = "vm.create"
-	TaskTypeVMReinstall   = "vm.reinstall"
-	TaskTypeVMMigrate     = "vm.migrate"
-	TaskTypeVMResize      = "vm.resize"
-	TaskTypeBackupCreate  = "backup.create"
-	TaskTypeBackupRestore = "backup.restore"
+	TaskTypeVMCreate        = "vm.create"
+	TaskTypeVMReinstall     = "vm.reinstall"
+	TaskTypeVMMigrate       = "vm.migrate"
+	TaskTypeVMResize        = "vm.resize"
+	TaskTypeBackupCreate    = "backup.create"
+	TaskTypeBackupRestore   = "backup.restore"
+	TaskTypeSnapshotCreate  = "snapshot.create"
+	TaskTypeSnapshotRevert  = "snapshot.revert"
+	TaskTypeSnapshotDelete  = "snapshot.delete"
 )
 
 // Task represents an async task to be processed.

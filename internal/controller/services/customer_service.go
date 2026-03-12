@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -15,13 +16,15 @@ import (
 // Customers are the primary users of the platform who own and manage VMs.
 type CustomerService struct {
 	customerRepo *repository.CustomerRepository
+	auditRepo    *repository.AuditRepository
 	logger       *slog.Logger
 }
 
 // NewCustomerService creates a new CustomerService with the given dependencies.
-func NewCustomerService(customerRepo *repository.CustomerRepository, logger *slog.Logger) *CustomerService {
+func NewCustomerService(customerRepo *repository.CustomerRepository, auditRepo *repository.AuditRepository, logger *slog.Logger) *CustomerService {
 	return &CustomerService{
 		customerRepo: customerRepo,
+		auditRepo:    auditRepo,
 		logger:       logger.With("component", "customer-service"),
 	}
 }
@@ -52,7 +55,7 @@ func (s *CustomerService) List(ctx context.Context, filter repository.CustomerLi
 // Update updates a customer's profile information.
 // Only certain fields like name can be updated through this method.
 // Password changes should go through the AuthService.
-func (s *CustomerService) Update(ctx context.Context, customer *models.Customer) error {
+func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, customer *models.Customer) error {
 	// Verify customer exists
 	existing, err := s.customerRepo.GetByID(ctx, customer.ID)
 	if err != nil {
@@ -62,8 +65,16 @@ func (s *CustomerService) Update(ctx context.Context, customer *models.Customer)
 		return fmt.Errorf("getting customer: %w", err)
 	}
 
+	// Track changes for audit log
+	changes := map[string]any{}
+	if customer.Name != existing.Name {
+		changes["name"] = map[string]string{"from": existing.Name, "to": customer.Name}
+	}
+	if customer.Email != existing.Email {
+		changes["email"] = map[string]string{"from": existing.Email, "to": customer.Email}
+	}
+
 	// Preserve immutable fields
-	customer.Email = existing.Email
 	customer.PasswordHash = existing.PasswordHash
 	customer.Status = existing.Status
 	customer.TOTPEnabled = existing.TOTPEnabled
@@ -72,14 +83,50 @@ func (s *CustomerService) Update(ctx context.Context, customer *models.Customer)
 	customer.WHMCSClientID = existing.WHMCSClientID
 	customer.CreatedAt = existing.CreatedAt
 
-	// Note: The CustomerRepository doesn't have a general Update method yet.
-	// This would require adding one. For now, we log the update.
-	s.logger.Info("customer update requested",
+	// Update customer in repository
+	if err := s.customerRepo.Update(ctx, customer); err != nil {
+		// Log failed audit
+		s.logAudit(ctx, actorID, actorIP, "customer.update", customer.ID, changes, false, err.Error())
+		return fmt.Errorf("updating customer: %w", err)
+	}
+
+	// Log successful audit
+	s.logAudit(ctx, actorID, actorIP, "customer.update", customer.ID, changes, true, "")
+
+	s.logger.Info("customer updated",
 		"customer_id", customer.ID,
+		"email", customer.Email,
 		"name", customer.Name)
 
-	// TODO: Implement repository.Update method for customers
-	return fmt.Errorf("customer update not yet implemented in repository")
+	return nil
+}
+
+// logAudit creates an audit log entry for customer operations.
+func (s *CustomerService) logAudit(ctx context.Context, actorID, actorIP, action, resourceID string, changes map[string]any, success bool, errMsg string) {
+	changesJSON, _ := json.Marshal(changes)
+	errMsgPtr := (*string)(nil)
+	if errMsg != "" {
+		errMsgPtr = &errMsg
+	}
+
+	audit := &models.AuditLog{
+		ActorID:      &actorID,
+		ActorType:    models.AuditActorAdmin,
+		ActorIP:      &actorIP,
+		Action:       action,
+		ResourceType: "customer",
+		ResourceID:   &resourceID,
+		Changes:      changesJSON,
+		Success:      success,
+		ErrorMessage: errMsgPtr,
+	}
+
+	if err := s.auditRepo.Append(ctx, audit); err != nil {
+		s.logger.Error("failed to append audit log",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+	}
 }
 
 // Suspend suspends a customer account.

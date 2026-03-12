@@ -152,6 +152,9 @@ func (r *NodeRepository) RecordHeartbeat(ctx context.Context, hb *models.NodeHea
 		return fmt.Errorf("starting heartbeat transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Rollback error is ignored intentionally: if Commit succeeds, Rollback is a no-op.
+	// If Commit fails, the original error is already being returned and is more important.
+	// This is standard Go idiom for transaction defer - rollback is a safety net.
 
 	const insertQ = `
 		INSERT INTO node_heartbeats (node_id, timestamp, cpu_percent, memory_percent, disk_percent, vm_count, load_average)

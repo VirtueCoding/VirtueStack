@@ -265,8 +265,78 @@ export default function AuditLogsPage() {
   });
 
   const handleExport = () => {
-    console.log("Export audit logs to CSV");
-    // TODO: Implement CSV export
+    if (filteredLogs.length === 0) {
+      return;
+    }
+
+    const headers = [
+      "Timestamp",
+      "Actor Type",
+      "Actor Name",
+      "Action",
+      "Resource Name",
+      "Resource Type",
+      "Status",
+      "IP Address",
+    ];
+
+    const escapeCsv = (value: string): string => {
+      const str = String(value);
+      if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const chunks: string[] = [];
+    chunks.push(headers.join(","));
+
+    const batchSize = 1000;
+    for (let i = 0; i < filteredLogs.length; i += batchSize) {
+      const batch = filteredLogs.slice(i, i + batchSize);
+      const rows = batch.map((log) => {
+        const row = [
+          escapeCsv(log.timestamp),
+          escapeCsv(log.actor_type),
+          escapeCsv(log.actor_name),
+          escapeCsv(log.action),
+          escapeCsv(log.resource_name),
+          escapeCsv(log.resource_type),
+          escapeCsv(log.status),
+          escapeCsv(log.ip_address),
+        ];
+        return row.join(",");
+      });
+      chunks.push(rows.join("\n"));
+    }
+
+    const csvContent = chunks.join("\n");
+
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0];
+    const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
+
+    const filterParts: string[] = [];
+    if (filterAction !== "all") filterParts.push(filterAction);
+    if (filterStatus !== "all") filterParts.push(filterStatus);
+    if (filterActor !== "all") filterParts.push(filterActor);
+    if (searchTerm) filterParts.push("search");
+    const filterSuffix = filterParts.length > 0 ? `_${filterParts.join("-")}` : "";
+
+    const filename = `audit-logs_${dateStr}_${timeStr}${filterSuffix}.csv`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const actions = ["all", "create", "update", "delete", "read", "login", "logout"];

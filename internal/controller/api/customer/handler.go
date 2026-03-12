@@ -25,6 +25,9 @@ type CustomerHandler struct {
 	backupRepo      *repository.BackupRepository
 	templateRepo    *repository.TemplateRepository
 	customerRepo    *repository.CustomerRepository
+	apiKeyRepo      *repository.CustomerAPIKeyRepository
+	auditRepo       *repository.AuditRepository
+	bandwidthRepo   *repository.BandwidthRepository
 	authConfig      middleware.AuthConfig
 	encryptionKey   string
 	logger          *slog.Logger
@@ -41,6 +44,9 @@ func NewCustomerHandler(
 	backupRepo *repository.BackupRepository,
 	templateRepo *repository.TemplateRepository,
 	customerRepo *repository.CustomerRepository,
+	apiKeyRepo *repository.CustomerAPIKeyRepository,
+	auditRepo *repository.AuditRepository,
+	bandwidthRepo *repository.BandwidthRepository,
 	jwtSecret string,
 	issuer string,
 	encryptionKey string,
@@ -56,6 +62,9 @@ func NewCustomerHandler(
 		backupRepo:      backupRepo,
 		templateRepo:    templateRepo,
 		customerRepo:    customerRepo,
+		apiKeyRepo:      apiKeyRepo,
+		auditRepo:       auditRepo,
+		bandwidthRepo:   bandwidthRepo,
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey:   encryptionKey,
 		logger:          logger.With("component", "customer-handler"),

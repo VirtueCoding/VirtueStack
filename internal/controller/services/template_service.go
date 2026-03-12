@@ -186,7 +186,6 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 				"template_id", id,
 				"rbd_image", template.RBDImage,
 				"error", err)
-			// Don't fail the operation - the database record is already deleted
 		}
 	}
 
@@ -195,6 +194,80 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 		"name", template.Name)
 
 	return nil
+}
+
+// Update applies partial updates to a template and increments its version.
+// Only non-nil fields in the update request are modified.
+// The version is automatically incremented by the repository.
+func (s *TemplateService) Update(ctx context.Context, id string, req *models.TemplateUpdateRequest) (*models.Template, error) {
+	template, err := s.templateRepo.GetByID(ctx, id)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, fmt.Errorf("template not found: %s", id)
+		}
+		return nil, fmt.Errorf("getting template: %w", err)
+	}
+
+	if req.Name != nil {
+		if *req.Name == "" {
+			return nil, fmt.Errorf("name cannot be empty")
+		}
+		existing, err := s.templateRepo.GetByName(ctx, *req.Name)
+		if err == nil && existing != nil && existing.ID != id {
+			return nil, fmt.Errorf("template with name %s already exists", *req.Name)
+		}
+		template.Name = *req.Name
+	}
+	if req.OSFamily != nil {
+		if *req.OSFamily == "" {
+			return nil, fmt.Errorf("os_family cannot be empty")
+		}
+		template.OSFamily = *req.OSFamily
+	}
+	if req.OSVersion != nil {
+		if *req.OSVersion == "" {
+			return nil, fmt.Errorf("os_version cannot be empty")
+		}
+		template.OSVersion = *req.OSVersion
+	}
+	if req.RBDImage != nil {
+		template.RBDImage = *req.RBDImage
+	}
+	if req.RBDSnapshot != nil {
+		template.RBDSnapshot = *req.RBDSnapshot
+	}
+	if req.MinDiskGB != nil {
+		if *req.MinDiskGB < 1 {
+			return nil, fmt.Errorf("min_disk_gb must be at least 1")
+		}
+		template.MinDiskGB = *req.MinDiskGB
+	}
+	if req.SupportsCloudInit != nil {
+		template.SupportsCloudInit = *req.SupportsCloudInit
+	}
+	if req.IsActive != nil {
+		template.IsActive = *req.IsActive
+	}
+	if req.SortOrder != nil {
+		if *req.SortOrder < 0 {
+			return nil, fmt.Errorf("sort_order cannot be negative")
+		}
+		template.SortOrder = *req.SortOrder
+	}
+	if req.Description != nil {
+		template.Description = *req.Description
+	}
+
+	if err := s.templateRepo.Update(ctx, template); err != nil {
+		return nil, fmt.Errorf("updating template: %w", err)
+	}
+
+	s.logger.Info("template updated",
+		"template_id", template.ID,
+		"name", template.Name,
+		"version", template.Version)
+
+	return template, nil
 }
 
 // generateTemplateID generates a unique UUID for a new template.

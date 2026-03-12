@@ -58,6 +58,7 @@ import (
 //	API Keys:
 //	  GET    /api-keys           - List API keys
 //	  POST   /api-keys           - Create API key
+//	  POST   /api-keys/:id/rotate - Rotate API key (generate new key value)
 //	  DELETE /api-keys/:id       - Revoke API key
 //
 //	Webhooks:
@@ -143,6 +144,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 		{
 			apiKeys.GET("", handler.ListAPIKeys)
 			apiKeys.POST("", handler.CreateAPIKey)
+			apiKeys.POST("/:id/rotate", handler.RotateAPIKey)
 			apiKeys.DELETE("/:id", handler.DeleteAPIKey)
 		}
 

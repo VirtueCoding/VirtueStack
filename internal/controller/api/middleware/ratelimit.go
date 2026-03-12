@@ -177,11 +177,11 @@ func LoginRateLimit() gin.HandlerFunc {
 	})
 }
 
-// ProvisioningRateLimit allows up to 1000 requests per minute per API key.
-// Suitable for high-throughput automated provisioning workflows.
+// ProvisioningRateLimit allows up to 100 requests per minute per API key.
+// Suitable for automated provisioning workflows with reasonable rate limiting.
 func ProvisioningRateLimit() gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{
-		Requests: 1000,
+		Requests: 100,
 		Window:   time.Minute,
 		KeyFunc:  keyByAPIKeyID,
 	})

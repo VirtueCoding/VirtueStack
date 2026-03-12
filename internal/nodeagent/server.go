@@ -8,9 +8,12 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,6 +36,7 @@ type Server struct {
 	libvirtConn   *libvirt.Connect
 	grpcServer    *grpc.Server
 	vmManager     *vm.Manager
+	rbdManager    *storage.RBDManager
 	logger        *slog.Logger
 	listenAddr    string
 }
@@ -46,8 +50,20 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 		return nil, fmt.Errorf("connecting to libvirt at %s: %w", LibvirtURI, err)
 	}
 
-	// Create VM manager
-	vmManager := vm.NewManager(libvirtConn, logger)
+	// Create VM manager with data directory for persistence
+	dataDir := "/var/lib/virtuestack"
+	if cfg.CloudInitPath != "" {
+		// Use parent directory of CloudInitPath as data directory
+		dataDir = filepath.Dir(cfg.CloudInitPath)
+	}
+	vmManager := vm.NewManager(libvirtConn, logger, dataDir)
+
+	// Create RBD manager for Ceph storage operations
+	rbdManager, err := storage.NewRBDManager(cfg.CephConf, cfg.CephUser, cfg.CephPool, logger)
+	if err != nil {
+		libvirtConn.Close()
+		return nil, fmt.Errorf("connecting to ceph: %w", err)
+	}
 
 	// Determine listen address
 	listenAddr := DefaultListenAddr
@@ -61,6 +77,7 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 		config:      cfg,
 		libvirtConn: libvirtConn,
 		vmManager:   vmManager,
+		rbdManager:  rbdManager,
 		logger:      logging.WithComponent(logger, "node-agent"),
 		listenAddr:  listenAddr,
 	}
@@ -69,6 +86,7 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	grpcServer, err := s.createGRPCServer()
 	if err != nil {
 		libvirtConn.Close()
+		rbdManager.Close()
 		return nil, fmt.Errorf("creating gRPC server: %w", err)
 	}
 	s.grpcServer = grpcServer
@@ -174,6 +192,10 @@ func (s *Server) Stop() {
 		s.grpcServer.GracefulStop()
 	}
 
+	if s.rbdManager != nil {
+		s.rbdManager.Close()
+	}
+
 	if s.libvirtConn != nil {
 		if err := s.libvirtConn.Close(); err != nil {
 			s.logger.Error("error closing libvirt connection", "error", err)
@@ -181,6 +203,43 @@ func (s *Server) Stop() {
 	}
 
 	s.logger.Info("node agent server stopped")
+}
+
+// getDiskUsage returns the local disk usage percentage for the root filesystem.
+func (s *Server) getDiskUsage() float64 {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err != nil {
+		s.logger.Warn("could not get disk usage", "error", err)
+		return 0
+	}
+	total := stat.Blocks * uint64(stat.Bsize)
+	used := (stat.Blocks - stat.Bavail) * uint64(stat.Bsize)
+	if total == 0 {
+		return 0
+	}
+	return float64(used) / float64(total) * 100
+}
+
+// getCephPoolStats returns the Ceph pool storage statistics.
+func (s *Server) getCephPoolStats() (totalGB, usedGB int64) {
+	if s.rbdManager == nil {
+		return 0, 0
+	}
+	stats, err := s.rbdManager.GetPoolStats(context.Background())
+	if err != nil {
+		s.logger.Warn("could not get ceph pool stats", "error", err)
+		return 0, 0
+	}
+	gb := int64(1024 * 1024 * 1024)
+	return stats.TotalBytes / gb, stats.UsedBytes / gb
+}
+
+// isCephConnected returns true if the Ceph connection is healthy.
+func (s *Server) isCephConnected() bool {
+	if s.rbdManager == nil {
+		return false
+	}
+	return s.rbdManager.IsConnected()
 }
 
 // grpcHandler implements the NodeAgentService gRPC service.
@@ -218,17 +277,20 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *Empty) (*NodeHealt
 		memoryPercent = float64(resources.UsedMemoryMB) / float64(resources.TotalMemoryMB) * 100
 	}
 
+	// Get local disk usage percentage
+	diskPercent := h.server.getDiskUsage()
+
 	return &NodeHealthResponse{
 		NodeID:          h.server.config.NodeID,
 		Healthy:         true,
 		CPUPercent:      cpuPercent,
 		MemoryPercent:   memoryPercent,
-		DiskPercent:     0, // TODO: Implement disk usage calculation
+		DiskPercent:     diskPercent,
 		VMCount:         resources.VMCount,
 		LoadAverage:     resources.LoadAverage[:],
 		UptimeSeconds:   resources.UptimeSeconds,
 		LibvirtConnected: h.server.libvirtConn != nil && h.server.libvirtConn.IsAlive() == 1,
-		CephConnected:   false, // TODO: Implement Ceph connection check
+		CephConnected:   h.server.isCephConnected(),
 	}, nil
 }
 
@@ -282,13 +344,15 @@ func (h *grpcHandler) GetNodeResources(ctx context.Context, req *Empty) (*NodeRe
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
 	}
 
+	totalDiskGB, usedDiskGB := h.server.getCephPoolStats()
+
 	return &NodeResourcesResponse{
 		TotalVCPU:     resources.TotalVCPU,
 		UsedVCPU:      resources.UsedVCPU,
 		TotalMemoryMB: resources.TotalMemoryMB,
 		UsedMemoryMB:  resources.UsedMemoryMB,
-		TotalDiskGB:   0, // TODO: Implement disk calculation
-		UsedDiskGB:    0, // TODO: Implement disk calculation
+		TotalDiskGB:   totalDiskGB,
+		UsedDiskGB:    usedDiskGB,
 		VMCount:       resources.VMCount,
 		LoadAverage:   resources.LoadAverage[:],
 		UptimeSeconds: resources.UptimeSeconds,

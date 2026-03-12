@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,7 +14,16 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+)
+
+// DefaultSnapshotQuota is the default maximum number of snapshots per VM.
+const DefaultSnapshotQuota = 10
+
+var (
+	// ErrSnapshotQuotaExceeded is returned when a VM has reached its snapshot quota.
+	ErrSnapshotQuotaExceeded = fmt.Errorf("snapshot quota exceeded")
 )
 
 // NodeAgentClient interface for backup operations (subset of the full interface).
@@ -323,6 +333,169 @@ func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) e
 		"name", snapshot.Name)
 
 	return nil
+}
+
+// GetSnapshotCount returns the number of snapshots for a VM.
+func (s *BackupService) GetSnapshotCount(ctx context.Context, vmID string) (int, error) {
+	snapshots, err := s.snapshotRepo.ListSnapshotsByVM(ctx, vmID)
+	if err != nil {
+		return 0, fmt.Errorf("counting snapshots: %w", err)
+	}
+	return len(snapshots), nil
+}
+
+// CheckSnapshotQuota checks if a VM has reached its snapshot quota.
+func (s *BackupService) CheckSnapshotQuota(ctx context.Context, vmID string, quota int) error {
+	count, err := s.GetSnapshotCount(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("checking snapshot quota: %w", err)
+	}
+	if count >= quota {
+		return fmt.Errorf("%w: VM has %d snapshots, quota is %d", ErrSnapshotQuotaExceeded, count, quota)
+	}
+	return nil
+}
+
+// CreateSnapshotAsync creates a snapshot asynchronously via NATS task.
+func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, customerID string) (*models.Snapshot, string, error) {
+	// Verify VM exists and get its node
+	vm, err := s.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, "", fmt.Errorf("VM not found: %s", vmID)
+		}
+		return nil, "", fmt.Errorf("getting VM: %w", err)
+	}
+
+	if vm.NodeID == nil {
+		return nil, "", fmt.Errorf("VM has no node assigned")
+	}
+
+	// Check quota
+	if err := s.CheckSnapshotQuota(ctx, vmID, DefaultSnapshotQuota); err != nil {
+		return nil, "", err
+	}
+
+	// Generate snapshot ID
+	snapshotID := uuid.New().String()
+
+	// Create pending snapshot record
+	snapshot := &models.Snapshot{
+		ID:          snapshotID,
+		VMID:        vmID,
+		Name:        name,
+		RBDSnapshot: fmt.Sprintf("snap-%s", snapshotID[:8]),
+	}
+
+	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
+		return nil, "", fmt.Errorf("creating snapshot record: %w", err)
+	}
+
+	// Publish task if task publisher is available
+	if s.taskPublisher != nil {
+		payload := map[string]any{
+			"vm_id":       vmID,
+			"snapshot_id": snapshotID,
+			"name":        name,
+			"customer_id": customerID,
+		}
+
+		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotCreate, payload)
+		if err != nil {
+			// Clean up the pending snapshot record
+			_ = s.snapshotRepo.DeleteSnapshot(ctx, snapshotID)
+			return nil, "", fmt.Errorf("publishing snapshot task: %w", err)
+		}
+
+		s.logger.Info("snapshot create task published",
+			"snapshot_id", snapshotID,
+			"vm_id", vmID,
+			"task_id", taskID)
+
+		return snapshot, taskID, nil
+	}
+
+	return snapshot, "", nil
+}
+
+// RevertSnapshotAsync reverts a VM to a snapshot asynchronously via NATS task.
+func (s *BackupService) RevertSnapshotAsync(ctx context.Context, snapshotID, customerID string) (string, error) {
+	// Get snapshot
+	snapshot, err := s.snapshotRepo.GetSnapshotByID(ctx, snapshotID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return "", fmt.Errorf("snapshot not found: %s", snapshotID)
+		}
+		return "", fmt.Errorf("getting snapshot: %w", err)
+	}
+
+	// Get VM
+	vm, err := s.vmRepo.GetByID(ctx, snapshot.VMID)
+	if err != nil {
+		return "", fmt.Errorf("getting VM: %w", err)
+	}
+
+	if vm.NodeID == nil {
+		return "", fmt.Errorf("VM has no node assigned")
+	}
+
+	// Publish task if task publisher is available
+	if s.taskPublisher != nil {
+		payload := map[string]any{
+			"vm_id":       snapshot.VMID,
+			"snapshot_id": snapshotID,
+			"customer_id": customerID,
+		}
+
+		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotRevert, payload)
+		if err != nil {
+			return "", fmt.Errorf("publishing snapshot revert task: %w", err)
+		}
+
+		s.logger.Info("snapshot revert task published",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID,
+			"task_id", taskID)
+
+		return taskID, nil
+	}
+
+	return "", nil
+}
+
+// DeleteSnapshotAsync deletes a snapshot asynchronously via NATS task.
+func (s *BackupService) DeleteSnapshotAsync(ctx context.Context, snapshotID, customerID string) (string, error) {
+	// Get snapshot
+	snapshot, err := s.snapshotRepo.GetSnapshotByID(ctx, snapshotID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return "", fmt.Errorf("snapshot not found: %s", snapshotID)
+		}
+		return "", fmt.Errorf("getting snapshot: %w", err)
+	}
+
+	// Publish task if task publisher is available
+	if s.taskPublisher != nil {
+		payload := map[string]any{
+			"vm_id":       snapshot.VMID,
+			"snapshot_id": snapshotID,
+			"customer_id": customerID,
+		}
+
+		taskID, err := s.taskPublisher.PublishTask(ctx, tasks.TaskTypeSnapshotDelete, payload)
+		if err != nil {
+			return "", fmt.Errorf("publishing snapshot delete task: %w", err)
+		}
+
+		s.logger.Info("snapshot delete task published",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID,
+			"task_id", taskID)
+
+		return taskID, nil
+	}
+
+	return "", nil
 }
 
 // ============================================================================

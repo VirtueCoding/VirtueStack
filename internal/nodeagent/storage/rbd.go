@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -428,4 +429,74 @@ func (m *RBDManager) FlattenImage(ctx context.Context, imageName string) error {
 
 	logger.Info("image flattened successfully")
 	return nil
+}
+
+// PoolStats contains storage pool statistics.
+type PoolStats struct {
+	// TotalBytes is the total capacity of the pool in bytes.
+	TotalBytes int64
+	// UsedBytes is the used capacity of the pool in bytes.
+	UsedBytes int64
+	// AvailableBytes is the available capacity of the pool in bytes.
+	AvailableBytes int64
+}
+
+// GetPoolStats returns storage statistics for the configured pool.
+// It queries the Ceph cluster for pool usage information.
+func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
+	// Get pool statistics using rados command
+	cmd := `{"prefix": "df", "format": "json"}`
+	cmdBuf, _, err := m.conn.MonCommand([]byte(cmd))
+	if err != nil {
+		return nil, fmt.Errorf("getting pool stats: %w", err)
+	}
+
+	// Parse the JSON response
+	var dfResp struct {
+		Pools []struct {
+			Name   string `json:"name"`
+			Stats  struct {
+				BytesUsed    int64 `json:"bytes_used"`
+				MaxAvailable int64 `json:"max_avail"`
+				Stored       int64 `json:"stored"`
+			} `json:"stats"`
+		} `json:"pools"`
+		Stats struct {
+			TotalBytes      int64 `json:"total_bytes"`
+			TotalUsedBytes  int64 `json:"total_used_bytes"`
+			TotalAvailBytes int64 `json:"total_avail_bytes"`
+		} `json:"stats"`
+	}
+
+	if err := json.Unmarshal(cmdBuf, &dfResp); err != nil {
+		return nil, fmt.Errorf("parsing pool stats response: %w", err)
+	}
+
+	// Find our pool in the response
+	for _, pool := range dfResp.Pools {
+		if pool.Name == m.pool {
+			return &PoolStats{
+				TotalBytes:     pool.Stats.BytesUsed + pool.Stats.MaxAvailable,
+				UsedBytes:      pool.Stats.BytesUsed,
+				AvailableBytes: pool.Stats.MaxAvailable,
+			}, nil
+		}
+	}
+
+	// Pool not found in response, return cluster-wide stats as fallback
+	return &PoolStats{
+		TotalBytes:     dfResp.Stats.TotalBytes,
+		UsedBytes:      dfResp.Stats.TotalUsedBytes,
+		AvailableBytes: dfResp.Stats.TotalAvailBytes,
+	}, nil
+}
+
+// IsConnected checks if the Ceph connection is still alive.
+func (m *RBDManager) IsConnected() bool {
+	if m.conn == nil {
+		return false
+	}
+	// Try a simple command to check connection
+	_, err := m.conn.GetClusterStats()
+	return err == nil
 }

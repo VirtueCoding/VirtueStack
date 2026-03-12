@@ -1,11 +1,13 @@
 package customer
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -15,6 +17,12 @@ import (
 type CreateSnapshotRequest struct {
 	VMID string `json:"vm_id" validate:"required,uuid"`
 	Name string `json:"name" validate:"required,max=100"`
+}
+
+// SnapshotResponse represents the response for snapshot operations.
+type SnapshotResponse struct {
+	Snapshot *models.Snapshot `json:"snapshot"`
+	TaskID   string           `json:"task_id,omitempty"`
 }
 
 // ListSnapshots handles GET /snapshots - lists all snapshots for the customer's VMs.
@@ -92,9 +100,13 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		return
 	}
 
-	// Create snapshot
-	snapshot, err := h.backupService.CreateSnapshot(c.Request.Context(), vm.ID, req.Name)
+	// Create snapshot asynchronously
+	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
 	if err != nil {
+		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
+			respondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED", err.Error())
+			return
+		}
 		h.logger.Error("failed to create snapshot",
 			"vm_id", req.VMID,
 			"customer_id", customerID,
@@ -104,13 +116,17 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("snapshot created via customer API",
+	h.logger.Info("snapshot creation initiated via customer API",
 		"snapshot_id", snapshot.ID,
 		"vm_id", req.VMID,
 		"customer_id", customerID,
+		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusCreated, models.Response{Data: snapshot})
+	c.JSON(http.StatusAccepted, SnapshotResponse{
+		Snapshot: snapshot,
+		TaskID:   taskID,
+	})
 }
 
 // DeleteSnapshot handles DELETE /snapshots/:id - deletes a snapshot.
@@ -142,8 +158,9 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 		return
 	}
 
-	// Delete snapshot
-	if err := h.backupService.DeleteSnapshot(c.Request.Context(), snapshotID); err != nil {
+	// Delete snapshot asynchronously
+	taskID, err := h.backupService.DeleteSnapshotAsync(c.Request.Context(), snapshotID, customerID)
+	if err != nil {
 		h.logger.Error("failed to delete snapshot",
 			"snapshot_id", snapshotID,
 			"customer_id", customerID,
@@ -153,12 +170,17 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("snapshot deleted via customer API",
+	h.logger.Info("snapshot deletion initiated via customer API",
 		"snapshot_id", snapshotID,
 		"customer_id", customerID,
+		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Snapshot deleted successfully"}})
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":     "Snapshot deletion initiated",
+		"snapshot_id": snapshotID,
+		"task_id":     taskID,
+	})
 }
 
 // RestoreSnapshot handles POST /snapshots/:id/restore - restores a VM from a snapshot.
@@ -190,31 +212,32 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 		return
 	}
 
-	// Get VM to find the node
-	vm, err := h.vmService.GetVM(c.Request.Context(), snapshot.VMID, customerID, false)
+	// Restore snapshot asynchronously
+	taskID, err := h.backupService.RevertSnapshotAsync(c.Request.Context(), snapshotID, customerID)
 	if err != nil {
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Failed to get VM")
+		h.logger.Error("failed to restore snapshot",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", err.Error())
 		return
 	}
 
-	if vm.NodeID == nil {
-		respondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
-		return
-	}
-
-	// Restore snapshot - this would typically call the backup service
-	// For now, we'll log and return a placeholder response
 	h.logger.Info("snapshot restore initiated via customer API",
 		"snapshot_id", snapshotID,
 		"vm_id", snapshot.VMID,
 		"customer_id", customerID,
+		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusAccepted, models.Response{Data: gin.H{
+	c.JSON(http.StatusAccepted, gin.H{
 		"message":     "Snapshot restore initiated",
 		"snapshot_id": snapshotID,
 		"vm_id":       snapshot.VMID,
-	}})
+		"task_id":     taskID,
+	})
 }
 
 // verifySnapshotOwnership verifies that a VM belongs to the customer.

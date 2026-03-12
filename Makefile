@@ -21,7 +21,7 @@ PROTO_OUT := internal/shared/proto
 
 # Migrations
 MIGRATE_DIR := migrations
-DATABASE_URL ?= postgresql://virtuestack:changeme@localhost:5432/virtuestack?sslmode=disable
+DATABASE_URL ?= $(or $(DATABASE_URL),postgresql://virtuestack:@localhost:5432/virtuestack?sslmode=disable)
 
 ## help: Show this help message
 help:

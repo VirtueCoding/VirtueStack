@@ -15,6 +15,8 @@ type Template struct {
 	SupportsCloudInit bool     `json:"supports_cloudinit" db:"supports_cloudinit"`
 	IsActive         bool      `json:"is_active" db:"is_active"`
 	SortOrder        int       `json:"sort_order" db:"sort_order"`
+	Version          int       `json:"version" db:"version"`                         // Version incremented on each update for audit trail
+	Description      string    `json:"description,omitempty" db:"description"`       // Optional description of the template
 	CreatedAt        time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
 }
@@ -30,6 +32,7 @@ type TemplateCreateRequest struct {
 	SupportsCloudInit bool   `json:"supports_cloudinit"`
 	IsActive          bool   `json:"is_active"`
 	SortOrder         int    `json:"sort_order" validate:"min=0"`
+	Description       string `json:"description,omitempty" validate:"max=500"`
 }
 
 // TemplateUpdateRequest holds the fields that can be updated on an existing template.
@@ -44,4 +47,5 @@ type TemplateUpdateRequest struct {
 	SupportsCloudInit *bool   `json:"supports_cloudinit,omitempty"`
 	IsActive          *bool   `json:"is_active,omitempty"`
 	SortOrder         *int    `json:"sort_order,omitempty" validate:"omitempty,min=0"`
+	Description       *string `json:"description,omitempty" validate:"omitempty,max=500"`
 }

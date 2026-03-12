@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/alexedwards/argon2id"
 )
 
 // HandlerDeps contains all dependencies required by task handlers.
@@ -48,6 +50,10 @@ type NodeAgentClient interface {
 	DeleteVM(ctx context.Context, nodeID, vmID string) error
 	// CreateSnapshot creates a disk snapshot for a VM.
 	CreateSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) (*SnapshotResponse, error)
+	// DeleteSnapshot removes a disk snapshot for a VM.
+	DeleteSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error
+	// RestoreSnapshot restores a VM disk from a snapshot.
+	RestoreSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error
 	// CloneFromBackup clones a VM disk from a backup snapshot.
 	CloneFromBackup(ctx context.Context, nodeID, vmID, backupSnapshot string, diskGB int) error
 	// DeleteDisk removes the RBD disk for a VM.
@@ -201,6 +207,15 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 	worker.RegisterHandler(TaskTypeBackupRestore, func(ctx context.Context, task *Task) error {
 		return handleBackupRestore(ctx, task, deps)
 	})
+	worker.RegisterHandler(TaskTypeSnapshotCreate, func(ctx context.Context, task *Task) error {
+		return handleSnapshotCreate(ctx, task, deps)
+	})
+	worker.RegisterHandler(TaskTypeSnapshotRevert, func(ctx context.Context, task *Task) error {
+		return handleSnapshotRevert(ctx, task, deps)
+	})
+	worker.RegisterHandler(TaskTypeSnapshotDelete, func(ctx context.Context, task *Task) error {
+		return handleSnapshotDelete(ctx, task, deps)
+	})
 
 	deps.Logger.Info("all task handlers registered",
 		"handlers", []string{
@@ -210,6 +225,9 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 			TaskTypeBackupCreate,
 			"vm.delete",
 			TaskTypeBackupRestore,
+			TaskTypeSnapshotCreate,
+			TaskTypeSnapshotRevert,
+			TaskTypeSnapshotDelete,
 		})
 }
 
@@ -312,8 +330,11 @@ func handleVMCreate(ctx context.Context, task *Task, deps *HandlerDeps) error {
 		ipv6Gateway = ipv6Subnet.Gateway
 	}
 
-	// Hash the password (in production, use proper password hashing)
-	passwordHash := hashPassword(payload.Password)
+	// Hash the password using Argon2id
+	passwordHash, err := hashPassword(payload.Password)
+	if err != nil {
+		return fmt.Errorf("hashing password: %w", err)
+	}
 
 	// Generate cloud-init ISO
 	cloudInitCfg := &CloudInitConfig{
@@ -695,14 +716,85 @@ func generateMACAddress(vmID string) string {
 	return fmt.Sprintf("%s:%02x:%02x:%02x", prefix, octet4, octet5, octet6)
 }
 
-// hashPassword creates a password hash suitable for cloud-init.
-// In production, use a proper password hashing library like bcrypt or argon2.
-func hashPassword(password string) string {
-	// Placeholder - in production, use proper password hashing
-	// For cloud-init, we typically use SHA-512 or Argon2id
+// hashPasswordParams holds the parameters for Argon2id password hashing.
+// These parameters are tuned for security (memory=65536, iterations=3, parallelism=4).
+var hashPasswordParams = &argon2id.Params{
+	Memory:      65536, // 64MB
+	Iterations:  3,
+	Parallelism: 4,
+	SaltLength:  16,
+	KeyLength:   32,
+}
+
+// hashPassword creates a secure password hash using Argon2id.
+// Returns an empty string if the password is empty or fails validation.
+func hashPassword(password string) (string, error) {
 	if password == "" {
-		return ""
+		return "", nil
 	}
-	// This is a placeholder - actual implementation would use crypt library
-	return "$6$rounds=4096$" + password + "$hashed"
+
+	if err := validatePasswordStrength(password); err != nil {
+		return "", err
+	}
+
+	hash, err := argon2id.CreateHash(password, hashPasswordParams)
+	if err != nil {
+		return "", fmt.Errorf("creating password hash: %w", err)
+	}
+	return hash, nil
+}
+
+// verifyPassword verifies a password against an Argon2id hash.
+// Returns true if the password matches the hash.
+func verifyPassword(password, hash string) (bool, error) {
+	if password == "" || hash == "" {
+		return false, fmt.Errorf("password and hash cannot be empty")
+	}
+
+	match, err := argon2id.ComparePasswordAndHash(password, hash)
+	if err != nil {
+		return false, fmt.Errorf("comparing password: %w", err)
+	}
+	return match, nil
+}
+
+// validatePasswordStrength validates that a password meets minimum security requirements.
+// Minimum 8 characters with at least one uppercase, one lowercase, one digit, and one special character.
+func validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+
+	hasUpper := false
+	hasLower := false
+	hasDigit := false
+	hasSpecial := false
+
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsDigit(char):
+			hasDigit = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return fmt.Errorf("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+
+	return nil
 }

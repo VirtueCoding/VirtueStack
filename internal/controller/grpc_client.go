@@ -198,8 +198,7 @@ func (nc *NodeClient) ConnectionCount() int {
 	return len(nc.conns)
 }
 
-// InsecureNodeClient creates a NodeClient without mTLS for development.
-// WARNING: Do not use in production.
+// InsecureNodeClient creates a NodeClient without mTLS for development/testing.
 func InsecureNodeClient(logger *slog.Logger) *NodeClient {
 	return &NodeClient{
 		conns:  make(map[string]*grpc.ClientConn),

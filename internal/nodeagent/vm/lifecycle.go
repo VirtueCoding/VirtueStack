@@ -2,10 +2,12 @@ package vm
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,19 +24,27 @@ const (
 	ShutdownPollInterval = 2 * time.Second
 	// DefaultLibvirtURI is the default libvirt connection URI.
 	DefaultLibvirtURI = "qemu:///system"
+	// DefaultDataDir is the default directory for VM state persistence.
+	DefaultDataDir = "/var/lib/virtuestack"
 )
 
 // Manager handles VM lifecycle operations via libvirt.
 type Manager struct {
-	conn   *libvirt.Connect
-	logger *slog.Logger
+	conn    *libvirt.Connect
+	logger  *slog.Logger
+	dataDir string
 }
 
 // NewManager creates a new VM Manager with the given libvirt connection.
-func NewManager(conn *libvirt.Connect, logger *slog.Logger) *Manager {
+// It uses DefaultDataDir for persistence if dataDir is empty.
+func NewManager(conn *libvirt.Connect, logger *slog.Logger, dataDir string) *Manager {
+	if dataDir == "" {
+		dataDir = DefaultDataDir
+	}
 	return &Manager{
-		conn:   conn,
-		logger: logger.With("component", "vm-manager"),
+		conn:    conn,
+		logger:  logger.With("component", "vm-manager"),
+		dataDir: dataDir,
 	}
 }
 
@@ -71,6 +81,12 @@ func (m *Manager) CreateVM(ctx context.Context, cfg *DomainConfig) (*CreateResul
 		return nil, fmt.Errorf("starting domain: %w", err)
 	}
 
+	// Record start time for uptime tracking
+	if err := m.recordVMStartTime(cfg.VMID); err != nil {
+		logger.Warn("failed to record VM start time", "error", err)
+		// Don't fail the operation if recording fails
+	}
+
 	// Get VNC port from running domain's XML
 	vncPort, err := m.getVNCPort(domain)
 	if err != nil {
@@ -88,6 +104,7 @@ func (m *Manager) CreateVM(ctx context.Context, cfg *DomainConfig) (*CreateResul
 
 // StartVM starts a stopped virtual machine.
 // Returns nil if the VM is already running (idempotent).
+// Records the start time for uptime tracking.
 func (m *Manager) StartVM(ctx context.Context, vmID string) error {
 	logger := m.logger.With("vm_id", vmID)
 	logger.Info("starting VM")
@@ -113,6 +130,12 @@ func (m *Manager) StartVM(ctx context.Context, vmID string) error {
 	// Start the domain
 	if err := domain.Create(); err != nil {
 		return fmt.Errorf("starting VM %s: %w", vmID, err)
+	}
+
+	// Record start time for uptime tracking
+	if err := m.recordVMStartTime(vmID); err != nil {
+		logger.Warn("failed to record VM start time", "error", err)
+		// Don't fail the operation if recording fails
 	}
 
 	logger.Info("VM started successfully")
@@ -170,6 +193,8 @@ func (m *Manager) StopVM(ctx context.Context, vmID string, timeoutSec int) error
 			}
 			if currentState == libvirt.DOMAIN_SHUTOFF {
 				logger.Info("VM stopped successfully")
+				// Clear the start time since VM is now stopped
+				m.clearVMStartTime(vmID)
 				return nil
 			}
 		}
@@ -205,6 +230,9 @@ func (m *Manager) ForceStopVM(ctx context.Context, vmID string) error {
 		return fmt.Errorf("force stopping VM %s: %w", vmID, err)
 	}
 
+	// Clear the start time since VM is now stopped
+	m.clearVMStartTime(vmID)
+
 	logger.Info("VM force stopped successfully")
 	return nil
 }
@@ -239,6 +267,9 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 	if err := domain.UndefineFlags(libvirt.DOMAIN_UNDEFINE_NVRAM); err != nil {
 		return fmt.Errorf("undefining VM %s: %w", vmID, err)
 	}
+
+	// Clear the uptime data since VM is deleted
+	m.clearVMStartTime(vmID)
 
 	logger.Info("VM deleted successfully")
 	return nil
@@ -430,12 +461,119 @@ func (m *Manager) getVNCPort(domain *libvirt.Domain) (int32, error) {
 	return 0, fmt.Errorf("VNC graphics not found in domain XML")
 }
 
+// uptimeData represents the persisted uptime data for a VM.
+type uptimeData struct {
+	StartTimeUnix int64 `json:"start_time_unix"`
+	VMID          string `json:"vm_id"`
+}
+
+// getUptimeDir returns the directory path for storing uptime data.
+func (m *Manager) getUptimeDir() string {
+	return filepath.Join(m.dataDir, "uptime")
+}
+
+// getUptimeFilePath returns the file path for a VM's uptime data.
+func (m *Manager) getUptimeFilePath(vmID string) string {
+	return filepath.Join(m.getUptimeDir(), fmt.Sprintf("%s.json", vmID))
+}
+
+// ensureUptimeDir creates the uptime directory if it doesn't exist.
+func (m *Manager) ensureUptimeDir() error {
+	dir := m.getUptimeDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating uptime directory: %w", err)
+	}
+	return nil
+}
+
+// recordVMStartTime persists the VM start time to disk.
+// This allows uptime tracking to survive agent restarts.
+func (m *Manager) recordVMStartTime(vmID string) error {
+	if err := m.ensureUptimeDir(); err != nil {
+		return err
+	}
+
+	data := uptimeData{
+		StartTimeUnix: time.Now().Unix(),
+		VMID:          vmID,
+	}
+
+	filePath := m.getUptimeFilePath(vmID)
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("creating uptime file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(data); err != nil {
+		return fmt.Errorf("encoding uptime data: %w", err)
+	}
+
+	return nil
+}
+
+// getVMStartTime retrieves the persisted start time for a VM.
+// Returns 0 if no start time is recorded (VM never started or data lost).
+func (m *Manager) getVMStartTime(vmID string) int64 {
+	filePath := m.getUptimeFilePath(vmID)
+	
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		m.logger.Warn("failed to open uptime file", "vm_id", vmID, "error", err)
+		return 0
+	}
+	defer file.Close()
+
+	var data uptimeData
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&data); err != nil {
+		m.logger.Warn("failed to decode uptime data", "vm_id", vmID, "error", err)
+		return 0
+	}
+
+	return data.StartTimeUnix
+}
+
+// clearVMStartTime removes the persisted start time for a VM.
+// Called when a VM is stopped or deleted.
+func (m *Manager) clearVMStartTime(vmID string) {
+	filePath := m.getUptimeFilePath(vmID)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		m.logger.Warn("failed to remove uptime file", "vm_id", vmID, "error", err)
+	}
+}
+
 // getDomainUptime returns the uptime of a running domain in seconds.
+// It calculates uptime from the persisted start time, surviving agent restarts.
 func (m *Manager) getDomainUptime(domain *libvirt.Domain) (int64, error) {
-	// Use the domain's metadata or calculate from creation time
-	// libvirt doesn't have a direct uptime API, so we approximate
-	// by checking the domain's start time from metadata
-	return 0, nil // Placeholder - in production, track VM start times
+	// Get domain name to lookup the VM ID
+	name, err := domain.GetName()
+	if err != nil {
+		return 0, fmt.Errorf("getting domain name: %w", err)
+	}
+
+	// Extract VM ID from domain name (format: vs-{vmID})
+	vmID := strings.TrimPrefix(name, "vs-")
+	if vmID == name {
+		return 0, fmt.Errorf("could not extract VM ID from domain name: %s", name)
+	}
+
+	// Get the persisted start time
+	startTimeUnix := m.getVMStartTime(vmID)
+	if startTimeUnix == 0 {
+		// No start time recorded, return 0
+		return 0, nil
+	}
+
+	// Calculate uptime in seconds
+	startTime := time.Unix(startTimeUnix, 0)
+	uptime := time.Since(startTime).Seconds()
+	
+	return int64(uptime), nil
 }
 
 // getCPUUsage calculates the CPU usage percentage for a domain.

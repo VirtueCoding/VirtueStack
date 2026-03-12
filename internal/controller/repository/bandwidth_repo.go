@@ -180,3 +180,153 @@ func (r *BandwidthRepository) DeleteForVM(ctx context.Context, vmID string) erro
 	}
 	return nil
 }
+
+// BandwidthSnapshot represents a point-in-time bandwidth measurement.
+type BandwidthSnapshot struct {
+	VMID      string    `json:"vm_id"`
+	Timestamp time.Time `json:"timestamp"`
+	BytesIn   int64     `json:"bytes_in"`
+	BytesOut  int64     `json:"bytes_out"`
+}
+
+// GetSnapshots retrieves historical bandwidth snapshots for a VM.
+// Period determines the time range and granularity:
+// - hour: last 1 hour, 5-minute intervals (12 points from hourly snapshots)
+// - day: last 24 hours, 1-hour intervals (24 points from hourly snapshots)
+// - week: last 7 days, 6-hour intervals (28 points aggregated from hourly snapshots)
+// - month: last 30 days, daily snapshots (30 points from daily snapshots)
+func (r *BandwidthRepository) GetSnapshots(ctx context.Context, vmID string, period string) ([]BandwidthSnapshot, error) {
+	now := time.Now().UTC()
+
+	switch period {
+	case "hour":
+		return r.getHourlySnapshots(ctx, vmID, now.Add(-1*time.Hour), now)
+	case "day":
+		return r.getHourlySnapshots(ctx, vmID, now.Add(-24*time.Hour), now)
+	case "week":
+		return r.getAggregatedHourly(ctx, vmID, now.Add(-7*24*time.Hour), now, 6*time.Hour)
+	case "month":
+		return r.getDailySnapshots(ctx, vmID, now.Add(-30*24*time.Hour), now)
+	default:
+		return r.getHourlySnapshots(ctx, vmID, now.Add(-24*time.Hour), now)
+	}
+}
+
+// getHourlySnapshots retrieves hourly bandwidth snapshots within a time range.
+func (r *BandwidthRepository) getHourlySnapshots(ctx context.Context, vmID string, start, end time.Time) ([]BandwidthSnapshot, error) {
+	const q = `
+		SELECT vm_id,
+			   make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   bytes_in, bytes_out
+		FROM bandwidth_snapshots
+		WHERE vm_id = $1
+		  AND snapshot_type = 'hourly'
+		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' >= $2
+		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' <= $3
+		ORDER BY timestamp ASC`
+
+	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {
+		var s BandwidthSnapshot
+		err := rows.Scan(&s.VMID, &s.Timestamp, &s.BytesIn, &s.BytesOut)
+		return s, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting hourly snapshots for VM %s: %w", vmID, err)
+	}
+	return snapshots, nil
+}
+
+// getDailySnapshots retrieves daily bandwidth snapshots within a time range.
+func (r *BandwidthRepository) getDailySnapshots(ctx context.Context, vmID string, start, end time.Time) ([]BandwidthSnapshot, error) {
+	const q = `
+		SELECT vm_id,
+			   make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   bytes_in, bytes_out
+		FROM bandwidth_snapshots
+		WHERE vm_id = $1
+		  AND snapshot_type = 'daily'
+		  AND make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' >= $2
+		  AND make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' <= $3
+		ORDER BY timestamp ASC`
+
+	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {
+		var s BandwidthSnapshot
+		err := rows.Scan(&s.VMID, &s.Timestamp, &s.BytesIn, &s.BytesOut)
+		return s, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting daily snapshots for VM %s: %w", vmID, err)
+	}
+	return snapshots, nil
+}
+
+// getAggregatedHourly retrieves and aggregates hourly snapshots into larger intervals.
+func (r *BandwidthRepository) getAggregatedHourly(ctx context.Context, vmID string, start, end time.Time, interval time.Duration) ([]BandwidthSnapshot, error) {
+	// Query all hourly snapshots in range
+	const q = `
+		SELECT vm_id,
+			   make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   bytes_in, bytes_out
+		FROM bandwidth_snapshots
+		WHERE vm_id = $1
+		  AND snapshot_type = 'hourly'
+		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' >= $2
+		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' <= $3
+		ORDER BY timestamp ASC`
+
+	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {
+		var s BandwidthSnapshot
+		err := rows.Scan(&s.VMID, &s.Timestamp, &s.BytesIn, &s.BytesOut)
+		return s, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting aggregated snapshots for VM %s: %w", vmID, err)
+	}
+
+	// If no snapshots, return empty
+	if len(snapshots) == 0 {
+		return snapshots, nil
+	}
+
+	// Aggregate into interval buckets
+	return aggregateSnapshots(snapshots, interval), nil
+}
+
+// aggregateSnapshots groups snapshots into fixed-size intervals.
+func aggregateSnapshots(snapshots []BandwidthSnapshot, interval time.Duration) []BandwidthSnapshot {
+	if len(snapshots) == 0 {
+		return snapshots
+	}
+
+	// Find the start time aligned to interval
+	start := snapshots[0].Timestamp.Truncate(interval)
+	end := snapshots[len(snapshots)-1].Timestamp
+
+	// Group snapshots by interval bucket
+	buckets := make(map[int64][]BandwidthSnapshot)
+	for _, s := range snapshots {
+		bucket := s.Timestamp.Truncate(interval).Unix()
+		buckets[bucket] = append(buckets[bucket], s)
+	}
+
+	// Aggregate each bucket
+	var result []BandwidthSnapshot
+	for t := start; !t.After(end); t = t.Add(interval) {
+		bucket := t.Unix()
+		if items, ok := buckets[bucket]; ok {
+			var totalIn, totalOut int64
+			for _, item := range items {
+				totalIn += item.BytesIn
+				totalOut += item.BytesOut
+			}
+			result = append(result, BandwidthSnapshot{
+				VMID:      items[0].VMID,
+				Timestamp: t,
+				BytesIn:   totalIn,
+				BytesOut:  totalOut,
+			})
+		}
+	}
+
+	return result
+}

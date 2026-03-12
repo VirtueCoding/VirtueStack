@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +30,25 @@ func HashAPIKey(rawKey string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ProvisioningAuditLogger creates an AuditLogger for provisioning API requests.
+func ProvisioningAuditLogger(auditRepo *repository.AuditRepository) middleware.AuditLogger {
+	return func(ctx context.Context, entry *middleware.AuditEntry) error {
+		audit := &models.AuditLog{
+			ActorID:       entry.ActorID,
+			ActorType:     entry.ActorType,
+			ActorIP:       entry.ActorIP,
+			Action:        entry.Action,
+			ResourceType:  entry.ResourceType,
+			ResourceID:    entry.ResourceID,
+			Changes:       entry.Changes,
+			CorrelationID: entry.CorrelationID,
+			Success:       entry.Success,
+			ErrorMessage:  entry.ErrorMessage,
+		}
+		return auditRepo.Append(ctx, audit)
+	}
+}
+
 // RegisterProvisioningRoutes registers all provisioning API routes.
 // These routes are designed for WHMCS integration and use API key authentication.
 //
@@ -48,63 +68,38 @@ func HashAPIKey(rawKey string) string {
 //   POST   /vms/:id/power          - Power operations (start/stop/restart)
 //   GET    /vms/:id/status         - Get VM status
 //   GET    /tasks/:id              - Get task status
-func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHandler, apiKeyRepo *repository.ProvisioningKeyRepository) {
-	// Create API key validator
+func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHandler, apiKeyRepo *repository.ProvisioningKeyRepository, auditRepo *repository.AuditRepository) {
 	apiKeyValidator := APIKeyValidatorFunc(apiKeyRepo)
 
-	// All provisioning routes require API key authentication
 	provisioning := router.Group("/provisioning")
 	provisioning.Use(middleware.APIKeyAuth(apiKeyValidator))
+	provisioning.Use(middleware.ProvisioningRateLimit())
+	provisioning.Use(middleware.Audit(ProvisioningAuditLogger(auditRepo)))
 	{
-		// VM CRUD operations
 		vms := provisioning.Group("/vms")
 		{
-			// POST /vms - Create VM
 			vms.POST("", handler.CreateVM)
-
-			// GET /vms/:id - Get VM by ID
 			vms.GET("/:id", handler.GetVMInfo)
-
-			// GET /vms/by-service/:service_id - Get VM by WHMCS service ID
 			vms.GET("/by-service/:service_id", handler.GetVMByWHMCSServiceID)
-
-			// DELETE /vms/:id - Terminate VM
 			vms.DELETE("/:id", handler.DeleteVM)
-
-			// POST /vms/:id/suspend - Suspend VM
 			vms.POST("/:id/suspend", handler.SuspendVM)
-
-			// POST /vms/:id/unsuspend - Unsuspend VM
 			vms.POST("/:id/unsuspend", handler.UnsuspendVM)
-
-			// POST /vms/:id/resize - Resize VM
 			vms.POST("/:id/resize", handler.ResizeVM)
-
-			// POST /vms/:id/password - Set password
 			vms.POST("/:id/password", handler.SetPassword)
-
-			// POST /vms/:id/password/reset - Reset password
 			vms.POST("/:id/password/reset", handler.ResetPassword)
-
-			// POST /vms/:id/power - Power operations
 			vms.POST("/:id/power", handler.PowerOperation)
-
-			// GET /vms/:id/status - Get status
 			vms.GET("/:id/status", handler.GetStatus)
 		}
 
-		// Task polling
 		tasks := provisioning.Group("/tasks")
 		{
-			// GET /tasks/:id - Get task status
 			tasks.GET("/:id", handler.GetTask)
 		}
 	}
 }
 
 // RegisterProvisioningRoutesSimple registers provisioning routes without API key validation.
-// This is useful for development/testing or when API key validation is handled externally.
-// WARNING: Do not use in production without additional authentication.
+// This is intended only for development/testing environments.
 func RegisterProvisioningRoutesSimple(router *gin.RouterGroup, handler *ProvisioningHandler) {
 	provisioning := router.Group("/provisioning")
 	{

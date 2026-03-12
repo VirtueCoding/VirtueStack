@@ -6,6 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -24,18 +32,10 @@ import {
   HardDrive,
   Network,
   DollarSign,
+  Loader2,
 } from "lucide-react";
-
-interface Plan {
-  id: string;
-  name: string;
-  vcpu: number;
-  memory_mb: number;
-  disk_gb: number;
-  bandwidth_mbps: number;
-  price_monthly: number;
-  status: "active" | "inactive";
-}
+import { adminPlansApi, type Plan } from "@/lib/api-client";
+import { useToast } from "@/components/ui/use-toast";
 
 const mockPlans: Plan[] = [
   {
@@ -149,29 +149,90 @@ function formatMemory(mb: number) {
   return `${mb} MB`;
 }
 
+type DialogAction = "edit" | "delete" | null;
+
 export default function PlansPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [plans] = useState<Plan[]>(mockPlans);
+  const [plans, setPlans] = useState<Plan[]>(mockPlans);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState<DialogAction>(null);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const { toast } = useToast();
 
   const filteredPlans = plans.filter((plan) =>
     plan.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleEdit = (plan: Plan) => {
-    console.log("Edit plan:", plan);
-    // TODO: Implement edit action
-  };
-
-  const handleDelete = (plan: Plan) => {
-    if (
-      window.confirm(
-        `Are you sure you want to delete plan "${plan.name}"? This cannot be undone.`
-      )
-    ) {
-      console.log("Delete plan:", plan);
-      // TODO: Implement delete action
+  const handleEdit = async (plan: Plan) => {
+    setLoadingId(plan.id);
+    try {
+      const planDetails = await adminPlansApi.getPlan(plan.id);
+      toast({
+        title: "Edit Plan",
+        description: `Editing plan: ${planDetails.name}`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to fetch plan details",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
     }
   };
+
+  const openConfirmDialog = (plan: Plan, action: DialogAction) => {
+    setSelectedPlan(plan);
+    setDialogAction(action);
+    setDialogOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!selectedPlan || !dialogAction) return;
+
+    setDialogOpen(false);
+    setLoadingId(selectedPlan.id);
+
+    try {
+      if (dialogAction === "delete") {
+        await adminPlansApi.deletePlan(selectedPlan.id);
+        toast({
+          title: "Plan Deleted",
+          description: `Plan "${selectedPlan.name}" has been permanently deleted.`,
+        });
+        setPlans((prev) => prev.filter((p) => p.id !== selectedPlan.id));
+      }
+    } catch (error) {
+      toast({
+        title: "Action Failed",
+        description: error instanceof Error ? error.message : `Failed to ${dialogAction} plan`,
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
+      setSelectedPlan(null);
+      setDialogAction(null);
+    }
+  };
+
+  const getDialogContent = () => {
+    if (!selectedPlan || !dialogAction) return null;
+
+    if (dialogAction === "delete") {
+      return {
+        title: "Delete Plan",
+        description: `Are you sure you want to permanently delete plan "${selectedPlan.name}"? This action cannot be undone.`,
+        confirmText: "Delete",
+        variant: "destructive" as const,
+      };
+    }
+
+    return null;
+  };
+
+  const dialogContent = getDialogContent();
 
   const activePlans = plans.filter((p) => p.status === "active").length;
   const totalPlans = plans.length;
@@ -179,7 +240,6 @@ export default function PlansPage() {
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">VM Plans</h1>
@@ -193,7 +253,6 @@ export default function PlansPage() {
           </Button>
         </div>
 
-        {/* Search and Filter */}
         <Card>
           <CardContent className="pt-6">
             <div className="relative">
@@ -208,7 +267,6 @@ export default function PlansPage() {
           </CardContent>
         </Card>
 
-        {/* Plans Table */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -284,16 +342,23 @@ export default function PlansPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleEdit(plan)}
+                              disabled={loadingId === plan.id}
                             >
-                              <Edit className="h-3 w-3" />
+                              {loadingId === plan.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Edit className="mr-1 h-3 w-3" />
+                              )}
                               Edit
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleDelete(plan)}
+                              onClick={() => openConfirmDialog(plan, "delete")}
+                              disabled={loadingId === plan.id}
+                              className="text-destructive hover:bg-destructive/10"
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="mr-1 h-3 w-3" />
                               Delete
                             </Button>
                           </div>
@@ -307,7 +372,6 @@ export default function PlansPage() {
           </CardContent>
         </Card>
 
-        {/* Summary Stats */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="pt-6">
@@ -352,6 +416,26 @@ export default function PlansPage() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dialogContent?.title}</DialogTitle>
+            <DialogDescription>{dialogContent?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant={dialogContent?.variant || "default"}
+              onClick={handleConfirmAction}
+            >
+              {dialogContent?.confirmText}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

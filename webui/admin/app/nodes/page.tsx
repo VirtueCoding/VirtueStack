@@ -6,6 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,21 +28,10 @@ import {
   Eye,
   ArrowDownToLine,
   RefreshCcw,
-  MoreVertical,
+  Loader2,
 } from "lucide-react";
-
-interface Node {
-  id: string;
-  name: string;
-  hostname: string;
-  status: "online" | "offline" | "draining" | "failed";
-  location: string;
-  vm_count: number;
-  cpu_total: number;
-  cpu_allocated: number;
-  memory_total_gb: number;
-  memory_allocated_gb: number;
-}
+import { adminNodesApi, type Node } from "@/lib/api-client";
+import { useToast } from "@/components/ui/use-toast";
 
 const mockNodes: Node[] = [
   {
@@ -183,9 +180,16 @@ function getResourceUsage(current: number, total: number, type: "cpu" | "memory"
   );
 }
 
+type DialogAction = "drain" | "failover" | null;
+
 export default function NodesPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [nodes] = useState<Node[]>(mockNodes);
+  const [nodes, setNodes] = useState<Node[]>(mockNodes);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState<DialogAction>(null);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const { toast } = useToast();
 
   const filteredNodes = nodes.filter(
     (node) =>
@@ -194,24 +198,88 @@ export default function NodesPage() {
       node.location.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleView = (node: Node) => {
-    console.log("View node:", node);
-    // TODO: Implement view action
-  };
-
-  const handleDrain = (node: Node) => {
-    if (window.confirm(`Are you sure you want to drain node "${node.name}"? This will migrate all VMs to other nodes.`)) {
-      console.log("Drain node:", node);
-      // TODO: Implement drain action
+  const handleView = async (node: Node) => {
+    setLoadingId(node.id);
+    try {
+      const nodeDetails = await adminNodesApi.getNode(node.id);
+      toast({
+        title: "Node Details",
+        description: `Viewing ${nodeDetails.name} (${nodeDetails.hostname})`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to fetch node details",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
     }
   };
 
-  const handleFailover = (node: Node) => {
-    if (window.confirm(`Are you sure you want to initiate failover for node "${node.name}"? This will trigger HA recovery.`)) {
-      console.log("Failover node:", node);
-      // TODO: Implement failover action
+  const openConfirmDialog = (node: Node, action: DialogAction) => {
+    setSelectedNode(node);
+    setDialogAction(action);
+    setDialogOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!selectedNode || !dialogAction) return;
+
+    setDialogOpen(false);
+    setLoadingId(selectedNode.id);
+
+    try {
+      if (dialogAction === "drain") {
+        await adminNodesApi.drainNode(selectedNode.id);
+        toast({
+          title: "Node Drained",
+          description: `Node "${selectedNode.name}" is now draining. VMs will be migrated to other nodes.`,
+        });
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.id === selectedNode.id ? { ...n, status: "draining" } : n
+          )
+        );
+      } else if (dialogAction === "failover") {
+        await adminNodesApi.failoverNode(selectedNode.id);
+        toast({
+          title: "Failover Initiated",
+          description: `Failover initiated for node "${selectedNode.name}". HA recovery is in progress.`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Action Failed",
+        description: error instanceof Error ? error.message : `Failed to ${dialogAction} node`,
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
+      setSelectedNode(null);
+      setDialogAction(null);
     }
   };
+
+  const getDialogContent = () => {
+    if (!selectedNode || !dialogAction) return null;
+
+    if (dialogAction === "drain") {
+      return {
+        title: "Drain Node",
+        description: `Are you sure you want to drain node "${selectedNode.name}"? This will migrate all VMs to other nodes.`,
+        confirmText: "Drain Node",
+      };
+    }
+
+    return {
+      title: "Initiate Failover",
+      description: `Are you sure you want to initiate failover for node "${selectedNode.name}"? This will trigger HA recovery.`,
+      confirmText: "Initiate Failover",
+    };
+  };
+
+  const dialogContent = getDialogContent();
 
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
@@ -307,26 +375,31 @@ export default function NodesPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleView(node)}
+                              disabled={loadingId === node.id}
                             >
-                              <Eye className="h-3 w-3" />
+                              {loadingId === node.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Eye className="mr-1 h-3 w-3" />
+                              )}
                               View
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleDrain(node)}
-                              disabled={node.status === "offline" || node.status === "failed"}
+                              onClick={() => openConfirmDialog(node, "drain")}
+                              disabled={node.status === "offline" || node.status === "failed" || loadingId === node.id}
                             >
-                              <ArrowDownToLine className="h-3 w-3" />
+                              <ArrowDownToLine className="mr-1 h-3 w-3" />
                               Drain
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleFailover(node)}
-                              disabled={node.status === "online" || node.status === "draining"}
+                              onClick={() => openConfirmDialog(node, "failover")}
+                              disabled={node.status === "online" || node.status === "draining" || loadingId === node.id}
                             >
-                              <RefreshCcw className="h-3 w-3" />
+                              <RefreshCcw className="mr-1 h-3 w-3" />
                               Failover
                             </Button>
                           </div>
@@ -404,6 +477,27 @@ export default function NodesPage() {
           </Card>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dialogContent?.title}</DialogTitle>
+            <DialogDescription>{dialogContent?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant={dialogAction === "failover" ? "destructive" : "default"}
+              onClick={handleConfirmAction}
+            >
+              {dialogContent?.confirmText}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

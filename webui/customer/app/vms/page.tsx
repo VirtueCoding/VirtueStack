@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Play, Square, RotateCw, Plus, Server } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Play, Square, RotateCw, Plus, Server, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -19,71 +27,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
-interface VM {
-  id: string;
-  name: string;
-  hostname: string;
-  status: "running" | "stopped" | "error" | "provisioning";
-  ipv4: string;
-  vcpu: number;
-  memory_mb: number;
-  disk_gb: number;
-}
-
-// Mock data - will be replaced with API calls later
-const mockVMs: VM[] = [
-  {
-    id: "vm-001",
-    name: "web-server-prod",
-    hostname: "web-prod-01.internal",
-    status: "running",
-    ipv4: "10.0.1.15",
-    vcpu: 4,
-    memory_mb: 8192,
-    disk_gb: 100,
-  },
-  {
-    id: "vm-002",
-    name: "db-server-prod",
-    hostname: "db-prod-01.internal",
-    status: "running",
-    ipv4: "10.0.1.20",
-    vcpu: 8,
-    memory_mb: 16384,
-    disk_gb: 500,
-  },
-  {
-    id: "vm-003",
-    name: "api-staging",
-    hostname: "api-staging-01.internal",
-    status: "stopped",
-    ipv4: "10.0.2.10",
-    vcpu: 2,
-    memory_mb: 4096,
-    disk_gb: 50,
-  },
-  {
-    id: "vm-004",
-    name: "test-environment",
-    hostname: "test-01.internal",
-    status: "error",
-    ipv4: "10.0.3.5",
-    vcpu: 2,
-    memory_mb: 2048,
-    disk_gb: 30,
-  },
-  {
-    id: "vm-005",
-    name: "analytics-worker",
-    hostname: "analytics-01.internal",
-    status: "provisioning",
-    ipv4: "10.0.1.25",
-    vcpu: 4,
-    memory_mb: 8192,
-    disk_gb: 200,
-  },
-];
+import { useToast } from "@/components/ui/use-toast";
+import { vmApi, VM, ApiClientError } from "@/lib/api-client";
 
 function getStatusBadgeVariant(
   status: VM["status"]
@@ -112,27 +57,120 @@ function formatMemory(mb: number): string {
 }
 
 export default function VMsPage() {
-  const [vms, setVms] = useState<VM[]>(mockVMs);
-  const [isLoading, setIsLoading] = useState(false);
+  const [vms, setVms] = useState<VM[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingVMs, setLoadingVMs] = useState<Record<string, boolean>>({});
+  const [vmToStop, setVmToStop] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  const handleStart = (id: string) => {
-    console.log(`Starting VM: ${id}`);
-    // TODO: Implement API call
+  const fetchVMs = useCallback(async () => {
+    try {
+      const data = await vmApi.getVMs();
+      setVms(data);
+    } catch (error) {
+      console.error("Failed to fetch VMs:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load virtual machines. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchVMs();
+  }, [fetchVMs]);
+
+  const setVMLoading = (id: string, loading: boolean) => {
+    setLoadingVMs((prev) => ({ ...prev, [id]: loading }));
   };
 
-  const handleStop = (id: string) => {
-    console.log(`Stopping VM: ${id}`);
-    // TODO: Implement API call
+  const handleStart = async (id: string) => {
+    setVMLoading(id, true);
+    try {
+      await vmApi.startVM(id);
+      toast({
+        title: "VM Started",
+        description: "Virtual machine started successfully.",
+      });
+      await fetchVMs();
+    } catch (error) {
+      const message = error instanceof ApiClientError 
+        ? error.message 
+        : "Failed to start VM. Please try again.";
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setVMLoading(id, false);
+    }
   };
 
-  const handleRestart = (id: string) => {
-    console.log(`Restarting VM: ${id}`);
-    // TODO: Implement API call
+  const handleStop = async (id: string) => {
+    setVmToStop(null);
+    setVMLoading(id, true);
+    try {
+      await vmApi.stopVM(id);
+      toast({
+        title: "VM Stopped",
+        description: "Virtual machine stopped successfully.",
+      });
+      await fetchVMs();
+    } catch (error) {
+      const message = error instanceof ApiClientError 
+        ? error.message 
+        : "Failed to stop VM. Please try again.";
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setVMLoading(id, false);
+    }
+  };
+
+  const handleRestart = async (id: string) => {
+    setVMLoading(id, true);
+    try {
+      await vmApi.restartVM(id);
+      toast({
+        title: "VM Restarted",
+        description: "Virtual machine restarted successfully.",
+      });
+      await fetchVMs();
+    } catch (error) {
+      const message = error instanceof ApiClientError 
+        ? error.message 
+        : "Failed to restart VM. Please try again.";
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setVMLoading(id, false);
+    }
   };
 
   const handleCreateVM = () => {
-    console.log("Create new VM");
-    // TODO: Implement navigation to create VM page
+    toast({
+      title: "Coming Soon",
+      description: "VM creation will be available in a future update.",
+    });
+  };
+
+  const confirmStop = (id: string) => {
+    setVmToStop(id);
+  };
+
+  const getVMName = (id: string) => {
+    const vm = vms.find((v) => v.id === id);
+    return vm?.name || id;
   };
 
   if (isLoading) {
@@ -170,110 +208,163 @@ export default function VMsPage() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Virtual Machines</CardTitle>
-            <CardDescription>
-              Manage and monitor your virtual machines
-            </CardDescription>
+    <>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Virtual Machines</CardTitle>
+              <CardDescription>
+                Manage and monitor your virtual machines
+              </CardDescription>
+            </div>
+            <Button onClick={handleCreateVM}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create VM
+            </Button>
           </div>
-          <Button onClick={handleCreateVM}>
-            <Plus className="mr-2 h-4 w-4" />
-            Create VM
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>IP Address</TableHead>
-              <TableHead>Resources</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {vms.map((vm) => (
-              <TableRow key={vm.id}>
-                <TableCell className="font-medium">
-                  <div>
-                    <div>{vm.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {vm.hostname}
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>IP Address</TableHead>
+                <TableHead>Resources</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {vms.map((vm) => (
+                <TableRow key={vm.id}>
+                  <TableCell className="font-medium">
+                    <div>
+                      <div>{vm.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {vm.hostname}
+                      </div>
                     </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={getStatusBadgeVariant(vm.status)}>
-                    {getStatusLabel(vm.status)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-mono text-sm">{vm.ipv4}</TableCell>
-                <TableCell>
-                  <div className="text-sm">
-                    <div>{vm.vcpu} vCPU</div>
-                    <div>{formatMemory(vm.memory_mb)}</div>
-                    <div className="text-muted-foreground">{vm.disk_gb} GB</div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
-                    {vm.status === "stopped" && (
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleStart(vm.id)}
-                        title="Start VM"
-                      >
-                        <Play className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {vm.status === "running" && (
-                      <>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getStatusBadgeVariant(vm.status)}>
+                      {getStatusLabel(vm.status)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-sm">{vm.ipv4}</TableCell>
+                  <TableCell>
+                    <div className="text-sm">
+                      <div>{vm.vcpu} vCPU</div>
+                      <div>{formatMemory(vm.memory_mb)}</div>
+                      <div className="text-muted-foreground">{vm.disk_gb} GB</div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      {vm.status === "stopped" && (
                         <Button
                           variant="outline"
                           size="icon"
-                          onClick={() => handleStop(vm.id)}
-                          title="Stop VM"
+                          onClick={() => handleStart(vm.id)}
+                          disabled={loadingVMs[vm.id]}
+                          title="Start VM"
                         >
-                          <Square className="h-4 w-4" />
+                          {loadingVMs[vm.id] ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
                         </Button>
+                      )}
+                      {vm.status === "running" && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => confirmStop(vm.id)}
+                            disabled={loadingVMs[vm.id]}
+                            title="Stop VM"
+                          >
+                            {loadingVMs[vm.id] ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleRestart(vm.id)}
+                            disabled={loadingVMs[vm.id]}
+                            title="Restart VM"
+                          >
+                            {loadingVMs[vm.id] ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCw className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </>
+                      )}
+                      {vm.status === "error" && (
                         <Button
                           variant="outline"
                           size="icon"
                           onClick={() => handleRestart(vm.id)}
+                          disabled={loadingVMs[vm.id]}
                           title="Restart VM"
                         >
-                          <RotateCw className="h-4 w-4" />
+                          {loadingVMs[vm.id] ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCw className="h-4 w-4" />
+                          )}
                         </Button>
-                      </>
-                    )}
-                    {vm.status === "error" && (
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleRestart(vm.id)}
-                        title="Restart VM"
-                      >
-                        <RotateCw className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {vm.status === "provisioning" && (
-                      <Button variant="outline" size="icon" disabled>
-                        <RotateCw className="h-4 w-4 animate-spin" />
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+                      )}
+                      {vm.status === "provisioning" && (
+                        <Button variant="outline" size="icon" disabled>
+                          <RotateCw className="h-4 w-4 animate-spin" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!vmToStop} onOpenChange={() => setVmToStop(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Stop Virtual Machine</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to stop <strong>{vmToStop ? getVMName(vmToStop) : ""}</strong>?
+              This will perform a graceful shutdown of the VM.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVmToStop(null)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="default" 
+              onClick={() => vmToStop && handleStop(vmToStop)}
+              disabled={vmToStop ? loadingVMs[vmToStop] : false}
+            >
+              {vmToStop && loadingVMs[vmToStop] ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Stopping...
+                </>
+              ) : (
+                "Stop VM"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

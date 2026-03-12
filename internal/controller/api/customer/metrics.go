@@ -138,10 +138,24 @@ func (h *CustomerHandler) GetNetworkHistory(c *gin.Context) {
 		return
 	}
 
-	// In a production system, this would query a time-series database
-	// like Prometheus, InfluxDB, or TimescaleDB for actual network history.
-	// For now, return placeholder data based on the period.
-	dataPoints := generatePlaceholderNetworkData(period)
+	snapshots, err := h.bandwidthRepo.GetSnapshots(c.Request.Context(), vmID, period)
+	if err != nil {
+		h.logger.Warn("failed to get network history",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "NETWORK_HISTORY_FAILED", "Failed to retrieve network history")
+		return
+	}
+
+	dataPoints := make([]NetworkPoint, len(snapshots))
+	for i, s := range snapshots {
+		dataPoints[i] = NetworkPoint{
+			Timestamp: s.Timestamp,
+			RxBytes:   s.BytesIn,
+			TxBytes:   s.BytesOut,
+		}
+	}
 
 	resp := NetworkHistoryResponse{
 		VMID:       vmID,
@@ -160,42 +174,4 @@ func isValidPeriod(period string) bool {
 	default:
 		return false
 	}
-}
-
-// generatePlaceholderNetworkData generates placeholder network history data.
-// In production, this would query actual metrics from a time-series database.
-func generatePlaceholderNetworkData(period string) []NetworkPoint {
-	now := time.Now()
-	var points []NetworkPoint
-	var interval time.Duration
-	var count int
-
-	switch period {
-	case "hour":
-		interval = 5 * time.Minute
-		count = 12
-	case "day":
-		interval = time.Hour
-		count = 24
-	case "week":
-		interval = 6 * time.Hour
-		count = 28
-	case "month":
-		interval = 24 * time.Hour
-		count = 30
-	default:
-		interval = time.Hour
-		count = 24
-	}
-
-	for i := count - 1; i >= 0; i-- {
-		t := now.Add(-time.Duration(i) * interval)
-		points = append(points, NetworkPoint{
-			Timestamp: t,
-			RxBytes:   int64(1000000 + i*50000), // Placeholder values
-			TxBytes:   int64(500000 + i*25000),
-		})
-	}
-
-	return points
 }

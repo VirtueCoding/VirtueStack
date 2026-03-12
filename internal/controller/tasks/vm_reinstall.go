@@ -178,7 +178,10 @@ func handleVMReinstall(ctx context.Context, task *Task, deps *HandlerDeps) error
 	}
 
 	// Generate cloud-init with new credentials
-	passwordHash := hashPassword(payload.Password)
+	passwordHash, err := hashPassword(payload.Password)
+	if err != nil {
+		return fmt.Errorf("hashing password: %w", err)
+	}
 	cloudInitCfg := &CloudInitConfig{
 		VMID:             payload.VMID,
 		Hostname:         vm.Hostname,

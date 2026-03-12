@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -17,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/lib/auth-context";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -26,8 +26,7 @@ const loginSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { login, error: authError, clearError, isLoading } = useAuth();
 
   const {
     register,
@@ -38,24 +37,8 @@ export default function LoginPage() {
   });
 
   const onSubmit = async (data: LoginFormData) => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // TODO: Replace with actual API call
-      // POST /api/v1/customer/auth/login
-      console.log("Login attempt:", data);
-
-      // Mock API delay
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // Mock response - for now just log success
-      console.log("Login successful");
-    } catch (err) {
-      setError("Invalid email or password. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
+    clearError();
+    await login(data);
   };
 
   return (
@@ -71,9 +54,9 @@ export default function LoginPage() {
         </CardHeader>
         <form onSubmit={handleSubmit(onSubmit)}>
           <CardContent className="space-y-4">
-            {error && (
+            {authError && (
               <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
-                {error}
+                {authError}
               </div>
             )}
             <div className="space-y-2">
@@ -81,7 +64,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="email@example.com"
                 disabled={isLoading}
                 {...register("email")}
               />

@@ -30,7 +30,7 @@ func TestVMLifecycle(t *testing.T) {
 			PlanID:     TestPlanID,
 			Hostname:   "test-vm-lifecycle",
 			TemplateID: TestTemplateID,
-			Password:   "SecurePassword123!",
+			Password:   TestVMPassword,
 		})
 
 		require.NoError(t, err, "VM creation should succeed")

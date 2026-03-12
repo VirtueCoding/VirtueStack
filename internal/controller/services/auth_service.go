@@ -32,7 +32,7 @@ const (
 	TempTokenDuration = 5 * time.Minute
 
 	// PasswordResetTokenDuration is the lifetime of password reset tokens.
-	PasswordResetTokenDuration = 1 * time.Hour
+	PasswordResetTokenDuration = 24 * time.Hour
 
 	// MaxAdminSessions is the maximum concurrent sessions for admin users.
 	MaxAdminSessions = 3
@@ -51,17 +51,19 @@ var Argon2idParams = &argon2id.Params{
 // AuthService provides authentication business logic for VirtueStack.
 // It handles login flows, 2FA verification, token refresh, and session management.
 type AuthService struct {
-	customerRepo  *repository.CustomerRepository
-	adminRepo     *repository.AdminRepository
-	authConfig    middleware.AuthConfig
-	encryptionKey string // hex-encoded AES-256 key for TOTP secret decryption
-	logger        *slog.Logger
+	customerRepo *repository.CustomerRepository
+	adminRepo    *repository.AdminRepository
+	auditRepo    *repository.AuditRepository
+	authConfig   middleware.AuthConfig
+	encryptionKey string
+	logger       *slog.Logger
 }
 
 // NewAuthService creates a new AuthService with the given dependencies.
 func NewAuthService(
 	customerRepo *repository.CustomerRepository,
 	adminRepo *repository.AdminRepository,
+	auditRepo *repository.AuditRepository,
 	jwtSecret string,
 	issuer string,
 	encryptionKey string,
@@ -70,6 +72,7 @@ func NewAuthService(
 	return &AuthService{
 		customerRepo:  customerRepo,
 		adminRepo:     adminRepo,
+		auditRepo:     auditRepo,
 		authConfig:    middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey: encryptionKey,
 		logger:        logger,
@@ -378,9 +381,9 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, oldPassword, n
 	// Update password hash in database
 	switch userType {
 	case "customer":
-		// Note: CustomerRepository needs UpdatePasswordHash method
-		// For now, return an error indicating this needs to be implemented
-		return fmt.Errorf("customer password update not yet implemented in repository")
+		if err := s.customerRepo.UpdateCustomerPasswordHash(ctx, userID, newHash); err != nil {
+			return fmt.Errorf("updating customer password: %w", err)
+		}
 	case "admin":
 		if err := s.adminRepo.UpdatePasswordHash(ctx, userID, newHash); err != nil {
 			return fmt.Errorf("updating admin password: %w", err)
@@ -402,42 +405,96 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) (s
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			// Don't reveal whether email exists - return success anyway
 			return "", nil
 		}
 		return "", fmt.Errorf("getting customer by email: %w", err)
 	}
 
-	// Generate a password reset token (using temp token mechanism with different purpose)
-	// For simplicity, we use a random token stored in a password_resets table
-	// In a production system, you'd have a dedicated table for this
-	resetToken, err := middleware.GenerateRefreshToken() // 64-char hex token
+	resetToken, err := crypto.GenerateRandomToken(32)
 	if err != nil {
 		return "", fmt.Errorf("generating reset token: %w", err)
 	}
 
-	// In a full implementation, you would store this token with an expiry
-	// For now, we'll log it and return it
-	// TODO: Implement password_resets table and storage
+	tokenHash := crypto.HashSHA256(resetToken)
+
+	reset := &models.PasswordReset{
+		UserID:    customer.ID,
+		UserType:  "customer",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(PasswordResetTokenDuration),
+	}
+
+	if err := s.customerRepo.CreatePasswordReset(ctx, reset); err != nil {
+		return "", fmt.Errorf("creating password reset: %w", err)
+	}
 
 	s.logger.Info("password reset requested", "customer_id", customer.ID)
 
-	// Return the token - the caller should send it via email
 	return resetToken, nil
 }
 
 // ResetPassword resets a user's password using a reset token.
 func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword string) error {
-	// In a full implementation, you would:
-	// 1. Look up the token in password_resets table
-	// 2. Verify it hasn't expired
-	// 3. Get the associated user ID
-	// 4. Hash and update the password
-	// 5. Delete the reset token
-	// 6. Invalidate all sessions
+	tokenHash := crypto.HashSHA256(token)
 
-	// For now, return an error indicating this needs to be implemented
-	return fmt.Errorf("password reset not yet fully implemented - requires password_resets table")
+	reset, err := s.customerRepo.GetPasswordResetByTokenHash(ctx, tokenHash)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return sharederrors.ErrUnauthorized
+		}
+		return fmt.Errorf("getting password reset: %w", err)
+	}
+
+	if time.Now().After(reset.ExpiresAt) {
+		return fmt.Errorf("reset token has expired")
+	}
+
+	if reset.UsedAt != nil {
+		return fmt.Errorf("reset token has already been used")
+	}
+
+	newHash, err := s.hashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hashing new password: %w", err)
+	}
+
+	switch reset.UserType {
+	case "customer":
+		if err := s.customerRepo.UpdateCustomerPasswordHash(ctx, reset.UserID, newHash); err != nil {
+			return fmt.Errorf("updating customer password: %w", err)
+		}
+	case "admin":
+		if err := s.adminRepo.UpdatePasswordHash(ctx, reset.UserID, newHash); err != nil {
+			return fmt.Errorf("updating admin password: %w", err)
+		}
+	default:
+		return fmt.Errorf("invalid user type: %s", reset.UserType)
+	}
+
+	if err := s.customerRepo.MarkPasswordResetUsed(ctx, reset.ID); err != nil {
+		s.logger.Warn("failed to mark password reset as used", "reset_id", reset.ID, "error", err)
+	}
+
+	if err := s.LogoutAll(ctx, reset.UserID, reset.UserType); err != nil {
+		s.logger.Warn("failed to logout all sessions after password reset", "user_id", reset.UserID, "error", err)
+	}
+
+	if s.auditRepo != nil {
+		audit := &models.AuditLog{
+			ActorID:      &reset.UserID,
+			ActorType:    reset.UserType,
+			Action:       "password.reset",
+			ResourceType: "user",
+			ResourceID:   &reset.UserID,
+			Success:      true,
+		}
+		if err := s.auditRepo.Append(ctx, audit); err != nil {
+			s.logger.Warn("failed to write audit log for password reset", "user_id", reset.UserID, "error", err)
+		}
+	}
+
+	s.logger.Info("password reset completed", "user_id", reset.UserID, "user_type", reset.UserType)
+	return nil
 }
 
 // AdminLogin authenticates an admin user.

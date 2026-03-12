@@ -86,6 +86,12 @@ func getTaskMessage(task *tasks.Task) string {
 		return getBackupCreateMessage(task)
 	case tasks.TaskTypeBackupRestore:
 		return getBackupRestoreMessage(task)
+	case tasks.TaskTypeSnapshotCreate:
+		return getSnapshotCreateMessage(task)
+	case tasks.TaskTypeSnapshotRevert:
+		return getSnapshotRevertMessage(task)
+	case tasks.TaskTypeSnapshotDelete:
+		return getSnapshotDeleteMessage(task)
 	default:
 		return getGenericTaskMessage(task)
 	}
@@ -195,6 +201,62 @@ func getBackupRestoreMessage(task *tasks.Task) string {
 		return "Restoring from backup..."
 	case tasks.TaskStatusCompleted:
 		return "Backup restored successfully"
+	case tasks.TaskStatusFailed:
+		return task.ErrorMessage
+	default:
+		return "Unknown status"
+	}
+}
+
+func getSnapshotCreateMessage(task *tasks.Task) string {
+	switch task.Status {
+	case tasks.TaskStatusPending:
+		return "Snapshot creation queued"
+	case tasks.TaskStatusRunning:
+		return getProgressMessage(task.Progress, []string{
+			"Validating parameters...",
+			"Creating disk snapshot...",
+			"Updating snapshot record...",
+		})
+	case tasks.TaskStatusCompleted:
+		return "Snapshot created successfully"
+	case tasks.TaskStatusFailed:
+		return task.ErrorMessage
+	default:
+		return "Unknown status"
+	}
+}
+
+func getSnapshotRevertMessage(task *tasks.Task) string {
+	switch task.Status {
+	case tasks.TaskStatusPending:
+		return "Snapshot revert queued"
+	case tasks.TaskStatusRunning:
+		return getProgressMessage(task.Progress, []string{
+			"Stopping VM...",
+			"Restoring from snapshot...",
+			"Starting VM...",
+		})
+	case tasks.TaskStatusCompleted:
+		return "Snapshot reverted successfully"
+	case tasks.TaskStatusFailed:
+		return task.ErrorMessage
+	default:
+		return "Unknown status"
+	}
+}
+
+func getSnapshotDeleteMessage(task *tasks.Task) string {
+	switch task.Status {
+	case tasks.TaskStatusPending:
+		return "Snapshot deletion queued"
+	case tasks.TaskStatusRunning:
+		return getProgressMessage(task.Progress, []string{
+			"Deleting from storage...",
+			"Removing snapshot record...",
+		})
+	case tasks.TaskStatusCompleted:
+		return "Snapshot deleted successfully"
 	case tasks.TaskStatusFailed:
 		return task.ErrorMessage
 	default:

@@ -143,53 +143,26 @@ func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 		return
 	}
 
-	// Get existing template
-	template, err := h.templateService.GetByID(c.Request.Context(), templateID)
+	template, err := h.templateService.Update(c.Request.Context(), templateID, &req)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_GET_FAILED", "Failed to retrieve template")
+		h.logger.Error("failed to update template",
+			"template_id", templateID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusBadRequest, "TEMPLATE_UPDATE_FAILED", err.Error())
 		return
 	}
 
-	// Apply updates
-	if req.Name != nil {
-		template.Name = *req.Name
-	}
-	if req.OSFamily != nil {
-		template.OSFamily = *req.OSFamily
-	}
-	if req.OSVersion != nil {
-		template.OSVersion = *req.OSVersion
-	}
-	if req.RBDImage != nil {
-		template.RBDImage = *req.RBDImage
-	}
-	if req.RBDSnapshot != nil {
-		template.RBDSnapshot = *req.RBDSnapshot
-	}
-	if req.MinDiskGB != nil {
-		template.MinDiskGB = *req.MinDiskGB
-	}
-	if req.SupportsCloudInit != nil {
-		template.SupportsCloudInit = *req.SupportsCloudInit
-	}
-	if req.IsActive != nil {
-		template.IsActive = *req.IsActive
-	}
-	if req.SortOrder != nil {
-		template.SortOrder = *req.SortOrder
-	}
-
-	// Update would require repository method - log for now
-	h.logger.Info("template update requested via admin API",
-		"template_id", templateID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
-	// Log audit event
 	h.logAuditEvent(c, "template.update", "template", templateID, req, true)
+
+	h.logger.Info("template updated via admin API",
+		"template_id", templateID,
+		"version", template.Version,
+		"correlation_id", middleware.GetCorrelationID(c))
 
 	c.JSON(http.StatusOK, models.Response{Data: template})
 }

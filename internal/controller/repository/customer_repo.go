@@ -4,11 +4,14 @@ package repository
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // CustomerRepository provides database operations for customer accounts.
@@ -161,6 +164,55 @@ func (r *CustomerRepository) SoftDelete(ctx context.Context, id string) error {
 	return nil
 }
 
+// emailRegex is a simple regex for basic email validation.
+// Note: This is intentionally simple - full RFC 5322 validation is not practical.
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// Update updates a customer's profile information (name and email).
+// Uses a transaction to ensure atomic updates with audit logging.
+// Validates email format and name constraints before updating.
+func (r *CustomerRepository) Update(ctx context.Context, customer *models.Customer) error {
+	// Validate name
+	if strings.TrimSpace(customer.Name) == "" {
+		return sharederrors.NewValidationError("name", "name cannot be empty")
+	}
+	if len(customer.Name) > 255 {
+		return sharederrors.NewValidationError("name", "name cannot exceed 255 characters")
+	}
+
+	// Validate email
+	if strings.TrimSpace(customer.Email) == "" {
+		return sharederrors.NewValidationError("email", "email cannot be empty")
+	}
+	if len(customer.Email) > 254 {
+		return sharederrors.NewValidationError("email", "email cannot exceed 254 characters")
+	}
+	if !emailRegex.MatchString(customer.Email) {
+		return sharederrors.NewValidationError("email", "invalid email format")
+	}
+
+	const q = `
+		UPDATE customers SET
+			name = $1,
+			email = $2,
+			updated_at = NOW()
+		WHERE id = $3 AND status != 'deleted'
+		RETURNING ` + customerSelectCols
+
+	row := r.db.QueryRow(ctx, q,
+		customer.Name, customer.Email, customer.ID,
+	)
+	updated, err := scanCustomer(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("updating customer %s: %w", customer.ID, sharederrors.ErrNotFound)
+		}
+		return fmt.Errorf("updating customer %s: %w", customer.ID, err)
+	}
+	*customer = updated
+	return nil
+}
+
 // CreateSession inserts a new session record into the database.
 func (r *CustomerRepository) CreateSession(ctx context.Context, session *models.Session) error {
 	const q = `
@@ -184,7 +236,7 @@ func (r *CustomerRepository) CreateSession(ctx context.Context, session *models.
 func (r *CustomerRepository) GetSession(ctx context.Context, id string) (*models.Session, error) {
 	const q = `
 		SELECT id, user_id, user_type, refresh_token_hash,
-		       ip_address, user_agent, expires_at, created_at
+		       ip_address, user_agent, expires_at, last_reauth_at, created_at
 		FROM sessions WHERE id = $1`
 	session, err := ScanRow(ctx, r.db, q, []any{id}, scanSession)
 	if err != nil {
@@ -197,7 +249,7 @@ func (r *CustomerRepository) GetSession(ctx context.Context, id string) (*models
 func (r *CustomerRepository) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
 	const q = `
 		SELECT id, user_id, user_type, refresh_token_hash,
-		       ip_address, user_agent, expires_at, created_at
+		       ip_address, user_agent, expires_at, last_reauth_at, created_at
 		FROM sessions WHERE refresh_token_hash = $1`
 	session, err := ScanRow(ctx, r.db, q, []any{refreshTokenHash}, scanSession)
 	if err != nil {
@@ -239,12 +291,40 @@ func (r *CustomerRepository) DeleteSessionsByUser(ctx context.Context, userID, u
 	return nil
 }
 
+// GetSessionLastReauthAt returns the last re-authentication timestamp for a session.
+// Returns nil if the session has no last_reauth_at recorded.
+func (r *CustomerRepository) GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error) {
+	const q = `SELECT last_reauth_at FROM sessions WHERE id = $1`
+	var lastReauthAt *time.Time
+	err := r.db.QueryRow(ctx, q, sessionID).Scan(&lastReauthAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, sharederrors.ErrNotFound
+		}
+		return nil, fmt.Errorf("getting session last_reauth_at: %w", err)
+	}
+	return lastReauthAt, nil
+}
+
+// UpdateSessionLastReauthAt updates the last re-authentication timestamp for a session.
+func (r *CustomerRepository) UpdateSessionLastReauthAt(ctx context.Context, sessionID string, timestamp time.Time) error {
+	const q = `UPDATE sessions SET last_reauth_at = $1 WHERE id = $2`
+	tag, err := r.db.Exec(ctx, q, timestamp, sessionID)
+	if err != nil {
+		return fmt.Errorf("updating session last_reauth_at: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating session last_reauth_at: %w", ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // scanSession scans a single session row into a models.Session struct.
 func scanSession(row pgx.Row) (models.Session, error) {
 	var s models.Session
 	err := row.Scan(
 		&s.ID, &s.UserID, &s.UserType, &s.RefreshTokenHash,
-		&s.IPAddress, &s.UserAgent, &s.ExpiresAt, &s.CreatedAt,
+		&s.IPAddress, &s.UserAgent, &s.ExpiresAt, &s.LastReauthAt, &s.CreatedAt,
 	)
 	return s, err
 }
@@ -394,4 +474,82 @@ type CustomerListFilter struct {
 type AdminListFilter struct {
 	Role *string `form:"role"`
 	models.PaginationParams
+}
+
+// scanPasswordReset scans a single password_reset row into a models.PasswordReset struct.
+func scanPasswordReset(row pgx.Row) (models.PasswordReset, error) {
+	var pr models.PasswordReset
+	err := row.Scan(
+		&pr.ID, &pr.UserID, &pr.UserType, &pr.TokenHash,
+		&pr.ExpiresAt, &pr.UsedAt, &pr.CreatedAt,
+	)
+	return pr, err
+}
+
+const passwordResetSelectCols = `
+	id, user_id, user_type, token_hash, expires_at, used_at, created_at`
+
+// CreatePasswordReset inserts a new password reset token into the database.
+func (r *CustomerRepository) CreatePasswordReset(ctx context.Context, reset *models.PasswordReset) error {
+	const q = `
+		INSERT INTO password_resets (
+			user_id, user_type, token_hash, expires_at
+		) VALUES ($1,$2,$3,$4)
+		RETURNING ` + passwordResetSelectCols
+
+	row := r.db.QueryRow(ctx, q,
+		reset.UserID, reset.UserType, reset.TokenHash, reset.ExpiresAt,
+	)
+	created, err := scanPasswordReset(row)
+	if err != nil {
+		return fmt.Errorf("creating password reset: %w", err)
+	}
+	*reset = created
+	return nil
+}
+
+// GetPasswordResetByTokenHash returns a password reset by its token hash. Returns ErrNotFound if no match.
+func (r *CustomerRepository) GetPasswordResetByTokenHash(ctx context.Context, tokenHash string) (*models.PasswordReset, error) {
+	const q = `SELECT ` + passwordResetSelectCols + ` FROM password_resets WHERE token_hash = $1`
+	reset, err := ScanRow(ctx, r.db, q, []any{tokenHash}, scanPasswordReset)
+	if err != nil {
+		return nil, fmt.Errorf("getting password reset by token: %w", err)
+	}
+	return &reset, nil
+}
+
+// MarkPasswordResetUsed marks a password reset token as used by setting used_at.
+func (r *CustomerRepository) MarkPasswordResetUsed(ctx context.Context, id string) error {
+	const q = `UPDATE password_resets SET used_at = NOW() WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("marking password reset used: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("marking password reset used: %w", ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// DeleteExpiredPasswordResets removes all expired password reset tokens.
+func (r *CustomerRepository) DeleteExpiredPasswordResets(ctx context.Context) error {
+	const q = `DELETE FROM password_resets WHERE expires_at < NOW()`
+	_, err := r.db.Exec(ctx, q)
+	if err != nil {
+		return fmt.Errorf("deleting expired password resets: %w", err)
+	}
+	return nil
+}
+
+// UpdateCustomerPasswordHash updates the password hash for a customer.
+func (r *CustomerRepository) UpdateCustomerPasswordHash(ctx context.Context, id, passwordHash string) error {
+	const q = `UPDATE customers SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND status != 'deleted'`
+	tag, err := r.db.Exec(ctx, q, passwordHash, id)
+	if err != nil {
+		return fmt.Errorf("updating customer %s password: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating customer %s password: %w", id, ErrNoRowsAffected)
+	}
+	return nil
 }

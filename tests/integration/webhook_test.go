@@ -304,7 +304,7 @@ func TestWebhookSignatureVerification(t *testing.T) {
 	SetupTest(t)
 	defer TeardownTest(t)
 
-	secret := "test-webhook-secret"
+	secret := TestWebhookSecret
 
 	t.Run("ValidSignature", func(t *testing.T) {
 		payload := map[string]interface{}{
@@ -535,7 +535,7 @@ func TestWebhookSecurity(t *testing.T) {
 
 		// Secret hash should be stored, not plain secret
 		assert.NotEmpty(t, webhook.SecretHash, "Secret hash should be stored")
-		assert.NotEqual(t, "test-webhook-secret", webhook.SecretHash, "Secret should be hashed")
+		assert.NotEqual(t, TestWebhookSecret, webhook.SecretHash, "Secret should be hashed")
 	})
 
 	t.Run("HTTPSOnly", func(t *testing.T) {

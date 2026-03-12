@@ -6,6 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,16 +28,12 @@ import {
   Search,
   Eye,
   Ban,
+  CheckCircle,
+  Trash2,
+  Loader2,
 } from "lucide-react";
-
-interface Customer {
-  id: string;
-  name: string;
-  email: string;
-  vm_count: number;
-  status: "active" | "suspended";
-  created_at: string;
-}
+import { adminCustomersApi, type Customer } from "@/lib/api-client";
+import { useToast } from "@/components/ui/use-toast";
 
 const mockCustomers: Customer[] = [
   {
@@ -131,9 +135,16 @@ function getCustomerAvatar(name: string) {
   );
 }
 
+type DialogAction = "suspend" | "unsuspend" | "delete" | null;
+
 export default function CustomersPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [customers] = useState<Customer[]>(mockCustomers);
+  const [customers, setCustomers] = useState<Customer[]>(mockCustomers);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState<DialogAction>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const { toast } = useToast();
 
   const filteredCustomers = customers.filter(
     (customer) =>
@@ -142,23 +153,99 @@ export default function CustomersPage() {
   );
 
   const handleView = (customer: Customer) => {
-    console.log("View customer:", customer);
-    // TODO: Implement view action
+    toast({
+      title: "Customer Details",
+      description: `Viewing ${customer.name} (${customer.email})`,
+    });
   };
 
-  const handleSuspend = (customer: Customer) => {
-    if (window.confirm(`Are you sure you want to suspend customer "${customer.name}"? This will suspend all their VMs.`)) {
-      console.log("Suspend customer:", customer);
-      // TODO: Implement suspend action
+  const openConfirmDialog = (customer: Customer, action: DialogAction) => {
+    setSelectedCustomer(customer);
+    setDialogAction(action);
+    setDialogOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!selectedCustomer || !dialogAction) return;
+
+    setDialogOpen(false);
+    setLoadingId(selectedCustomer.id);
+
+    try {
+      if (dialogAction === "suspend") {
+        await adminCustomersApi.suspendCustomer(selectedCustomer.id);
+        toast({
+          title: "Customer Suspended",
+          description: `Customer "${selectedCustomer.name}" has been suspended.`,
+        });
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === selectedCustomer.id ? { ...c, status: "suspended" } : c
+          )
+        );
+      } else if (dialogAction === "unsuspend") {
+        await adminCustomersApi.unsuspendCustomer(selectedCustomer.id);
+        toast({
+          title: "Customer Unsuspended",
+          description: `Customer "${selectedCustomer.name}" has been unsuspended.`,
+        });
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === selectedCustomer.id ? { ...c, status: "active" } : c
+          )
+        );
+      } else if (dialogAction === "delete") {
+        await adminCustomersApi.deleteCustomer(selectedCustomer.id);
+        toast({
+          title: "Customer Deleted",
+          description: `Customer "${selectedCustomer.name}" has been permanently deleted.`,
+        });
+        setCustomers((prev) => prev.filter((c) => c.id !== selectedCustomer.id));
+      }
+    } catch (error) {
+      toast({
+        title: "Action Failed",
+        description: error instanceof Error ? error.message : `Failed to ${dialogAction} customer`,
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
+      setSelectedCustomer(null);
+      setDialogAction(null);
     }
   };
 
-  const handleUnsuspend = (customer: Customer) => {
-    if (window.confirm(`Are you sure you want to unsuspend customer "${customer.name}"?`)) {
-      console.log("Unsuspend customer:", customer);
-      // TODO: Implement unsuspend action
+  const getDialogContent = () => {
+    if (!selectedCustomer || !dialogAction) return null;
+
+    switch (dialogAction) {
+      case "suspend":
+        return {
+          title: "Suspend Customer",
+          description: `Are you sure you want to suspend customer "${selectedCustomer.name}"? This will suspend all their VMs.`,
+          confirmText: "Suspend",
+          variant: "destructive" as const,
+        };
+      case "unsuspend":
+        return {
+          title: "Unsuspend Customer",
+          description: `Are you sure you want to unsuspend customer "${selectedCustomer.name}"?`,
+          confirmText: "Unsuspend",
+          variant: "default" as const,
+        };
+      case "delete":
+        return {
+          title: "Delete Customer",
+          description: `Are you sure you want to permanently delete customer "${selectedCustomer.name}"? This action cannot be undone.`,
+          confirmText: "Delete",
+          variant: "destructive" as const,
+        };
+      default:
+        return null;
     }
   };
+
+  const dialogContent = getDialogContent();
 
   const totalCustomers = customers.length;
   const activeCustomers = customers.filter((c) => c.status === "active").length;
@@ -167,7 +254,6 @@ export default function CustomersPage() {
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
@@ -181,7 +267,6 @@ export default function CustomersPage() {
           </Button>
         </div>
 
-        {/* Summary Stats */}
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>
             <CardContent className="pt-6">
@@ -224,7 +309,6 @@ export default function CustomersPage() {
           </Card>
         </div>
 
-        {/* Search and Filter */}
         <Card>
           <CardContent className="pt-6">
             <div className="relative">
@@ -239,7 +323,6 @@ export default function CustomersPage() {
           </CardContent>
         </Card>
 
-        {/* Customers Table */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -299,28 +382,46 @@ export default function CustomersPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleView(customer)}
+                              disabled={loadingId === customer.id}
                             >
-                              <Eye className="h-3 w-3" />
+                              <Eye className="mr-1 h-3 w-3" />
                               View
                             </Button>
                             {customer.status === "active" ? (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleSuspend(customer)}
+                                onClick={() => openConfirmDialog(customer, "suspend")}
+                                disabled={loadingId === customer.id}
                               >
-                                <Ban className="h-3 w-3" />
+                                <Ban className="mr-1 h-3 w-3" />
                                 Suspend
                               </Button>
                             ) : (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleUnsuspend(customer)}
+                                onClick={() => openConfirmDialog(customer, "unsuspend")}
+                                disabled={loadingId === customer.id}
                               >
-                                Suspend
+                                <CheckCircle className="mr-1 h-3 w-3" />
+                                Unsuspend
                               </Button>
                             )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openConfirmDialog(customer, "delete")}
+                              disabled={loadingId === customer.id}
+                              className="text-destructive hover:bg-destructive/10"
+                            >
+                              {loadingId === customer.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Trash2 className="mr-1 h-3 w-3" />
+                              )}
+                              Delete
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -332,6 +433,26 @@ export default function CustomersPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dialogContent?.title}</DialogTitle>
+            <DialogDescription>{dialogContent?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant={dialogContent?.variant || "default"}
+              onClick={handleConfirmAction}
+            >
+              {dialogContent?.confirmText}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

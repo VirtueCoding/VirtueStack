@@ -61,15 +61,17 @@ const ReAuthWindow = 5 * time.Minute
 // RBACService provides Role-Based Access Control for VirtueStack.
 // It enforces permissions based on user roles and logs denied access attempts.
 type RBACService struct {
-	auditRepo *repository.AuditRepository
-	logger    *slog.Logger
+	auditRepo    *repository.AuditRepository
+	customerRepo *repository.CustomerRepository
+	logger       *slog.Logger
 }
 
 // NewRBACService creates a new RBACService with the given dependencies.
-func NewRBACService(auditRepo *repository.AuditRepository, logger *slog.Logger) *RBACService {
+func NewRBACService(auditRepo *repository.AuditRepository, customerRepo *repository.CustomerRepository, logger *slog.Logger) *RBACService {
 	return &RBACService{
-		auditRepo: auditRepo,
-		logger:    logger,
+		auditRepo:    auditRepo,
+		customerRepo: customerRepo,
+		logger:       logger,
 	}
 }
 
@@ -144,15 +146,47 @@ func (s *RBACService) logDeniedAndReturn(ctx context.Context, userID, userRole, 
 
 // RequireReauthForDestructive checks if an action requires re-authentication.
 // Destructive operations require the user to have re-authenticated within the last 5 minutes.
-// This is a placeholder that returns true for destructive actions - the actual re-auth
-// time check should be implemented by the caller using session metadata.
-func (s *RBACService) RequireReauthForDestructive(ctx context.Context, userID, action string) (bool, error) {
+// Returns true if re-authentication is required, false if the action can proceed.
+// For destructive actions, checks if last_reauth_at is within the 5-minute window.
+func (s *RBACService) RequireReauthForDestructive(ctx context.Context, sessionID, action string) (bool, error) {
+	// Check if this is a destructive action
+	isDestructive := false
 	for _, destructiveAction := range DestructiveActions {
 		if action == destructiveAction {
-			return true, nil
+			isDestructive = true
+			break
 		}
 	}
-	return false, nil
+
+	// Non-destructive actions don't require re-auth
+	if !isDestructive {
+		return false, nil
+	}
+
+	// For destructive actions, check the last re-auth timestamp
+	if s.customerRepo == nil {
+		return true, fmt.Errorf("customer repository not configured")
+	}
+
+	lastReauthAt, err := s.customerRepo.GetSessionLastReauthAt(ctx, sessionID)
+	if err != nil {
+		// If session not found or other error, require re-auth for safety
+		return true, fmt.Errorf("checking session last_reauth_at: %w", err)
+	}
+
+	// If no last_reauth_at recorded, re-auth is required
+	if lastReauthAt == nil {
+		return true, nil
+	}
+
+	// Check if within 5-minute window
+	if time.Since(*lastReauthAt) <= ReAuthWindow {
+		// Within window - no re-auth needed
+		return false, nil
+	}
+
+	// Outside 5-minute window - re-auth required
+	return true, nil
 }
 
 // CanCreateVM checks if a user can create a VM.

@@ -115,6 +115,9 @@ func (s *Server) InitializeServices() error {
 	taskRepo := repository.NewTaskRepository(s.dbPool)
 	adminRepo := repository.NewAdminRepository(s.dbPool)
 	provisioningKeyRepo := repository.NewProvisioningKeyRepository(s.dbPool)
+	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
+	webhookRepo := repository.NewWebhookRepository(s.dbPool)
+	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 
 	// Create task publisher using the worker
 	var taskPublisher services.TaskPublisher
@@ -122,9 +125,10 @@ func (s *Server) InitializeServices() error {
 		taskPublisher = services.NewDefaultTaskPublisher(taskRepo, s.logger)
 	}
 
-	// Node agent client - will be set up in a future phase when gRPC implementation is complete
-	// For now, services that require node communication will handle nil gracefully
-	var nodeAgentClient services.NodeAgentClient = nil
+	var nodeAgentClient services.NodeAgentClient
+	if s.nodeClient != nil {
+		nodeAgentClient = services.NewNodeAgentGRPCClient(nodeRepo, s.nodeClient, s.logger)
+	}
 
 	// Suppress unused variable warning for provisioningKeyRepo (used in route registration)
 	_ = provisioningKeyRepo
@@ -133,6 +137,7 @@ func (s *Server) InitializeServices() error {
 	s.authService = services.NewAuthService(
 		customerRepo,
 		adminRepo,
+		auditRepo,
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.config.EncryptionKey,
@@ -171,7 +176,7 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
-	s.customerService = services.NewCustomerService(customerRepo, s.logger)
+	s.customerService = services.NewCustomerService(customerRepo, auditRepo, s.logger)
 
 	s.backupService = services.NewBackupService(
 		backupRepo,
@@ -180,6 +185,13 @@ func (s *Server) InitializeServices() error {
 		nil, // nodeAgent - will be set up in future phase
 		taskPublisher,
 		s.logger,
+	)
+
+	webhookService := services.NewWebhookService(
+		webhookRepo,
+		taskPublisher,
+		s.logger,
+		s.config.EncryptionKey,
 	)
 
 	// Initialize handlers
@@ -194,15 +206,19 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
-	s.customerHandler = customer.NewCustomerHandler(
+s.customerHandler = customer.NewCustomerHandler(
 		s.vmService,
 		s.backupService,
 		s.authService,
 		s.templateService,
+		webhookService,
 		vmRepo,
 		backupRepo,
 		templateRepo,
 		customerRepo,
+		apiKeyRepo,
+		auditRepo,
+		bandwidthRepo,
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.config.EncryptionKey,
@@ -266,13 +282,12 @@ func (s *Server) RegisterAPIRoutes() {
 
 	v1 := s.router.Group("/api/v1")
 
-	// Provisioning API (WHMCS) - requires API key authentication
-	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo())
+	auditRepo := repository.NewAuditRepository(s.dbPool)
 
-	// Customer API - requires JWT authentication
+	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo(), auditRepo)
+
 	customer.RegisterCustomerRoutes(v1, s.customerHandler)
 
-	// Admin API - requires JWT authentication with admin role
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
 
 	s.logger.Info("API routes registered")
@@ -321,6 +336,18 @@ func (s *Server) readinessHandler(c *gin.Context) {
 // placeholderHandler returns a placeholder response for unimplemented routes.
 func (s *Server) placeholderHandler(name string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// In production, return 501 Not Implemented
+		// In dev mode, return 200 with helpful message
+		if s.config.Environment == "production" {
+			respondError(c, &apierrors.APIError{
+				Code:       "NOT_IMPLEMENTED",
+				Message:    fmt.Sprintf("%s API is not yet implemented", name),
+				HTTPStatus: http.StatusNotImplemented,
+			})
+			return
+		}
+
+		// Dev mode: return 200 with message
 		respondJSON(c, http.StatusOK, gin.H{
 			"message": fmt.Sprintf("%s API - coming in Phase 2", name),
 		})

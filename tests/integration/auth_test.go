@@ -28,7 +28,7 @@ func TestCustomerLogin(t *testing.T) {
 		tokens, refreshToken, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -45,7 +45,7 @@ func TestCustomerLogin(t *testing.T) {
 		_, _, err := suite.AuthService.Login(
 			ctx,
 			"nonexistent@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -58,7 +58,7 @@ func TestCustomerLogin(t *testing.T) {
 		_, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"WrongPassword123!",
+			TestWrongPassword,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -74,7 +74,7 @@ func TestCustomerLogin(t *testing.T) {
 		_, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -112,7 +112,7 @@ func TestCustomerLoginWith2FA(t *testing.T) {
 		tokens, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -141,7 +141,7 @@ func TestCustomerLoginWith2FA(t *testing.T) {
 		tokens, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -183,7 +183,7 @@ func TestCustomerLoginWith2FA(t *testing.T) {
 		tokens, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -221,7 +221,7 @@ func TestTokenRefresh(t *testing.T) {
 		_, refreshToken, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -258,7 +258,7 @@ func TestTokenRefresh(t *testing.T) {
 		_, refreshToken, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -310,7 +310,7 @@ func TestAdminLogin(t *testing.T) {
 		tokens, err := suite.AuthService.AdminLogin(
 			ctx,
 			"admin@example.com",
-			"AdminPassword123!",
+			TestAdminPass,
 		)
 
 		require.NoError(t, err, "Admin login should succeed")
@@ -335,13 +335,13 @@ func TestAdminLogin(t *testing.T) {
 		tokens, err := suite.AuthService.AdminLogin(
 			ctx,
 			"admin@example.com",
-			"AdminPassword123!",
+			TestAdminPass,
 		)
 		require.NoError(t, err)
 
-		// The test admin has TOTP secret "JBSWY3DPEHPK3PXP" (base32)
+		// The test admin has TOTP secret TestTOTPSecret (base32)
 		// Generate valid code
-		validCode, err := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
+		validCode, err := totp.GenerateCode(TestTOTPSecret, time.Now())
 		require.NoError(t, err)
 
 		// Verify 2FA
@@ -374,7 +374,7 @@ func TestLogout(t *testing.T) {
 		_, refreshToken, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -409,7 +409,7 @@ func TestLogout(t *testing.T) {
 			_, _, err := suite.AuthService.Login(
 				ctx,
 				"test@example.com",
-				"TestPassword123!",
+				TestCustomerPass,
 				"127.0.0.1",
 				"test-agent",
 			)
@@ -445,7 +445,7 @@ func TestSessionManagement(t *testing.T) {
 		_, _, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"192.168.1.100",
 			"Mozilla/5.0 Test Browser",
 		)
@@ -469,7 +469,7 @@ func TestSessionManagement(t *testing.T) {
 		_, refreshToken, err := suite.AuthService.Login(
 			ctx,
 			"test@example.com",
-			"TestPassword123!",
+			TestCustomerPass,
 			"127.0.0.1",
 			"test-agent",
 		)
@@ -523,7 +523,7 @@ func TestPasswordSecurity(t *testing.T) {
 		nonExistentTime := time.Since(start)
 
 		start = time.Now()
-		_, _, _ = suite.AuthService.Login(ctx, "test@example.com", "WrongPassword123!", "127.0.0.1", "agent")
+		_, _, _ = suite.AuthService.Login(ctx, "test@example.com", TestWrongPassword, "127.0.0.1", "agent")
 		wrongPasswordTime := time.Since(start)
 
 		// Both should take similar time (within 2x factor for basic check)
@@ -545,7 +545,7 @@ func TestPermissionVerification(t *testing.T) {
 	t.Run("CustomerCannotAccessOtherCustomerVMs", func(t *testing.T) {
 		// Create another customer
 		otherCustomerID := "00000000-0000-0000-0000-000000000099"
-		passwordHash, _ := services.Argon2idParams.HashPassword("OtherPassword123!")
+		passwordHash, _ := services.Argon2idParams.HashPassword(TestCustomerPass)
 		_, _ = suite.DBPool.Exec(ctx, `
 			INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 			VALUES ($1, 'other@example.com', $2, 'Other Customer', 'active', NOW(), NOW())
@@ -570,10 +570,10 @@ func TestPermissionVerification(t *testing.T) {
 
 	t.Run("AdminRoleInToken", func(t *testing.T) {
 		// Admin login and verify
-		tokens, err := suite.AuthService.AdminLogin(ctx, "admin@example.com", "AdminPassword123!")
+		tokens, err := suite.AuthService.AdminLogin(ctx, "admin@example.com", TestAdminPass)
 		require.NoError(t, err)
 
-		validCode, _ := totp.GenerateCode("JBSWY3DPEHPK3PXP", time.Now())
+		validCode, _ := totp.GenerateCode(TestTOTPSecret, time.Now())
 		finalTokens, _, err := suite.AuthService.AdminVerify2FA(ctx, tokens.TempToken, validCode, "127.0.0.1", "agent")
 		require.NoError(t, err)
 

@@ -130,7 +130,7 @@ export default function SettingsPage() {
                 <Label htmlFor="name">Full Name</Label>
                 <Input
                   id="name"
-                  placeholder="John Doe"
+                  placeholder="Enter your full name"
                   defaultValue="John Doe"
                   className="max-w-md"
                 />
@@ -142,7 +142,7 @@ export default function SettingsPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="john@example.com"
+                    placeholder="email@example.com"
                     defaultValue="john@example.com"
                     className="pl-10"
                   />

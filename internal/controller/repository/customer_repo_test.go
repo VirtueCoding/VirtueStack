@@ -1,0 +1,212 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// mockCustomerDB implements the DB interface for testing.
+type mockCustomerDB struct {
+	execFunc    func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (m *mockCustomerDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (m *mockCustomerDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if m.queryRowFunc != nil {
+		return m.queryRowFunc(ctx, sql, args...)
+	}
+	return nil
+}
+
+func (m *mockCustomerDB) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	if m.execFunc != nil {
+		return m.execFunc(ctx, sql, arguments...)
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func (m *mockCustomerDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return nil, nil
+}
+
+// mockCustomerRow implements pgx.Row for testing QueryRow results.
+type mockCustomerRow struct {
+	customer models.Customer
+	err      error
+}
+
+func (m mockCustomerRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Copy customer data to dest
+	c := dest[0].(*models.Customer)
+	*c = m.customer
+	return nil
+}
+
+// TestCustomerUpdate tests the CustomerRepository.Update method.
+func TestCustomerUpdate(t *testing.T) {
+	now := time.Now()
+	validCustomer := models.Customer{
+		ID:        "550e8400-e29b-41d4-a716-446655440000",
+		Email:     "test@example.com",
+		Name:      "Test User",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	tests := []struct {
+		name          string
+		customer      *models.Customer
+		rowsAffected  int64
+		queryRowErr   error
+		wantErr       bool
+		errContains   string
+	}{
+		{
+			name: "successful update",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "newemail@example.com",
+				Name:  "New Name",
+			},
+			rowsAffected: 1,
+			queryRowErr:  nil,
+			wantErr:      false,
+		},
+		{
+			name: "validation error - empty name",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "test@example.com",
+				Name:  "",
+			},
+			wantErr:     true,
+			errContains: "name cannot be empty",
+		},
+		{
+			name: "validation error - name too long",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "test@example.com",
+				Name:  string(make([]byte, 256)), // 256 chars > 255
+			},
+			wantErr:     true,
+			errContains: "name cannot exceed 255",
+		},
+		{
+			name: "validation error - empty email",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "",
+				Name:  "Test",
+			},
+			wantErr:     true,
+			errContains: "email cannot be empty",
+		},
+		{
+			name: "validation error - email too long",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: string(make([]byte, 255)) + "@example.com", // > 254 chars
+				Name:  "Test",
+			},
+			wantErr:     true,
+			errContains: "email cannot exceed 254",
+		},
+		{
+			name: "validation error - invalid email format",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "not-an-email",
+				Name:  "Test",
+			},
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name: "customer not found",
+			customer: &models.Customer{
+				ID:    "550e8400-e29b-41d4-a716-446655440001",
+				Email: "test@example.com",
+				Name:  "Test User",
+			},
+			queryRowErr:  pgx.ErrNoRows,
+			wantErr:      true,
+			errContains:  "not found",
+		},
+		{
+			name: "database error",
+			customer: &models.Customer{
+				ID:    validCustomer.ID,
+				Email: "test@example.com",
+				Name:  "Test User",
+			},
+			queryRowErr:  errors.New("connection refused"),
+			wantErr:      true,
+			errContains:  "connection refused",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockCustomerDB{
+				queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
+					if tt.queryRowErr != nil {
+						return mockCustomerRow{err: tt.queryRowErr}
+					}
+					// Return the updated customer
+					updated := validCustomer
+					if len(args) >= 2 {
+						updated.Name = args[0].(string)
+						updated.Email = args[1].(string)
+					}
+					updated.UpdatedAt = time.Now()
+					return mockCustomerRow{customer: updated}
+				},
+			}
+
+			repo := NewCustomerRepository(mock)
+			err := repo.Update(context.Background(), tt.customer)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
+
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

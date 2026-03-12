@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -31,15 +32,38 @@ type NodeAgentClient interface {
 // It handles node registration, heartbeat processing, status management,
 // and node selection for VM placement.
 type NodeService struct {
-	nodeRepo    *repository.NodeRepository
-	vmRepo      *repository.VMRepository
-	nodeAgent   NodeAgentClient
-	encryptionKey string // For encrypting IPMI credentials
-	logger      *slog.Logger
+	nodeRepo       *repository.NodeRepository
+	vmRepo         *repository.VMRepository
+	auditRepo      *repository.AuditRepository
+	nodeAgent      NodeAgentClient
+	notification   *NotificationService
+	circuitBreaker *FailoverCircuitBreaker
+	encryptionKey  string
+	logger         *slog.Logger
 }
 
-// NewNodeService creates a new NodeService with the given dependencies.
 func NewNodeService(
+	nodeRepo *repository.NodeRepository,
+	vmRepo *repository.VMRepository,
+	auditRepo *repository.AuditRepository,
+	nodeAgent NodeAgentClient,
+	notification *NotificationService,
+	encryptionKey string,
+	logger *slog.Logger,
+) *NodeService {
+	return &NodeService{
+		nodeRepo:       nodeRepo,
+		vmRepo:         vmRepo,
+		auditRepo:      auditRepo,
+		nodeAgent:      nodeAgent,
+		notification:   notification,
+		circuitBreaker: NewFailoverCircuitBreaker(),
+		encryptionKey:  encryptionKey,
+		logger:         logger.With("component", "node-service"),
+	}
+}
+
+func NewNodeServiceWithDefaults(
 	nodeRepo *repository.NodeRepository,
 	vmRepo *repository.VMRepository,
 	nodeAgent NodeAgentClient,
@@ -47,11 +71,12 @@ func NewNodeService(
 	logger *slog.Logger,
 ) *NodeService {
 	return &NodeService{
-		nodeRepo:      nodeRepo,
-		vmRepo:        vmRepo,
-		nodeAgent:     nodeAgent,
-		encryptionKey: encryptionKey,
-		logger:        logger.With("component", "node-service"),
+		nodeRepo:       nodeRepo,
+		vmRepo:         vmRepo,
+		nodeAgent:      nodeAgent,
+		circuitBreaker: NewFailoverCircuitBreaker(),
+		encryptionKey:  encryptionKey,
+		logger:         logger.With("component", "node-service"),
 	}
 }
 
@@ -188,7 +213,6 @@ func (s *NodeService) DrainNode(ctx context.Context, nodeID string) error {
 // - Automatic VM migration if possible
 // - IPMI power cycle attempts
 func (s *NodeService) FailoverNode(ctx context.Context, nodeID string) error {
-	// Verify node exists
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -197,28 +221,206 @@ func (s *NodeService) FailoverNode(ctx context.Context, nodeID string) error {
 		return fmt.Errorf("getting node: %w", err)
 	}
 
-	// Update status to failed
+	if err := s.circuitBreaker.CanAttemptFailover(nodeID); err != nil {
+		s.logger.Warn("failover blocked by circuit breaker",
+			"node_id", nodeID,
+			"error", err)
+		return fmt.Errorf("failover blocked: %w", err)
+	}
+
 	if err := s.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusFailed); err != nil {
 		return fmt.Errorf("updating node status: %w", err)
 	}
 
-	// Count affected VMs for logging/alerting
 	vmCount, err := s.vmRepo.CountByNode(ctx, nodeID)
 	if err != nil {
 		s.logger.Warn("failed to count VMs on failed node", "node_id", nodeID, "error", err)
+		vmCount = 0
 	}
 
-	s.logger.Error("node marked as failed",
+	ipmiConfigured := node.IPMIAddress != nil && node.IPMIUsernameEncrypted != nil && node.IPMIPasswordEncrypted != nil
+
+	s.logger.Error("node marked as failed, initiating failover",
 		"node_id", nodeID,
 		"hostname", node.Hostname,
 		"affected_vms", vmCount,
-		"ipmi_address", node.IPMIAddress)
+		"ipmi_configured", ipmiConfigured)
 
-	// TODO: Trigger alert notification
-	// TODO: Attempt VM migration to other nodes
-	// TODO: Attempt IPMI power cycle if configured
+	s.logAudit(ctx, "node.failover", nodeID, map[string]interface{}{
+		"hostname":        node.Hostname,
+		"affected_vms":    vmCount,
+		"ipmi_configured": ipmiConfigured,
+	}, true, "")
+
+	if s.notification != nil {
+		if err := s.notification.NotifyNodeFailure(ctx, nodeID, node.Hostname, vmCount, ipmiConfigured); err != nil {
+			s.logger.Error("failed to send node failure notification", "error", err)
+		}
+	}
+
+	migrationResults := s.migrateVMsFromFailedNode(ctx, node)
+
+	if ipmiConfigured {
+		s.attemptIPMIPowerCycle(ctx, node)
+	}
+
+	s.logAudit(ctx, "node.failover.complete", nodeID, map[string]interface{}{
+		"hostname":      node.Hostname,
+		"migrated_vms":  migrationResults.Migrated,
+		"failed_vms":    migrationResults.Failed,
+		"ipmi_attempted": ipmiConfigured,
+	}, true, "")
+
+	if migrationResults.Failed == 0 {
+		s.circuitBreaker.RecordFailoverSuccess(nodeID)
+	} else {
+		s.circuitBreaker.RecordFailoverFailure(nodeID, fmt.Errorf("%d VMs failed to migrate", migrationResults.Failed))
+	}
 
 	return nil
+}
+
+type migrationResult struct {
+	Migrated int
+	Failed   int
+}
+
+func (s *NodeService) migrateVMsFromFailedNode(ctx context.Context, failedNode *models.Node) migrationResult {
+	result := migrationResult{}
+
+	if s.nodeAgent == nil {
+		s.logger.Warn("cannot migrate VMs: node agent client not available")
+		return result
+	}
+
+	err := s.nodeAgent.EvacuateNode(ctx, failedNode.ID)
+	if err != nil {
+		s.logger.Error("failed to evacuate node",
+			"node_id", failedNode.ID,
+			"error", err)
+
+		s.logAudit(ctx, "vm.migration.failed", failedNode.ID, map[string]interface{}{
+			"hostname": failedNode.Hostname,
+			"error":    err.Error(),
+		}, false, err.Error())
+
+		result.Failed = 1
+		return result
+	}
+
+	s.logger.Info("node evacuation initiated successfully",
+		"node_id", failedNode.ID,
+		"hostname", failedNode.Hostname)
+
+	s.logAudit(ctx, "vm.migration.initiated", failedNode.ID, map[string]interface{}{
+		"hostname": failedNode.Hostname,
+	}, true, "")
+
+	result.Migrated = 1
+	return result
+}
+
+func (s *NodeService) attemptIPMIPowerCycle(ctx context.Context, node *models.Node) {
+	if node.IPMIAddress == nil || *node.IPMIAddress == "" {
+		s.logger.Debug("IPMI address not configured, skipping power cycle", "node_id", node.ID)
+		return
+	}
+
+	if node.IPMIUsernameEncrypted == nil || node.IPMIPasswordEncrypted == nil {
+		s.logger.Debug("IPMI credentials not configured, skipping power cycle", "node_id", node.ID)
+		return
+	}
+
+	username, err := crypto.Decrypt(*node.IPMIUsernameEncrypted, s.encryptionKey)
+	if err != nil {
+		s.logger.Error("failed to decrypt IPMI username", "node_id", node.ID, "error", err)
+		return
+	}
+
+	password, err := crypto.Decrypt(*node.IPMIPasswordEncrypted, s.encryptionKey)
+	if err != nil {
+		s.logger.Error("failed to decrypt IPMI password", "node_id", node.ID, "error", err)
+		return
+	}
+
+	s.logger.Info("attempting IPMI power cycle",
+		"node_id", node.ID,
+		"hostname", node.Hostname,
+		"ipmi_address", *node.IPMIAddress)
+
+	ipmiClient := NewIPMIClient(*node.IPMIAddress, username, password, s.logger)
+	err = ipmiClient.PowerCycle(ctx)
+
+	if s.notification != nil {
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		if notifErr := s.notification.NotifyIPMIAttempt(ctx, node.ID, node.Hostname, err == nil, errMsg); notifErr != nil {
+			s.logger.Error("failed to send IPMI notification", "error", notifErr)
+		}
+	}
+
+	if err != nil {
+		s.logger.Error("IPMI power cycle failed",
+			"node_id", node.ID,
+			"ipmi_address", *node.IPMIAddress,
+			"error", err)
+
+		s.logAudit(ctx, "ipmi.power_cycle.failed", node.ID, map[string]interface{}{
+			"hostname":     node.Hostname,
+			"ipmi_address": *node.IPMIAddress,
+			"error":        err.Error(),
+		}, false, err.Error())
+		return
+	}
+
+	s.logger.Info("IPMI power cycle completed successfully",
+		"node_id", node.ID,
+		"ipmi_address", *node.IPMIAddress)
+
+	s.logAudit(ctx, "ipmi.power_cycle.success", node.ID, map[string]interface{}{
+		"hostname":     node.Hostname,
+		"ipmi_address": *node.IPMIAddress,
+	}, true, "")
+}
+
+func (s *NodeService) logAudit(ctx context.Context, action, resourceID string, details map[string]interface{}, success bool, errMsg string) {
+	if s.auditRepo == nil {
+		return
+	}
+
+	changesJSON, _ := json.Marshal(details)
+	errMsgPtr := (*string)(nil)
+	if errMsg != "" {
+		errMsgPtr = &errMsg
+	}
+
+	audit := &models.AuditLog{
+		ActorType:    models.AuditActorSystem,
+		Action:       action,
+		ResourceType: "node",
+		ResourceID:   &resourceID,
+		Changes:      changesJSON,
+		Success:      success,
+		ErrorMessage: errMsgPtr,
+	}
+
+	if err := s.auditRepo.Append(ctx, audit); err != nil {
+		s.logger.Error("failed to append audit log",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+	}
+}
+
+func (s *NodeService) GetFailoverStats(nodeID string) map[string]interface{} {
+	return s.circuitBreaker.GetFailoverStats(nodeID)
+}
+
+func (s *NodeService) ResetFailoverCircuitBreaker(nodeID string) {
+	s.circuitBreaker.ResetNode(nodeID)
+	s.logger.Info("failover circuit breaker reset", "node_id", nodeID)
 }
 
 // GetLeastLoadedNode returns the best node for VM placement in a given location.
@@ -309,11 +511,24 @@ func (s *NodeService) GetNodeStatus(ctx context.Context, nodeID string) (*models
 			status.CPUPercent = metrics.CPUPercent
 			status.MemoryPercent = metrics.MemoryPercent
 			status.DiskPercent = metrics.DiskPercent
+			status.TotalDiskGB = metrics.TotalDiskGB
+			status.UsedDiskGB = metrics.UsedDiskGB
 			status.LoadAverage = metrics.LoadAverage
+
+		if metrics.CephConnected {
+			status.CephStatus = "connected"
+			status.CephTotalGB = metrics.CephTotalGB
+			status.CephUsedGB = metrics.CephUsedGB
 		} else {
-			s.logger.Debug("failed to get real-time metrics from node agent",
-				"node_id", nodeID, "error", err)
+			status.CephStatus = "disconnected"
 		}
+	} else {
+		s.logger.Debug("failed to get real-time metrics from node agent",
+			"node_id", nodeID, "error", err)
+		status.CephStatus = "unknown"
+	}
+	} else {
+		status.CephStatus = "unknown"
 	}
 
 	return status, nil

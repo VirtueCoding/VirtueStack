@@ -53,12 +53,14 @@ type CustomerAPIKey struct {
 	ID          string     `json:"id" db:"id"`
 	CustomerID  string     `json:"customer_id" db:"customer_id"`
 	Name        string     `json:"name" db:"name"`
-	KeyHash     string     `json:"-" db:"key_hash"` // Never expose
+	KeyHash     string     `json:"-" db:"key_hash"`
+	VMIDs       []string   `json:"vm_ids,omitempty" db:"vm_ids"`
 	Permissions []string   `json:"permissions" db:"permissions"`
 	IsActive    bool       `json:"is_active" db:"is_active"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
 }
 
 // WebhookEvent constants define the event types that can trigger a webhook delivery.

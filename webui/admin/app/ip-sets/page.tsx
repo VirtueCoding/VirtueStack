@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -31,7 +32,10 @@ import {
   HardDrive,
   Database,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
+import { apiClient } from "@/lib/api-client";
 
 interface IPSet {
   id: string;
@@ -41,6 +45,16 @@ interface IPSet {
   total_ips: number;
   available_ips: number;
   cidr: string;
+}
+
+interface CreateIPSetRequest {
+  name: string;
+  network: string;
+  gateway: string;
+  ip_version: 4 | 6;
+  location_id?: string;
+  vlan_id?: number;
+  node_ids?: string[];
 }
 
 const mockIPSets: IPSet[] = [
@@ -149,8 +163,19 @@ function formatNumber(num: number): string {
 
 export default function IPSetsPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [ipSets] = useState<IPSet[]>(mockIPSets);
+  const [ipSets, setIPSets] = useState<IPSet[]>(mockIPSets);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const { toast } = useToast();
+
+  const [formData, setFormData] = useState<CreateIPSetRequest>({
+    name: "",
+    network: "",
+    gateway: "",
+    ip_version: 4,
+  });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const filteredIPSets = ipSets.filter(
     (ipSet) =>
@@ -158,15 +183,139 @@ export default function IPSetsPage() {
       ipSet.location.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleImport = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log("Import IPs submitted");
-    setImportDialogOpen(false);
+  const validateCIDR = (cidr: string, ipVersion: 4 | 6): boolean => {
+    if (!cidr) return false;
+    
+    if (ipVersion === 4) {
+      const ipv4CidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/;
+      if (!ipv4CidrRegex.test(cidr)) return false;
+      
+      const [ip, prefix] = cidr.split("/");
+      const prefixNum = parseInt(prefix, 10);
+      if (prefixNum < 1 || prefixNum > 32) return false;
+      
+      const parts = ip.split(".").map(Number);
+      return parts.every((part) => part >= 0 && part <= 255);
+    } else {
+      const ipv6CidrRegex = /^([0-9a-fA-F:]+)\/(\d{1,3})$/;
+      if (!ipv6CidrRegex.test(cidr)) return false;
+      
+      const [, prefix] = cidr.split("/");
+      const prefixNum = parseInt(prefix, 10);
+      return prefixNum >= 1 && prefixNum <= 128;
+    }
   };
 
-  const handleCreate = () => {
-    console.log("Create IP Set");
-    // TODO: Implement create action
+  const validateIP = (ip: string, ipVersion: 4 | 6): boolean => {
+    if (!ip) return false;
+    
+    if (ipVersion === 4) {
+      const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+      if (!ipv4Regex.test(ip)) return false;
+      const parts = ip.split(".").map(Number);
+      return parts.every((part) => part >= 0 && part <= 255);
+    } else {
+      const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+      return ipv6Regex.test(ip) || ip === "::" || ip.includes("::");
+    }
+  };
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {};
+
+    if (!formData.name.trim()) {
+      errors.name = "Name is required";
+    } else if (formData.name.length > 100) {
+      errors.name = "Name must be less than 100 characters";
+    }
+
+    if (!formData.network.trim()) {
+      errors.network = "Network CIDR is required";
+    } else if (!validateCIDR(formData.network, formData.ip_version)) {
+      errors.network = formData.ip_version === 4 
+        ? "Invalid IPv4 CIDR format (e.g., 10.0.0.0/24)"
+        : "Invalid IPv6 CIDR format (e.g., 2001:db8::/32)";
+    }
+
+    if (!formData.gateway.trim()) {
+      errors.gateway = "Gateway is required";
+    } else if (!validateIP(formData.gateway, formData.ip_version)) {
+      errors.gateway = formData.ip_version === 4
+        ? "Invalid IPv4 address"
+        : "Invalid IPv6 address";
+    }
+
+    if (formData.vlan_id !== undefined && formData.vlan_id !== null) {
+      if (formData.vlan_id < 1 || formData.vlan_id > 4094) {
+        errors.vlan_id = "VLAN ID must be between 1 and 4094";
+      }
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsCreating(true);
+    
+    try {
+      const response = await apiClient.post<{ data: IPSet }>("/admin/ip-sets", {
+        name: formData.name,
+        network: formData.network,
+        gateway: formData.gateway,
+        ip_version: formData.ip_version,
+        location_id: formData.location_id || undefined,
+        vlan_id: formData.vlan_id || undefined,
+        node_ids: formData.node_ids || [],
+      });
+
+      const newIPSet: IPSet = {
+        id: response.data.id,
+        name: response.data.name,
+        type: formData.ip_version === 4 ? "ipv4" : "ipv6",
+        location: response.data.location || "Unassigned",
+        total_ips: response.data.total_ips || 0,
+        available_ips: response.data.available_ips || 0,
+        cidr: formData.network,
+      };
+
+      setIPSets((prev) => [...prev, newIPSet]);
+      
+      toast({
+        title: "IP Set Created",
+        description: `"${formData.name}" has been created successfully.`,
+      });
+
+      setFormData({
+        name: "",
+        network: "",
+        gateway: "",
+        ip_version: 4,
+      });
+      setFormErrors({});
+      setCreateDialogOpen(false);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to create IP set";
+      toast({
+        title: "Failed to Create IP Set",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleImport = (e: React.FormEvent) => {
+    e.preventDefault();
+    // TODO: Implement actual import logic with file processing
+    setImportDialogOpen(false);
   };
 
   const totalSets = ipSets.length;
@@ -248,7 +397,7 @@ export default function IPSetsPage() {
                 </form>
               </DialogContent>
             </Dialog>
-            <Button size="default" onClick={handleCreate}>
+            <Button size="default" onClick={() => setCreateDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Create IP Set
             </Button>
@@ -418,6 +567,124 @@ export default function IPSetsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="sm:max-w-[525px]">
+          <DialogHeader>
+            <DialogTitle>Create IP Set</DialogTitle>
+            <DialogDescription>
+              Create a new IP address pool for VM assignments.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreate}>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="name">Name</Label>
+                <Input
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g., production-pool-01"
+                  className={formErrors.name ? "border-destructive" : ""}
+                />
+                {formErrors.name && (
+                  <p className="text-xs text-destructive">{formErrors.name}</p>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="ip-version">IP Version</Label>
+                <select
+                  id="ip-version"
+                  value={formData.ip_version}
+                  onChange={(e) => setFormData({ ...formData, ip_version: parseInt(e.target.value) as 4 | 6 })}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value={4}>IPv4</option>
+                  <option value={6}>IPv6</option>
+                </select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="network">Network CIDR</Label>
+                <Input
+                  id="network"
+                  value={formData.network}
+                  onChange={(e) => setFormData({ ...formData, network: e.target.value })}
+                  placeholder={formData.ip_version === 4 ? "10.0.0.0/24" : "2001:db8::/32"}
+                  className={formErrors.network ? "border-destructive font-mono" : "font-mono"}
+                />
+                {formErrors.network ? (
+                  <p className="text-xs text-destructive">{formErrors.network}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {formData.ip_version === 4 
+                      ? "Format: xxx.xxx.xxx.xxx/xx (e.g., 10.0.0.0/24)"
+                      : "Format: xxxx:xxxx::/xx (e.g., 2001:db8::/32)"}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="gateway">Gateway</Label>
+                <Input
+                  id="gateway"
+                  value={formData.gateway}
+                  onChange={(e) => setFormData({ ...formData, gateway: e.target.value })}
+                  placeholder={formData.ip_version === 4 ? "10.0.0.1" : "2001:db8::1"}
+                  className={formErrors.gateway ? "border-destructive font-mono" : "font-mono"}
+                />
+                {formErrors.gateway && (
+                  <p className="text-xs text-destructive">{formErrors.gateway}</p>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="vlan-id">VLAN ID (Optional)</Label>
+                <Input
+                  id="vlan-id"
+                  type="number"
+                  min={1}
+                  max={4094}
+                  value={formData.vlan_id || ""}
+                  onChange={(e) => {
+                    const value = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                    setFormData({ ...formData, vlan_id: value });
+                  }}
+                  placeholder="e.g., 100"
+                  className={formErrors.vlan_id ? "border-destructive" : ""}
+                />
+                {formErrors.vlan_id && (
+                  <p className="text-xs text-destructive">{formErrors.vlan_id}</p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateDialogOpen(false)}
+                disabled={isCreating}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isCreating}>
+                {isCreating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -274,6 +274,9 @@ func (r *IPRepository) AllocateIPv4(ctx context.Context, ipSetID, vmID, customer
 		return nil, fmt.Errorf("starting IP allocation transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Rollback error is ignored intentionally: if Commit succeeds, Rollback is a no-op.
+	// If Commit fails, the original error is already being returned and is more important.
+	// This is standard Go idiom for transaction defer - rollback is a safety net.
 
 	// Find an available IP address and lock it for update
 	const selectQ = `
@@ -325,6 +328,9 @@ func (r *IPRepository) ReleaseIPv4(ctx context.Context, ipID string) error {
 		return fmt.Errorf("starting IP release transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Rollback error is ignored intentionally: if Commit succeeds, Rollback is a no-op.
+	// If Commit fails, the original error is already being returned and is more important.
+	// This is standard Go idiom for transaction defer - rollback is a safety net.
 
 	// Get current time and calculate cooldown end (typically 5 minutes)
 	now := time.Now().UTC()

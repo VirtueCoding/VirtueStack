@@ -36,7 +36,7 @@ func scanTemplate(row pgx.Row) (models.Template, error) {
 		&t.ID, &t.Name, &t.OSFamily, &t.OSVersion,
 		&t.RBDImage, &t.RBDSnapshot, &t.MinDiskGB,
 		&t.SupportsCloudInit, &t.IsActive, &t.SortOrder,
-		&t.CreatedAt, &t.UpdatedAt,
+		&t.Version, &t.Description, &t.CreatedAt, &t.UpdatedAt,
 	)
 	return t, err
 }
@@ -45,7 +45,7 @@ const templateSelectCols = `
 	id, name, os_family, os_version,
 	rbd_image, rbd_snapshot, min_disk_gb,
 	supports_cloudinit, is_active, sort_order,
-	created_at, updated_at`
+	version, description, created_at, updated_at`
 
 // Create inserts a new template record into the database.
 // The template's ID, CreatedAt, and UpdatedAt are populated by the database.
@@ -53,15 +53,15 @@ func (r *TemplateRepository) Create(ctx context.Context, template *models.Templa
 	const q = `
 		INSERT INTO templates (
 			name, os_family, os_version, rbd_image, rbd_snapshot,
-			min_disk_gb, supports_cloudinit, is_active, sort_order
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			min_disk_gb, supports_cloudinit, is_active, sort_order, description
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING ` + templateSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		template.Name, template.OSFamily, template.OSVersion,
 		template.RBDImage, template.RBDSnapshot,
 		template.MinDiskGB, template.SupportsCloudInit,
-		template.IsActive, template.SortOrder,
+		template.IsActive, template.SortOrder, template.Description,
 	)
 	created, err := scanTemplate(row)
 	if err != nil {
@@ -149,7 +149,7 @@ func (r *TemplateRepository) ListActive(ctx context.Context) ([]models.Template,
 	return templates, nil
 }
 
-// Update updates all editable fields of a template.
+// Update updates all editable fields of a template and increments the version.
 // Returns ErrNoRowsAffected if no template was found to update.
 func (r *TemplateRepository) Update(ctx context.Context, template *models.Template) error {
 	const q = `
@@ -157,15 +157,15 @@ func (r *TemplateRepository) Update(ctx context.Context, template *models.Templa
 			name = $1, os_family = $2, os_version = $3,
 			rbd_image = $4, rbd_snapshot = $5, min_disk_gb = $6,
 			supports_cloudinit = $7, is_active = $8, sort_order = $9,
-			updated_at = NOW()
-		WHERE id = $10
+			description = $10, version = version + 1, updated_at = NOW()
+		WHERE id = $11
 		RETURNING ` + templateSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		template.Name, template.OSFamily, template.OSVersion,
 		template.RBDImage, template.RBDSnapshot, template.MinDiskGB,
 		template.SupportsCloudInit, template.IsActive, template.SortOrder,
-		template.ID,
+		template.Description, template.ID,
 	)
 	updated, err := scanTemplate(row)
 	if err != nil {
@@ -175,10 +175,10 @@ func (r *TemplateRepository) Update(ctx context.Context, template *models.Templa
 	return nil
 }
 
-// UpdateActive updates the is_active status of a template.
+// UpdateActive updates the is_active status of a template and increments version.
 // Returns ErrNoRowsAffected if no template was found to update.
 func (r *TemplateRepository) UpdateActive(ctx context.Context, id string, isActive bool) error {
-	const q = `UPDATE templates SET is_active = $1, updated_at = NOW() WHERE id = $2`
+	const q = `UPDATE templates SET is_active = $1, version = version + 1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, isActive, id)
 	if err != nil {
 		return fmt.Errorf("updating template %s active status: %w", id, err)
@@ -189,10 +189,10 @@ func (r *TemplateRepository) UpdateActive(ctx context.Context, id string, isActi
 	return nil
 }
 
-// UpdateSortOrder updates the sort_order of a template.
+// UpdateSortOrder updates the sort_order of a template and increments version.
 // Returns ErrNoRowsAffected if no template was found to update.
 func (r *TemplateRepository) UpdateSortOrder(ctx context.Context, id string, sortOrder int) error {
-	const q = `UPDATE templates SET sort_order = $1, updated_at = NOW() WHERE id = $2`
+	const q = `UPDATE templates SET sort_order = $1, version = version + 1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, sortOrder, id)
 	if err != nil {
 		return fmt.Errorf("updating template %s sort order: %w", id, err)
