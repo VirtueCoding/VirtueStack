@@ -21,8 +21,8 @@ For experienced users who want to get VirtueStack running quickly:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/virtuestack.git
-cd virtuestack
+git clone https://github.com/AbuGosok/VirtueStack.git
+cd VirtueStack
 
 # 2. Copy and configure environment
 cp .env.example .env
@@ -38,18 +38,25 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout ssl/key.pem -out ssl/cert.pem \
   -subj "/CN=localhost"
 
-# 5. Deploy with Docker Compose
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 5. Deploy with Docker Compose (development)
+docker compose up -d
 
-# 6. Create first admin user
-docker compose exec controller ./virtuestack admin create \
-  --email admin@example.com \
-  --password "YourSecurePassword123!"
+# For production:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
-# 7. Access the platforms
-# Admin UI: https://your-domain.com/admin
-# Customer UI: https://your-domain.com/
+# 6. Apply database migrations
+# Migrations are NOT auto-applied. Run them manually:
+for f in migrations/*.up.sql; do
+  docker compose exec -T postgres psql -U virtuestack -d virtuestack < "$f"
+done
+
+# 7. Access the platforms (self-signed cert warning is expected in dev)
+# Admin UI: https://localhost/admin
+# Customer UI: https://localhost
+# API: https://localhost/api/v1
 ```
+
+> **Development credentials** (after seeding): admin@virtuestack.local / admin123 (2FA enabled), customer@virtuestack.local / customer123
 
 ---
 
@@ -115,8 +122,8 @@ Log out and log back in for Docker group membership to take effect.
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/virtuestack.git
-cd virtuestack
+git clone https://github.com/AbuGosok/VirtueStack.git
+cd VirtueStack
 
 # Create required directories
 mkdir -p ssl backups logs
@@ -227,8 +234,11 @@ chmod 644 ssl/cert.pem
 ### Step 5: Deploy VirtueStack
 
 ```bash
-# Build and start all services
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Build and start all services (development)
+docker compose up -d --build
+
+# For production:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # Monitor the startup
 docker compose logs -f
@@ -245,41 +255,58 @@ virtuestack-postgres      healthy   5432/tcp
 virtuestack-nats          healthy   4222/tcp, 8222/tcp
 virtuestack-controller    healthy   8080/tcp
 virtuestack-admin-webui   healthy   3000/tcp
-virtuestack-customer-webui healthy  3001/tcp
+virtuestack-customer-webui healthy  3002/tcp
 virtuestack-nginx         healthy   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
 ```
 
 ### Step 6: Database Initialization
 
-The database is automatically initialized via the migrations mounted in `docker-compose.yml`. Verify migrations ran:
+Database migrations are **not** auto-applied. After containers are running, apply them manually:
 
 ```bash
-# Check migration status
+# Option A: Apply all migrations via psql
+for f in migrations/*.up.sql; do
+  docker compose exec -T postgres psql -U virtuestack -d virtuestack < "$f"
+done
+
+# Option B: Using golang-migrate (if installed on host)
+# migrate -path ./migrations -database "postgresql://virtuestack:YOUR_PASSWORD@localhost:5432/virtuestack?sslmode=disable" up
+
+# Verify tables were created (~52 tables expected)
 docker compose exec postgres psql -U virtuestack -d virtuestack -c "\dt"
 
-# Expected tables:
-# customers, vms, nodes, plans, templates, ip_addresses, backups, 
-# snapshots, webhook_deliveries, audit_logs, notification_preferences, etc.
+# Expected tables include:
+# admins, customers, vms, nodes, plans, templates, ip_addresses, backups,
+# snapshots, webhook_deliveries, audit_logs, notification_preferences,
+# provisioning_keys, bandwidth_usage, etc.
 ```
 
 ### Step 7: Create First Admin User
 
-```bash
-# Create admin user via CLI
-docker compose exec controller ./virtuestack admin create \
-  --email admin@yourdomain.com \
-  --password "YourSecurePassword123!" \
-  --name "System Administrator"
+There is no CLI tool for user creation yet. Seed users directly via SQL:
 
-# Or via API
-curl -X POST https://localhost/api/v1/admin/setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@yourdomain.com",
-    "password": "YourSecurePassword123!",
-    "name": "System Administrator"
-  }'
+```bash
+# Insert an admin user (replace email/password hash for production)
+# The controller uses Argon2id for password verification.
+docker compose exec postgres psql -U virtuestack -d virtuestack -c "
+INSERT INTO admins (id, email, password_hash, role, is_active, created_at, updated_at)
+VALUES (
+  gen_random_uuid(),
+  'admin@yourdomain.com',
+  -- Generate a proper Argon2id hash for your password in production
+  -- For development, you can use the pre-seeded credentials below
+  'REPLACE_WITH_ARGON2ID_HASH',
+  'super_admin',
+  true,
+  NOW(),
+  NOW()
+);
+"
 ```
+
+> **For development**, seed data is available with these credentials:
+> - Admin: `admin@virtuestack.local` / `admin123` (2FA enabled, TOTP secret: `RARJYUEXCLFSCENWJ2RRV2QBENXBDF7U`)
+> - Customer: `customer@virtuestack.local` / `customer123`
 
 ### Step 8: WHMCS Module Installation
 
@@ -303,13 +330,21 @@ chown -R www-data:www-data /path/to/whmcs/modules/servers/virtuestack
 Generate a provisioning API key:
 
 ```bash
-# Via CLI
-docker compose exec controller ./virtuestack provisioning-key create \
-  --name "WHMCS Production" \
-  --allowed-ips "1.2.3.4,5.6.7.8"
-
-# Via Admin UI
-# Navigate to Settings > API Keys > Create Provisioning Key
+# Via database (no CLI tool yet)
+docker compose exec postgres psql -U virtuestack -d virtuestack -c "
+INSERT INTO provisioning_keys (id, name, key_hash, is_active, created_by, description, created_at, updated_at)
+VALUES (
+  gen_random_uuid(),
+  'WHMCS Production',
+  encode(sha256('your-secret-api-key'::bytea), 'hex'),
+  true,
+  (SELECT id FROM admins LIMIT 1),
+  'Provisioning key for WHMCS integration',
+  NOW(),
+  NOW()
+);
+"
+# Use the raw key value ('your-secret-api-key') in the X-API-Key header for provisioning API calls
 ```
 
 ---
@@ -382,7 +417,7 @@ docker compose exec controller ./virtuestack provisioning-key create \
 | `nats` | NATS JetStream message queue | 4222 (internal) |
 | `controller` | Go API controller | 8080 (internal) |
 | `admin-webui` | Admin dashboard (Next.js) | 3000 (internal) |
-| `customer-webui` | Customer portal (Next.js) | 3001 (internal) |
+| `customer-webui` | Customer portal (Next.js) | 3001 (internal, mapped to 3002 on host in dev) |
 | `nginx` | Reverse proxy | 80, 443 (external) |
 
 ### Nginx Configuration
@@ -408,11 +443,11 @@ The default nginx configuration proxies requests as follows:
 docker compose ps
 
 # Verify controller health endpoint
-curl -k https://localhost/api/v1/health
-# Expected: {"status":"healthy"}
+curl -k https://localhost/health
+# Expected: {"status":"ok"} or similar
 
 # Check database connectivity
-docker compose exec controller ./virtuestack db ping
+docker compose exec postgres psql -U virtuestack -d virtuestack -c "SELECT count(*) FROM admins;"
 ```
 
 ### 2. Admin UI Access
@@ -430,13 +465,21 @@ docker compose exec controller ./virtuestack db ping
 ### 4. API Verification
 
 ```bash
-# Test admin login API
+# Test admin login API (step 1: get temp token)
 curl -k -X POST https://localhost/api/v1/admin/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@yourdomain.com","password":"YourSecurePassword123!"}'
+  -d '{"email":"admin@virtuestack.local","password":"admin123"}'
+
+# Expected response (admin has 2FA enabled):
+# {"data":{"requires_2fa":true,"temp_token":"...","message":"2FA verification required"}}
+
+# Test customer login API
+curl -k -X POST https://localhost/api/v1/customer/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"customer@virtuestack.local","password":"customer123"}'
 
 # Expected response:
-# {"data":{"access_token":"...","refresh_token":"...","token_type":"Bearer","expires_in":3600}}
+# {"data":{"access_token":"...","token_type":"Bearer","expires_in":900}}
 ```
 
 ### 5. Node Registration
@@ -582,7 +625,10 @@ docker compose down
 docker compose down -v
 
 # Rebuild from scratch
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose up -d --build
+
+# For production:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 ### Getting Help

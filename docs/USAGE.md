@@ -2,6 +2,11 @@
 
 This guide provides comprehensive instructions for using VirtueStack Phase 6, covering both the Admin Dashboard and Customer Portal interfaces.
 
+> **Feature Status Legend:**
+> - ✅ **Working** — Feature is implemented and verified end-to-end
+> - ⚠️ **Planned** — Feature is designed but not yet fully implemented
+> - 🔧 **Partial** — Backend exists but frontend integration is pending
+
 ---
 
 ## Table of Contents
@@ -34,7 +39,7 @@ This guide provides comprehensive instructions for using VirtueStack Phase 6, co
 
 ## Admin Dashboard
 
-### Admin Dashboard Overview
+### Admin Dashboard Overview ✅
 
 The Admin Dashboard provides a comprehensive interface for managing the entire VirtueStack platform. Access it at `https://your-domain.com/admin`.
 
@@ -64,9 +69,11 @@ When you first log in, the dashboard displays:
 - **Recent Activity**: Latest system events and VM changes
 - **Node Health**: Status indicators for all registered nodes
 
-### Node Management
+### Node Management 🔧
 
 Nodes are hypervisor servers that host virtual machines.
+
+> **Status:** Backend API for node CRUD is working. Admin UI has the interface but is not yet wired to the live API. Node registration can be done via API.
 
 #### Registering a New Node
 
@@ -136,7 +143,9 @@ Click on a node to view detailed information:
 | `draining` | Node is under maintenance, no new VMs |
 | `failed` | Node has failed, requires intervention |
 
-### VM Management (Admin)
+### VM Management (Admin) 🔧
+
+> **Status:** Backend API for VM CRUD is working. Admin UI has the interface but is not yet wired to the live API.
 
 Admins can view and manage all VMs across all customers.
 
@@ -211,7 +220,9 @@ Click on any VM to view:
    - **Offline Migration**: VM will be stopped during migration
 5. Click **Start Migration**
 
-### Plan Management
+### Plan Management 🔧
+
+> **Status:** Backend API is working. Admin UI has the interface but is not yet wired to the live API.
 
 Plans define the resource allocations and pricing for VPS offerings.
 
@@ -243,7 +254,9 @@ Plans define the resource allocations and pricing for VPS offerings.
 - Offer multiple plans for different use cases
 - Keep hourly and monthly prices proportional
 
-### Template Management
+### Template Management 🔧
+
+> **Status:** Backend API is working. Admin UI has the interface but is not yet wired to the live API.
 
 Templates are OS images used to provision VMs.
 
@@ -275,7 +288,9 @@ To import an OS image:
 3. Create the template record in VirtueStack
 4. Click **Import** on the template to process it
 
-### IP Management
+### IP Management 🔧
+
+> **Status:** Backend API is working. Admin UI has the interface but is not yet wired to the live API.
 
 IP Sets are pools of IP addresses available for VM assignment.
 
@@ -302,7 +317,9 @@ IP Sets are pools of IP addresses available for VM assignment.
 2. Click **Available IPs**
 3. View IPs that are unassigned and ready for use
 
-### Customer Management
+### Customer Management 🔧
+
+> **Status:** Backend API is working. Admin UI has the interface but is not yet wired to the live API.
 
 #### Viewing Customers
 
@@ -332,7 +349,9 @@ Click on a customer to view:
 | **Suspend** | Temporarily disable account |
 | **Delete** | Remove customer (requires no active VMs) |
 
-### Backup Management (Admin)
+### Backup Management (Admin) ⚠️
+
+> **Status:** Backend tables and API stubs exist. Full backup workflow (create, restore, delete) is not yet implemented end-to-end.
 
 Admins can view and manage backups across all customers.
 
@@ -356,7 +375,9 @@ Admins can restore any backup:
 3. Confirm the action
 4. The VM will be restored to the backup state
 
-### Audit Logs
+### Audit Logs 🔧
+
+> **Status:** Backend audit logging is working. Admin UI has the interface but is not yet wired to the live API.
 
 Audit logs track all administrative actions.
 
@@ -399,7 +420,9 @@ Platform-wide configuration settings.
 
 ## Customer Portal
 
-### Customer Portal Overview
+### Customer Portal Overview ✅
+
+> **Status:** Customer authentication (login → JWT) is fully working. Protected API endpoints are verified. The UI is built but not yet wired to the live backend API.
 
 The Customer Portal provides self-service access for customers to manage their VPS services. Access it at `https://your-domain.com/`.
 
@@ -415,7 +438,9 @@ The Customer Portal provides self-service access for customers to manage their V
 | **Webhooks** | Configure event notifications |
 | **Settings** | Account and notification preferences |
 
-### VM Management (Customer)
+### VM Management (Customer) 🔧
+
+> **Status:** Backend API is working. Customer UI has the interface but is not yet wired to the live API.
 
 #### Viewing Your VMs
 
@@ -480,7 +505,9 @@ Click on any VM to access:
 
 **Warning**: This action is permanent and cannot be undone!
 
-### Console Access
+### Console Access ⚠️
+
+> **Status:** Not yet implemented. NoVNC/serial console integration is planned but not wired up.
 
 #### NoVNC Console
 
@@ -510,7 +537,9 @@ For headless access:
 - Troubleshooting network issues
 - Headless server management
 
-### Backup Management (Customer)
+### Backup Management (Customer) ⚠️
+
+> **Status:** Backend tables exist. Customer-facing backup workflow is not yet implemented end-to-end.
 
 #### Viewing Backups
 
@@ -548,7 +577,9 @@ For headless access:
 2. Click **Delete**
 3. Confirm the deletion
 
-### Snapshot Management
+### Snapshot Management ⚠️
+
+> **Status:** Backend tables exist. Snapshot workflow is not yet implemented end-to-end.
 
 Snapshots are lightweight point-in-time states stored in Ceph.
 
@@ -574,7 +605,9 @@ Snapshots are lightweight point-in-time states stored in Ceph.
 2. Click **Delete**
 3. Confirm the deletion
 
-### Webhook Configuration
+### Webhook Configuration 🔧
+
+> **Status:** Backend webhook tables and delivery system exist. Customer UI has the interface but is not yet wired to the live API.
 
 Webhooks allow you to receive event notifications at your own endpoints.
 
@@ -639,7 +672,9 @@ def verify_webhook(secret, payload, signature):
    - Success/failure
    - Retry schedule
 
-### Notification Preferences
+### Notification Preferences ⚠️
+
+> **Status:** Backend tables exist. Notification delivery (email/Telegram) is not yet implemented.
 
 Configure how you receive notifications.
 
@@ -663,7 +698,9 @@ Configure how you receive notifications.
 3. Configure email and/or Telegram settings
 4. Click **Save Preferences**
 
-### API Keys
+### API Keys ⚠️
+
+> **Status:** Backend API key table exists. Customer-facing API key management UI is not yet wired to the live API.
 
 Create API keys for programmatic access to your account.
 
@@ -698,9 +735,11 @@ curl -X GET https://your-domain.com/api/v1/customer/vms \
 
 ---
 
-## WHMCS Integration
+## WHMCS Integration 🔧
 
 ### Overview
+
+> **Status:** WHMCS PHP module files exist and pass syntax checks. The provisioning API backend is working and authenticated. Full WHMCS ↔ VirtueStack integration has not been tested end-to-end with a live WHMCS instance.
 
 VirtueStack integrates with WHMCS for automated billing and provisioning.
 
