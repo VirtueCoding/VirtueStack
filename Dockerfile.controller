@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.25.4
 FROM golang:${GO_VERSION}-alpine AS builder
 
 # Install build dependencies
@@ -30,6 +30,9 @@ ENV CGO_ENABLED=0 \
 
 # Copy go.mod and go.sum first for caching
 COPY go.mod go.sum ./
+
+# Run mod tidy to ensure dependencies are correct
+RUN go mod tidy
 
 # Download dependencies
 RUN go mod download && go mod verify
@@ -63,8 +66,10 @@ RUN apk add --no-cache \
     bash
 
 # Install Air for hot reload and Delve for debugging
-RUN go install github.com/air-verse/air@latest && \
-    go install github.com/go-delve/delve/cmd/dlv@latest
+# Pin air to v1.61.7 (last version supporting Go 1.23)
+# Pin delve to v1.23.1 (last version supporting Go 1.23)
+RUN go install github.com/air-verse/air@v1.61.7 && \
+    go install github.com/go-delve/delve/cmd/dlv@v1.23.1
 
 WORKDIR /app
 

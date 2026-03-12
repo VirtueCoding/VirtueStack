@@ -23,15 +23,7 @@ services:
     ports:
       - "${NATS_PORT:-4222}:4222"
       - "${NATS_HTTP_PORT:-8222}:8222"
-    command: >
-      --jetstream
-      --store_dir /data
-      --http_port 8222
-      --cluster_name virtuestack-dev
-      --max_memory_store 512MB
-      --max_file_store 1GB
-      --debug
-      --trace
+    command: ["nats-server", "-js", "-sd", "/data", "-m", "8222"]
 
   # ===========================================================================
   # Controller - Development Settings
@@ -41,7 +33,7 @@ services:
       context: .
       dockerfile: Dockerfile.controller
       args:
-        GO_VERSION: ${GO_VERSION:-1.23}
+        GO_VERSION: "1.25.4"
       target: development
     volumes:
       - .:/app:cached
