@@ -47,12 +47,12 @@ function getStatusBadge(status: Plan["status"]) {
   return <Badge variant={getStatusBadgeVariant(status) as React.ComponentProps<typeof Badge>["variant"]}>{labels[status]}</Badge>;
 }
 
-function formatPrice(price: number) {
+function formatPrice(cents: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,
-  }).format(price);
+  }).format(cents / 100);
 }
 
 function formatMemory(mb: number) {

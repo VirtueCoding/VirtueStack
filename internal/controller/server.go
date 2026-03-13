@@ -367,27 +367,6 @@ func (s *Server) readinessHandler(c *gin.Context) {
 	})
 }
 
-// placeholderHandler returns a placeholder response for unimplemented routes.
-func (s *Server) placeholderHandler(name string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// In production, return 501 Not Implemented
-		// In dev mode, return 200 with helpful message
-		if s.config.Environment == "production" {
-			respondError(c, &apierrors.APIError{
-				Code:       "NOT_IMPLEMENTED",
-				Message:    fmt.Sprintf("%s API is not yet implemented", name),
-				HTTPStatus: http.StatusNotImplemented,
-			})
-			return
-		}
-
-		// Dev mode: return 200 with message
-		respondJSON(c, http.StatusOK, gin.H{
-			"message": fmt.Sprintf("%s API - coming in Phase 2", name),
-		})
-	}
-}
-
 // requestLogger returns a middleware that logs HTTP requests.
 func (s *Server) requestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {

@@ -26,8 +26,10 @@ import {
   Calendar,
   Loader2,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 
 export default function SettingsPage() {
+  const { user } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   
@@ -122,7 +124,7 @@ export default function SettingsPage() {
                 <Input
                   id="name"
                   placeholder="Enter your full name"
-                  defaultValue="John Doe"
+                  defaultValue={user?.email?.split("@")[0] ?? ""}
                   className="max-w-md"
                 />
               </div>
@@ -134,7 +136,7 @@ export default function SettingsPage() {
                     id="email"
                     type="email"
                     placeholder="email@example.com"
-                    defaultValue="john@example.com"
+                    defaultValue={user?.email ?? ""}
                     className="pl-10"
                   />
                 </div>

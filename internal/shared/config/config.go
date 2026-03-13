@@ -147,8 +147,10 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 		return nil, fmt.Errorf("password validation failed: %w", err)
 	}
 
-	// Log warnings for weak default passwords
-	validateDefaultPasswords()
+	// Check for weak default passwords (fatal in production)
+	if err := validateDefaultPasswords(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -424,19 +426,37 @@ func validatePasswords() error {
 }
 
 // validateDefaultPasswords logs warnings for default/placeholder passwords.
-func validateDefaultPasswords() {
+// In production mode, refuses to start with weak passwords.
+func validateDefaultPasswords() error {
 	defaultPasswordEnvVars := []string{
 		"DB_PASSWORD",
 		"ADMIN_PASSWORD",
 		"CUSTOMER_PASSWORD",
 	}
 
+	isProduction := strings.EqualFold(os.Getenv("APP_ENV"), "production")
+	var weakFound []string
+
 	for _, envVar := range defaultPasswordEnvVars {
 		password := os.Getenv(envVar)
-		if password != "" && isWeakPassword(password) {
+		if password == "" {
+			continue
+		}
+		if isWeakPassword(password) || len(password) < 12 {
+			weakFound = append(weakFound, envVar)
+		}
+	}
+
+	if len(weakFound) > 0 {
+		if isProduction {
+			return fmt.Errorf("FATAL: weak or short (<12 chars) passwords detected in production for: %s", strings.Join(weakFound, ", "))
+		}
+		for _, envVar := range weakFound {
 			log.Printf("WARNING: %s is set to a weak default password - please change in production", envVar)
 		}
 	}
+
+	return nil
 }
 
 func splitAndTrimCSV(input string) []string {

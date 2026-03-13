@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -31,6 +32,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <div
@@ -96,12 +98,12 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             >
               <Avatar className="h-8 w-8">
                 <AvatarImage src="/avatars/customer.png" alt="Customer" />
-                <AvatarFallback>CN</AvatarFallback>
+                <AvatarFallback>{user?.email?.charAt(0).toUpperCase() ?? "C"}</AvatarFallback>
               </Avatar>
               {!collapsed && (
                 <div className="flex flex-col items-start text-xs">
-                  <span className="font-medium">Customer</span>
-                  <span className="text-muted-foreground">customer@example.com</span>
+                  <span className="font-medium">{user?.email?.split("@")[0] ?? "Customer"}</span>
+                  <span className="text-muted-foreground">{user?.email ?? ""}</span>
                 </div>
               )}
             </Button>

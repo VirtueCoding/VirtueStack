@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,80 +57,17 @@ interface CreateIPSetRequest {
   node_ids?: string[];
 }
 
-const mockIPSets: IPSet[] = [
-  {
-    id: "1",
-    name: "production-pool-01",
-    type: "ipv4",
-    location: "US-East-1",
-    total_ips: 1024,
-    available_ips: 342,
-    cidr: "10.0.0.0/22",
-  },
-  {
-    id: "2",
-    name: "production-pool-02",
-    type: "ipv4",
-    location: "US-West-2",
-    total_ips: 512,
-    available_ips: 128,
-    cidr: "10.0.4.0/23",
-  },
-  {
-    id: "3",
-    name: "dev-pool-01",
-    type: "ipv4",
-    location: "EU-Central-1",
-    total_ips: 256,
-    available_ips: 89,
-    cidr: "10.1.0.0/24",
-  },
-  {
-    id: "4",
-    name: "staging-pool-01",
-    type: "ipv4",
-    location: "US-East-1",
-    total_ips: 128,
-    available_ips: 45,
-    cidr: "10.2.0.0/25",
-  },
-  {
-    id: "5",
-    name: "ipv6-global-pool",
-    type: "ipv6",
-    location: "Global",
-    total_ips: 65536,
-    available_ips: 42000,
-    cidr: "2001:db8::/32",
-  },
-  {
-    id: "6",
-    name: "ipv6-eu-pool",
-    type: "ipv6",
-    location: "EU-Central-1",
-    total_ips: 32768,
-    available_ips: 18500,
-    cidr: "2001:db8:1::/33",
-  },
-  {
-    id: "7",
-    name: "backup-pool-01",
-    type: "ipv4",
-    location: "AP-South-1",
-    total_ips: 512,
-    available_ips: 256,
-    cidr: "10.3.0.0/23",
-  },
-  {
-    id: "8",
-    name: "gpu-cluster-pool",
-    type: "ipv4",
-    location: "US-West-2",
-    total_ips: 64,
-    available_ips: 12,
-    cidr: "10.4.0.0/26",
-  },
-];
+function mapApiIPSet(raw: Record<string, unknown>): IPSet {
+  return {
+    id: raw.id as string,
+    name: raw.name as string,
+    type: (raw.ip_version === 6 ? "ipv6" : "ipv4") as "ipv4" | "ipv6",
+    location: (raw.location as string) || "Unassigned",
+    total_ips: (raw.total_ips as number) || 0,
+    available_ips: (raw.available_ips as number) || 0,
+    cidr: (raw.network as string) || "",
+  };
+}
 
 function getTypeBadge(type: IPSet["type"]) {
   const variants = {
@@ -163,8 +100,28 @@ function formatNumber(num: number): string {
 
 export default function IPSetsPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [ipSets, setIPSets] = useState<IPSet[]>(mockIPSets);
+  const [ipSets, setIPSets] = useState<IPSet[]>([]);
+  const [loading, setLoading] = useState(true);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  useEffect(() => {
+    async function fetchIPSets() {
+      try {
+        const data = await apiClient.get<Record<string, unknown>[]>("/admin/ip-sets");
+        setIPSets((data || []).map(mapApiIPSet));
+      } catch (err) {
+        console.error("Failed to load IP sets", err);
+        toast({
+          title: "Error",
+          description: "Failed to load IP sets.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchIPSets();
+  }, [toast]);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importTargetPool, setImportTargetPool] = useState("");
   const [isImporting, setIsImporting] = useState(false);

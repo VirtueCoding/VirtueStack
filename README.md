@@ -69,7 +69,7 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
 | Admin Portal | Next.js 15 + shadcn/ui | UI ready, backend API verified |
 | Customer Portal | Next.js 15 + shadcn/ui | UI ready, backend API verified |
 
-**See [CODEBASE_AUDIT_REPORT.md](docs/CODEBASE_AUDIT_REPORT.md) for detailed status.**
+**See [Implementation Plan](docs/todo.md) for detailed status.**
 
 ---
 
@@ -222,7 +222,7 @@ make migrate-down
 
 ### Security Checklist
 
-⚠️ **CRITICAL**: Review [CODEBASE_AUDIT_REPORT.md](docs/CODEBASE_AUDIT_REPORT.md) before production deployment.
+⚠️ **CRITICAL**: Review [Implementation Plan](docs/todo.md) before production deployment.
 
 Required fixes before production:
 - [x] Password hashing with Argon2id — implemented and verified
@@ -247,7 +247,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed production setup.
 
 | Document | Description |
 |----------|-------------|
-| [CODEBASE_AUDIT_REPORT.md](docs/CODEBASE_AUDIT_REPORT.md) | Comprehensive audit of unfinished work |
+| [Implementation Plan](docs/todo.md) | Comprehensive audit of unfinished work |
 | [API.md](docs/API.md) | API reference documentation |
 | [INSTALL.md](docs/INSTALL.md) | Installation guide |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture details |
@@ -286,7 +286,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed production setup.
 ⚠️ API key management UI  
 ⚠️ Password reset workflow  
 
-See [CODEBASE_AUDIT_REPORT.md](docs/CODEBASE_AUDIT_REPORT.md) for detailed breakdown.
+See [Implementation Plan](docs/todo.md) for detailed breakdown.
 
 ---
 
@@ -371,4 +371,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**⚠️ IMPORTANT:** This codebase is under active development. See [CODEBASE_AUDIT_REPORT.md](docs/CODEBASE_AUDIT_REPORT.md) before production use.
+**⚠️ IMPORTANT:** This codebase is under active development. See [Implementation Plan](docs/todo.md) before production use.

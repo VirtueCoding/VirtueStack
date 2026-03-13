@@ -9,7 +9,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
+import { vmApi } from "@/lib/api-client"
 import {
   Area,
   AreaChart,
@@ -35,6 +36,7 @@ type TimeRange = "1h" | "24h" | "7d"
 
 interface ResourceChartsProps {
   className?: string
+  vmId?: string
 }
 
 // Mock data generators
@@ -236,14 +238,44 @@ const DiskChart: React.FC<{ data: ChartDataPoint[] }> = ({ data }) => (
   />
 )
 
-export function ResourceCharts({ className }: ResourceChartsProps) {
+export function ResourceCharts({ className, vmId }: ResourceChartsProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
   const [chartData, setChartData] = useState<ChartDataPoint[]>(() => generateMockData("1h"))
+  const historyRef = useRef<ChartDataPoint[]>([])
 
-  // Update chart data when time range changes
+  const fetchMetrics = useCallback(async () => {
+    if (!vmId) return
+    try {
+      const metrics = await vmApi.getMetrics(vmId)
+      const point: ChartDataPoint = {
+        timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        cpu_percent: metrics.cpu_usage_percent,
+        memory_percent: metrics.memory_total_bytes > 0
+          ? (metrics.memory_usage_bytes / metrics.memory_total_bytes) * 100
+          : 0,
+        network_rx_mbps: metrics.network_rx_bytes / (1024 * 1024),
+        network_tx_mbps: metrics.network_tx_bytes / (1024 * 1024),
+        disk_read_mbps: metrics.disk_read_bytes / (1024 * 1024),
+        disk_write_mbps: metrics.disk_write_bytes / (1024 * 1024),
+      }
+      const maxPoints = timeRange === "1h" ? 13 : timeRange === "24h" ? 25 : 7
+      historyRef.current = [...historyRef.current, point].slice(-maxPoints)
+      setChartData([...historyRef.current])
+    } catch {
+      // API not available, keep mock data
+    }
+  }, [vmId, timeRange])
+
   useEffect(() => {
-    setChartData(generateMockData(timeRange))
-  }, [timeRange])
+    historyRef.current = []
+    if (vmId) {
+      fetchMetrics()
+      const interval = setInterval(fetchMetrics, 30000)
+      return () => clearInterval(interval)
+    } else {
+      setChartData(generateMockData(timeRange))
+    }
+  }, [timeRange, vmId, fetchMetrics])
 
   return (
     <div className={cn("space-y-6", className)}>

@@ -550,9 +550,54 @@ function handleProvisioningWebhook(): void
             break;
 
         case 'vm.deleted':
-            // Handle VM deletion notification
             if ($whmcsServiceId > 0) {
                 updateServiceField($whmcsServiceId, 'provisioning_status', 'terminated');
+                logActivity("VirtueStack: VM deleted for service {$whmcsServiceId}");
+            }
+            break;
+
+        case 'vm.started':
+            if ($whmcsServiceId > 0) {
+                updateServiceField($whmcsServiceId, 'vm_status', 'running');
+            }
+            break;
+
+        case 'vm.stopped':
+            if ($whmcsServiceId > 0) {
+                updateServiceField($whmcsServiceId, 'vm_status', 'stopped');
+            }
+            break;
+
+        case 'vm.reinstalled':
+            if ($whmcsServiceId > 0) {
+                updateServiceField($whmcsServiceId, 'provisioning_status', 'active');
+                updateServiceField($whmcsServiceId, 'vm_status', 'running');
+                logActivity("VirtueStack: VM reinstalled for service {$whmcsServiceId}");
+            }
+            break;
+
+        case 'vm.migrated':
+            if ($whmcsServiceId > 0) {
+                $newNodeId = $data['node_id'] ?? '';
+                updateServiceField($whmcsServiceId, 'node_id', $newNodeId);
+                logActivity("VirtueStack: VM migrated for service {$whmcsServiceId} to node {$newNodeId}");
+            }
+            break;
+
+        case 'backup.completed':
+            if ($whmcsServiceId > 0) {
+                logActivity("VirtueStack: Backup completed for service {$whmcsServiceId}");
+            }
+            break;
+
+        case 'backup.failed':
+            if ($whmcsServiceId > 0) {
+                $errorMsg = $data['message'] ?? 'Unknown error';
+                logActivity("VirtueStack: Backup FAILED for service {$whmcsServiceId}: {$errorMsg}");
+                sendAdminNotification(
+                    'VirtueStack Backup Failure',
+                    "Backup failed for service ID {$whmcsServiceId}.\n\nError: {$errorMsg}"
+                );
             }
             break;
 

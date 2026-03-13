@@ -524,15 +524,22 @@ function virtuestack_TestConnection(array $params): array
 {
     try {
         $client = virtuestack_getApiClient($params);
-        
-        // Try to get a simple status endpoint
-        // Note: You may need to add a health check endpoint to your API
-        // For now, we'll just try to instantiate the client
+
+        // Call the health endpoint to verify connectivity and API version
+        $response = $client->get('/health');
+
+        if (!isset($response['status']) || $response['status'] !== 'ok') {
+            return [
+                'success' => false,
+                'error'   => 'API returned unexpected health status: ' . json_encode($response),
+            ];
+        }
+
         $success = true;
         $errorMsg = '';
     } catch (\Exception $e) {
         $success = false;
-        $errorMsg = $e->getMessage();
+        $errorMsg = 'Connection failed: ' . $e->getMessage();
     }
 
     return [

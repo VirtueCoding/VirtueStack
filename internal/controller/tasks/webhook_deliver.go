@@ -39,10 +39,11 @@ type WebhookDeliveryPayload struct {
 
 // WebhookDeliveryDeps contains dependencies for webhook delivery tasks.
 type WebhookDeliveryDeps struct {
-	WebhookRepo   *repository.WebhookRepository
-	HTTPClient    *http.Client
-	Logger        *slog.Logger
-	EncryptionKey string
+	WebhookRepo        *repository.WebhookRepository
+	HTTPClient         *http.Client
+	Logger             *slog.Logger
+	EncryptionKey      string
+	OnWebhookDisabled  func(customerID, webhookID, url string, failCount int)
 }
 
 // RegisterWebhookDeliveryHandler registers the webhook delivery task handler.
@@ -151,7 +152,15 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 					"error", err)
 			} else {
 				logger.Warn("webhook auto-disabled due to consecutive failures",
+					"webhook_id", webhook.ID,
+					"customer_id", webhook.CustomerID,
+					"url", webhook.URL,
 					"fail_count", newFailCount)
+
+				// Notify via notification service if available
+				if deps.OnWebhookDisabled != nil {
+					deps.OnWebhookDisabled(webhook.CustomerID, webhook.ID, webhook.URL, newFailCount)
+				}
 			}
 		}
 	}

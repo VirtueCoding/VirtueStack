@@ -700,7 +700,7 @@ export default function VMDetailPage() {
             <Server className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-sm font-semibold">{"Unknown"}</div>
+            <div className="text-sm font-semibold">{vm.template_name ?? "Unknown"}</div>
             <p className="text-xs text-muted-foreground">
               VM ID: {vm.id}
             </p>
@@ -724,7 +724,9 @@ export default function VMDetailPage() {
             </div>
             <div>
               <h4 className="text-sm font-medium text-muted-foreground">IPv6 Address</h4>
-              <p className="mt-1 font-mono text-lg">Not assigned</p>
+              <p className="mt-1 font-mono text-lg">
+                {vm.ip_addresses?.find((ip) => ip.ip_version === 6)?.address ?? "Not assigned"}
+              </p>
             </div>
           </div>
         </CardContent>

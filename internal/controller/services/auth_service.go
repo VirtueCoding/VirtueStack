@@ -225,9 +225,6 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 		}
 	}
 
-	// Check for backup code usage if TOTP fails (not implemented in this iteration)
-	// For now, just generate tokens
-
 	// Generate access and refresh tokens
 	accessToken, err := middleware.GenerateAccessToken(s.authConfig, customer.ID, "customer", "", AccessTokenDuration)
 	if err != nil {

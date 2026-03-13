@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
-
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -136,9 +134,7 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 			return nil, fmt.Errorf("importing template to storage: %w", err)
 		}
 	} else {
-		// Generate placeholder values if no storage backend is configured
-		rbdImage = fmt.Sprintf("template-%s", uuid.New().String()[:8])
-		rbdSnapshot = "v1"
+		return nil, fmt.Errorf("storage backend is not configured - cannot import templates without a storage backend")
 	}
 
 	// Determine minimum disk size from source file

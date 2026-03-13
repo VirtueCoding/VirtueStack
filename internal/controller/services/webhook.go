@@ -2,6 +2,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -476,8 +478,67 @@ type DeliveryStats struct {
 	SuccessRate     float64
 }
 
+// Register validates a webhook URL, sends a test ping, and creates the webhook.
+// Returns the signing secret for the created webhook.
 func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerWebhook) (string, error) {
-	return "", fmt.Errorf("not implemented")
+	// Validate URL (must be HTTPS)
+	if err := s.validateWebhookURL(webhook.URL); err != nil {
+		return "", err
+	}
+
+	// Validate events
+	for _, event := range webhook.Events {
+		if !ValidWebhookEvents[event] {
+			return "", fmt.Errorf("%w: %s", ErrInvalidEvent, event)
+		}
+	}
+
+	// Generate signing secret
+	secret, err := crypto.GenerateRandomToken(32)
+	if err != nil {
+		return "", fmt.Errorf("generating webhook secret: %w", err)
+	}
+
+	// Send a test ping to verify the endpoint is reachable
+	testPayload := WebhookPayload{
+		Event:     "webhook.test",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Data:      json.RawMessage(`{"message":"webhook verification ping"}`),
+	}
+	body, _ := json.Marshal(testPayload)
+	sig := GenerateSignature(secret, body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("creating test request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Webhook-Signature", sig)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("webhook endpoint unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("webhook endpoint returned status %d", resp.StatusCode)
+	}
+
+	// Create the webhook via existing Create method
+	created, err := s.Create(ctx, CreateWebhookRequest{
+		CustomerID: webhook.CustomerID,
+		URL:        webhook.URL,
+		Secret:     secret,
+		Events:     webhook.Events,
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating webhook: %w", err)
+	}
+
+	s.logger.Info("webhook registered", "webhook_id", created.ID, "customer_id", webhook.CustomerID)
+
+	return secret, nil
 }
 
 func (s *WebhookService) ListByCustomer(ctx context.Context, customerID string) ([]repository.Webhook, error) {

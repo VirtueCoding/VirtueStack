@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/network"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
@@ -245,6 +248,46 @@ func (s *Server) isLibvirtAlive() bool {
 		return false
 	}
 	return alive
+}
+
+// newBandwidthManager creates a new NodeBandwidthManager for bandwidth operations.
+func (s *Server) newBandwidthManager() *network.NodeBandwidthManager {
+	return network.NewNodeBandwidthManager(s.libvirtConn, s.logger)
+}
+
+// getVNCPort extracts the VNC port from a running domain's XML.
+func (s *Server) getVNCPort(domain *libvirt.Domain) (int32, error) {
+	xmlDesc, err := domain.GetXMLDesc(0)
+	if err != nil {
+		return 0, fmt.Errorf("getting domain XML: %w", err)
+	}
+
+	type graphicsXML struct {
+		Type string `xml:"type,attr"`
+		Port string `xml:"port,attr"`
+	}
+	type devicesXML struct {
+		Graphics []graphicsXML `xml:"graphics"`
+	}
+	type domainXML struct {
+		Devices devicesXML `xml:"devices"`
+	}
+
+	var domDef domainXML
+	if err := xml.Unmarshal([]byte(xmlDesc), &domDef); err != nil {
+		return 0, fmt.Errorf("parsing domain XML: %w", err)
+	}
+
+	for _, gfx := range domDef.Devices.Graphics {
+		if gfx.Type == "vnc" {
+			port, err := strconv.ParseInt(gfx.Port, 10, 32)
+			if err != nil {
+				return 0, fmt.Errorf("parsing VNC port: %w", err)
+			}
+			return int32(port), nil
+		}
+	}
+	return 0, fmt.Errorf("VNC graphics not found")
 }
 
 // grpcHandler implements the NodeAgentService gRPC service.

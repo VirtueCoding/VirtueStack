@@ -297,6 +297,13 @@ export interface VMOperationResponse {
   message: string;
 }
 
+export interface IPAddress {
+  id: string;
+  address: string;
+  ip_version: 4 | 6;
+  is_primary: boolean;
+}
+
 export interface VM {
   id: string;
   name: string;
@@ -306,6 +313,10 @@ export interface VM {
   vcpu: number;
   memory_mb: number;
   disk_gb: number;
+  template_name?: string;
+  template_id?: string;
+  plan_name?: string;
+  ip_addresses?: IPAddress[];
 }
 
 export interface ConsoleTokenResponse {
@@ -371,7 +382,36 @@ export const vmApi = {
   async getVM(vmId: string): Promise<VM> {
     return apiClient.get<VM>(`/customer/vms/${vmId}`);
   },
+
+  async getMetrics(vmId: string): Promise<VMMetrics> {
+    return apiClient.get<VMMetrics>(`/customer/vms/${vmId}/metrics`);
+  },
+
+  async getBandwidth(vmId: string): Promise<VMBandwidth> {
+    return apiClient.get<VMBandwidth>(`/customer/vms/${vmId}/bandwidth`);
+  },
 };
+
+export interface VMMetrics {
+  vm_id: string;
+  cpu_usage_percent: number;
+  memory_usage_bytes: number;
+  memory_total_bytes: number;
+  disk_read_bytes: number;
+  disk_write_bytes: number;
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+  uptime_seconds: number;
+  timestamp: string;
+}
+
+export interface VMBandwidth {
+  vm_id: string;
+  inbound_bytes: number;
+  outbound_bytes: number;
+  limit_gb: number;
+  period: string;
+}
 
 // Backup Types
 export interface Backup {
