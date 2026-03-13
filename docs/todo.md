@@ -874,24 +874,29 @@ These features are designed in `docs/VIRTUESTACK_KICKSTART_V2.md` and documented
 
 ### Phase 1: Critical Fixes & Low-Hanging Fruit (1-2 weeks)
 
-These items require minimal effort and fix real bugs or dead code.
+These items require minimal effort and fix real bugs or dead code. **Only items with zero backend dependencies.**
 
-| # | Item | Section | Effort |
-|---|------|---------|--------|
-| 1 | Fix float pricing → integer cents | 1.1 | Medium |
-| 2 | Block weak passwords in production | 1.2 | Low |
-| 3 | Remove dead `placeholderHandler` | 1.3 | Trivial |
-| 4 | Fix template service placeholder values | 1.6 | Low |
-| 5 | Add webhook auto-disable notification | 1.7 | Low |
-| 6 | Replace hardcoded sidebar email | 3.3 | Trivial |
-| 7 | Replace hardcoded user profile | 3.2 | Low |
-| 8 | Replace mock IP sets with API call | 3.8 | Low |
-| 9 | Replace mock chart data with API calls | 3.9 | Low |
-| 10 | Replace mock dashboard alerts | 3.4 | Low |
-| 11 | Fix OS/IPv6 display placeholders | 3.6 | Trivial |
-| 12 | Create missing CODEBASE_AUDIT_REPORT.md or update refs | 9.6 | Low |
-| 13 | Create ssl/ directory + docs | 9.1 | Trivial |
-| 14 | Remove default passwords from override | 9.2 | Trivial |
+| # | Item | Section | Effort | Notes |
+|---|------|---------|--------|-------|
+| 1 | Fix float pricing → integer cents | 1.1 | Medium | Pure backend model change |
+| 2 | Block weak passwords in production | 1.2 | Low | Config validation only |
+| 3 | Remove dead `placeholderHandler` | 1.3 | Trivial | Dead code removal |
+| 4 | Fix template service placeholder values | 1.6 | Low | Return error instead of fake data |
+| 5 | Replace hardcoded sidebar email | 3.3 | Trivial | Read from JWT claims (no API call) |
+| 6 | Fix OS/IPv6 display placeholders | 3.6 | Trivial | Data already in VM API response |
+| 7 | Create missing CODEBASE_AUDIT_REPORT.md or update refs | 9.6 | Low | Documentation only |
+| 8 | Create ssl/ directory + docs | 9.1 | Trivial | Infrastructure only |
+| 9 | Remove default passwords from override | 9.2 | Trivial | Config cleanup |
+
+**Moved OUT of Phase 1 (have backend dependencies):**
+
+| Item | Why | Moved To |
+|------|-----|----------|
+| Replace hardcoded user profile (3.2) | Needs `GET /api/v1/customer/profile` verified | Phase 2 (API wiring) |
+| Replace mock IP sets (3.8) | Needs API client setup in admin frontend first | Phase 2 (API wiring) |
+| Replace mock chart data (3.9) | Needs API client setup in customer frontend first | Phase 2 (API wiring) |
+| Replace mock dashboard alerts (3.4) | **Backend alerts endpoint doesn't exist** — needs implementation | Phase 4 (planned features) |
+| Add webhook auto-disable notification (1.7) | Email/Telegram delivery not implemented yet (Section 6.4) | Phase 4 (after notification service) |
 
 ### Phase 2: Frontend ↔ Backend API Wiring (2-4 weeks)
 
@@ -910,6 +915,11 @@ Wire all existing UI to the working backend API. No new backend features needed.
 | 9 | Customer — Webhook Configuration wiring | 5.2 | Medium |
 | 10 | Customer — Settings/Profile wiring | 5.3 | Low |
 | 11 | Customer — API Key Management wiring | 6.5 | Low |
+| 12 | Replace hardcoded user profile with API call | 3.2 | Low | Depends on `GET /api/v1/customer/profile` — verify endpoint exists, then wire |
+| 13 | Replace mock IP sets with API data | 3.8 | Low | Needs admin API client setup (item #5) first |
+| 14 | Replace mock chart data with API data | 3.9 | Low | Needs customer API client setup (item #8) first |
+
+> **Dependency note:** Items 12-14 were moved here from Phase 1 because they require working API client connections. Item 12 depends on Settings/Profile wiring (#10). Items 13-14 depend on admin/customer wiring being set up first.
 
 ### Phase 3: Core Node Agent gRPC Implementation (3-5 weeks)
 
@@ -925,25 +935,31 @@ Implement the 19 missing gRPC methods, starting with the most critical.
 | **P2** | MigrateVM, AbortMigration, PostMigrateSetup | 2.3-2.5 | High |
 | **P2** | GuestFreezeFilesystems, GuestThawFilesystems, GuestGetNetworkInterfaces | 2.14-2.16 | Low |
 
+> **Internal dependency note:** `GuestFreezeFilesystems`/`GuestThawFilesystems` (2.14-2.15) are needed for consistent snapshots. Consider implementing them alongside P0 Snapshot methods (2.8-2.11) even though they're prioritized P2.
+
 ### Phase 4: Planned Features (4-8 weeks)
 
 Implement features that are designed but have no working implementation.
 
-| Priority | Feature | Section | Effort |
-|----------|---------|---------|--------|
-| **P0** | Console Access (NoVNC + Serial) | 6.1 | High |
-| **P0** | Backup Management (end-to-end) | 6.2 | High |
-| **P0** | Snapshot Management (end-to-end) | 6.3 | Medium |
-| **P1** | Notification Delivery (email + Telegram) | 6.4 | Medium |
-| **P1** | Password Reset Workflow | 6.6 | Medium |
-| **P1** | Auth Backup Codes (use flow) | 1.4 | Low |
-| **P1** | Webhook Registration method | 1.5 | Low |
-| **P2** | VM Live Migration (end-to-end) | 6.7 | High |
-| **P2** | Automatic Node Failover | 6.8 | High |
-| **P2** | VM Resize (end-to-end) | 6.9 | Medium |
-| **P2** | VM Reinstall (end-to-end) | 6.10 | Medium |
-| **P3** | Reverse DNS Management | 6.11 | Medium |
-| **P3** | ISO Upload & Custom Boot | 6.12 | Medium |
+| Priority | Feature | Section | Effort | Dependencies |
+|----------|---------|---------|--------|-------------|
+| **P0** | Console Access (NoVNC + Serial) | 6.1 | High | Phase 3: StreamVNCConsole/StreamSerialConsole (2.6-2.7) |
+| **P0** | Backup Management (end-to-end) | 6.2 | High | — |
+| **P0** | Snapshot Management (end-to-end) | 6.3 | Medium | Phase 3: Snapshot gRPC methods (2.8-2.11) |
+| **P1** | Notification Delivery (email + Telegram) | 6.4 | Medium | — (**implement early — others depend on this**) |
+| **P1** | Password Reset Workflow | 6.6 | Medium | ⚠️ Notification Delivery (6.4) must be done first |
+| **P1** | Auth Backup Codes (use flow) | 1.4 | Low | — |
+| **P1** | Webhook Registration method | 1.5 | Low | — |
+| **P1** | Webhook auto-disable notification | 1.7 | Low | ⚠️ Notification Delivery (6.4) must be done first |
+| **P1** | Replace mock dashboard alerts with real alerting | 3.4 | Medium | ⚠️ Backend alerts endpoint must be created first |
+| **P2** | VM Live Migration (end-to-end) | 6.7 | High | Phase 3: MigrateVM/AbortMigration/PostMigrateSetup (2.3-2.5) |
+| **P2** | Automatic Node Failover | 6.8 | High | — |
+| **P2** | VM Resize (end-to-end) | 6.9 | Medium | Phase 3: ResizeVM (2.2) |
+| **P2** | VM Reinstall (end-to-end) | 6.10 | Medium | Phase 3: ReinstallVM (2.1) |
+| **P3** | Reverse DNS Management | 6.11 | Medium | — |
+| **P3** | ISO Upload & Custom Boot | 6.12 | Medium | — |
+
+> **Ordering note within Phase 4:** Implement Notification Delivery (6.4) FIRST among P1 items — Password Reset (6.6) and Webhook auto-disable notification (1.7) both depend on it. Console Access (6.1) and Snapshot Management (6.3) depend on Phase 3 gRPC implementations.
 
 ### Phase 5: WHMCS & Integration (2-3 weeks)
 
@@ -954,6 +970,8 @@ Implement features that are designed but have no working implementation.
 | 3 | Add webhook payload validation | 7.3 | Low |
 | 4 | Fix helper function graceful fallbacks | 7.4 | Low |
 | 5 | End-to-end WHMCS testing | 7.7 | High |
+
+> **Internal ordering:** Item 5 (E2E testing) must be done last — it depends on items 1-4 being complete.
 
 ### Phase 6: Testing & Quality (Ongoing)
 
@@ -968,6 +986,8 @@ Implement features that are designed but have no working implementation.
 | **P2** | Fix auth permission test placeholder | 8.8 | Low |
 | **P3** | E2E tests for new features | 8.7 | High |
 
+> **Cross-phase note:** Node agent unit tests (8.4) should be written alongside Phase 3 gRPC implementations. E2E tests (8.7) depend on Phase 4 features being complete.
+
 ### Phase 7: Infrastructure & Security (1-2 weeks)
 
 | # | Item | Section | Effort |
@@ -979,6 +999,8 @@ Implement features that are designed but have no working implementation.
 | 5 | Rate limiting verification | 10.4 | Low |
 | 6 | CI/CD pipeline | 9.4 | Medium |
 | 7 | Kubernetes/Helm (optional) | 9.5 | High |
+
+> **Cross-phase dependency:** Item 4 (Guest agent command whitelisting) depends on Phase 3 `GuestExecCommand` (2.13) being implemented first — can't whitelist commands for a method that doesn't exist yet.
 
 ---
 
