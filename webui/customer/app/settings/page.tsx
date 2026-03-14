@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
+import { z } from "zod";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -119,6 +119,7 @@ export default function SettingsPage() {
   const [webhookDialogOpen, setWebhookDialogOpen] = useState(false);
   const [editingWebhook, setEditingWebhook] = useState<WebhookType | null>(null);
   const [deleteKeyDialogOpen, setDeleteKeyDialogOpen] = useState(false);
+  const [rotateKeyDialogOpen, setRotateKeyDialogOpen] = useState(false);
   const [deleteWebhookDialogOpen, setDeleteWebhookDialogOpen] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
   const [selectedWebhookId, setSelectedWebhookId] = useState<string | null>(null);
@@ -150,7 +151,8 @@ export default function SettingsPage() {
       try {
         await settingsApi.getBackupCodes();
         return { enabled: true };
-      } catch {
+      } catch (error) {
+        console.error("Failed to get 2FA status:", error);
         return { enabled: false };
       }
     },
@@ -534,8 +536,14 @@ export default function SettingsPage() {
   };
 
   const handleRotateKey = (keyId: string) => {
-    if (confirm("Are you sure you want to rotate this API key? The old key will stop working immediately.")) {
-      rotateApiKeyMutation.mutate(keyId);
+    setSelectedKeyId(keyId);
+    setRotateKeyDialogOpen(true);
+  };
+
+  const confirmRotateKey = () => {
+    if (selectedKeyId) {
+      rotateApiKeyMutation.mutate(selectedKeyId);
+      setRotateKeyDialogOpen(false);
     }
   };
 
@@ -1225,6 +1233,30 @@ export default function SettingsPage() {
             >
               {deleteApiKeyMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rotateKeyDialogOpen} onOpenChange={setRotateKeyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rotate API Key</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to rotate this API key? The old key will stop working immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setRotateKeyDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              type="button" 
+              onClick={confirmRotateKey}
+              disabled={rotateApiKeyMutation.isPending}
+            >
+              {rotateApiKeyMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Rotate
             </Button>
           </DialogFooter>
         </DialogContent>

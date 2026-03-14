@@ -120,6 +120,69 @@ wait_for_zap() {
     return 1
 }
 
+# Function to wait for spider to complete
+wait_for_spider() {
+    echo -e "${YELLOW}Waiting for spider to complete...${NC}"
+    
+    local max_attempts=60
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        local status=$(docker exec ${ZAP_CONTAINER} zap-cli spider status 2>/dev/null | grep -o "complete\|running\|starting" || echo "unknown")
+        if [ "$status" = "complete" ] || [ "$status" = "no spider" ]; then
+            echo -e "${GREEN}Spider completed${NC}"
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    echo -e "${YELLOW}Spider timeout - continuing anyway${NC}"
+    return 0
+}
+
+# Function to wait for active scan to complete
+wait_for_scan() {
+    echo -e "${YELLOW}Waiting for active scan to complete...${NC}"
+    
+    local max_attempts=90
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        local status=$(docker exec ${ZAP_CONTAINER} zap-cli active-scan status 2>/dev/null | grep -o "complete\|running\|starting" || echo "unknown")
+        if [ "$status" = "complete" ] || [ "$status" = "no scan" ]; then
+            echo -e "${GREEN}Scan completed${NC}"
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    echo -e "${YELLOW}Scan timeout - continuing anyway${NC}"
+    return 0
+}
+
+# Function to wait for AJAX spider to complete
+wait_for_ajax_spider() {
+    echo -e "${YELLOW}Waiting for AJAX spider to complete...${NC}"
+    
+    local max_attempts=90
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        local status=$(docker exec ${ZAP_CONTAINER} zap-cli ajax-spider status 2>/dev/null | grep -o "complete\|running\|starting" || echo "unknown")
+        if [ "$status" = "complete" ] || [ "$status" = "no spider" ]; then
+            echo -e "${GREEN}AJAX spider completed${NC}"
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    echo -e "${YELLOW}AJAX spider timeout - continuing anyway${NC}"
+    return 0
+}
+
 # Function to run baseline scan
 run_baseline_scan() {
     echo -e "${YELLOW}Running baseline scan...${NC}"
@@ -162,14 +225,14 @@ run_full_scan() {
     docker exec ${ZAP_CONTAINER} zap-cli spider "${TARGET_URL}" || true
     
     # Wait for spider to complete
-    sleep 10
+    wait_for_spider
     
     # Scan all discovered URLs
     echo -e "${YELLOW}Scanning all discovered URLs...${NC}"
     docker exec ${ZAP_CONTAINER} zap-cli active-scan -r "${TARGET_URL}" || true
     
     # Wait for scan to complete
-    sleep 30
+    wait_for_scan
     
     # Generate reports
     echo -e "${YELLOW}Generating reports...${NC}"
@@ -311,7 +374,7 @@ run_ajax_scan() {
     docker exec ${ZAP_CONTAINER} zap-cli ajax-spider "${TARGET_URL}" || true
     
     # Wait for AJAX spider
-    sleep 30
+    wait_for_ajax_spider
     
     # Active scan
     docker exec ${ZAP_CONTAINER} zap-cli active-scan -r "${TARGET_URL}" || true

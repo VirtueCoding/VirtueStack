@@ -57,6 +57,8 @@ export function VNCConsole({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [clipboardText, setClipboardText] = useState("")
   const [isClipboardOpen, setIsClipboardOpen] = useState(false)
+  const [passwordPromptOpen, setPasswordPromptOpen] = useState(false)
+  const [vncPassword, setVncPassword] = useState("")
   const containerRef = useRef<HTMLDivElement>(null)
   const screenRef = useRef<HTMLDivElement>(null)
   const rfbRef = useRef<InstanceType<typeof import("@novnc/novnc/lib/rfb").default> | null>(null)
@@ -139,10 +141,7 @@ export function VNCConsole({
       })
 
       rfb.addEventListener("credentialsrequired", () => {
-        const password = window.prompt("VNC Password Required:")
-        if (password) {
-          rfb.sendCredentials({ username: "", password: "", target: "" })
-        }
+        setPasswordPromptOpen(true)
       })
 
       rfb.addEventListener("securityfailure", (e: { detail: { reason: string } }) => {
@@ -174,19 +173,23 @@ export function VNCConsole({
     }
   }, [])
 
+  const handlePasswordSubmit = useCallback(() => {
+    if (rfbRef.current && vncPassword) {
+      rfbRef.current.sendCredentials({ username: "", password: vncPassword, target: "" })
+      setPasswordPromptOpen(false)
+      setVncPassword("")
+    }
+  }, [vncPassword])
+
   // Toggle fullscreen
   const toggleFullScreen = useCallback(() => {
     if (!containerRef.current) return
 
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch((err) => {
-        console.error("Failed to enter fullscreen:", err)
-      })
+      containerRef.current.requestFullscreen().catch(() => {})
       setIsFullScreen(true)
     } else {
-      document.exitFullscreen().catch((err) => {
-        console.error("Failed to exit fullscreen:", err)
-      })
+      document.exitFullscreen().catch(() => {})
       setIsFullScreen(false)
     }
   }, [])
@@ -463,6 +466,37 @@ export function VNCConsole({
           {getControls()}
         </div>
       </CardContent>
+
+      <Dialog open={passwordPromptOpen} onOpenChange={setPasswordPromptOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>VNC Password Required</DialogTitle>
+            <DialogDescription>
+              Enter the VNC password to connect to this remote desktop.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="vnc-password">Password</Label>
+              <Input
+                id="vnc-password"
+                type="password"
+                value={vncPassword}
+                onChange={(e) => setVncPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handlePasswordSubmit()
+                  }
+                }}
+                placeholder="Enter VNC password"
+              />
+            </div>
+          </div>
+          <Button onClick={handlePasswordSubmit} disabled={!vncPassword}>
+            Connect
+          </Button>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

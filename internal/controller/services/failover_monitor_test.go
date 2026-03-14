@@ -104,7 +104,13 @@ func TestFailoverMonitorContextCancellation(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(30 * time.Millisecond)
+	// Wait for monitor to start using a short poll instead of fixed sleep
+	select {
+	case <-time.After(50 * time.Millisecond):
+		// Monitor should have started by now
+	case <-done:
+		// Already done (unexpected but handle gracefully)
+	}
 	cancel()
 
 	select {

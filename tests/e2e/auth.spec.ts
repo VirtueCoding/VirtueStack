@@ -365,7 +365,7 @@ test.describe('Authentication Security', () => {
       await page.fill('input[name="email"]', 'test@example.com');
       await page.fill('input[name="password"]', `wrong-password-${i}`);
       await page.click('button[type="submit"]');
-      await page.waitForTimeout(100);
+      await page.waitForLoadState('networkidle');
     }
     
     // Should show rate limit error

@@ -36,13 +36,18 @@ type rateLimiter struct {
 	config  RateLimitConfig
 	mu      sync.RWMutex
 	entries map[string]*windowEntry
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // newRateLimiter constructs a rateLimiter and starts a background cleanup goroutine.
 func newRateLimiter(config RateLimitConfig) *rateLimiter {
+	ctx, cancel := context.WithCancel(context.Background())
 	rl := &rateLimiter{
 		config:  config,
 		entries: make(map[string]*windowEntry),
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	go rl.cleanupLoop()
@@ -55,8 +60,13 @@ func (rl *rateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.removeExpired()
+	for {
+		select {
+		case <-rl.ctx.Done():
+			return
+		case <-ticker.C:
+			rl.removeExpired()
+		}
 	}
 }
 
@@ -72,6 +82,11 @@ func (rl *rateLimiter) removeExpired() {
 			delete(rl.entries, key)
 		}
 	}
+}
+
+// Stop stops the background cleanup goroutine.
+func (rl *rateLimiter) Stop() {
+	rl.cancel()
 }
 
 // allow returns (allowed, remaining, resetAt).

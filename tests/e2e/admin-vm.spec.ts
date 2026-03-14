@@ -254,8 +254,7 @@ test.describe('Admin VM List', () => {
   test('should search VMs by hostname', async ({ page }) => {
     await vmListPage.searchVM('test-vm');
     
-    // Wait for search results
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // All visible VMs should match search
     const rows = await vmListPage.getVMRows();
@@ -269,7 +268,7 @@ test.describe('Admin VM List', () => {
   test('should filter VMs by status', async ({ page }) => {
     await vmListPage.filterByStatus('Running');
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // All visible VMs should have Running status
     const statusCells = page.locator('table tbody td:has-text("Running"), [data-testid="vm-status"]:has-text("Running")');
@@ -299,7 +298,7 @@ test.describe('Admin VM List', () => {
   test('should change page size', async ({ page }) => {
     await vmListPage.changePageSize(50);
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // URL or page should reflect change
     const rows = await vmListPage.getVMRows();

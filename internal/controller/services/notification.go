@@ -105,7 +105,7 @@ func (s *NotificationService) SendNotification(ctx context.Context, payload *Not
 // sendNotificationAsync handles the actual notification sending.
 func (s *NotificationService) sendNotificationAsync(ctx context.Context, payload *NotificationPayload) {
 	// Create a timeout context for the notification
-	notifyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	notifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	s.logger.Info("sending notification",

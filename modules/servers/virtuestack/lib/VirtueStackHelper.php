@@ -144,9 +144,13 @@ final class VirtueStackHelper
      * Creates a short-lived JWT that authenticates the customer
      * with the Customer WebUI without requiring separate login.
      *
+     * NOTE: The API secret is NOT included in the JWT payload.
+     * API secrets should never be transmitted in JWTs as they are
+     * only base64 encoded, not encrypted. The Customer WebUI should
+     * look up the secret securely from the database using api_id.
+     *
      * @param string $customerId         Customer UUID from VirtueStack
      * @param string $customerApiId      Customer API ID
-     * @param string $customerApiSecret  Customer API secret
      * @param string $jwtSecret          JWT signing secret
      * @param string $issuer             JWT issuer (usually controller URL)
      * @param int    $expiryHours        Token expiry in hours (default 1)
@@ -158,13 +162,12 @@ final class VirtueStackHelper
     public static function generateSSOToken(
         string $customerId,
         string $customerApiId,
-        string $customerApiSecret,
         string $jwtSecret,
         string $issuer,
         int $expiryHours = self::SSO_TOKEN_EXPIRY_HOURS
     ): string {
-        if (empty($customerId) || empty($customerApiId) || empty($customerApiSecret)) {
-            throw new InvalidArgumentException('Customer ID, API ID, and API Secret are required');
+        if (empty($customerId) || empty($customerApiId)) {
+            throw new InvalidArgumentException('Customer ID and API ID are required');
         }
 
         if (empty($jwtSecret)) {
@@ -189,7 +192,6 @@ final class VirtueStackHelper
             'nbf' => $now,
             'exp' => $expiry,
             'api_id' => $customerApiId,
-            'api_secret' => $customerApiSecret,
             'type' => 'sso',
         ];
 

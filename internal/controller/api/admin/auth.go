@@ -20,17 +20,17 @@ type Verify2FARequest struct {
 }
 
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token" validate:"required"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type AuthResponse struct {
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in,omitempty"`
-	Requires2FA  bool   `json:"requires_2fa,omitempty"`
-	TempToken    string `json:"temp_token,omitempty"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in,omitempty"`
+	Requires2FA bool   `json:"requires_2fa,omitempty"`
+	TempToken   string `json:"temp_token,omitempty"`
 }
+
+const adminRefreshCookiePath = "/api/v1/admin/auth/refresh"
 
 func (h *AdminHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -67,8 +67,6 @@ func (h *AdminHandler) Login(c *gin.Context) {
 
 	if tokens.Requires2FA {
 		resp.TempToken = tokens.TempToken
-	} else {
-		resp.AccessToken = tokens.AccessToken
 	}
 
 	h.logger.Info("admin login successful",
@@ -108,11 +106,12 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
+
 	resp := AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: refreshToken,
-		TokenType:    tokens.TokenType,
-		ExpiresIn:    tokens.ExpiresIn,
+		TokenType: tokens.TokenType,
+		ExpiresIn: tokens.ExpiresIn,
 	}
 
 	h.logger.Info("admin 2FA verification successful",
@@ -122,26 +121,29 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 }
 
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
+	refreshToken := middleware.GetRefreshTokenFromCookie(c)
+
 	var req RefreshTokenRequest
-	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
-			return
-		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+		refreshToken = req.RefreshToken
+	}
+
+	if refreshToken == "" {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
 		return
 	}
 
 	ipAddress := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
-	tokens, newRefreshToken, err := h.authService.RefreshToken(c.Request.Context(), req.RefreshToken, ipAddress, userAgent)
+	tokens, newRefreshToken, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, ipAddress, userAgent)
 	if err != nil {
 		h.logger.Warn("token refresh failed",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
+			middleware.ClearAuthCookies(c, adminRefreshCookiePath)
 			respondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
 			return
 		}
@@ -150,12 +152,18 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuthCookies(c, tokens.AccessToken, newRefreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
+
 	resp := AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: newRefreshToken,
-		TokenType:    tokens.TokenType,
-		ExpiresIn:    tokens.ExpiresIn,
+		TokenType: tokens.TokenType,
+		ExpiresIn: tokens.ExpiresIn,
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+func (h *AdminHandler) Logout(c *gin.Context) {
+	middleware.ClearAuthCookies(c, adminRefreshCookiePath)
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }

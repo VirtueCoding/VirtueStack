@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/network"
@@ -42,6 +43,7 @@ type Server struct {
 	rbdManager  *storage.RBDManager
 	logger      *slog.Logger
 	listenAddr  string
+	bgWg        sync.WaitGroup
 }
 
 // NewServer creates a new Node Agent server.
@@ -195,6 +197,9 @@ func (s *Server) Stop() {
 		s.grpcServer.GracefulStop()
 	}
 
+	// Wait for background goroutines to complete
+	s.bgWg.Wait()
+
 	if s.rbdManager != nil {
 		s.rbdManager.Close()
 	}
@@ -206,6 +211,15 @@ func (s *Server) Stop() {
 	}
 
 	s.logger.Info("node agent server stopped")
+}
+
+// trackBackgroundGoroutine tracks a background goroutine for graceful shutdown.
+func (s *Server) trackBackgroundGoroutine(fn func()) {
+	s.bgWg.Add(1)
+	go func() {
+		defer s.bgWg.Done()
+		fn()
+	}()
 }
 
 // getDiskUsage returns the local disk usage percentage for the root filesystem.

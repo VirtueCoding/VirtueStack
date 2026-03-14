@@ -272,7 +272,7 @@ test.describe('Customer Backup List', () => {
   test('should filter backups by VM', async ({ page }) => {
     await backupListPage.filterByVM('test-vm');
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // All visible backups should be for that VM
     const list = await backupListPage.getBackupList();
@@ -287,7 +287,7 @@ test.describe('Customer Backup List', () => {
   test('should filter backups by status', async ({ page }) => {
     await backupListPage.filterByStatus('Completed');
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // All visible backups should have Completed status
     const statuses = page.locator('[data-testid="status"]:has-text("Completed"), td:has-text("Completed")');
@@ -298,7 +298,7 @@ test.describe('Customer Backup List', () => {
   test('should search backups', async ({ page }) => {
     await backupListPage.searchBackup('backup-name');
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // Results should match search
     const list = await backupListPage.getBackupList();

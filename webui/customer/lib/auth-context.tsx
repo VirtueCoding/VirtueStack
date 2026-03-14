@@ -11,7 +11,6 @@ import {
 import { useRouter } from "next/navigation";
 import {
   customerAuthApi,
-  tokenStorage,
   ApiClientError,
   type LoginRequest,
   type Verify2FARequest,
@@ -42,35 +41,6 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_STATE_KEY = "customer_auth_state";
-const ACCESS_TOKEN_KEY = "customer_access_token";
-const REFRESH_TOKEN_KEY = "customer_refresh_token";
-
-function parseJwt(token: string): { sub: string; email?: string; role?: string } | null {
-  try {
-    const base64Url = token.split(".")[1];
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
-    return JSON.parse(jsonPayload);
-  } catch (err) {
-    console.error("Failed to parse JWT:", err);
-    return null;
-  }
-}
-
-function buildUserFromToken(token: string): CustomerUser | null {
-  const payload = parseJwt(token);
-  if (!payload) return null;
-  return {
-    id: payload.sub,
-    email: payload.email || "",
-    role: payload.role || "customer",
-  };
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -106,67 +76,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initAuth = useCallback(async () => {
     if (typeof window === "undefined") return;
 
-    const accessToken = tokenStorage.getAccessToken();
-    const refreshToken = tokenStorage.getRefreshToken();
-
-    if (!accessToken || !refreshToken) {
-      setState((prev) => ({ ...prev, isLoading: false }));
-      return;
-    }
-
-    if (tokenStorage.isTokenExpired()) {
-      try {
-        const tokens = await customerAuthApi.refreshToken(refreshToken);
-        const user = buildUserFromToken(tokens.access_token);
-        updateState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-      } catch (error) {
-        console.error("Token refresh failed:", error);
-        tokenStorage.clearTokens();
-        setState({
-          user: null,
-          isAuthenticated: false,
-          isLoading: false,
-          requires2FA: false,
-          tempToken: null,
-        });
-        router.push("/login");
-      }
-    } else {
-      const user = buildUserFromToken(accessToken);
+    try {
+      const { settingsApi } = await import("./api-client");
+      const profile = await settingsApi.getProfile();
       updateState({
-        user,
+        user: {
+          id: profile.id,
+          email: profile.email,
+          role: "customer",
+        },
         isAuthenticated: true,
         isLoading: false,
       });
+    } catch {
+      setState((prev) => ({ ...prev, isLoading: false }));
     }
-  }, [router, updateState]);
+  }, [updateState]);
 
   useEffect(() => {
     initAuth();
   }, [initAuth]);
-
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === ACCESS_TOKEN_KEY || e.key === REFRESH_TOKEN_KEY) {
-        if (!e.newValue) {
-          setState({
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-            requires2FA: false,
-            tempToken: null,
-          });
-        }
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
 
   const login = useCallback(
     async (credentials: LoginRequest) => {
@@ -185,10 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        tokenStorage.setTokens(tokens);
-        const user = buildUserFromToken(tokens.access_token);
         updateState({
-          user,
+          user: {
+            id: "",
+            email: credentials.email,
+            role: "customer",
+          },
           isAuthenticated: true,
           isLoading: false,
         });
@@ -215,11 +146,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateState({ isLoading: true });
 
       try {
-        const tokens = await customerAuthApi.verify2FA(request);
-        tokenStorage.setTokens(tokens);
-        const user = buildUserFromToken(tokens.access_token);
+        await customerAuthApi.verify2FA(request);
         updateState({
-          user,
+          user: {
+            id: "",
+            email: "",
+            role: "customer",
+          },
           isAuthenticated: true,
           isLoading: false,
           requires2FA: false,

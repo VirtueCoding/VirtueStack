@@ -559,15 +559,12 @@ func TestPermissionVerification(t *testing.T) {
 
 		// Try to get other customer's VM (should fail with proper RLS/auth)
 		_, err = suite.VMRepo.GetByID(ctx, otherVMID)
-		// Note: Without RLS context, this might succeed in test
-		// Real implementation would test with proper auth context
+		// Access to other customer's VM should be denied
+		assert.Error(t, err, "Should not access other customer's VM")
 
 		// Cleanup
 		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", otherCustomerID)
 		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", otherCustomerID)
-
-		// Mark as passed for now
-		assert.True(t, true, "Permission test placeholder")
 	})
 
 	t.Run("AdminRoleInToken", func(t *testing.T) {

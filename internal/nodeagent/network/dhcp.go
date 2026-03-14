@@ -49,6 +49,7 @@ type DHCPManager struct {
 	logger       *slog.Logger
 	mu           sync.RWMutex
 	runningProcs map[string]*dnsmasqProcess // vmID -> process info
+	wg           sync.WaitGroup
 }
 
 // dnsmasqProcess tracks a running dnsmasq instance.
@@ -73,12 +74,12 @@ type DHCPLease struct {
 
 // DHCPConfig contains configuration for starting a DHCP server for a VM.
 type DHCPConfig struct {
-	VMID           string
-	VMName         string
-	MACAddress     string
-	IPAddress      string
-	Gateway        string
-	DNS            string
+	VMID            string
+	VMName          string
+	MACAddress      string
+	IPAddress       string
+	Gateway         string
+	DNS             string
 	BridgeInterface string
 }
 
@@ -93,6 +94,11 @@ func NewDHCPManager(configDir, leaseDir, pidDir string, logger *slog.Logger) *DH
 		logger:       logger.With("component", "dhcp-manager"),
 		runningProcs: make(map[string]*dnsmasqProcess),
 	}
+}
+
+// Stop waits for all background goroutines to complete.
+func (m *DHCPManager) Stop() {
+	m.wg.Wait()
 }
 
 // Initialize creates the necessary directories for DHCP management.
@@ -263,7 +269,12 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 	}
 
 	// Start goroutine to wait for process exit and clean up
-	go m.monitorProcess(cfg.VMID, cmd, logFile)
+	m.wg.Add(1)
+	// Use a derived context with timeout for the monitor goroutine since the parent ctx
+	// may be cancelled after the dnsmasq process exits
+	monitorCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go m.monitorProcess(monitorCtx, cfg.VMID, cmd, logFile)
 
 	logger.Info("DHCP started successfully", "pid", pid)
 	return nil
@@ -634,7 +645,8 @@ func (m *DHCPManager) saveLeaseStatus(vmID string, lease *DHCPLease) error {
 }
 
 // monitorProcess monitors a dnsmasq process and cleans up when it exits.
-func (m *DHCPManager) monitorProcess(vmID string, cmd *exec.Cmd, logFile *os.File) {
+func (m *DHCPManager) monitorProcess(ctx context.Context, vmID string, cmd *exec.Cmd, logFile *os.File) {
+	defer m.wg.Done()
 	defer logFile.Close()
 
 	err := cmd.Wait()
@@ -649,7 +661,7 @@ func (m *DHCPManager) monitorProcess(vmID string, cmd *exec.Cmd, logFile *os.Fil
 	defer m.mu.Unlock()
 
 	// Update status file to stopped
-	lease, err := m.GetVMLease(context.Background(), vmID)
+	lease, err := m.GetVMLease(ctx, vmID)
 	if err == nil && lease != nil {
 		lease.Status = "stopped"
 		if saveErr := m.saveLeaseStatus(vmID, lease); saveErr != nil {

@@ -85,6 +85,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		auth.POST("/login", handler.Login)
 		auth.POST("/verify-2fa", handler.Verify2FA)
 		auth.POST("/refresh", handler.RefreshToken)
+		auth.POST("/logout", handler.Logout)
 	}
 
 	protected := admin.Group("")

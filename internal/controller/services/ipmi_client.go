@@ -35,8 +35,9 @@ func (c *IPMIClient) PowerCycle(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", c.host,
 		"-U", c.username,
-		"-P", c.password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"chassis", "power", "cycle")
+	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+c.password)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -57,8 +58,9 @@ func (c *IPMIClient) PowerOn(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", c.host,
 		"-U", c.username,
-		"-P", c.password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"chassis", "power", "on")
+	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+c.password)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -75,8 +77,9 @@ func (c *IPMIClient) PowerOff(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", c.host,
 		"-U", c.username,
-		"-P", c.password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"chassis", "power", "off")
+	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+c.password)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -93,8 +96,9 @@ func (c *IPMIClient) GetPowerStatus(ctx context.Context) (bool, error) {
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", c.host,
 		"-U", c.username,
-		"-P", c.password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"chassis", "power", "status")
+	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+c.password)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

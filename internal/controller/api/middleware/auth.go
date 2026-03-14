@@ -76,15 +76,15 @@ type JWTClaims struct {
 // Returns an error if the key is not found or inactive.
 type APIKeyValidator func(ctx context.Context, keyHash string) (keyID string, allowedIPs []string, err error)
 
-// JWTAuth returns a Gin middleware that validates JWT Bearer tokens.
-// The token is expected in the Authorization header as "Bearer <token>".
+// JWTAuth returns a Gin middleware that validates JWT tokens from HttpOnly cookies.
+// Falls back to Authorization header for API clients that don't use cookies.
 // On success it sets "user_id", "user_type", and "role" in gin.Context.
 // On failure it aborts with 401 and a standard APIError body.
 func JWTAuth(config AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString, err := extractBearerToken(c)
-		if err != nil {
-			abortWithAuthError(c, http.StatusUnauthorized, "MISSING_TOKEN", err.Error())
+		tokenString := GetAccessTokenFromCookie(c)
+		if tokenString == "" {
+			abortWithAuthError(c, http.StatusUnauthorized, "MISSING_TOKEN", "authentication token is required")
 			return
 		}
 
@@ -99,7 +99,6 @@ func JWTAuth(config AuthConfig) gin.HandlerFunc {
 			return
 		}
 
-		// Reject temp tokens on regular endpoints.
 		if claims.Purpose == tempTokenPurposeValue {
 			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "temp tokens are not accepted here")
 			return
@@ -116,9 +115,8 @@ func JWTAuth(config AuthConfig) gin.HandlerFunc {
 // authenticated and anonymous clients.
 func OptionalJWTAuth(config AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString, err := extractBearerToken(c)
-		if err != nil {
-			// No token — continue as anonymous.
+		tokenString := GetAccessTokenFromCookie(c)
+		if tokenString == "" {
 			c.Next()
 			return
 		}
@@ -130,7 +128,6 @@ func OptionalJWTAuth(config AuthConfig) gin.HandlerFunc {
 				"error", err,
 				"correlation_id", GetCorrelationID(c),
 			)
-			// Invalid token — treat as anonymous rather than aborting.
 			c.Next()
 			return
 		}
@@ -439,4 +436,90 @@ func tokenFingerprint(token string) string {
 		return "***"
 	}
 	return token[:8] + "..."
+}
+
+// Cookie configuration constants for secure token storage.
+const (
+	// AccessTokenCookieName is the cookie name for access tokens.
+	AccessTokenCookieName = "vs_access_token"
+
+	// RefreshTokenCookieName is the cookie name for refresh tokens.
+	RefreshTokenCookieName = "vs_refresh_token"
+
+	// AccessTokenMaxAge is the max age for access token cookies (15 minutes).
+	AccessTokenMaxAge = 15 * 60
+
+	// RefreshTokenMaxAge is the max age for refresh token cookies (7 days).
+	RefreshTokenMaxAge = 7 * 24 * 60 * 60
+
+	// RefreshTokenMaxAgeAdmin is the max age for admin refresh token cookies (4 hours).
+	RefreshTokenMaxAgeAdmin = 4 * 60 * 60
+)
+
+// SetAuthCookies sets HttpOnly, Secure, SameSite=Strict cookies for tokens.
+// Access token: 15 min expiry, path=/
+// Refresh token: configurable expiry, path=/api/v1/{userType}/auth/refresh
+func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenMaxAge, refreshTokenMaxAge int, refreshPath string) {
+	// Set access token cookie
+	c.SetCookie(
+		AccessTokenCookieName,
+		accessToken,
+		accessTokenMaxAge,
+		"/",
+		"",   // domain - let browser determine
+		true, // secure
+		true, // httpOnly
+	)
+
+	// Set refresh token cookie with restricted path
+	c.SetCookie(
+		RefreshTokenCookieName,
+		refreshToken,
+		refreshTokenMaxAge,
+		refreshPath,
+		"",   // domain - let browser determine
+		true, // secure
+		true, // httpOnly
+	)
+}
+
+// ClearAuthCookies clears both access and refresh token cookies.
+func ClearAuthCookies(c *gin.Context, refreshPath string) {
+	c.SetCookie(AccessTokenCookieName, "", -1, "/", "", true, true)
+	c.SetCookie(RefreshTokenCookieName, "", -1, refreshPath, "", true, true)
+}
+
+// GetAccessTokenFromCookie extracts the access token from the cookie.
+// Falls back to Authorization header for API clients that don't use cookies.
+func GetAccessTokenFromCookie(c *gin.Context) string {
+	// First try cookie
+	token, err := c.Cookie(AccessTokenCookieName)
+	if err == nil && token != "" {
+		return token
+	}
+
+	// Fall back to Authorization header for API-only clients
+	header := c.GetHeader("Authorization")
+	if header == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+
+	return parts[1]
+}
+
+// GetRefreshTokenFromCookie extracts the refresh token from the cookie.
+// Also checks for refresh_token in request body as fallback.
+func GetRefreshTokenFromCookie(c *gin.Context) string {
+	// Try cookie first
+	token, err := c.Cookie(RefreshTokenCookieName)
+	if err == nil && token != "" {
+		return token
+	}
+
+	return ""
 }

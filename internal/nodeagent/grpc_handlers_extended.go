@@ -82,16 +82,21 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 
 	// Set root password via guest agent if available
 	if req.GetRootPasswordHash() != "" {
-		go func() {
+		h.server.trackBackgroundGoroutine(func() {
 			time.Sleep(30 * time.Second)
 			domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
 			if err != nil {
+				logger.Warn("failed to lookup domain for password set", "error", err)
 				return
 			}
 			defer domain.Free()
 			agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
-			_ = agent.SetUserPassword(context.Background(), "root", req.GetRootPasswordHash())
-		}()
+			if err := agent.SetUserPassword(ctx, "root", req.GetRootPasswordHash()); err != nil {
+				logger.Error("failed to set root password via guest agent", "error", err)
+			} else {
+				logger.Info("root password set via guest agent", "vm_id", req.GetVmId())
+			}
+		})
 	}
 
 	return &nodeagentpb.CreateVMResponse{

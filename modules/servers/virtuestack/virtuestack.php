@@ -443,7 +443,6 @@ function virtuestack_ClientArea(array $params): array
                 $ssoToken = VirtueStackHelper::generateSSOToken(
                     $customerId,
                     $credentials['api_id'],
-                    $credentials['api_secret'],
                     $jwtSecret,
                     $issuer
                 );
@@ -526,7 +525,7 @@ function virtuestack_TestConnection(array $params): array
         $client = virtuestack_getApiClient($params);
 
         // Call the health endpoint to verify connectivity and API version
-        $response = $client->get('/health');
+        $response = $client->healthCheck();
 
         if (!isset($response['status']) || $response['status'] !== 'ok') {
             return [

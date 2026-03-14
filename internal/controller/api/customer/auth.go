@@ -10,42 +10,34 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// LoginRequest represents the request body for customer login.
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email,max=254"`
 	Password string `json:"password" validate:"required,min=12,max=128"`
 }
 
-// Verify2FARequest represents the request body for 2FA verification.
 type Verify2FARequest struct {
 	TempToken string `json:"temp_token" validate:"required"`
 	TOTPCode  string `json:"totp_code" validate:"required,len=6,numeric"`
 }
 
-// RefreshTokenRequest represents the request body for token refresh.
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token" validate:"required"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-// ChangePasswordRequest represents the request body for password change.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" validate:"required,min=12,max=128"`
 	NewPassword     string `json:"new_password" validate:"required,min=12,max=128"`
 }
 
-// AuthResponse represents the response for successful authentication.
 type AuthResponse struct {
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in,omitempty"`
-	Requires2FA  bool   `json:"requires_2fa,omitempty"`
-	TempToken    string `json:"temp_token,omitempty"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in,omitempty"`
+	Requires2FA bool   `json:"requires_2fa,omitempty"`
+	TempToken   string `json:"temp_token,omitempty"`
 }
 
-// Login handles POST /auth/login - authenticates a customer.
-// If the customer has 2FA enabled, returns a temp token for verification.
-// Otherwise, returns access and refresh tokens directly.
+const customerRefreshCookiePath = "/api/v1/customer/auth/refresh"
+
 func (h *CustomerHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -85,8 +77,8 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	if tokens.Requires2FA {
 		resp.TempToken = tokens.TempToken
 	} else {
-		resp.AccessToken = tokens.AccessToken
-		resp.RefreshToken = refreshToken
+		middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
+			middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
 	}
 
 	h.logger.Info("customer login successful",
@@ -97,8 +89,6 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
-// Verify2FA handles POST /auth/verify-2fa - verifies TOTP code for 2FA login.
-// Exchanges a temp token (from Login) for access and refresh tokens.
 func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -128,11 +118,12 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
+
 	resp := AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: refreshToken,
-		TokenType:    tokens.TokenType,
-		ExpiresIn:    tokens.ExpiresIn,
+		TokenType: tokens.TokenType,
+		ExpiresIn: tokens.ExpiresIn,
 	}
 
 	h.logger.Info("customer 2FA verification successful",
@@ -141,29 +132,30 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
-// RefreshToken handles POST /auth/refresh - refreshes an access token.
-// Validates the refresh token and issues new tokens (rotation).
 func (h *CustomerHandler) RefreshToken(c *gin.Context) {
+	refreshToken := middleware.GetRefreshTokenFromCookie(c)
+
 	var req RefreshTokenRequest
-	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
-			return
-		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+		refreshToken = req.RefreshToken
+	}
+
+	if refreshToken == "" {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
 		return
 	}
 
 	ipAddress := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
-	tokens, newRefreshToken, err := h.authService.RefreshToken(c.Request.Context(), req.RefreshToken, ipAddress, userAgent)
+	tokens, newRefreshToken, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, ipAddress, userAgent)
 	if err != nil {
 		h.logger.Warn("token refresh failed",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
+			middleware.ClearAuthCookies(c, customerRefreshCookiePath)
 			respondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
 			return
 		}
@@ -172,63 +164,39 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuthCookies(c, tokens.AccessToken, newRefreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
+
 	resp := AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: newRefreshToken,
-		TokenType:    tokens.TokenType,
-		ExpiresIn:    tokens.ExpiresIn,
+		TokenType: tokens.TokenType,
+		ExpiresIn: tokens.ExpiresIn,
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
-// Logout handles POST /auth/logout - invalidates the current session.
-// Requires authentication. The session is derived from the refresh token in the request body.
 func (h *CustomerHandler) Logout(c *gin.Context) {
-	var req RefreshTokenRequest
-	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
-			return
+	refreshToken := middleware.GetRefreshTokenFromCookie(c)
+
+	if refreshToken != "" {
+		refreshTokenHash := hashToken(refreshToken)
+		session, err := h.customerRepo.GetSessionByRefreshToken(c.Request.Context(), refreshTokenHash)
+		if err == nil {
+			userID := middleware.GetUserID(c)
+			if session.UserID == userID {
+				_ = h.authService.Logout(c.Request.Context(), session.ID)
+				h.logger.Info("customer logged out",
+					"user_id", userID,
+					"session_id", session.ID,
+					"correlation_id", middleware.GetCorrelationID(c))
+			}
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
-		return
 	}
 
-	// Get session by refresh token
-	refreshTokenHash := hashToken(req.RefreshToken)
-	session, err := h.customerRepo.GetSessionByRefreshToken(c.Request.Context(), refreshTokenHash)
-	if err != nil {
-		// Session not found - still return success (idempotent)
-		c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
-		return
-	}
-
-	// Verify the session belongs to the authenticated user
-	userID := middleware.GetUserID(c)
-	if session.UserID != userID {
-		respondWithError(c, http.StatusForbidden, "FORBIDDEN", "Cannot logout another user's session")
-		return
-	}
-
-	// Delete the session
-	if err := h.authService.Logout(c.Request.Context(), session.ID); err != nil {
-		h.logger.Warn("failed to logout session",
-			"session_id", session.ID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		// Still return success - the session may have already been deleted
-	}
-
-	h.logger.Info("customer logged out",
-		"user_id", userID,
-		"session_id", session.ID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
+	middleware.ClearAuthCookies(c, customerRefreshCookiePath)
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
 
-// respondWithError sends a standardized error response.
 func respondWithError(c *gin.Context, status int, code, message string) {
 	correlationID := middleware.GetCorrelationID(c)
 
@@ -241,8 +209,6 @@ func respondWithError(c *gin.Context, status int, code, message string) {
 	})
 }
 
-// ChangePassword handles PUT /password - changes the authenticated customer's password.
-// Requires valid JWT authentication. Rate limited to 5 attempts per 15 minutes per IP.
 func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -316,8 +282,6 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Password updated successfully"}})
 }
 
-// hashToken computes a SHA-256 hash of a token for secure comparison.
-// This is used for refresh token lookups.
 func hashToken(token string) string {
 	return crypto.HashSHA256(token)
 }

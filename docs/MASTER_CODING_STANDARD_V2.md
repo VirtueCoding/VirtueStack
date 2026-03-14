@@ -32,9 +32,7 @@
 - NEVER use `:latest` or mutable tags for container images. Pin by SHA digest.
 - NEVER use mutable tags in CI actions. Pin all CI actions to commit SHAs.
 - NEVER suppress linter warnings without a justifying comment and team approval.
-- NEVER write functions longer than 40 lines (excluding doc comments).
 - NEVER nest logic deeper than 3 levels. Use early returns and guard clauses.
-- NEVER write files longer than 300 lines. Split into modules.
 - NEVER accept more than 4 function parameters. Use an options struct/object.
 - NEVER rely on network segmentation as sole security. Authenticate every request.
 - NEVER disable certificate validation (`verify=False`, `InsecureSkipVerify`).

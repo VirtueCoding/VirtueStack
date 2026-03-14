@@ -195,7 +195,6 @@ export default function VMDetailPage() {
       setVm(data);
       setVmName(data.name);
     } catch (error) {
-      console.error("Failed to fetch VM:", error);
       toast({
         title: "Error",
         description: "Failed to load virtual machine details.",
@@ -213,7 +212,6 @@ export default function VMDetailPage() {
       const data = await backupApi.listBackups(vmId);
       setBackups(data);
     } catch (error) {
-      console.error("Failed to fetch backups:", error);
       toast({
         title: "Error",
         description: "Failed to load backups.",
@@ -231,7 +229,6 @@ export default function VMDetailPage() {
       const data = await snapshotApi.listSnapshots(vmId);
       setSnapshots(data);
     } catch (error) {
-      console.error("Failed to fetch snapshots:", error);
       toast({
         title: "Error",
         description: "Failed to load snapshots.",

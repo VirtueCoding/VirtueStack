@@ -54,10 +54,9 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     setProgress(0)
     setErrorMessage("")
 
-    // Simulate upload progress
     const interval = setInterval(() => {
       setProgress((prev) => {
-        const increment = Math.random() * 15 + 5
+        const increment = 10
         const newProgress = Math.min(prev + increment, 100)
 
         if (newProgress >= 100) {

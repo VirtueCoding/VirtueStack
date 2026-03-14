@@ -642,7 +642,10 @@ function logWebhook(string $level, string $message, array $context = []): void
         !empty($context) ? json_encode($context) : ''
     );
 
-    file_put_contents($logFile, $logEntry, FILE_APPEND | LOCK_EX);
+    $result = file_put_contents($logFile, $logEntry, FILE_APPEND | LOCK_EX);
+    if ($result === false) {
+        error_log("VirtueStack webhook: Failed to write to log file: {$logFile}");
+    }
 }
 
 /**

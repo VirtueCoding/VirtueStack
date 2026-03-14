@@ -260,7 +260,8 @@ test.describe('Customer VM List', () => {
   test('should search VMs', async ({ page }) => {
     await vmListPage.searchVM('test');
     
-    await page.waitForTimeout(500);
+    // Wait for search results to load via network
+    await page.waitForLoadState('networkidle');
     
     const cards = await vmListPage.getVMCards();
     const count = await cards.count();
@@ -276,7 +277,7 @@ test.describe('Customer VM List', () => {
   test('should filter VMs by status', async ({ page }) => {
     await vmListPage.filterByStatus('Running');
     
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle');
     
     // All visible VMs should have Running status
     const statuses = page.locator('[data-testid="vm-status"]:has-text("Running")');
@@ -382,8 +383,8 @@ test.describe('Customer VM Power Operations', () => {
     if (status?.toLowerCase().includes('stopped')) {
       await vmDetailPage.startVM();
       
-      // Should show confirmation or status change
-      await page.waitForTimeout(1000);
+      // Wait for status to change with explicit polling
+      await expect(vmDetailPage['page'].locator('[data-testid="vm-status"], .status')).toBeVisible({ timeout: 10000 });
       
       // Wait for status to potentially change
       const newStatus = await vmDetailPage.getStatus();
@@ -397,7 +398,7 @@ test.describe('Customer VM Power Operations', () => {
     if (status?.toLowerCase().includes('running')) {
       await vmDetailPage.stopVM();
       
-      await page.waitForTimeout(1000);
+      await expect(vmDetailPage['page'].locator('[data-testid="vm-status"], .status')).toBeVisible({ timeout: 10000 });
       
       // Should show confirmation or status change
       const newStatus = await vmDetailPage.getStatus();
@@ -411,7 +412,7 @@ test.describe('Customer VM Power Operations', () => {
     if (status?.toLowerCase().includes('running')) {
       await vmDetailPage.rebootVM();
       
-      await page.waitForTimeout(1000);
+      await expect(vmDetailPage['page'].locator('[data-testid="vm-status"], .status')).toBeVisible({ timeout: 10000 });
       
       // VM should be rebooting or still running
       const newStatus = await vmDetailPage.getStatus();

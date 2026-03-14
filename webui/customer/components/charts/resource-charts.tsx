@@ -211,7 +211,6 @@ export function ResourceCharts({ className, vmId }: ResourceChartsProps) {
       setChartData([...historyRef.current])
     } catch (err) {
       setError('Failed to load metrics. Please try again.')
-      console.error('Metrics fetch error:', err)
     } finally {
       setLoading(false)
     }

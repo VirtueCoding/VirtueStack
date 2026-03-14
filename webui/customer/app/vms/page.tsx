@@ -70,7 +70,6 @@ export default function VMsPage() {
       const data = await vmApi.getVMs();
       setVms(data);
     } catch (error) {
-      console.error("Failed to fetch VMs:", error);
       toast({
         title: "Error",
         description: "Failed to load virtual machines. Please try again.",

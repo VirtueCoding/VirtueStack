@@ -44,8 +44,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
       NATS_URL: nats://nats:4222
-      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-min-32-characters-long}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
       LISTEN_ADDR: :8080
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       CGO_ENABLED: "0"

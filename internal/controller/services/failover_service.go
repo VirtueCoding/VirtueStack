@@ -245,13 +245,13 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		"node_id", node.ID,
 		"ipmi_address", ipmiAddress)
 
-	// Execute IPMI power off command
-	// Using ipmitool: ipmitool -H <address> -U <user> -P <pass> power off
+	// Execute IPMI power off command using environment variable to avoid exposing password in process list
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", ipmiAddress,
 		"-U", username,
-		"-P", password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"power", "off")
+	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+password)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -266,12 +266,13 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		return fmt.Errorf("context cancelled during STONITH wait: %w", ctx.Err())
 	}
 
-	// Verify power state
+	// Verify power state using environment variable to avoid exposing password
 	verifyCmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", ipmiAddress,
 		"-U", username,
-		"-P", password,
+		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"power", "status")
+	verifyCmd.Env = append(verifyCmd.Environ(), "IPMITOOL_PASSWORD="+password)
 
 	verifyOutput, err := verifyCmd.CombinedOutput()
 	if err != nil {
@@ -302,6 +303,10 @@ func (s *FailoverService) blocklistNodeInCeph(ctx context.Context, node *models.
 	s.logger.Info("adding node to Ceph blocklist",
 		"node_id", node.ID,
 		"management_ip", safeIP)
+
+	// Ensure a timeout is applied to prevent the command from hanging indefinitely
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	// Execute ceph osd blocklist add command
 	cmd := exec.CommandContext(ctx, "ceph",

@@ -506,8 +506,21 @@ function handleProvisioningWebhook(): void
         exit('Method not allowed');
     }
 
+    // Limit request body size to prevent DoS attacks (max 1MB)
+    $maxBodySize = 1024 * 1024; // 1MB
+    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($contentLength > $maxBodySize) {
+        http_response_code(413);
+        exit('Request body too large');
+    }
+
     // Get request body
-    $body = file_get_contents('php://input');
+    $body = file_get_contents('php://input', false, null, 0, $maxBodySize);
+    if ($body === false) {
+        http_response_code(400);
+        exit('Failed to read request body');
+    }
+
     $data = json_decode($body, true);
 
     if (json_last_error() !== JSON_ERROR_NONE) {

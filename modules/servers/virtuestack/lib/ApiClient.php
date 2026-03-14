@@ -66,6 +66,19 @@ final class ApiClient
     }
 
     /**
+     * Check API health/connectivity.
+     *
+     * @return array Health check response with status
+     *
+     * @throws RuntimeException On API error or connection failure
+     */
+    public function healthCheck(): array
+    {
+        $response = $this->request('GET', '/health');
+        return $response;
+    }
+
+    /**
      * Create a new VM asynchronously.
      *
      * @param array $params VM creation parameters:
@@ -427,6 +440,7 @@ final class ApiClient
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
             // Fallback to provisioning endpoint if admin endpoint fails
+            error_log('listTemplates: Admin endpoint failed, trying provisioning: ' . $e->getMessage());
         }
 
         $response = $this->request('GET', '/provisioning/templates');
@@ -440,6 +454,7 @@ final class ApiClient
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
             // Fallback to admin endpoint if provisioning endpoint fails
+            error_log('listLocations: Provisioning endpoint failed, trying admin: ' . $e->getMessage());
         }
 
         $response = $this->request('GET', '/admin/locations');

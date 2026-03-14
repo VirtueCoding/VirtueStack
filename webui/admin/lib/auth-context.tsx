@@ -11,9 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import {
   adminAuthApi,
-  tokenStorage,
   ApiClientError,
-  type AuthTokens,
   type LoginRequest,
   type Verify2FARequest,
 } from "./api-client";
@@ -43,33 +41,6 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_STATE_KEY = "admin_auth_state";
-
-function parseJwt(token: string): { sub: string; email?: string; role?: string } | null {
-  try {
-    const base64Url = token.split(".")[1];
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
-    return JSON.parse(jsonPayload);
-  } catch (err) {
-    // JWT parsing failures are silently handled - user will be redirected to login
-    return null;
-  }
-}
-
-function buildUserFromToken(token: string): AdminUser | null {
-  const payload = parseJwt(token);
-  if (!payload) return null;
-  return {
-    id: payload.sub,
-    email: payload.email || "",
-    role: payload.role || "admin",
-  };
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -105,66 +76,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initAuth = useCallback(async () => {
     if (typeof window === "undefined") return;
 
-    const accessToken = tokenStorage.getAccessToken();
-    const refreshToken = tokenStorage.getRefreshToken();
-
-    if (!accessToken || !refreshToken) {
-      setState((prev) => ({ ...prev, isLoading: false }));
-      return;
-    }
-
-    if (tokenStorage.isTokenExpired()) {
-      try {
-        const tokens = await adminAuthApi.refreshToken(refreshToken);
-        const user = buildUserFromToken(tokens.access_token);
-        updateState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-      } catch (err) {
-        // Token refresh failure clears session and redirects to login
-        tokenStorage.clearTokens();
-        setState({
-          user: null,
-          isAuthenticated: false,
-          isLoading: false,
-          requires2FA: false,
-          tempToken: null,
-        });
+    try {
+      const { adminNodesApi } = await import("./api-client");
+      await adminNodesApi.getNodes();
+      const stored = sessionStorage.getItem(AUTH_STATE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.user && parsed.isAuthenticated) {
+          updateState({
+            user: parsed.user,
+            isAuthenticated: true,
+            isLoading: false,
+          });
+          return;
+        }
       }
-    } else {
-      const user = buildUserFromToken(accessToken);
       updateState({
-        user,
+        user: { id: "", email: "", role: "admin" },
         isAuthenticated: true,
         isLoading: false,
       });
+    } catch {
+      setState((prev) => ({ ...prev, isLoading: false }));
     }
   }, [updateState]);
 
   useEffect(() => {
     initAuth();
   }, [initAuth]);
-
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === ACCESS_TOKEN_KEY || e.key === REFRESH_TOKEN_KEY) {
-        if (!e.newValue) {
-          setState({
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-            requires2FA: false,
-            tempToken: null,
-          });
-        }
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
 
   const login = useCallback(
     async (credentials: LoginRequest) => {
@@ -183,10 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        tokenStorage.setTokens(tokens);
-        const user = buildUserFromToken(tokens.access_token);
         updateState({
-          user,
+          user: {
+            id: "",
+            email: credentials.email,
+            role: "admin",
+          },
           isAuthenticated: true,
           isLoading: false,
         });
@@ -213,11 +154,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateState({ isLoading: true });
 
       try {
-        const tokens = await adminAuthApi.verify2FA(request);
-        tokenStorage.setTokens(tokens);
-        const user = buildUserFromToken(tokens.access_token);
+        await adminAuthApi.verify2FA(request);
         updateState({
-          user,
+          user: {
+            id: "",
+            email: "",
+            role: "admin",
+          },
           isAuthenticated: true,
           isLoading: false,
           requires2FA: false,
@@ -277,6 +220,3 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
-
-const ACCESS_TOKEN_KEY = "admin_access_token";
-const REFRESH_TOKEN_KEY = "admin_refresh_token";

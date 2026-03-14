@@ -144,9 +144,8 @@ func TestBackupRestore(t *testing.T) {
 
 		// Restore to different VM (should fail if not allowed, or succeed if cross-restore is allowed)
 		err = suite.BackupService.RestoreBackup(ctx, backupID)
-		// Behavior depends on business logic - adjust assertion as needed
-		// For now, we just check it doesn't panic
-		assert.True(t, true, "Cross-VM restore handled")
+		// Cross-VM restore handled - assert no panic and error handling works
+		assert.NoError(t, err, "Cross-VM restore should complete without panic")
 	})
 }
 
@@ -167,11 +166,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a backup schedule
 		schedule := &models.BackupSchedule{
-			VMID:     vmID,
-			Type:     "full",
-			CronExpr: "0 2 * * *", // Daily at 2 AM
+			VMID:      vmID,
+			Type:      "full",
+			CronExpr:  "0 2 * * *", // Daily at 2 AM
 			Retention: 7,
-			Enabled:  true,
+			Enabled:   true,
 		}
 
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
@@ -188,11 +187,11 @@ func TestBackupScheduling(t *testing.T) {
 		// Create multiple schedules
 		for i := 0; i < 2; i++ {
 			schedule := &models.BackupSchedule{
-				VMID:     vmID,
-				Type:     "full",
-				CronExpr: "0 2 * * *",
+				VMID:      vmID,
+				Type:      "full",
+				CronExpr:  "0 2 * * *",
 				Retention: 7,
-				Enabled:  true,
+				Enabled:   true,
 			}
 			_, err := suite.BackupService.CreateSchedule(ctx, schedule)
 			require.NoError(t, err)
@@ -212,11 +211,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a schedule
 		schedule := &models.BackupSchedule{
-			VMID:     vmID,
-			Type:     "full",
-			CronExpr: "0 2 * * *",
+			VMID:      vmID,
+			Type:      "full",
+			CronExpr:  "0 2 * * *",
 			Retention: 7,
-			Enabled:  true,
+			Enabled:   true,
 		}
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
 		require.NoError(t, err)
@@ -241,11 +240,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a schedule
 		schedule := &models.BackupSchedule{
-			VMID:     vmID,
-			Type:     "full",
-			CronExpr: "0 2 * * *",
+			VMID:      vmID,
+			Type:      "full",
+			CronExpr:  "0 2 * * *",
 			Retention: 7,
-			Enabled:  true,
+			Enabled:   true,
 		}
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
 		require.NoError(t, err)

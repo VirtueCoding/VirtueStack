@@ -70,7 +70,7 @@ services:
       dockerfile: Dockerfile.controller
       args:
         GO_VERSION: ${GO_VERSION:-1.23}
-    image: virtuestack/controller:${CONTROLLER_TAG:-latest}
+    image: virtuestack/controller:${CONTROLLER_TAG}
     container_name: virtuestack-controller
     restart: unless-stopped
     environment:
@@ -109,7 +109,7 @@ services:
       args:
         NODE_VERSION: ${NODE_VERSION:-20}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-    image: virtuestack/admin-webui:${ADMIN_WEBUI_TAG:-latest}
+    image: virtuestack/admin-webui:${ADMIN_WEBUI_TAG}
     container_name: virtuestack-admin-webui
     restart: unless-stopped
     depends_on:
@@ -139,7 +139,7 @@ services:
       args:
         NODE_VERSION: ${NODE_VERSION:-20}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-    image: virtuestack/customer-webui:${CUSTOMER_WEBUI_TAG:-latest}
+    image: virtuestack/customer-webui:${CUSTOMER_WEBUI_TAG}
     container_name: virtuestack-customer-webui
     restart: unless-stopped
     depends_on:

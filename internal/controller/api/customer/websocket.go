@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,28 +25,76 @@ const (
 	webSocketIdleTimeout          = 30 * time.Second
 	webSocketTotalTimeout         = 5 * time.Minute
 	webSocketBufferSize           = 32 * 1024
+
+	// Environment variable for configurable WebSocket origins
+	envWebSocketOrigins = "CUSTOMER_WEBSOCKET_ORIGINS"
 )
+
+// Default allowed origins for backward compatibility
+var defaultAllowedOrigins = []string{
+	"https://localhost",
+	"https://localhost:3000",
+	"https://virtuestack.com",
+	"https://app.virtuestack.com",
+}
 
 var (
 	wsConnectionCounts = make(map[string]int)
 	wsConnectionMu     sync.RWMutex
+
+	// Allowed origins loaded from environment variable
+	allowedOrigins     []string
+	allowedOriginsInit sync.Once
+	allowedOriginsErr  error
 )
+
+// loadAllowedOrigins loads allowed origins from environment variable or falls back to defaults
+func loadAllowedOrigins() ([]string, error) {
+	allowedOriginsInit.Do(func() {
+		envValue := os.Getenv(envWebSocketOrigins)
+		if envValue == "" {
+			allowedOrigins = defaultAllowedOrigins
+			return
+		}
+
+		// Parse comma-separated origins
+		origins := strings.Split(envValue, ",")
+		for _, origin := range origins {
+			origin = strings.TrimSpace(origin)
+			if origin == "" {
+				continue
+			}
+
+			// Validate that origin is a valid URL
+			if _, err := url.Parse(origin); err != nil {
+				allowedOriginsErr = fmt.Errorf("invalid origin %q: %w", origin, err)
+				return
+			}
+
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+
+		if len(allowedOrigins) == 0 {
+			allowedOrigins = defaultAllowedOrigins
+		}
+	})
+
+	return allowedOrigins, allowedOriginsErr
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  webSocketBufferSize,
 	WriteBufferSize: webSocketBufferSize,
 	CheckOrigin: func(r *http.Request) bool {
-		allowedOrigins := []string{
-			"https://localhost",
-			"https://localhost:3000",
-			"https://virtuestack.com",
-			"https://app.virtuestack.com",
+		origins, err := loadAllowedOrigins()
+		if err != nil {
+			return false
 		}
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			return false
 		}
-		for _, allowed := range allowedOrigins {
+		for _, allowed := range origins {
 			if origin == allowed {
 				return true
 			}

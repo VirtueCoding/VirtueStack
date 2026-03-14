@@ -47,6 +47,9 @@ type Manager struct {
 	conn    *libvirt.Connect
 	logger  *slog.Logger
 	dataDir string
+	cpuWg   sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // NewManager creates a new VM Manager with the given libvirt connection.
@@ -55,11 +58,20 @@ func NewManager(conn *libvirt.Connect, logger *slog.Logger, dataDir string) *Man
 	if dataDir == "" {
 		dataDir = DefaultDataDir
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		conn:    conn,
 		logger:  logger.With("component", "vm-manager"),
 		dataDir: dataDir,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
+}
+
+// Stop stops all background goroutines and releases resources.
+func (m *Manager) Stop() {
+	m.cancel()
+	m.cpuWg.Wait()
 }
 
 // CreateVM creates and starts a new virtual machine.
@@ -637,16 +649,24 @@ func (m *Manager) ensureCPUSampler(domainName string) {
 	cpuUsageCache[domainName] = entry
 	cpuUsageCacheMu.Unlock()
 
+	m.cpuWg.Add(1)
 	go m.runCPUSampler(domainName)
 }
 
 func (m *Manager) runCPUSampler(domainName string) {
+	defer m.cpuWg.Done()
+
 	m.sampleCPUUsage(domainName)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		m.sampleCPUUsage(domainName)
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.sampleCPUUsage(domainName)
+		}
 	}
 }
 
