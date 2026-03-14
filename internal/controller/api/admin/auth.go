@@ -11,7 +11,7 @@ import (
 
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email,max=254"`
-	Password string `json:"password" validate:"required,min=1,max=128"`
+	Password string `json:"password" validate:"required,min=12,max=128"`
 }
 
 type Verify2FARequest struct {
@@ -34,8 +34,12 @@ type AuthResponse struct {
 
 func (h *AdminHandler) Login(c *gin.Context) {
 	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -77,8 +81,12 @@ func (h *AdminHandler) Login(c *gin.Context) {
 
 func (h *AdminHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -115,8 +123,12 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

@@ -90,6 +90,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	protected := admin.Group("")
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireRole("admin", "super_admin"))
+	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 	{
 		// Node management
 		nodes := protected.Group("/nodes")

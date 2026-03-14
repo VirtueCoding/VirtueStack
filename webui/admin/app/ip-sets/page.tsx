@@ -110,7 +110,6 @@ export default function IPSetsPage() {
         const data = await apiClient.get<Record<string, unknown>[]>("/admin/ip-sets");
         setIPSets((data || []).map(mapApiIPSet));
       } catch (err) {
-        console.error("Failed to load IP sets", err);
         toast({
           title: "Error",
           description: "Failed to load IP sets.",

@@ -426,6 +426,7 @@ final class ApiClient
             $response = $this->request('GET', '/admin/templates');
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
+            // Fallback to provisioning endpoint if admin endpoint fails
         }
 
         $response = $this->request('GET', '/provisioning/templates');
@@ -438,6 +439,7 @@ final class ApiClient
             $response = $this->request('GET', '/provisioning/locations');
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
+            // Fallback to admin endpoint if provisioning endpoint fails
         }
 
         $response = $this->request('GET', '/admin/locations');

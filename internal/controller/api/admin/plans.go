@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -48,8 +49,12 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 // CreatePlan handles POST /plans - creates a new service plan.
 func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	var req models.PlanCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -66,12 +71,12 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 
 	// Log audit event
 	h.logAuditEvent(c, "plan.create", "plan", plan.ID, map[string]interface{}{
-		"name":              plan.Name,
-		"slug":              plan.Slug,
-		"vcpu":              plan.VCPU,
-		"memory_mb":         plan.MemoryMB,
-		"disk_gb":           plan.DiskGB,
-		"price_monthly":     plan.PriceMonthly,
+		"name":          plan.Name,
+		"slug":          plan.Slug,
+		"vcpu":          plan.VCPU,
+		"memory_mb":     plan.MemoryMB,
+		"disk_gb":       plan.DiskGB,
+		"price_monthly": plan.PriceMonthly,
 	}, true)
 
 	h.logger.Info("plan created via admin API",
@@ -93,8 +98,12 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	}
 
 	var req models.PlanUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -187,7 +196,7 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		// Check if it's a FK constraint error
-		if err.Error() == "plan has existing VMs" {
+		if errors.Is(err, sharederrors.ErrPlanHasExistingVMs) {
 			respondWithError(c, http.StatusConflict, "PLAN_IN_USE", "Cannot delete plan with existing VMs")
 			return
 		}

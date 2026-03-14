@@ -7,6 +7,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,8 +58,12 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	var req UpdateNotificationPreferencesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

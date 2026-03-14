@@ -56,7 +56,7 @@ function parseJwt(token: string): { sub: string; email?: string; role?: string }
     );
     return JSON.parse(jsonPayload);
   } catch (err) {
-    console.error("Failed to parse JWT:", err);
+    // JWT parsing failures are silently handled - user will be redirected to login
     return null;
   }
 }
@@ -123,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isLoading: false,
         });
       } catch (err) {
-        console.error("Token refresh failed:", err);
+        // Token refresh failure clears session and redirects to login
         tokenStorage.clearTokens();
         setState({
           user: null,

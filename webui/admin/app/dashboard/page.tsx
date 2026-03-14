@@ -53,12 +53,17 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [vms, nodes, customers, logs] = await Promise.all([
-          adminVMsApi.getVMs().catch((err) => { console.error(err); return []; }),
-          adminNodesApi.getNodes().catch((err) => { console.error(err); return []; }),
-          adminCustomersApi.getCustomers().catch((err) => { console.error(err); return []; }),
-          adminAuditLogsApi.getAuditLogs().catch((err) => { console.error(err); return []; }),
+        const results = await Promise.allSettled([
+          adminVMsApi.getVMs(),
+          adminNodesApi.getNodes(),
+          adminCustomersApi.getCustomers(),
+          adminAuditLogsApi.getAuditLogs(),
         ]);
+
+        const vms = results[0].status === 'fulfilled' ? results[0].value : [];
+        const nodes = results[1].status === 'fulfilled' ? results[1].value : [];
+        const customers = results[2].status === 'fulfilled' ? results[2].value : [];
+        const logs = results[3].status === 'fulfilled' ? results[3].value : [];
 
         setStats({
           totalVMs: vms.length,
@@ -83,7 +88,6 @@ export default function DashboardPage() {
         });
         setActivities(mappedActivities);
       } catch (error) {
-        console.error("Failed to load dashboard data", error);
         setError("Failed to load dashboard data");
         toast({
           title: "Error",

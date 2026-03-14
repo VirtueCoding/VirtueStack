@@ -412,6 +412,42 @@ func scanSession(row pgx.Row) (models.Session, error) {
 	return s, err
 }
 
+// RecordFailedLogin records a failed login attempt for the given email.
+func (r *CustomerRepository) RecordFailedLogin(ctx context.Context, email string) error {
+	const q = `
+		INSERT INTO failed_login_attempts (email, attempted_at) 
+		VALUES ($1, NOW())`
+	_, err := r.db.Exec(ctx, q, email)
+	if err != nil {
+		return fmt.Errorf("recording failed login: %w", err)
+	}
+	return nil
+}
+
+// GetFailedLoginCount returns the number of failed attempts in the last N minutes.
+func (r *CustomerRepository) GetFailedLoginCount(ctx context.Context, email string, window time.Duration) (int, error) {
+	const q = `
+		SELECT COUNT(*) FROM failed_login_attempts 
+		WHERE email = $1 AND attempted_at > NOW() - $2::interval`
+
+	var count int
+	err := r.db.QueryRow(ctx, q, email, window).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("getting failed login count: %w", err)
+	}
+	return count, nil
+}
+
+// ClearFailedLogins removes all failed login records for the given email.
+func (r *CustomerRepository) ClearFailedLogins(ctx context.Context, email string) error {
+	const q = `DELETE FROM failed_login_attempts WHERE email = $1`
+	_, err := r.db.Exec(ctx, q, email)
+	if err != nil {
+		return fmt.Errorf("clearing failed logins: %w", err)
+	}
+	return nil
+}
+
 // AdminRepository provides database operations for administrative user accounts.
 type AdminRepository struct {
 	db DB

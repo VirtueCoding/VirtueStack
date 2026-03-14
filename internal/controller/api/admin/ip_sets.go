@@ -13,21 +13,21 @@ import (
 
 // IPSetUpdateRequest represents the request body for updating an IP set.
 type IPSetUpdateRequest struct {
-	Name      *string   `json:"name,omitempty" validate:"omitempty,max=100"`
-	LocationID *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
-	Gateway   *string   `json:"gateway,omitempty" validate:"omitempty,ip"`
-	VLANID    *int      `json:"vlan_id,omitempty" validate:"omitempty,min=1,max=4094"`
-	NodeIDs   *[]string `json:"node_ids,omitempty" validate:"dive,uuid"`
+	Name       *string   `json:"name,omitempty" validate:"omitempty,max=100"`
+	LocationID *string   `json:"location_id,omitempty" validate:"omitempty,uuid"`
+	Gateway    *string   `json:"gateway,omitempty" validate:"omitempty,ip"`
+	VLANID     *int      `json:"vlan_id,omitempty" validate:"omitempty,min=1,max=4094"`
+	NodeIDs    *[]string `json:"node_ids,omitempty" validate:"dive,uuid"`
 }
 
 // IPSetDetail represents an IP set with additional statistics.
 type IPSetDetail struct {
 	models.IPSet
-	TotalIPs      int `json:"total_ips"`
-	AssignedIPs   int `json:"assigned_ips"`
-	AvailableIPs  int `json:"available_ips"`
-	ReservedIPs   int `json:"reserved_ips"`
-	CooldownIPs   int `json:"cooldown_ips"`
+	TotalIPs     int `json:"total_ips"`
+	AssignedIPs  int `json:"assigned_ips"`
+	AvailableIPs int `json:"available_ips"`
+	ReservedIPs  int `json:"reserved_ips"`
+	CooldownIPs  int `json:"cooldown_ips"`
 }
 
 // ListIPSets handles GET /ip-sets - lists all IP sets.
@@ -72,19 +72,23 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 // CreateIPSet handles POST /ip-sets - creates a new IP set.
 func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 	var req models.IPSetCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	ipSet := &models.IPSet{
-		Name:      req.Name,
+		Name:       req.Name,
 		LocationID: req.LocationID,
-		Network:   req.Network,
-		Gateway:   req.Gateway,
-		VLANID:    req.VlanID,
-		IPVersion: int16(req.IPVersion),
-		NodeIDs:   req.NodeIDs,
+		Network:    req.Network,
+		Gateway:    req.Gateway,
+		VLANID:     req.VlanID,
+		IPVersion:  int16(req.IPVersion),
+		NodeIDs:    req.NodeIDs,
 	}
 
 	err := h.ipRepo.CreateIPSet(c.Request.Context(), ipSet)
@@ -100,9 +104,9 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 
 	// Log audit event
 	h.logAuditEvent(c, "ipset.create", "ipset", ipSet.ID, map[string]interface{}{
-		"name":      req.Name,
-		"network":   req.Network,
-		"gateway":   req.Gateway,
+		"name":       req.Name,
+		"network":    req.Network,
+		"gateway":    req.Gateway,
 		"ip_version": req.IPVersion,
 	}, true)
 
@@ -160,11 +164,11 @@ func (h *AdminHandler) GetIPSet(c *gin.Context) {
 	availableIPs, _, _ := h.ipRepo.ListIPAddresses(c.Request.Context(), availableFilter)
 
 	detail := IPSetDetail{
-		IPSet:         *ipSet,
-		TotalIPs:      len(totalIPs),
-		AssignedIPs:   len(assignedIPs),
-		AvailableIPs:  len(availableIPs),
-		ReservedIPs:   len(totalIPs) - len(assignedIPs) - len(availableIPs),
+		IPSet:        *ipSet,
+		TotalIPs:     len(totalIPs),
+		AssignedIPs:  len(assignedIPs),
+		AvailableIPs: len(availableIPs),
+		ReservedIPs:  len(totalIPs) - len(assignedIPs) - len(availableIPs),
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: detail})
@@ -181,8 +185,12 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 	}
 
 	var req IPSetUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -302,8 +310,8 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 
 	// List available IPs
 	filter := repository.IPAddressListFilter{
-		IPSetID:         &ipSetID,
-		Status:          strPtr("available"),
+		IPSetID:          &ipSetID,
+		Status:           strPtr("available"),
 		PaginationParams: pagination,
 	}
 

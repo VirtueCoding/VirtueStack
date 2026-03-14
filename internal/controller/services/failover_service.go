@@ -524,7 +524,7 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 				"error", err)
 			// Don't fail the entire migration - the VM is reassigned and can be started manually
 		} else {
-			// Update status to running
+			// Update status to running - failure not critical as VM is already migrated
 			_ = s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning)
 		}
 	} else {

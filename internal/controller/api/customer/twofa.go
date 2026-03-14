@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -100,7 +101,7 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 	if err != nil {
 		h.logger.Warn("2FA initiation failed", "user_id", userID, "error", err)
 
-		if err.Error() == "2FA is already enabled" {
+		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
 			respondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
@@ -120,8 +121,12 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	var req Enable2FARequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -142,12 +147,12 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 			return
 		}
 
-		if err.Error() == "2FA is already enabled" {
+		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
 			respondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
 
-		if err.Error() == "2FA setup not initiated" {
+		if errors.Is(err, sharederrors.Err2FASetupNotInitiated) {
 			respondWithError(c, http.StatusBadRequest, "NOT_INITIATED", "Please initiate 2FA setup first")
 			return
 		}
@@ -165,8 +170,12 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 
 func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 	var req Disable2FARequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -181,7 +190,7 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 			return
 		}
 
-		if err.Error() == "2FA is not enabled" {
+		if errors.Is(err, sharederrors.Err2FANotEnabled) {
 			respondWithError(c, http.StatusBadRequest, "NOT_ENABLED", "2FA is not enabled for this account")
 			return
 		}

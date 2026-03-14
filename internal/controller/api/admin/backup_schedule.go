@@ -30,8 +30,12 @@ type BackupScheduleUpdateRequest struct {
 // CreateBackupSchedule handles POST /backup-schedules - creates a new backup schedule.
 func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 	var req BackupScheduleCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -147,8 +151,12 @@ func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
 	}
 
 	var req BackupScheduleUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

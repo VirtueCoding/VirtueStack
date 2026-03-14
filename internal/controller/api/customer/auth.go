@@ -13,7 +13,7 @@ import (
 // LoginRequest represents the request body for customer login.
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email,max=254"`
-	Password string `json:"password" validate:"required,min=1,max=128"`
+	Password string `json:"password" validate:"required,min=12,max=128"`
 }
 
 // Verify2FARequest represents the request body for 2FA verification.
@@ -48,8 +48,12 @@ type AuthResponse struct {
 // Otherwise, returns access and refresh tokens directly.
 func (h *CustomerHandler) Login(c *gin.Context) {
 	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -97,8 +101,12 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 // Exchanges a temp token (from Login) for access and refresh tokens.
 func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -137,8 +145,12 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 // Validates the refresh token and issues new tokens (rotation).
 func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -174,8 +186,12 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 // Requires authentication. The session is derived from the refresh token in the request body.
 func (h *CustomerHandler) Logout(c *gin.Context) {
 	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -229,8 +245,12 @@ func respondWithError(c *gin.Context, status int, code, message string) {
 // Requires valid JWT authentication. Rate limited to 5 attempts per 15 minutes per IP.
 func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

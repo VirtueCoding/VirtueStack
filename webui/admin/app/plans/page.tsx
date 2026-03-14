@@ -81,7 +81,6 @@ export default function PlansPage() {
         const data = await adminPlansApi.getPlans();
         setPlans(data || []);
       } catch (err) {
-        console.error("Failed to load plans", err);
         setError("Failed to load plans");
         toast({
           title: "Error",

@@ -41,6 +41,21 @@ var (
 
 	// ErrNoIPMIConfigured indicates that IPMI is not configured for a node.
 	ErrNoIPMIConfigured = stderrors.New("IPMI not configured for this node")
+
+	// 2FA errors
+	Err2FAAlreadyEnabled    = stderrors.New("2FA is already enabled")
+	Err2FANotEnabled        = stderrors.New("2FA is not enabled")
+	Err2FASetupNotInitiated = stderrors.New("2FA setup not initiated")
+
+	// VM state errors
+	ErrInvalidVMState = stderrors.New("invalid VM state for operation")
+	ErrVMNotRunning   = stderrors.New("VM is not running")
+
+	// Plan errors
+	ErrPlanHasExistingVMs = stderrors.New("plan has existing VMs")
+
+	// Account lockout error
+	ErrAccountLocked = stderrors.New("account locked due to too many failed attempts")
 )
 
 // ValidationDetail represents a single validation error detail.
@@ -109,10 +124,10 @@ func NewOperationError(operation, step string, err error) *OperationError {
 // It includes a machine-readable code, human-readable message,
 // optional validation details, and the appropriate HTTP status code.
 type APIError struct {
-	Code       string            `json:"code"`
-	Message    string            `json:"message"`
+	Code       string             `json:"code"`
+	Message    string             `json:"message"`
 	Details    []ValidationDetail `json:"details,omitempty"`
-	HTTPStatus int               `json:"-"`
+	HTTPStatus int                `json:"-"`
 }
 
 // Error implements the error interface for APIError.

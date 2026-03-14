@@ -25,8 +25,12 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 
 	// Parse request body
 	var req ResizeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -76,7 +80,7 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 
 	// Validate resource changes (only upgrades allowed for disk)
 	if newDiskGB < vm.DiskGB {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", 
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR",
 			fmt.Sprintf("Disk shrinking is not supported. Current: %d GB, Requested: %d GB", vm.DiskGB, newDiskGB))
 		return
 	}

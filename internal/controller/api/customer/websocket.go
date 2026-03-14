@@ -41,14 +41,14 @@ var upgrader = websocket.Upgrader{
 		}
 		origin := r.Header.Get("Origin")
 		if origin == "" {
-			return true
+			return false
 		}
 		for _, allowed := range allowedOrigins {
 			if origin == allowed {
 				return true
 			}
 		}
-		return true
+		return false
 	},
 }
 

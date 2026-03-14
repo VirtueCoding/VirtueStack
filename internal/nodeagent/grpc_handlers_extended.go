@@ -301,8 +301,12 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 		return status.Errorf(codes.Internal, "getting VNC port: %v", err)
 	}
 
-	// Connect to the VNC server on localhost
-	vncAddr := fmt.Sprintf("127.0.0.1:%d", vncPort)
+	// Connect to the VNC server using configured host or default
+	vncHost := h.server.config.VNCHost
+	if vncHost == "" {
+		vncHost = "127.0.0.1"
+	}
+	vncAddr := fmt.Sprintf("%s:%d", vncHost, vncPort)
 	conn, err := net.DialTimeout("tcp", vncAddr, 5*time.Second)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "connecting to VNC: %v", err)

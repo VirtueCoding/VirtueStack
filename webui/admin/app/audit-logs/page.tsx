@@ -36,7 +36,6 @@ export default function AuditLogsPage() {
         const data = await adminAuditLogsApi.getAuditLogs();
         setLogs(data || []);
       } catch (error) {
-        console.error("Failed to load audit logs", error);
         toast({
           title: "Error",
           description: "Failed to load audit logs.",
@@ -159,7 +158,7 @@ export default function AuditLogsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getActionBadgeVariant(log.action) as any} className="capitalize">
+                          <Badge variant={getActionBadgeVariant(log.action) as "default" | "secondary" | "destructive" | "outline"} className="capitalize">
                             {log.action.replace(/\./g, " ")}
                           </Badge>
                         </TableCell>

@@ -17,11 +17,11 @@ import (
 
 // Notification event types.
 const (
-	EventVMCreated       = "vm.created"
-	EventVMDeleted       = "vm.deleted"
-	EventVMSuspended     = "vm.suspended"
-	EventBackupFailed    = "backup.failed"
-	EventNodeOffline     = "node.offline"
+	EventVMCreated         = "vm.created"
+	EventVMDeleted         = "vm.deleted"
+	EventVMSuspended       = "vm.suspended"
+	EventBackupFailed      = "backup.failed"
+	EventNodeOffline       = "node.offline"
 	EventBandwidthExceeded = "bandwidth.exceeded"
 )
 
@@ -53,14 +53,14 @@ type NotificationConfig struct {
 
 // NotificationPayload contains data for a notification.
 type NotificationPayload struct {
-	EventType   string                 `json:"event_type"`
-	Timestamp   time.Time              `json:"timestamp"`
-	CustomerID  string                 `json:"customer_id,omitempty"`
-	CustomerEmail string               `json:"customer_email,omitempty"`
-	CustomerName  string               `json:"customer_name,omitempty"`
-	ResourceID    string               `json:"resource_id,omitempty"`
-	ResourceType  string               `json:"resource_type,omitempty"`
-	Data          map[string]any        `json:"data,omitempty"`
+	EventType     string         `json:"event_type"`
+	Timestamp     time.Time      `json:"timestamp"`
+	CustomerID    string         `json:"customer_id,omitempty"`
+	CustomerEmail string         `json:"customer_email,omitempty"`
+	CustomerName  string         `json:"customer_name,omitempty"`
+	ResourceID    string         `json:"resource_id,omitempty"`
+	ResourceType  string         `json:"resource_type,omitempty"`
+	Data          map[string]any `json:"data,omitempty"`
 }
 
 // NotificationService provides notification functionality.
@@ -96,10 +96,10 @@ func NewNotificationService(
 
 // SendNotification sends a notification through enabled providers.
 // It checks customer preferences and routes the notification accordingly.
-// This method is non-blocking and logs errors instead of returning them.
+// This method blocks until all notification providers complete.
 func (s *NotificationService) SendNotification(ctx context.Context, payload *NotificationPayload) {
-	// Run notification sending in background to avoid blocking
-	go s.sendNotificationAsync(ctx, payload)
+	// Process notification with internal concurrency management
+	s.sendNotificationAsync(ctx, payload)
 }
 
 // sendNotificationAsync handles the actual notification sending.
@@ -219,11 +219,11 @@ func (s *NotificationService) sendEmailNotification(ctx context.Context, payload
 	templateName := s.getTemplateForEvent(payload.EventType)
 
 	return s.emailProvider.Send(ctx, &notifications.EmailPayload{
-		To:          payload.CustomerEmail,
-		Subject:     subject,
-		Template:    templateName,
+		To:           payload.CustomerEmail,
+		Subject:      subject,
+		Template:     templateName,
 		CustomerName: payload.CustomerName,
-		Data:        payload.Data,
+		Data:         payload.Data,
 	})
 }
 
@@ -238,11 +238,11 @@ func (s *NotificationService) sendTelegramNotification(ctx context.Context, payl
 // getSubjectForEvent returns the email subject for an event type.
 func (s *NotificationService) getSubjectForEvent(eventType string) string {
 	subjects := map[string]string{
-		EventVMCreated:       "Your VM has been created",
-		EventVMDeleted:       "Your VM has been deleted",
-		EventVMSuspended:     "Your VM has been suspended",
-		EventBackupFailed:    "Backup failed for your VM",
-		EventNodeOffline:     "Alert: Node offline detected",
+		EventVMCreated:         "Your VM has been created",
+		EventVMDeleted:         "Your VM has been deleted",
+		EventVMSuspended:       "Your VM has been suspended",
+		EventBackupFailed:      "Backup failed for your VM",
+		EventNodeOffline:       "Alert: Node offline detected",
 		EventBandwidthExceeded: "Bandwidth limit exceeded",
 	}
 	if subject, ok := subjects[eventType]; ok {
@@ -254,11 +254,11 @@ func (s *NotificationService) getSubjectForEvent(eventType string) string {
 // getTemplateForEvent returns the email template name for an event type.
 func (s *NotificationService) getTemplateForEvent(eventType string) string {
 	templates := map[string]string{
-		EventVMCreated:       "vm-created",
-		EventVMDeleted:       "vm-deleted",
-		EventVMSuspended:     "vm-suspended",
-		EventBackupFailed:    "backup-failed",
-		EventNodeOffline:     "node-offline",
+		EventVMCreated:         "vm-created",
+		EventVMDeleted:         "vm-deleted",
+		EventVMSuspended:       "vm-suspended",
+		EventBackupFailed:      "backup-failed",
+		EventNodeOffline:       "node-offline",
 		EventBandwidthExceeded: "bandwidth-exceeded",
 	}
 	if template, ok := templates[eventType]; ok {
@@ -304,11 +304,11 @@ func (s *NotificationService) formatTelegramMessage(payload *NotificationPayload
 // getEmojiForEvent returns an emoji for the event type.
 func (s *NotificationService) getEmojiForEvent(eventType string) string {
 	emojis := map[string]string{
-		EventVMCreated:       "🎉",
-		EventVMDeleted:       "🗑️",
-		EventVMSuspended:     "⏸️",
-		EventBackupFailed:    "⚠️",
-		EventNodeOffline:     "🔴",
+		EventVMCreated:         "🎉",
+		EventVMDeleted:         "🗑️",
+		EventVMSuspended:       "⏸️",
+		EventBackupFailed:      "⚠️",
+		EventNodeOffline:       "🔴",
 		EventBandwidthExceeded: "📊",
 	}
 	if emoji, ok := emojis[eventType]; ok {
@@ -369,9 +369,9 @@ func (s *NotificationService) TriggerBackupFailed(ctx context.Context, customerI
 		ResourceID:   backupID,
 		ResourceType: "backup",
 		Data: map[string]any{
-			"hostname":  hostname,
-			"vm_id":     vmID,
-			"error":     errorMsg,
+			"hostname": hostname,
+			"vm_id":    vmID,
+			"error":    errorMsg,
 		},
 	})
 }
@@ -398,9 +398,9 @@ func (s *NotificationService) TriggerBandwidthExceeded(ctx context.Context, cust
 		ResourceID:   vmID,
 		ResourceType: "vm",
 		Data: map[string]any{
-			"hostname":  hostname,
-			"used_gb":   usedGB,
-			"limit_gb":  limitGB,
+			"hostname": hostname,
+			"used_gb":  usedGB,
+			"limit_gb": limitGB,
 		},
 	})
 }

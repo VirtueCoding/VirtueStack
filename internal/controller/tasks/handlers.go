@@ -15,6 +15,10 @@ import (
 	"github.com/alexedwards/argon2id"
 )
 
+// MACPrefix is the OUI prefix for VirtueStack VM MAC addresses.
+// Uses QEMU's default prefix (52:54:00) for compatibility.
+const MACPrefix = "52:54:00"
+
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
 	VMRepo         *repository.VMRepository
@@ -361,7 +365,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	cloudInitPath, err := deps.NodeClient.GenerateCloudInit(ctx, payload.NodeID, cloudInitCfg)
 	if err != nil {
 		logger.Error("failed to generate cloud-init", "error", err)
-		// Cleanup: try to delete the cloned disk
+		// Cleanup of cloned disk is best-effort; primary error is cloud-init failure
 		_ = deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID)
 		return fmt.Errorf("generating cloud-init for VM %s: %w", payload.VMID, err)
 	}
@@ -708,9 +712,6 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 // generateMACAddress generates a MAC address from a VM ID.
 // Uses a consistent algorithm to generate reproducible MAC addresses.
 func generateMACAddress(vmID string) string {
-	// Use a fixed prefix for VirtueStack VMs
-	prefix := "52:54:00" // QEMU default prefix
-
 	// Generate the last 3 octets from the VM ID hash
 	// This is a simple deterministic approach
 	hash := 0
@@ -722,7 +723,7 @@ func generateMACAddress(vmID string) string {
 	octet5 := (hash >> 8) & 0xFF
 	octet6 := hash & 0xFF
 
-	return fmt.Sprintf("%s:%02x:%02x:%02x", prefix, octet4, octet5, octet6)
+	return fmt.Sprintf("%s:%02x:%02x:%02x", MACPrefix, octet4, octet5, octet6)
 }
 
 // hashPasswordParams holds the parameters for Argon2id password hashing.

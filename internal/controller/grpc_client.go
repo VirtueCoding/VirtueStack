@@ -109,6 +109,7 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 }
 
 func (nc *NodeClient) ReleaseConnection(nodeID string, conn *grpc.ClientConn) {
+	// Parameters intentionally unused - stub for future connection pooling implementation
 	_ = nodeID
 	_ = conn
 }

@@ -41,8 +41,9 @@ export default function ForgotPasswordPage() {
     try {
       await apiClient.post("/admin/auth/forgot-password", { email: data.email }, false);
       setIsSuccess(true);
-    } catch (err: any) {
-      setError(err.message || "Failed to send reset instructions.");
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to send reset instructions.";
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

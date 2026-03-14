@@ -30,22 +30,13 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 			return
 		}
 
-		h.logger.Warn("failed to start VM",
+		h.logger.Error("failed to start VM",
+			"error", err,
 			"vm_id", vmID,
 			"customer_id", customerID,
-			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		// Check for specific error conditions
-		errMsg := err.Error()
-		if slices.ContainsFunc([]string{"cannot start VM in status"}, func(needle string) bool {
-			return strings.Contains(errMsg, needle)
-		}) {
-			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
-			return
-		}
-
-		respondWithError(c, http.StatusInternalServerError, "VM_START_FAILED", errMsg)
+		respondWithError(c, http.StatusInternalServerError, "VM_START_FAILED", "Failed to start VM")
 		return
 	}
 
@@ -78,21 +69,13 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 			return
 		}
 
-		h.logger.Warn("failed to stop VM",
+		h.logger.Error("failed to stop VM",
+			"error", err,
 			"vm_id", vmID,
 			"customer_id", customerID,
-			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		errMsg := err.Error()
-		if slices.ContainsFunc([]string{"cannot stop VM in status"}, func(needle string) bool {
-			return strings.Contains(errMsg, needle)
-		}) {
-			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
-			return
-		}
-
-		respondWithError(c, http.StatusInternalServerError, "VM_STOP_FAILED", errMsg)
+		respondWithError(c, http.StatusInternalServerError, "VM_STOP_FAILED", "Failed to stop VM")
 		return
 	}
 
@@ -125,21 +108,13 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 			return
 		}
 
-		h.logger.Warn("failed to restart VM",
+		h.logger.Error("failed to restart VM",
+			"error", err,
 			"vm_id", vmID,
 			"customer_id", customerID,
-			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		errMsg := err.Error()
-		if slices.ContainsFunc([]string{"cannot restart VM in status"}, func(needle string) bool {
-			return strings.Contains(errMsg, needle)
-		}) {
-			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
-			return
-		}
-
-		respondWithError(c, http.StatusInternalServerError, "VM_RESTART_FAILED", errMsg)
+		respondWithError(c, http.StatusInternalServerError, "VM_RESTART_FAILED", "Failed to restart VM")
 		return
 	}
 
@@ -172,21 +147,13 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 			return
 		}
 
-		h.logger.Warn("failed to force stop VM",
+		h.logger.Error("failed to force stop VM",
+			"error", err,
 			"vm_id", vmID,
 			"customer_id", customerID,
-			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		errMsg := err.Error()
-		if slices.ContainsFunc([]string{"cannot stop VM in status"}, func(needle string) bool {
-			return strings.Contains(errMsg, needle)
-		}) {
-			respondWithError(c, http.StatusConflict, "INVALID_VM_STATE", errMsg)
-			return
-		}
-
-		respondWithError(c, http.StatusInternalServerError, "VM_FORCE_STOP_FAILED", errMsg)
+		respondWithError(c, http.StatusInternalServerError, "VM_FORCE_STOP_FAILED", "Failed to force stop VM")
 		return
 	}
 

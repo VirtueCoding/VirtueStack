@@ -46,20 +46,13 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 			return
 		}
 
-		h.logger.Warn("failed to get VM metrics",
+		h.logger.Error("failed to get VM metrics",
+			"error", err,
 			"vm_id", vmID,
 			"customer_id", customerID,
-			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		// Check if VM is not running
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "not running") {
-			respondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to get metrics")
-			return
-		}
-
-		respondWithError(c, http.StatusInternalServerError, "METRICS_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "METRICS_FAILED", "Failed to retrieve VM metrics")
 		return
 	}
 

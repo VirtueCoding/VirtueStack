@@ -73,13 +73,20 @@ function handleWebhook(): void
         return;
     }
 
-    // Process the event
-    $eventType = $data['event'] ?? '';
-    $taskId = $data['task_id'] ?? '';
-    $vmId = $data['vm_id'] ?? '';
-    $whmcsServiceId = $data['whmcs_service_id'] ?? 0;
-    $result = $data['result'] ?? [];
-    $timestamp = $data['timestamp'] ?? date('c');
+    // Process the event with input validation
+    $eventType = isset($data['event']) && is_string($data['event']) ? htmlspecialchars(trim($data['event']), ENT_QUOTES, 'UTF-8') : '';
+    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? htmlspecialchars(trim($data['task_id']), ENT_QUOTES, 'UTF-8') : '';
+    $vmId = isset($data['vm_id']) && is_string($data['vm_id']) ? htmlspecialchars(trim($data['vm_id']), ENT_QUOTES, 'UTF-8') : '';
+    $whmcsServiceId = isset($data['whmcs_service_id']) && is_int($data['whmcs_service_id']) ? $data['whmcs_service_id'] : 0;
+    $result = isset($data['result']) && is_array($data['result']) ? $data['result'] : [];
+    $timestamp = isset($data['timestamp']) && is_string($data['timestamp']) ? htmlspecialchars(trim($data['timestamp']), ENT_QUOTES, 'UTF-8') : date('c');
+
+    // Validate required fields
+    if (empty($eventType) || empty($taskId)) {
+        logWebhook('error', 'Missing required fields in webhook payload');
+        sendResponse(400, ['error' => 'Missing required fields: event, task_id']);
+        return;
+    }
 
     logWebhook('info', "Received webhook: {$eventType}", [
         'task_id' => $taskId,

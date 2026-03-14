@@ -54,7 +54,6 @@ export default function CustomersPage() {
         const data = await adminCustomersApi.getCustomers();
         setCustomers(data || []);
       } catch (err) {
-        console.error("Failed to load customers", err);
         toast({
           title: "Error",
           description: "Failed to load customers.",

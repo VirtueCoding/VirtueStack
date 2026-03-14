@@ -19,6 +19,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -310,6 +311,21 @@ func (s *Server) GetIPAMService() tasks.IPAMService {
 
 // setupRoutes configures all HTTP routes.
 func (s *Server) setupRoutes() {
+	// CORS configuration - use configured origins or defaults
+	allowOrigins := s.config.CORSOrigins
+	if len(allowOrigins) == 0 {
+		allowOrigins = []string{"https://virtuestack.com", "https://app.virtuestack.com"}
+	}
+	corsConfig := cors.Config{
+		AllowOrigins:     allowOrigins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID", "X-CSRF-Token"},
+		ExposeHeaders:    []string{"Content-Length", "X-Request-ID"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}
+	s.router.Use(cors.New(corsConfig))
+
 	// Health check endpoints
 	s.router.GET("/health", s.healthHandler)
 	s.router.GET("/ready", s.readinessHandler)

@@ -140,8 +140,7 @@ async function parseError(response: Response): Promise<ApiClientError> {
       correlationId = data.error.correlation_id;
     }
   } catch (err) {
-    console.error("Failed to parse error response JSON:", err);
-    // If we can't parse JSON, use status-based message
+    // JSON parse error - will fallback to statusText below
     message = response.statusText || message;
   }
 
@@ -258,7 +257,7 @@ export const adminAuthApi = {
         await apiClient.post("/admin/auth/logout", { refresh_token: refreshToken }, true);
       } catch (error) {
         // Even if logout fails server-side, clear local tokens
-        console.error("Logout error:", error);
+        // Error is intentionally not logged to avoid console noise in production
       }
     }
     tokenStorage.clearTokens();
@@ -316,8 +315,8 @@ export const adminNodesApi = {
   /**
    * Get a single node by ID
    */
-  async getNodes(): Promise<any[]> {
-    return apiClient.get<any[]>("/admin/nodes");
+  async getNodes(): Promise<Node[]> {
+    return apiClient.get<Node[]>("/admin/nodes");
   },
 
   async getNode(id: string): Promise<Node> {
@@ -356,8 +355,8 @@ export const adminCustomersApi = {
   /**
    * Suspend a customer account
    */
-  async getCustomers(): Promise<any[]> {
-    return apiClient.get<any[]>("/admin/customers");
+  async getCustomers(): Promise<Customer[]> {
+    return apiClient.get<Customer[]>("/admin/customers");
   },
 
   async suspendCustomer(id: string): Promise<void> {
@@ -417,8 +416,8 @@ export const adminPlansApi = {
   /**
    * Get a single plan by ID
    */
-  async getPlans(): Promise<any[]> {
-    return apiClient.get<any[]>("/admin/plans");
+  async getPlans(): Promise<Plan[]> {
+    return apiClient.get<Plan[]>("/admin/plans");
   },
 
   async getPlan(id: string): Promise<Plan> {

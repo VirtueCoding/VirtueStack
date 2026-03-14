@@ -5,7 +5,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -78,6 +77,7 @@ type ControllerConfig struct {
 	LogLevel       string   `yaml:"log_level" env:"LOG_LEVEL"`
 	Environment    string   `yaml:"environment" env:"APP_ENV"`
 	ConsoleBaseURL string   `yaml:"console_base_url" env:"CONSOLE_BASE_URL"`
+	CORSOrigins    []string `yaml:"cors_origins" env:"CORS_ORIGINS"`
 	DNSNameservers []string `yaml:"dns_nameservers" env:"DNS_NAMESERVERS"`
 	CephUser       string   `yaml:"ceph_user" env:"CEPH_USER"`
 	CephSecretUUID string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
@@ -95,6 +95,12 @@ type NodeAgentConfig struct {
 	ControllerGRPCAddr string `yaml:"controller_grpc_addr" env:"CONTROLLER_GRPC_ADDR"`
 	NodeID             string `yaml:"node_id" env:"NODE_ID"`
 
+	// Libvirt configuration
+	LibvirtURI string `yaml:"libvirt_uri" env:"LIBVIRT_URI"`
+
+	// VNC configuration
+	VNCHost string `yaml:"vnc_host" env:"VNC_HOST"`
+
 	// Ceph storage configuration
 	CephPool string `yaml:"ceph_pool" env:"CEPH_POOL"`
 	CephUser string `yaml:"ceph_user" env:"CEPH_USER"`
@@ -106,6 +112,7 @@ type NodeAgentConfig struct {
 	TLSCAFile   string `yaml:"tls_ca_file" env:"TLS_CA_FILE"`
 
 	// Paths
+	DataDir        string `yaml:"data_dir" env:"DATA_DIR"`
 	CloudInitPath  string `yaml:"cloudinit_path" env:"CLOUDINIT_PATH"`
 	ISOStoragePath string `yaml:"iso_storage_path" env:"ISO_STORAGE_PATH"`
 
@@ -229,6 +236,9 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	if v := os.Getenv("CONSOLE_BASE_URL"); v != "" {
 		cfg.ConsoleBaseURL = v
 	}
+	if v := os.Getenv("CORS_ORIGINS"); v != "" {
+		cfg.CORSOrigins = splitAndTrimCSV(v)
+	}
 	if v := os.Getenv("DNS_NAMESERVERS"); v != "" {
 		cfg.DNSNameservers = splitAndTrimCSV(v)
 	}
@@ -288,6 +298,12 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	if v := os.Getenv("NODE_ID"); v != "" {
 		cfg.NodeID = v
 	}
+	if v := os.Getenv("LIBVIRT_URI"); v != "" {
+		cfg.LibvirtURI = v
+	}
+	if v := os.Getenv("VNC_HOST"); v != "" {
+		cfg.VNCHost = v
+	}
 	if v := os.Getenv("CEPH_POOL"); v != "" {
 		cfg.CephPool = v
 	}
@@ -305,6 +321,9 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	}
 	if v := os.Getenv("TLS_CA_FILE"); v != "" {
 		cfg.TLSCAFile = v
+	}
+	if v := os.Getenv("DATA_DIR"); v != "" {
+		cfg.DataDir = v
 	}
 	if v := os.Getenv("CLOUDINIT_PATH"); v != "" {
 		cfg.CloudInitPath = v
@@ -451,9 +470,7 @@ func validateDefaultPasswords() error {
 		if isProduction {
 			return fmt.Errorf("FATAL: weak or short (<12 chars) passwords detected in production for: %s", strings.Join(weakFound, ", "))
 		}
-		for _, envVar := range weakFound {
-			log.Printf("WARNING: %s is set to a weak default password - please change in production", envVar)
-		}
+		// Weak passwords are logged by the logging middleware; skip console output here
 	}
 
 	return nil

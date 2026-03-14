@@ -52,7 +52,6 @@ export default function NodesPage() {
         const data = await adminNodesApi.getNodes();
         setNodes(data || []);
       } catch (err) {
-        console.error("Failed to load nodes", err);
         toast({
           title: "Error",
           description: "Failed to load nodes.",

@@ -43,12 +43,12 @@ type APIKeyResponse struct {
 
 // validPermissions defines the allowed permission scopes for customer API keys.
 var validPermissions = map[string]bool{
-	"vm:read":       true,
-	"vm:write":      true,
-	"vm:power":      true,
-	"backup:read":   true,
-	"backup:write":  true,
-	"snapshot:read": true,
+	"vm:read":        true,
+	"vm:write":       true,
+	"vm:power":       true,
+	"backup:read":    true,
+	"backup:write":   true,
+	"snapshot:read":  true,
 	"snapshot:write": true,
 }
 
@@ -106,8 +106,12 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 	correlationID := middleware.GetCorrelationID(c)
 
 	var req CreateAPIKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

@@ -31,8 +31,6 @@ import (
 const (
 	// DefaultListenAddr is the default gRPC listen address for the node agent.
 	DefaultListenAddr = ":50052"
-	// LibvirtURI is the libvirt connection URI.
-	LibvirtURI = "qemu:///system"
 )
 
 // Server represents the VirtueStack Node Agent gRPC server.
@@ -49,17 +47,24 @@ type Server struct {
 // NewServer creates a new Node Agent server.
 // It connects to libvirt, sets up mTLS, and initializes the VM manager.
 func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error) {
-	// Connect to libvirt
-	libvirtConn, err := libvirt.NewConnect(LibvirtURI)
+	// Connect to libvirt using configured URI or default
+	libvirtURI := cfg.LibvirtURI
+	if libvirtURI == "" {
+		libvirtURI = "qemu:///system"
+	}
+	libvirtConn, err := libvirt.NewConnect(libvirtURI)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to libvirt at %s: %w", LibvirtURI, err)
+		return nil, fmt.Errorf("connecting to libvirt at %s: %w", libvirtURI, err)
 	}
 
 	// Create VM manager with data directory for persistence
-	dataDir := "/var/lib/virtuestack"
-	if cfg.CloudInitPath != "" {
+	dataDir := cfg.DataDir
+	if dataDir == "" && cfg.CloudInitPath != "" {
 		// Use parent directory of CloudInitPath as data directory
 		dataDir = filepath.Dir(cfg.CloudInitPath)
+	}
+	if dataDir == "" {
+		dataDir = "/var/lib/virtuestack"
 	}
 	vmManager := vm.NewManager(libvirtConn, logger, dataDir)
 

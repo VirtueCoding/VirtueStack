@@ -91,7 +91,7 @@ add_hook('AfterModuleCreate', 1, function (array $params) {
  */
 add_hook('ClientAreaPage', 1, function (array $vars) {
     // Check if this is a webhook request
-    $webhookAction = $_GET['vs_webhook'] ?? '';
+    $webhookAction = isset($_GET['vs_webhook']) ? htmlspecialchars(trim($_GET['vs_webhook']), ENT_QUOTES, 'UTF-8') : '';
     
     if ($webhookAction === 'callback') {
         handleProvisioningWebhook();
@@ -522,10 +522,15 @@ function handleProvisioningWebhook(): void
         exit('Invalid signature');
     }
 
-    // Process webhook event
-    $eventType = $data['event'] ?? '';
-    $taskId = $data['task_id'] ?? '';
-    $whmcsServiceId = $data['whmcs_service_id'] ?? 0;
+    // Process webhook event with validation
+    $eventType = isset($data['event']) && is_string($data['event']) ? htmlspecialchars(trim($data['event']), ENT_QUOTES, 'UTF-8') : '';
+    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? htmlspecialchars(trim($data['task_id']), ENT_QUOTES, 'UTF-8') : '';
+    $whmcsServiceId = isset($data['whmcs_service_id']) && is_int($data['whmcs_service_id']) ? $data['whmcs_service_id'] : 0;
+    
+    if (empty($eventType) || empty($taskId)) {
+        http_response_code(400);
+        exit('Missing required fields: event, task_id');
+    }
 
     logActivity("VirtueStack: Received webhook event '{$eventType}' for task {$taskId}");
 

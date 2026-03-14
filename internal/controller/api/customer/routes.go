@@ -102,6 +102,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	protected := customer.Group("")
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireUserType("customer"))
+	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 	{
 		protected.POST("/auth/logout", handler.Logout)
 

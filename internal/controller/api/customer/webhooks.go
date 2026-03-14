@@ -8,6 +8,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
@@ -43,14 +44,14 @@ type WebhookResponse struct {
 
 // WebhookDeliveryResponse represents a webhook delivery attempt.
 type WebhookDeliveryResponse struct {
-	ID             string     `json:"id"`
-	Event          string     `json:"event"`
-	AttemptCount   int        `json:"attempt_count"`
-	ResponseStatus *int       `json:"response_status,omitempty"`
-	Success        bool       `json:"success"`
-	NextRetryAt    *string    `json:"next_retry_at,omitempty"`
-	DeliveredAt    *string    `json:"delivered_at,omitempty"`
-	CreatedAt      string     `json:"created_at"`
+	ID             string  `json:"id"`
+	Event          string  `json:"event"`
+	AttemptCount   int     `json:"attempt_count"`
+	ResponseStatus *int    `json:"response_status,omitempty"`
+	Success        bool    `json:"success"`
+	NextRetryAt    *string `json:"next_retry_at,omitempty"`
+	DeliveredAt    *string `json:"delivered_at,omitempty"`
+	CreatedAt      string  `json:"created_at"`
 }
 
 // toWebhookResponse converts a repository webhook to an API response.
@@ -72,12 +73,12 @@ func toWebhookResponse(w *repository.Webhook) WebhookResponse {
 func toDeliveryResponse(d *repository.WebhookDelivery) WebhookDeliveryResponse {
 	success := d.Status == repository.DeliveryStatusDelivered
 	resp := WebhookDeliveryResponse{
-		ID:           d.ID,
-		Event:        d.Event,
-		AttemptCount: d.AttemptCount,
+		ID:             d.ID,
+		Event:          d.Event,
+		AttemptCount:   d.AttemptCount,
 		ResponseStatus: d.ResponseStatus,
-		Success:      success,
-		CreatedAt:    d.CreatedAt.Format(time.RFC3339),
+		Success:        success,
+		CreatedAt:      d.CreatedAt.Format(time.RFC3339),
 	}
 	if d.NextRetryAt != nil {
 		t := d.NextRetryAt.Format(time.RFC3339)
@@ -122,8 +123,12 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	var req CreateWebhookRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -215,8 +220,12 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 	}
 
 	var req UpdateWebhookRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

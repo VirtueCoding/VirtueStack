@@ -37,6 +37,12 @@ const (
 
 	// MaxAdminSessions is the maximum concurrent sessions for admin users.
 	MaxAdminSessions = 3
+
+	// MaxFailedLoginAttempts is the maximum failed login attempts before account lockout.
+	MaxFailedLoginAttempts = 5
+
+	// LockoutWindow is the time window for counting failed login attempts.
+	LockoutWindow = 15 * time.Minute
 )
 
 // Argon2idParams holds the parameters for Argon2id password hashing.
@@ -84,6 +90,16 @@ func NewAuthService(
 // If the customer has 2FA enabled, returns temp_token with requires_2fa=true.
 // Otherwise, returns access_token and refresh_token directly.
 func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
+	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, email, LockoutWindow)
+	if err != nil {
+		return nil, "", fmt.Errorf("checking login attempts: %w", err)
+	}
+
+	if failedCount >= MaxFailedLoginAttempts {
+		s.logger.Warn("login attempt on locked account", "email", email, "attempts", failedCount)
+		return nil, "", sharederrors.ErrAccountLocked
+	}
+
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -93,22 +109,24 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 		return nil, "", fmt.Errorf("getting customer by email: %w", err)
 	}
 
-	// Verify password using Argon2id
 	match, err := s.verifyPassword(password, customer.PasswordHash)
 	if err != nil {
 		return nil, "", fmt.Errorf("verifying password: %w", err)
 	}
 	if !match {
-		s.logger.Warn("invalid password attempt", "customer_id", customer.ID)
+		s.logger.Warn("invalid password attempt", "customer_id", customer.ID, "email", email)
+		// Audit logging error intentionally ignored - login failure already returned to user
+		_ = s.customerRepo.RecordFailedLogin(ctx, email)
 		return nil, "", sharederrors.ErrUnauthorized
 	}
 
-	// Check if customer account is active
+	// Audit logging error intentionally ignored - not critical for login success
+	_ = s.customerRepo.ClearFailedLogins(ctx, email)
+
 	if customer.Status != models.CustomerStatusActive {
 		return nil, "", fmt.Errorf("account is %s", customer.Status)
 	}
 
-	// If 2FA is enabled, return temp token for 2FA verification
 	if customer.TOTPEnabled && customer.TOTPSecretEncrypted != nil {
 		tempToken, err := middleware.GenerateTempToken(s.authConfig, customer.ID, "customer")
 		if err != nil {
@@ -124,7 +142,6 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 		}, "", nil
 	}
 
-	// No 2FA - generate tokens and create session
 	accessToken, err := middleware.GenerateAccessToken(s.authConfig, customer.ID, "customer", "", AccessTokenDuration)
 	if err != nil {
 		return nil, "", fmt.Errorf("generating access token: %w", err)
@@ -135,7 +152,6 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 		return nil, "", fmt.Errorf("generating refresh token: %w", err)
 	}
 
-	// Create session in database
 	refreshTokenHash := crypto.HashSHA256(refreshToken)
 	session := &models.Session{
 		ID:               uuid.New().String(),
@@ -276,7 +292,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken, ipAddress,
 
 	// Check if session has expired
 	if time.Now().After(session.ExpiresAt) {
-		// Clean up expired session
+		// Cleanup of expired session is best-effort; auth failure is already returned
 		_ = s.customerRepo.DeleteSession(ctx, session.ID)
 		return nil, "", sharederrors.ErrUnauthorized
 	}
