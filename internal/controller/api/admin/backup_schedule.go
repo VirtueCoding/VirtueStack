@@ -1,0 +1,236 @@
+// Package admin provides HTTP handlers for the Admin API.
+package admin
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// BackupScheduleCreateRequest represents the request body for creating a backup schedule.
+type BackupScheduleCreateRequest struct {
+	VMID           string `json:"vm_id" validate:"required,uuid"`
+	CustomerID     string `json:"customer_id" validate:"required,uuid"`
+	Frequency      string `json:"frequency" validate:"required,oneof=daily weekly monthly"`
+	RetentionCount int    `json:"retention_count" validate:"required,min=1"`
+	Active         bool   `json:"active"`
+}
+
+// BackupScheduleUpdateRequest represents the request body for updating a backup schedule.
+type BackupScheduleUpdateRequest struct {
+	Active    *bool   `json:"active,omitempty"`
+	Frequency *string `json:"frequency,omitempty" validate:"omitempty,oneof=daily weekly monthly"`
+}
+
+// CreateBackupSchedule handles POST /backup-schedules - creates a new backup schedule.
+func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
+	var req BackupScheduleCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if _, err := uuid.Parse(req.VMID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
+		return
+	}
+	if _, err := uuid.Parse(req.CustomerID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+		return
+	}
+
+	freq := strings.ToLower(strings.TrimSpace(req.Frequency))
+	if freq != "daily" && freq != "weekly" && freq != "monthly" {
+		respondWithError(c, http.StatusBadRequest, "INVALID_FREQUENCY", "frequency must be daily, weekly, or monthly")
+		return
+	}
+
+	if req.RetentionCount <= 0 {
+		respondWithError(c, http.StatusBadRequest, "INVALID_RETENTION", "retention_count must be greater than 0")
+		return
+	}
+
+	schedule := &models.BackupSchedule{
+		VMID:           req.VMID,
+		CustomerID:     req.CustomerID,
+		Frequency:      freq,
+		RetentionCount: req.RetentionCount,
+		Active:         req.Active,
+	}
+
+	scheduleID, err := h.backupService.CreateSchedule(c.Request.Context(), schedule)
+	if err != nil {
+		h.logger.Error("failed to create backup schedule",
+			"error", err,
+			"vm_id", req.VMID,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SCHEDULE_CREATE_FAILED", "Failed to create backup schedule")
+		return
+	}
+
+	h.logAuditEvent(c, "backup_schedule.create", "backup_schedule", scheduleID, req, true)
+
+	h.logger.Info("backup schedule created",
+		"schedule_id", scheduleID,
+		"vm_id", req.VMID,
+		"frequency", freq,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusCreated, models.Response{Data: gin.H{
+		"id":          scheduleID,
+		"next_run_at": schedule.NextRunAt,
+	}})
+}
+
+// ListBackupSchedules handles GET /backup-schedules - lists all backup schedules.
+func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
+	vmID := c.Query("vm_id")
+
+	if vmID != "" {
+		if _, err := uuid.Parse(vmID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
+			return
+		}
+	}
+
+	schedules, err := h.backupService.ListSchedules(c.Request.Context(), vmID)
+	if err != nil {
+		h.logger.Error("failed to list backup schedules",
+			"error", err,
+			"vm_id", vmID,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SCHEDULE_LIST_FAILED", "Failed to retrieve backup schedules")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: schedules})
+}
+
+// GetBackupSchedule handles GET /backup-schedules/:id - gets a backup schedule by ID.
+func (h *AdminHandler) GetBackupSchedule(c *gin.Context) {
+	scheduleID := c.Param("id")
+
+	if _, err := uuid.Parse(scheduleID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_SCHEDULE_ID", "Schedule ID must be a valid UUID")
+		return
+	}
+
+	schedule, err := h.backupService.GetSchedule(c.Request.Context(), scheduleID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "SCHEDULE_NOT_FOUND", "Backup schedule not found")
+			return
+		}
+		h.logger.Error("failed to get backup schedule",
+			"schedule_id", scheduleID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SCHEDULE_GET_FAILED", "Failed to retrieve backup schedule")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: schedule})
+}
+
+// UpdateBackupSchedule handles PUT /backup-schedules/:id - updates a backup schedule.
+func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
+	scheduleID := c.Param("id")
+
+	if _, err := uuid.Parse(scheduleID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_SCHEDULE_ID", "Schedule ID must be a valid UUID")
+		return
+	}
+
+	var req BackupScheduleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if req.Active == nil && req.Frequency == nil {
+		respondWithError(c, http.StatusBadRequest, "NO_UPDATE_FIELDS", "Must provide active or frequency to update")
+		return
+	}
+
+	if req.Active != nil {
+		if err := h.backupService.UpdateSchedule(c.Request.Context(), scheduleID, *req.Active); err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNotFound) {
+				respondWithError(c, http.StatusNotFound, "SCHEDULE_NOT_FOUND", "Backup schedule not found")
+				return
+			}
+			h.logger.Error("failed to update backup schedule active",
+				"schedule_id", scheduleID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "SCHEDULE_UPDATE_FAILED", "Failed to update backup schedule")
+			return
+		}
+	}
+
+	if req.Frequency != nil {
+		freq := strings.ToLower(strings.TrimSpace(*req.Frequency))
+		if freq != "daily" && freq != "weekly" && freq != "monthly" {
+			respondWithError(c, http.StatusBadRequest, "INVALID_FREQUENCY", "frequency must be daily, weekly, or monthly")
+			return
+		}
+
+		if err := h.backupService.UpdateScheduleFrequency(c.Request.Context(), scheduleID, freq); err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNotFound) {
+				respondWithError(c, http.StatusNotFound, "SCHEDULE_NOT_FOUND", "Backup schedule not found")
+				return
+			}
+			h.logger.Error("failed to update backup schedule frequency",
+				"schedule_id", scheduleID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "SCHEDULE_UPDATE_FAILED", "Failed to update backup schedule frequency")
+			return
+		}
+	}
+
+	h.logAuditEvent(c, "backup_schedule.update", "backup_schedule", scheduleID, req, true)
+
+	h.logger.Info("backup schedule updated",
+		"schedule_id", scheduleID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{
+		"message": "Schedule updated",
+	}})
+}
+
+// DeleteBackupSchedule handles DELETE /backup-schedules/:id - deletes a backup schedule.
+func (h *AdminHandler) DeleteBackupSchedule(c *gin.Context) {
+	scheduleID := c.Param("id")
+
+	if _, err := uuid.Parse(scheduleID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_SCHEDULE_ID", "Schedule ID must be a valid UUID")
+		return
+	}
+
+	if err := h.backupService.DeleteSchedule(c.Request.Context(), scheduleID); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "SCHEDULE_NOT_FOUND", "Backup schedule not found")
+			return
+		}
+		h.logger.Error("failed to delete backup schedule",
+			"schedule_id", scheduleID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SCHEDULE_DELETE_FAILED", "Failed to delete backup schedule")
+		return
+	}
+
+	h.logAuditEvent(c, "backup_schedule.delete", "backup_schedule", scheduleID, nil, true)
+
+	h.logger.Info("backup schedule deleted",
+		"schedule_id", scheduleID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.Status(http.StatusNoContent)
+}

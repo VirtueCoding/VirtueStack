@@ -28,18 +28,18 @@ func NewCustomerRepository(db DB) *CustomerRepository {
 func scanCustomer(row pgx.Row) (models.Customer, error) {
 	var c models.Customer
 	err := row.Scan(
-		&c.ID, &c.Email, &c.PasswordHash, &c.Name,
+		&c.ID, &c.Email, &c.PasswordHash, &c.Name, &c.Phone,
 		&c.WHMCSClientID, &c.TOTPSecretEncrypted, &c.TOTPEnabled,
-		&c.TOTPBackupCodesHash, &c.Status,
+		&c.TOTPBackupCodesHash, &c.TOTPBackupCodesShown, &c.Status,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
 	return c, err
 }
 
 const customerSelectCols = `
-	id, email, password_hash, name,
+	id, email, password_hash, name, phone,
 	whmcs_client_id, totp_secret_encrypted, totp_enabled,
-	totp_backup_codes_hash, status,
+	totp_backup_codes_hash, totp_backup_codes_shown, status,
 	created_at, updated_at`
 
 // Create inserts a new customer record into the database.
@@ -168,11 +168,12 @@ func (r *CustomerRepository) SoftDelete(ctx context.Context, id string) error {
 // Note: This is intentionally simple - full RFC 5322 validation is not practical.
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
+var phoneRegex = regexp.MustCompile(`^\+?[0-9\s\-\(\)]{1,20}$`)
+
 // Update updates a customer's profile information (name and email).
 // Uses a transaction to ensure atomic updates with audit logging.
 // Validates email format and name constraints before updating.
 func (r *CustomerRepository) Update(ctx context.Context, customer *models.Customer) error {
-	// Validate name
 	if strings.TrimSpace(customer.Name) == "" {
 		return sharederrors.NewValidationError("name", "name cannot be empty")
 	}
@@ -180,7 +181,6 @@ func (r *CustomerRepository) Update(ctx context.Context, customer *models.Custom
 		return sharederrors.NewValidationError("name", "name cannot exceed 255 characters")
 	}
 
-	// Validate email
 	if strings.TrimSpace(customer.Email) == "" {
 		return sharederrors.NewValidationError("email", "email cannot be empty")
 	}
@@ -195,12 +195,13 @@ func (r *CustomerRepository) Update(ctx context.Context, customer *models.Custom
 		UPDATE customers SET
 			name = $1,
 			email = $2,
+			phone = $3,
 			updated_at = NOW()
-		WHERE id = $3 AND status != 'deleted'
+		WHERE id = $4 AND status != 'deleted'
 		RETURNING ` + customerSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		customer.Name, customer.Email, customer.ID,
+		customer.Name, customer.Email, customer.Phone, customer.ID,
 	)
 	updated, err := scanCustomer(row)
 	if err != nil {
@@ -211,6 +212,65 @@ func (r *CustomerRepository) Update(ctx context.Context, customer *models.Custom
 	}
 	*customer = updated
 	return nil
+}
+
+type ProfileUpdateParams struct {
+	Name  *string
+	Email *string
+	Phone *string
+}
+
+func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID string, params ProfileUpdateParams) (*models.Customer, error) {
+	existing, err := r.GetByID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("getting customer: %w", err)
+	}
+
+	if params.Name != nil {
+		name := strings.TrimSpace(*params.Name)
+		if name == "" {
+			return nil, sharederrors.NewValidationError("name", "name cannot be empty")
+		}
+		if len(name) > 100 {
+			return nil, sharederrors.NewValidationError("name", "name cannot exceed 100 characters")
+		}
+		existing.Name = name
+	}
+
+	if params.Email != nil {
+		email := strings.TrimSpace(*params.Email)
+		if email == "" {
+			return nil, sharederrors.NewValidationError("email", "email cannot be empty")
+		}
+		if len(email) > 254 {
+			return nil, sharederrors.NewValidationError("email", "email cannot exceed 254 characters")
+		}
+		if !emailRegex.MatchString(email) {
+			return nil, sharederrors.NewValidationError("email", "invalid email format")
+		}
+		existing.Email = email
+	}
+
+	if params.Phone != nil {
+		phone := strings.TrimSpace(*params.Phone)
+		if phone != "" {
+			if len(phone) > 20 {
+				return nil, sharederrors.NewValidationError("phone", "phone cannot exceed 20 characters")
+			}
+			if !phoneRegex.MatchString(phone) {
+				return nil, sharederrors.NewValidationError("phone", "invalid phone format")
+			}
+			existing.Phone = &phone
+		} else {
+			existing.Phone = nil
+		}
+	}
+
+	if err := r.Update(ctx, existing); err != nil {
+		return nil, fmt.Errorf("updating profile: %w", err)
+	}
+
+	return existing, nil
 }
 
 // CreateSession inserts a new session record into the database.
@@ -593,6 +653,63 @@ func (r *CustomerRepository) UpdateBackupCodes(ctx context.Context, userID strin
 	_, err := r.db.Exec(ctx, q, codes, userID)
 	if err != nil {
 		return fmt.Errorf("updating backup codes for user %s: %w", userID, err)
+	}
+	return nil
+}
+
+// UpdateTOTPEnabled updates the TOTP configuration for a customer.
+// When enabling, provide the encrypted secret and backup codes hash.
+// When disabling, set enabled=false and pass empty strings/slices.
+func (r *CustomerRepository) UpdateTOTPEnabled(ctx context.Context, id string, enabled bool, secretEncrypted *string, backupCodesHash []string) error {
+	const q = `
+		UPDATE customers SET
+			totp_enabled = $1,
+			totp_secret_encrypted = $2,
+			totp_backup_codes_hash = $3,
+			totp_backup_codes_shown = false,
+			updated_at = NOW()
+		WHERE id = $4 AND status != 'deleted'`
+	tag, err := r.db.Exec(ctx, q, enabled, secretEncrypted, backupCodesHash, id)
+	if err != nil {
+		return fmt.Errorf("updating customer %s TOTP settings: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating customer %s TOTP settings: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// UpdateBackupCodesShown marks that backup codes have been shown to the user.
+func (r *CustomerRepository) UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error {
+	const q = `
+		UPDATE customers SET
+			totp_backup_codes_shown = $1,
+			updated_at = NOW()
+		WHERE id = $2 AND status != 'deleted'`
+	tag, err := r.db.Exec(ctx, q, shown, id)
+	if err != nil {
+		return fmt.Errorf("updating customer %s backup codes shown flag: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating customer %s backup codes shown flag: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// UpdateBackupCodesWithShown updates backup codes and resets the shown flag.
+func (r *CustomerRepository) UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error {
+	const q = `
+		UPDATE customers SET
+			totp_backup_codes_hash = $1,
+			totp_backup_codes_shown = false,
+			updated_at = NOW()
+		WHERE id = $2 AND status != 'deleted'`
+	tag, err := r.db.Exec(ctx, q, backupCodesHash, id)
+	if err != nil {
+		return fmt.Errorf("updating customer %s backup codes: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating customer %s backup codes: %w", id, ErrNoRowsAffected)
 	}
 	return nil
 }

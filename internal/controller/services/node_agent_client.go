@@ -109,8 +109,6 @@ func (c *NodeAgentGRPCClient) GetNodeMetrics(ctx context.Context, nodeID string)
 	}
 
 	// Fetch metrics from node agent
-	// Note: When proto is generated, this will call the actual gRPC method
-	// For now, we simulate the response structure
 	metrics, err := c.fetchMetricsFromNode(ctx, conn, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching metrics from node %s: %w", nodeID, err)

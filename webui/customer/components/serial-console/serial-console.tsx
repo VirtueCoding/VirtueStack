@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Terminal, Trash2, Power, Wifi, WifiOff } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Terminal as TerminalIcon, Trash2, Power, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,228 +14,212 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-interface TerminalLine {
-  id: string;
-  text: string;
-  type: "output" | "input" | "system" | "error";
-}
+import "@xterm/xterm/css/xterm.css";
 
 interface SerialConsoleProps {
   vmId?: string;
   vmName?: string;
-  isConnected?: boolean;
+  token?: string;
 }
 
-const mockBootSequence = [
-  { text: "[ OK ] Started kernel", type: "system" as const },
-  { text: "[ OK ] Mounted /dev/vda1", type: "system" as const },
-  { text: "[ OK ] Started networking", type: "system" as const },
-  { text: "vm login: root", type: "output" as const },
-  { text: "Password: ", type: "output" as const },
-  { text: "Last login: Wed Mar 11 10:30:00 2026 from 10.0.1.1", type: "output" as const },
-  { text: "Welcome to VirtueStack VM Console", type: "output" as const },
-  { text: "Type 'help' for available commands.", type: "output" as const },
-  { text: "", type: "output" as const },
-];
+type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
 export function SerialConsole({
   vmId = "vm-001",
   vmName = "web-server-prod",
-  isConnected = true,
+  token,
 }: SerialConsoleProps) {
-  const [lines, setLines] = useState<TerminalLine[]>([]);
-  const [currentInput, setCurrentInput] = useState("");
-  const [isConnectedState, setIsConnectedState] = useState(isConnected);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const terminal = useRef<Terminal | null>(null);
+  const fitAddon = useRef<FitAddon | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus>("disconnected");
+  const [error, setError] = useState<string>("");
+  const [reconnectKey, setReconnectKey] = useState(0);
 
-  // Auto-scroll to bottom when new lines are added
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [lines]);
+  // Build WebSocket URL
+  const getWsUrl = useCallback(() => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}${tokenParam}`;
+  }, [vmId, token]);
 
-  // Initialize with boot sequence
   useEffect(() => {
-    const initializeTerminal = async () => {
-      // Simulate boot sequence with delays
-      for (const line of mockBootSequence) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        setLines((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substring(7),
-            text: line.text,
-            type: line.type,
-          },
-        ]);
-      }
-      // Add initial prompt
-      setLines((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36).substring(7),
-          text: `root@${vmName}:# `,
-          type: "output",
-        },
-      ]);
+    if (!terminalRef.current) return;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: "#0a0a0a",
+        foreground: "#e5e5e5",
+        cursor: "#22c55e",
+        selectionBackground: "#22c55e",
+        selectionForeground: "#0a0a0a",
+        black: "#000000",
+        red: "#ef4444",
+        green: "#22c55e",
+        yellow: "#eab308",
+        blue: "#3b82f6",
+        magenta: "#a855f7",
+        cyan: "#06b6d4",
+        white: "#e5e5e5",
+        brightBlack: "#525252",
+        brightRed: "#f87171",
+        brightGreen: "#4ade80",
+        brightYellow: "#facc15",
+        brightBlue: "#60a5fa",
+        brightMagenta: "#c084fc",
+        brightCyan: "#22d3ee",
+        brightWhite: "#ffffff",
+      },
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+
+    fitAddon.current = new FitAddon();
+    term.loadAddon(fitAddon.current);
+    term.loadAddon(new WebLinksAddon());
+
+    term.open(terminalRef.current);
+    fitAddon.current.fit();
+
+    term.writeln("\x1b[1;32mVirtueStack Serial Console\x1b[0m");
+    term.writeln(`\x1b[90mVM: ${vmName} (${vmId})\x1b[0m`);
+    term.writeln("\x1b[90mConnecting to serial port...\x1b[0m");
+    term.writeln("");
+
+    setStatus("connecting");
+    setError("");
+
+    const ws = new WebSocket(getWsUrl());
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setStatus("connected");
+      term.writeln("\x1b[1;32mConnected to serial console.\x1b[0m");
+      term.writeln("");
     };
 
-    initializeTerminal();
-  }, [vmName]);
+    ws.onmessage = (event) => {
+      if (event.data instanceof Blob) {
+        event.data.text().then((text) => {
+          term.write(text);
+        });
+      } else {
+        term.write(event.data);
+      }
+    };
 
-  const handleCommand = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentInput.trim()) return;
+    ws.onerror = (event) => {
+      setError("Connection error. Please check your network and try again.");
+      setStatus("error");
+      term.writeln("\x1b[1;31mConnection error.\x1b[0m");
+    };
 
-    // Add user input to terminal
-    setLines((prev) => [
-      ...prev,
-      {
-        id: Math.random().toString(36).substring(7),
-        text: currentInput,
-        type: "input",
-      },
-    ]);
+    ws.onclose = (event) => {
+      setStatus("disconnected");
+      term.writeln("");
+      if (!event.wasClean) {
+        term.writeln("\x1b[1;31mConnection closed unexpectedly.\x1b[0m");
+      } else {
+        term.writeln("\x1b[90mDisconnected from serial console.\x1b[0m");
+      }
+    };
 
-    // Process command
-    processCommand(currentInput);
-    setCurrentInput("");
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
 
-    // Focus input after command
-    setTimeout(() => inputRef.current?.focus(), 10);
+    terminal.current = term;
+
+    const handleResize = () => {
+      if (fitAddon.current) {
+        fitAddon.current.fit();
+        if (ws.readyState === WebSocket.OPEN && term) {
+          const { cols, rows } = term;
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      term.dispose();
+    };
+  }, [vmId, vmName, token, getWsUrl, reconnectKey]);
+
+  const handleDisconnect = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.close();
+    }
+    setStatus("disconnected");
   };
 
-  const processCommand = (command: string) => {
-    const normalizedCommand = command.trim().toLowerCase();
-    let response: string[] = [];
-
-    switch (normalizedCommand) {
-      case "help":
-        response = [
-          "Available commands:",
-          "  help     - Show this help message",
-          "  clear    - Clear terminal screen",
-          "  status   - Show VM status",
-          "  reboot   - Reboot the system",
-          "  whoami   - Show current user",
-          "  date     - Show current date/time",
-        ];
-        break;
-      case "clear":
-        setLines([]);
-        return;
-      case "status":
-        response = [
-          `VM: ${vmName}`,
-          `ID: ${vmId}`,
-          "Status: running",
-          "Uptime: 2h 15m 32s",
-        ];
-        break;
-      case "reboot":
-        response = ["Rebooting system...", "[ OK ] System halted"];
-        setTimeout(() => {
-          setLines([]);
-          // Reinitialize after "reboot"
-          mockBootSequence.forEach((line, index) => {
-            setTimeout(() => {
-              setLines((prev) => [
-                ...prev,
-                {
-                  id: Math.random().toString(36).substring(7),
-                  text: line.text,
-                  type: line.type,
-                },
-              ]);
-            }, index * 300);
-          });
-        }, 1500);
-        break;
-      case "whoami":
-        response = ["root"];
-        break;
-      case "date":
-        response = [new Date().toString()];
-        break;
-      default:
-        response = [`bash: ${command}: command not found`];
-    }
-
-    // Add response to terminal
-    setTimeout(() => {
-      response.forEach((text) => {
-        setLines((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substring(7),
-            text,
-            type: text.includes("not found") ? "error" : "output",
-          },
-        ]);
-      });
-      // Add new prompt
-      setLines((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36).substring(7),
-          text: `root@${vmName}:# `,
-          type: "output",
-        },
-      ]);
-    }, 100);
+  const handleReconnect = () => {
+    setReconnectKey((prev) => prev + 1);
   };
 
   const handleClear = () => {
-    setLines([]);
-    setCurrentInput("");
-    inputRef.current?.focus();
+    if (terminal.current) {
+      terminal.current.clear();
+      terminal.current.writeln("\x1b[1;32mVirtueStack Serial Console\x1b[0m");
+      terminal.current.writeln(`\x1b[90mVM: ${vmName} (${vmId})\x1b[0m`);
+      terminal.current.writeln("");
+    }
   };
 
   const handleReboot = () => {
-    setLines((prev) => [
-      ...prev,
-      {
-        id: Math.random().toString(36).substring(7),
-        text: "\n[ INFO ] System reboot initiated...",
-        type: "system",
-      },
-    ]);
-    setIsConnectedState(false);
+    if (terminal.current) {
+      terminal.current.writeln("");
+      terminal.current.writeln("\x1b[1;33m[ INFO ] System reboot initiated...\x1b[0m");
+      terminal.current.writeln("");
+    }
+    handleDisconnect();
     setTimeout(() => {
-      setLines([]);
-      setIsConnectedState(true);
-      // Reinitialize boot sequence
-      mockBootSequence.forEach((line, index) => {
-        setTimeout(() => {
-          setLines((prev) => [
-            ...prev,
-            {
-              id: Math.random().toString(36).substring(7),
-              text: line.text,
-              type: line.type,
-            },
-          ]);
-        }, index * 300);
-      });
-    }, 2000);
+      handleReconnect();
+    }, 500);
   };
 
-  const handleDisconnect = () => {
-    setIsConnectedState(!isConnectedState);
-  };
-
-  const getLineStyle = (type: TerminalLine["type"]) => {
-    switch (type) {
-      case "system":
-        return "text-cyan-400 font-semibold";
-      case "input":
-        return "text-white";
+  const getStatusBadge = () => {
+    switch (status) {
+      case "connected":
+        return (
+          <Badge variant="success" className="gap-1.5 font-mono text-xs">
+            <Wifi className="h-3 w-3" />
+            CONNECTED
+          </Badge>
+        );
+      case "connecting":
+        return (
+          <Badge variant="warning" className="gap-1.5 font-mono text-xs">
+            <Wifi className="h-3 w-3 animate-pulse" />
+            CONNECTING
+          </Badge>
+        );
       case "error":
-        return "text-red-400";
+        return (
+          <Badge variant="destructive" className="gap-1.5 font-mono text-xs">
+            <WifiOff className="h-3 w-3" />
+            ERROR
+          </Badge>
+        );
       default:
-        return "text-green-400";
+        return (
+          <Badge variant="secondary" className="gap-1.5 font-mono text-xs">
+            <WifiOff className="h-3 w-3" />
+            DISCONNECTED
+          </Badge>
+        );
     }
   };
 
@@ -241,31 +228,21 @@ export function SerialConsole({
       <CardHeader className="pb-3 border-b border-border">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Terminal className="h-5 w-5 text-green-500" />
+            <TerminalIcon className="h-5 w-5 text-green-500" />
             <CardTitle className="text-lg font-mono">
               Serial Console - {vmName}
             </CardTitle>
           </div>
           <div className="flex items-center gap-2">
-            <Badge
-              variant={isConnectedState ? "success" : "secondary"}
-              className="gap-1.5 font-mono text-xs"
-            >
-              {isConnectedState ? (
-                <Wifi className="h-3 w-3" />
-              ) : (
-                <WifiOff className="h-3 w-3" />
-              )}
-              {isConnectedState ? "CONNECTED" : "DISCONNECTED"}
-            </Badge>
+            {getStatusBadge()}
             <Button
               variant="outline"
               size="icon"
-              onClick={handleDisconnect}
-              title={isConnectedState ? "Disconnect" : "Connect"}
+              onClick={status === "connected" ? handleDisconnect : handleReconnect}
+              title={status === "connected" ? "Disconnect" : "Connect"}
               className="h-8 w-8"
             >
-              {isConnectedState ? (
+              {status === "connected" ? (
                 <WifiOff className="h-4 w-4" />
               ) : (
                 <Wifi className="h-4 w-4" />
@@ -275,7 +252,7 @@ export function SerialConsole({
               variant="outline"
               size="icon"
               onClick={handleReboot}
-              title="Reboot VM"
+              title="Reconnect"
               className="h-8 w-8"
             >
               <Power className="h-4 w-4" />
@@ -292,54 +269,34 @@ export function SerialConsole({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="p-0">
+      <CardContent className="p-0 relative">
         <div
-          className="font-mono text-sm min-h-[400px] max-h-[600px] overflow-y-auto bg-black p-4"
-          ref={scrollRef}
-          onClick={() => inputRef.current?.focus()}
-        >
-          {lines.map((line) => (
-            <div
-              key={line.id}
-              className={`${getLineStyle(line.type)} whitespace-pre-wrap break-words leading-relaxed`}
+          ref={terminalRef}
+          className="font-mono text-sm min-h-[400px] max-h-[600px] overflow-hidden bg-black p-2"
+        />
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+            <div className="text-center p-6">
+              <p className="text-red-400 mb-4 font-mono">{error}</p>
+              <Button onClick={handleReconnect} variant="outline">
+                Retry Connection
+              </Button>
+            </div>
+          </div>
+        )}
+        {status === "disconnected" && !error && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+            <Button
+              onClick={handleReconnect}
+              variant="outline"
+              size="sm"
+              className="gap-2"
             >
-              {line.type === "input" && (
-                <span className="text-green-400">{`root@${vmName}:# `}
-                </span>
-              )}
-              {line.text}
-            </div>
-          ))}
-
-          {/* Input line */}
-          {isConnectedState && (
-            <form onSubmit={handleCommand} className="flex items-center mt-2">
-              <span className="text-green-400 whitespace-nowrap">{`root@${vmName}:# `}</span>
-              <input
-                ref={inputRef}
-                type="text"
-                value={currentInput}
-                onChange={(e) => setCurrentInput(e.target.value)}
-                className="flex-1 bg-transparent text-white outline-none border-none px-2 font-mono"
-                autoFocus
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck="false"
-              />
-              <span className="w-2 h-5 bg-green-400 animate-pulse" />
-            </form>
-          )}
-
-          {!isConnectedState && (
-            <div className="text-yellow-400 mt-4">
-              <div>⚠ Disconnected from console</div>
-              <div className="text-sm text-yellow-500 mt-1">
-                Click the connect button to reconnect
-              </div>
-            </div>
-          )}
-        </div>
+              <Wifi className="h-4 w-4" />
+              Reconnect
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

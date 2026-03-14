@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "@types/novnc__novnc": "^1.6.0"
+  },
+  "dependencies": {
+    "@novnc/novnc": "^1.6.0"
+  }
+}

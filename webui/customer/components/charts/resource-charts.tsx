@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/select"
 import { useEffect, useState, useCallback, useRef } from "react"
 import { vmApi } from "@/lib/api-client"
+import { AlertCircle, RefreshCw } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -38,64 +40,6 @@ interface ResourceChartsProps {
   className?: string
   vmId?: string
 }
-
-// Mock data generators
-const generateTimeRange = (range: TimeRange): string[] => {
-  const now = new Date()
-  const points: string[] = []
-  
-  switch (range) {
-    case "1h":
-      for (let i = 60; i >= 0; i -= 5) {
-        const time = new Date(now.getTime() - i * 60 * 1000)
-        points.push(time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }))
-      }
-      break
-    case "24h":
-      for (let i = 24; i >= 0; i--) {
-        const time = new Date(now.getTime() - i * 60 * 60 * 1000)
-        points.push(time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }))
-      }
-      break
-    case "7d":
-      for (let i = 6; i >= 0; i--) {
-        const time = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
-        points.push(time.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }))
-      }
-      break
-  }
-  
-  return points
-}
-
-const generateMockData = (range: TimeRange): ChartDataPoint[] => {
-  const timestamps = generateTimeRange(range)
-  
-  return timestamps.map((timestamp, index) => {
-    const variation = range === "1h" ? 15 : range === "24h" ? 25 : 30
-    const baseCpu = 35 + Math.random() * 20
-    const baseMemory = 55 + Math.random() * 15
-    const baseNetworkRx = 45 + Math.random() * 30
-    const baseNetworkTx = 25 + Math.random() * 20
-    const baseDiskRead = 20 + Math.random() * 15
-    const baseDiskWrite = 15 + Math.random() * 10
-    
-    // Add some peaks and valleys
-    const peakFactor = Math.sin(index * 0.5) * variation
-    
-    return {
-      timestamp,
-      cpu_percent: Math.min(100, Math.max(0, baseCpu + peakFactor)),
-      memory_percent: Math.min(100, Math.max(0, baseMemory + peakFactor * 0.5)),
-      network_rx_mbps: Math.max(0, baseNetworkRx + peakFactor * 0.8),
-      network_tx_mbps: Math.max(0, baseNetworkTx + peakFactor * 0.6),
-      disk_read_mbps: Math.max(0, baseDiskRead + peakFactor * 0.4),
-      disk_write_mbps: Math.max(0, baseDiskWrite + peakFactor * 0.3),
-    }
-  })
-}
-
-// Chart color palette (using CSS variable references for theme support)
 const colors = {
   cpu: "#3b82f6",      // blue-500
   memory: "#8b5cf6",   // violet-500
@@ -240,11 +184,15 @@ const DiskChart: React.FC<{ data: ChartDataPoint[] }> = ({ data }) => (
 
 export function ResourceCharts({ className, vmId }: ResourceChartsProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
-  const [chartData, setChartData] = useState<ChartDataPoint[]>(() => generateMockData("1h"))
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const historyRef = useRef<ChartDataPoint[]>([])
 
   const fetchMetrics = useCallback(async () => {
     if (!vmId) return
+    setLoading(true)
+    setError(null)
     try {
       const metrics = await vmApi.getMetrics(vmId)
       const point: ChartDataPoint = {
@@ -261,8 +209,11 @@ export function ResourceCharts({ className, vmId }: ResourceChartsProps) {
       const maxPoints = timeRange === "1h" ? 13 : timeRange === "24h" ? 25 : 7
       historyRef.current = [...historyRef.current, point].slice(-maxPoints)
       setChartData([...historyRef.current])
-    } catch {
-      // API not available, keep mock data
+    } catch (err) {
+      setError('Failed to load metrics. Please try again.')
+      console.error('Metrics fetch error:', err)
+    } finally {
+      setLoading(false)
     }
   }, [vmId, timeRange])
 
@@ -272,10 +223,21 @@ export function ResourceCharts({ className, vmId }: ResourceChartsProps) {
       fetchMetrics()
       const interval = setInterval(fetchMetrics, 30000)
       return () => clearInterval(interval)
-    } else {
-      setChartData(generateMockData(timeRange))
     }
   }, [timeRange, vmId, fetchMetrics])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+        <p className="text-red-600 mb-4">{error}</p>
+        <Button onClick={fetchMetrics} variant="outline">
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Retry
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className={cn("space-y-6", className)}>

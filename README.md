@@ -50,7 +50,7 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
 | Bandwidth Monitoring | ✅ | Real-time tracking with usage graphs |
 | Backup & Snapshots | ⚠️ | Backend ready, frontend placeholders |
 | Console Access | ⚠️ | VNC placeholder in UI |
-| API Key Management | ⚠️ | UI exists, backend stubbed |
+| API Key Management | ✅ | Fully implemented for provisioning API |
 
 ### Authentication & Security
 

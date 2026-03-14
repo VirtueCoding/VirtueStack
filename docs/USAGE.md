@@ -698,9 +698,9 @@ Configure how you receive notifications.
 3. Configure email and/or Telegram settings
 4. Click **Save Preferences**
 
-### API Keys ⚠️
+### API Keys 🔧
 
-> **Status:** Backend API key table exists. Customer-facing API key management UI is not yet wired to the live API.
+> **Status:** Backend API key authentication is working (provisioning API verified). Customer-facing UI is built but not wired to live API.
 
 Create API keys for programmatic access to your account.
 

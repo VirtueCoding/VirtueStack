@@ -15,11 +15,13 @@ import (
 //
 // Endpoints:
 //
-//	Authentication:
+// Authentication:
+//
 //	  POST /auth/login        - Email/password login (returns tokens or 2FA challenge)
 //	  POST /auth/verify-2fa   - TOTP verification for 2FA-enabled accounts
 //	  POST /auth/refresh      - Refresh access token using refresh token
 //	  POST /auth/logout       - Logout current session
+//	  PUT   /password         - Change password (requires auth, rate limited)
 //
 //	VMs:
 //	  GET    /vms             - List customer's VMs
@@ -76,6 +78,14 @@ import (
 //	  PUT    /notifications/preferences   - Update notification preferences
 //	  GET    /notifications/events        - List notification events
 //	  GET    /notifications/events/types  - Get available event types
+//
+//	2FA (Two-Factor Authentication):
+//	  POST   /2fa/initiate  - Generate TOTP secret and QR URL
+//	  POST   /2fa/enable    - Verify TOTP code and enable 2FA
+//	  POST   /2fa/disable   - Disable 2FA (requires password)
+//	  GET    /2fa/status    - Get 2FA status
+//	  GET    /2fa/backup-codes          - Get backup codes (only once)
+//	  POST   /2fa/backup-codes/regenerate - Regenerate new backup codes
 func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, notifyHandler *NotificationsHandler) {
 	// Create the customer API group
 	customer := router.Group("/customer")
@@ -93,8 +103,12 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireUserType("customer"))
 	{
-		// Logout (requires auth to get session)
 		protected.POST("/auth/logout", handler.Logout)
+
+		protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
+
+		protected.GET("/profile", handler.GetProfile)
+		protected.PUT("/profile", handler.UpdateProfile)
 
 		// VM operations
 		vms := protected.Group("/vms")
@@ -162,9 +176,19 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 		// Templates
 		protected.GET("/templates", handler.ListTemplates)
 
-		// Notifications
-		if notifyHandler != nil {
-			RegisterNotificationRoutes(protected, notifyHandler)
+		// 2FA (Two-Factor Authentication)
+		twofa := protected.Group("/2fa")
+		{
+			twofa.POST("/initiate", handler.Initiate2FA)
+			twofa.POST("/enable", handler.Enable2FA)
+			twofa.POST("/disable", handler.Disable2FA)
+			twofa.GET("/status", handler.Get2FAStatus)
+			twofa.GET("/backup-codes", handler.GetBackupCodes)
+			twofa.POST("/backup-codes/regenerate", handler.RegenerateBackupCodes)
 		}
+
+		// WebSocket console endpoints
+		protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
+		protected.GET("/ws/serial/:vmId", handler.HandleSerialWebSocket)
 	}
 }

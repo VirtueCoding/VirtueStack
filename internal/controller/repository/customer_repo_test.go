@@ -13,7 +13,7 @@ import (
 
 // mockCustomerDB implements the DB interface for testing.
 type mockCustomerDB struct {
-	execFunc    func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	execFunc     func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
@@ -70,12 +70,12 @@ func TestCustomerUpdate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		customer      *models.Customer
-		rowsAffected  int64
-		queryRowErr   error
-		wantErr       bool
-		errContains   string
+		name         string
+		customer     *models.Customer
+		rowsAffected int64
+		queryRowErr  error
+		wantErr      bool
+		errContains  string
 	}{
 		{
 			name: "successful update",
@@ -145,9 +145,9 @@ func TestCustomerUpdate(t *testing.T) {
 				Email: "test@example.com",
 				Name:  "Test User",
 			},
-			queryRowErr:  pgx.ErrNoRows,
-			wantErr:      true,
-			errContains:  "not found",
+			queryRowErr: pgx.ErrNoRows,
+			wantErr:     true,
+			errContains: "not found",
 		},
 		{
 			name: "database error",
@@ -156,9 +156,9 @@ func TestCustomerUpdate(t *testing.T) {
 				Email: "test@example.com",
 				Name:  "Test User",
 			},
-			queryRowErr:  errors.New("connection refused"),
-			wantErr:      true,
-			errContains:  "connection refused",
+			queryRowErr: errors.New("connection refused"),
+			wantErr:     true,
+			errContains: "connection refused",
 		},
 	}
 
@@ -210,4 +210,118 @@ func containsAt(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestCustomerUpdateProfile(t *testing.T) {
+	now := time.Now()
+	existingCustomer := models.Customer{
+		ID:     "550e8400-e29b-41d4-a716-446655440000",
+		Email:  "test@example.com",
+		Name:   "Test User",
+		Status: "active",
+		Timestamps: models.Timestamps{
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+
+	tests := []struct {
+		name        string
+		params      ProfileUpdateParams
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "update name only",
+			params: ProfileUpdateParams{
+				Name: ptr("New Name"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "update email only",
+			params: ProfileUpdateParams{
+				Email: ptr("newemail@example.com"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "update phone only",
+			params: ProfileUpdateParams{
+				Phone: ptr("+1234567890"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "update all fields",
+			params: ProfileUpdateParams{
+				Name:  ptr("New Name"),
+				Email: ptr("new@example.com"),
+				Phone: ptr("+1234567890"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "name too long",
+			params: ProfileUpdateParams{
+				Name: ptr(string(make([]byte, 101))),
+			},
+			wantErr:     true,
+			errContains: "name cannot exceed 100",
+		},
+		{
+			name: "invalid email format",
+			params: ProfileUpdateParams{
+				Email: ptr("not-an-email"),
+			},
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name: "phone too long",
+			params: ProfileUpdateParams{
+				Phone: ptr(string(make([]byte, 21))),
+			},
+			wantErr:     true,
+			errContains: "phone cannot exceed 20",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockCustomerDB{
+				queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
+					updated := existingCustomer
+					updated.UpdatedAt = time.Now()
+					if tt.params.Phone != nil {
+						updated.Phone = tt.params.Phone
+					}
+					return mockCustomerRow{customer: updated}
+				},
+			}
+
+			repo := NewCustomerRepository(mock)
+			result, err := repo.UpdateProfile(context.Background(), existingCustomer.ID, tt.params)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if result == nil {
+					t.Fatal("expected result, got nil")
+				}
+			}
+		})
+	}
+}
+
+func ptr(s string) *string {
+	return &s
 }

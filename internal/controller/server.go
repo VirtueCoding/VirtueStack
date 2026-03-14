@@ -68,6 +68,7 @@ type Server struct {
 	customerService  *services.CustomerService
 	backupService    *services.BackupService
 	migrationService *services.MigrationService
+	failoverMonitor  *services.FailoverMonitor
 	// API Handlers
 	provisioningHandler *provisioning.ProvisioningHandler
 	customerHandler     *customer.CustomerHandler
@@ -217,6 +218,22 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
+	failoverService := services.NewFailoverService(
+		nodeRepo,
+		vmRepo,
+		nodeAgentClient,
+		auditRepo,
+		s.config.EncryptionKey,
+		s.logger,
+	)
+
+	s.failoverMonitor = services.NewFailoverMonitor(
+		nodeRepo,
+		failoverService,
+		s.logger,
+		services.DefaultFailoverMonitorConfig(),
+	)
+
 	webhookService := services.NewWebhookService(
 		webhookRepo,
 		taskPublisher,
@@ -242,6 +259,7 @@ func (s *Server) InitializeServices() error {
 		s.authService,
 		s.templateService,
 		webhookService,
+		s.customerService,
 		vmRepo,
 		backupRepo,
 		templateRepo,
@@ -249,8 +267,9 @@ func (s *Server) InitializeServices() error {
 		apiKeyRepo,
 		auditRepo,
 		bandwidthRepo,
+		s.nodeClient,
 		s.config.JWTSecret,
-		"virtuestack", // issuer
+		"virtuestack",
 		s.config.EncryptionKey,
 		s.config.ConsoleBaseURL,
 		s.logger,
@@ -443,6 +462,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 	if s.backupService != nil {
 		s.logger.Info("starting backup scheduler")
 		go s.backupService.StartScheduler(ctx)
+	}
+
+	if s.failoverMonitor != nil {
+		s.logger.Info("starting failover monitor")
+		go s.failoverMonitor.Start(ctx)
 	}
 }
 

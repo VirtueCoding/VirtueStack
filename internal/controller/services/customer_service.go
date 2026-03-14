@@ -227,3 +227,58 @@ func (s *CustomerService) GetByEmail(ctx context.Context, email string) (*models
 	}
 	return customer, nil
 }
+
+type ProfileUpdateParams struct {
+	Name  *string
+	Email *string
+	Phone *string
+}
+
+func (s *CustomerService) UpdateProfile(ctx context.Context, customerID, actorIP string, params ProfileUpdateParams) (*models.Customer, error) {
+	existing, err := s.customerRepo.GetByID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("getting customer: %w", err)
+	}
+
+	changes := map[string]any{}
+	if params.Name != nil && *params.Name != existing.Name {
+		changes["name"] = map[string]string{"from": existing.Name, "to": *params.Name}
+	}
+	if params.Email != nil && *params.Email != existing.Email {
+		changes["email"] = map[string]string{"from": existing.Email, "to": *params.Email}
+	}
+	if params.Phone != nil {
+		existingPhone := ""
+		if existing.Phone != nil {
+			existingPhone = *existing.Phone
+		}
+		newPhone := *params.Phone
+		if newPhone != existingPhone {
+			changes["phone"] = map[string]string{"from": existingPhone, "to": newPhone}
+		}
+	}
+
+	if len(changes) == 0 {
+		return existing, nil
+	}
+
+	repoParams := repository.ProfileUpdateParams{
+		Name:  params.Name,
+		Email: params.Email,
+		Phone: params.Phone,
+	}
+
+	updated, err := s.customerRepo.UpdateProfile(ctx, customerID, repoParams)
+	if err != nil {
+		s.logAudit(ctx, customerID, actorIP, "customer.profile.update", customerID, changes, false, err.Error())
+		return nil, fmt.Errorf("updating profile: %w", err)
+	}
+
+	s.logAudit(ctx, customerID, actorIP, "customer.profile.update", customerID, changes, true, "")
+
+	s.logger.Info("customer profile updated",
+		"customer_id", customerID,
+		"email", updated.Email)
+
+	return updated, nil
+}

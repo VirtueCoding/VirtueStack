@@ -70,6 +70,13 @@ import (
 //	Backups:
 //	  GET    /backups              - List all backups (all customers)
 //	  POST   /backups/:id/restore  - Restore backup (admin override)
+//
+//	Backup Schedules:
+//	  POST   /backup-schedules     - Create backup schedule
+//	  GET    /backup-schedules     - List backup schedules (optional ?vm_id= filter)
+//	  GET    /backup-schedules/:id - Get backup schedule by ID
+//	  PUT    /backup-schedules/:id - Update backup schedule
+//	  DELETE /backup-schedules/:id - Delete backup schedule
 func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	admin := router.Group("/admin")
 
@@ -162,6 +169,16 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		{
 			backups.GET("", handler.ListBackups)
 			backups.POST("/:id/restore", handler.RestoreBackup)
+		}
+
+		// Backup schedule management
+		backupSchedules := protected.Group("/backup-schedules")
+		{
+			backupSchedules.POST("", handler.CreateBackupSchedule)
+			backupSchedules.GET("", handler.ListBackupSchedules)
+			backupSchedules.GET("/:id", handler.GetBackupSchedule)
+			backupSchedules.PUT("/:id", handler.UpdateBackupSchedule)
+			backupSchedules.DELETE("/:id", handler.DeleteBackupSchedule)
 		}
 	}
 }

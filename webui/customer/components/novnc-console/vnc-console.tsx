@@ -6,6 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
   Monitor,
   Maximize,
   Minimize,
@@ -14,7 +24,18 @@ import {
   RefreshCw,
   Wifi,
   WifiOff,
+  Clipboard,
+  Keyboard,
+  Copy,
 } from "lucide-react"
+
+let RFB: typeof import("@novnc/novnc/lib/rfb").default | null = null
+
+if (typeof window !== "undefined") {
+  import("@novnc/novnc/lib/rfb").then((module) => {
+    RFB = module.default
+  })
+}
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -22,25 +43,67 @@ interface VNCConsoleProps {
   className?: string
   wsUrl?: string
   vmId?: string
+  token?: string
 }
 
 export function VNCConsole({
   className,
   wsUrl,
   vmId,
+  token,
 }: VNCConsoleProps) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected")
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [clipboardText, setClipboardText] = useState("")
+  const [isClipboardOpen, setIsClipboardOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const animationRef = useRef<number | undefined>(undefined)
-  const wsRef = useRef<WebSocket | null>(null)
+  const screenRef = useRef<HTMLDivElement>(null)
+  const rfbRef = useRef<InstanceType<typeof import("@novnc/novnc/lib/rfb").default> | null>(null)
 
-  // Real WebSocket connection
-  const connect = useCallback(() => {
-    if (!wsUrl) {
+  // Build WebSocket URL
+  const getWsUrl = useCallback(() => {
+    if (wsUrl) return wsUrl
+    if (vmId && token) {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+      return `${protocol}//${window.location.host}/api/v1/customer/ws/vnc/${vmId}?token=${token}`
+    }
+    return null
+  }, [wsUrl, vmId, token])
+
+  // Connect to VNC
+  const connect = useCallback(async () => {
+    const url = getWsUrl()
+    if (!url) {
       setErrorMessage("Console URL not available")
+      setStatus("error")
+      return
+    }
+
+    if (!RFB) {
+      // Wait for RFB to load
+      await new Promise<void>((resolve) => {
+        const checkRFB = setInterval(() => {
+          if (RFB) {
+            clearInterval(checkRFB)
+            resolve()
+          }
+        }, 100)
+        setTimeout(() => {
+          clearInterval(checkRFB)
+          resolve()
+        }, 5000)
+      })
+    }
+
+    if (!RFB) {
+      setErrorMessage("VNC library failed to load")
+      setStatus("error")
+      return
+    }
+
+    if (!screenRef.current) {
+      setErrorMessage("Screen container not available")
       setStatus("error")
       return
     }
@@ -49,47 +112,69 @@ export function VNCConsole({
     setErrorMessage(null)
 
     try {
-      const ws = new WebSocket(wsUrl)
-      wsRef.current = ws
+      // Clear any existing content
+      while (screenRef.current.firstChild) {
+        screenRef.current.removeChild(screenRef.current.firstChild)
+      }
 
-      ws.onopen = () => {
+      const rfb = new RFB(screenRef.current, url, {
+        shared: true,
+      })
+
+      rfb.scaleViewport = true
+      rfb.resizeSession = true
+      rfb.clipViewport = true
+
+      rfb.addEventListener("connect", () => {
         setStatus("connected")
-      }
+      })
 
-      ws.onclose = () => {
+      rfb.addEventListener("disconnect", (e: { detail: { clean: boolean } }) => {
         setStatus("disconnected")
-        wsRef.current = null
-      }
+        if (!e.detail.clean) {
+          setErrorMessage("Connection closed unexpectedly")
+          setStatus("error")
+        }
+        rfbRef.current = null
+      })
 
-      ws.onerror = () => {
-        setErrorMessage("WebSocket connection error")
+      rfb.addEventListener("credentialsrequired", () => {
+        const password = window.prompt("VNC Password Required:")
+        if (password) {
+          rfb.sendCredentials({ username: "", password: "", target: "" })
+        }
+      })
+
+      rfb.addEventListener("securityfailure", (e: { detail: { reason: string } }) => {
+        setErrorMessage(`Security failure: ${e.detail.reason}`)
         setStatus("error")
-        wsRef.current = null
-      }
+      })
+
+      rfbRef.current = rfb
     } catch (error) {
-      setErrorMessage("Failed to initialize WebSocket")
+      setErrorMessage("Failed to initialize VNC connection")
       setStatus("error")
     }
-  }, [wsUrl])
+  }, [getWsUrl])
 
+  // Disconnect from VNC
   const disconnect = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close()
-      wsRef.current = null
+    if (rfbRef.current) {
+      rfbRef.current.disconnect()
+      rfbRef.current = null
     }
     setStatus("disconnected")
     setIsFullScreen(false)
 
-    // Clear canvas
-    const canvas = canvasRef.current
-    if (canvas) {
-      const ctx = canvas.getContext("2d")
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // Clear screen
+    if (screenRef.current) {
+      while (screenRef.current.firstChild) {
+        screenRef.current.removeChild(screenRef.current.firstChild)
       }
     }
   }, [])
 
+  // Toggle fullscreen
   const toggleFullScreen = useCallback(() => {
     if (!containerRef.current) return
 
@@ -106,6 +191,22 @@ export function VNCConsole({
     }
   }, [])
 
+  // Send Ctrl+Alt+Del
+  const sendCtrlAltDel = useCallback(() => {
+    if (rfbRef.current) {
+      rfbRef.current.sendCtrlAltDel()
+    }
+  }, [])
+
+  // Send clipboard text to VNC
+  const sendClipboard = useCallback(() => {
+    if (rfbRef.current && clipboardText) {
+      rfbRef.current.clipboardPasteFrom(clipboardText)
+      setIsClipboardOpen(false)
+      setClipboardText("")
+    }
+  }, [clipboardText])
+
   // Handle fullscreen change events
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -117,79 +218,12 @@ export function VNCConsole({
       document.removeEventListener("fullscreenchange", handleFullscreenChange)
   }, [])
 
-  // Draw gradient pattern on canvas when connected
-  useEffect(() => {
-    if (status !== "connected" || !canvasRef.current) return
-
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    // Set canvas size
-    const updateCanvasSize = () => {
-      const container = containerRef.current
-      if (!container) return
-
-      const rect = container.getBoundingClientRect()
-      canvas.width = rect.width
-      canvas.height = rect.height
-
-      // Draw gradient background
-      const gradient = ctx.createLinearGradient(0, 0, rect.width, rect.height)
-      gradient.addColorStop(0, "#1e293b")
-      gradient.addColorStop(0.5, "#334155")
-      gradient.addColorStop(1, "#1e293b")
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, rect.width, rect.height)
-
-      // Draw grid pattern
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)"
-      ctx.lineWidth = 1
-      const gridSize = 40
-
-      for (let x = 0; x < rect.width; x += gridSize) {
-        ctx.beginPath()
-        ctx.moveTo(x, 0)
-        ctx.lineTo(x, rect.height)
-        ctx.stroke()
-      }
-
-      for (let y = 0; y < rect.height; y += gridSize) {
-        ctx.beginPath()
-        ctx.moveTo(0, y)
-        ctx.lineTo(rect.width, y)
-        ctx.stroke()
-      }
-
-      // Draw "VNC Connected" text
-      ctx.fillStyle = "rgba(255, 255, 255, 0.3)"
-      ctx.font = "bold 24px system-ui, -apple-system, sans-serif"
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      ctx.fillText("VNC Connected", rect.width / 2, rect.height / 2)
-
-      // Draw VM ID if provided
-      if (vmId) {
-        ctx.fillStyle = "rgba(255, 255, 255, 0.2)"
-        ctx.font = "14px system-ui, -apple-system, sans-serif"
-        ctx.fillText(`VM: ${vmId}`, rect.width / 2, rect.height / 2 + 40)
-      }
-    }
-
-    updateCanvasSize()
-
-    // Redraw on resize
-    const resizeObserver = new ResizeObserver(updateCanvasSize)
-    resizeObserver.observe(containerRef.current!)
-
-    return () => resizeObserver.disconnect()
-  }, [status, vmId])
-
-  // Cleanup animation frame on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
+      if (rfbRef.current) {
+        rfbRef.current.disconnect()
+        rfbRef.current = null
       }
     }
   }, [])
@@ -264,13 +298,69 @@ export function VNCConsole({
     // Connected state
     return (
       <div className="flex items-center gap-2">
-        <Button onClick={toggleFullScreen} variant="outline" size="icon">
+        {/* Clipboard Dialog */}
+        <Dialog open={isClipboardOpen} onOpenChange={setIsClipboardOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="icon" title="Clipboard">
+              <Clipboard className="h-4 w-4" />
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Clipboard</DialogTitle>
+              <DialogDescription>
+                Send text to the remote clipboard
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="clipboard-text">Text to send</Label>
+                <Input
+                  id="clipboard-text"
+                  value={clipboardText}
+                  onChange={(e) => setClipboardText(e.target.value)}
+                  placeholder="Enter text to send to remote clipboard..."
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsClipboardOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={sendClipboard} disabled={!clipboardText}>
+                <Copy className="h-4 w-4 mr-2" />
+                Send to Remote
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Ctrl+Alt+Del Button */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={sendCtrlAltDel}
+          title="Send Ctrl+Alt+Del"
+        >
+          <Keyboard className="h-4 w-4 mr-1" />
+          Ctrl+Alt+Del
+        </Button>
+
+        {/* Fullscreen Button */}
+        <Button
+          onClick={toggleFullScreen}
+          variant="outline"
+          size="icon"
+          title="Toggle Fullscreen"
+        >
           {isFullScreen ? (
             <Minimize className="h-4 w-4" />
           ) : (
             <Maximize className="h-4 w-4" />
           )}
         </Button>
+
+        {/* Disconnect Button */}
         <Button onClick={disconnect} variant="destructive">
           <Power className="h-4 w-4" />
           Disconnect
@@ -293,7 +383,7 @@ export function VNCConsole({
             <div>
               <CardTitle className="text-lg">VNC Console</CardTitle>
               <p className="text-sm text-muted-foreground">
-                {wsUrl ? wsUrl : "No URL provided"}
+                {vmId ? `VM: ${vmId}` : "Remote Desktop Access"}
               </p>
             </div>
           </div>
@@ -302,10 +392,13 @@ export function VNCConsole({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Canvas Container - 16:9 Aspect Ratio */}
-        <div className="relative w-full" style={{ aspectRatio: "16/9" }}>
+        {/* Screen Container - 16:9 Aspect Ratio */}
+        <div
+          className="relative w-full bg-black rounded-lg overflow-hidden"
+          style={{ aspectRatio: "16/9" }}
+        >
           {status === "disconnected" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted bg-muted/20">
+            <div className="absolute inset-0 flex flex-col items-center justify-center border-2 border-dashed border-muted bg-muted/20">
               <Monitor className="h-12 w-12 text-muted-foreground/50 mb-3" />
               <p className="text-muted-foreground text-sm">
                 Click Connect to start VNC session
@@ -317,19 +410,19 @@ export function VNCConsole({
           )}
 
           {status === "connecting" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg border bg-muted/10">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black">
               <Loader2 className="h-10 w-10 animate-spin text-primary mb-3" />
               <p className="text-muted-foreground text-sm">
-                Establishing connection...
+                Establishing VNC connection...
               </p>
               <p className="text-muted-foreground/70 text-xs mt-1">
-                Connecting to {wsUrl}
+                {getWsUrl()}
               </p>
             </div>
           )}
 
           {status === "error" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg border bg-destructive/5">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-destructive/5">
               <WifiOff className="h-10 w-10 text-destructive mb-3" />
               <p className="text-destructive font-medium">
                 {errorMessage || "Connection failed"}
@@ -340,13 +433,17 @@ export function VNCConsole({
             </div>
           )}
 
-          {status === "connected" && (
-            <canvas
-              ref={canvasRef}
-              className="h-full w-full rounded-lg"
-              style={{ display: "block" }}
-            />
-          )}
+          {/* noVNC Screen - Only visible when connected but rendered always */}
+          <div
+            ref={screenRef}
+            className={cn(
+              "w-full h-full",
+              status !== "connected" && "hidden"
+            )}
+            style={{
+              display: status === "connected" ? "flex" : "none",
+            }}
+          />
         </div>
 
         {/* Control Bar */}
@@ -354,12 +451,12 @@ export function VNCConsole({
           <div className="flex items-center gap-2">
             {status === "connected" && (
               <Badge variant="outline" className="text-xs">
-                Full HD (1920x1080)
+                noVNC Client
               </Badge>
             )}
             {status === "connected" && (
               <Badge variant="outline" className="text-xs">
-                60 FPS
+                Interactive
               </Badge>
             )}
           </div>

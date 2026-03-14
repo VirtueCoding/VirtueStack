@@ -12,15 +12,17 @@ const (
 
 // Customer represents a customer account as stored in the database.
 type Customer struct {
-	ID                  string   `json:"id" db:"id"`
-	Email               string   `json:"email" db:"email"`
-	PasswordHash        string   `json:"-" db:"password_hash"`        // Never expose
-	Name                string   `json:"name" db:"name"`
-	WHMCSClientID       *int     `json:"whmcs_client_id,omitempty" db:"whmcs_client_id"`
-	TOTPSecretEncrypted *string  `json:"-" db:"totp_secret_encrypted"` // Never expose
-	TOTPEnabled         bool     `json:"totp_enabled" db:"totp_enabled"`
-	TOTPBackupCodesHash []string `json:"-" db:"totp_backup_codes_hash"` // Never expose
-	Status              string   `json:"status" db:"status"`
+	ID                   string   `json:"id" db:"id"`
+	Email                string   `json:"email" db:"email"`
+	PasswordHash         string   `json:"-" db:"password_hash"`
+	Name                 string   `json:"name" db:"name"`
+	Phone                *string  `json:"phone,omitempty" db:"phone"`
+	WHMCSClientID        *int     `json:"whmcs_client_id,omitempty" db:"whmcs_client_id"`
+	TOTPSecretEncrypted  *string  `json:"-" db:"totp_secret_encrypted"`
+	TOTPEnabled          bool     `json:"totp_enabled" db:"totp_enabled"`
+	TOTPBackupCodesHash  []string `json:"-" db:"totp_backup_codes_hash"`
+	TOTPBackupCodesShown bool     `json:"-" db:"totp_backup_codes_shown"`
+	Status               string   `json:"status" db:"status"`
 	Timestamps
 }
 
@@ -66,8 +68,8 @@ type Verify2FARequest struct {
 // AuthTokens holds the result of a successful authentication, including access and refresh tokens.
 type AuthTokens struct {
 	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`          // "Bearer"
-	ExpiresIn   int    `json:"expires_in"`          // seconds
+	TokenType   string `json:"token_type"` // "Bearer"
+	ExpiresIn   int    `json:"expires_in"` // seconds
 	Requires2FA bool   `json:"requires_2fa,omitempty"`
 	TempToken   string `json:"temp_token,omitempty"`
 }

@@ -177,6 +177,16 @@ func LoginRateLimit() gin.HandlerFunc {
 	})
 }
 
+// PasswordChangeRateLimit limits password change attempts to 5 per 15 minutes per source IP.
+// Intended to protect the password change endpoint against brute-force attacks.
+func PasswordChangeRateLimit() gin.HandlerFunc {
+	return RateLimit(RateLimitConfig{
+		Requests: 5,
+		Window:   15 * time.Minute,
+		KeyFunc:  keyByIP,
+	})
+}
+
 // ProvisioningRateLimit allows up to 100 requests per minute per API key.
 // Suitable for automated provisioning workflows with reasonable rate limiting.
 func ProvisioningRateLimit() gin.HandlerFunc {

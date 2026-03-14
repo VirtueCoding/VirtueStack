@@ -96,8 +96,6 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	s.grpcServer = grpcServer
 
 	// Register the gRPC handler
-	// Note: When proto is generated, we'll register the generated service.
-	// For now, we use a placeholder registration.
 	s.registerServices()
 
 	return s, nil

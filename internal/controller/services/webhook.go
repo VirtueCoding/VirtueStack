@@ -29,6 +29,7 @@ type WebhookService struct {
 	taskPublisher TaskPublisher
 	logger        *slog.Logger
 	encryptionKey string
+	httpClient    *http.Client
 }
 
 // NewWebhookService creates a new WebhookService with the given dependencies.
@@ -43,6 +44,9 @@ func NewWebhookService(
 		taskPublisher: taskPublisher,
 		logger:        logger.With("component", "webhook-service"),
 		encryptionKey: encryptionKey,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 

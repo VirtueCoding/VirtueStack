@@ -27,6 +27,12 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
+// ChangePasswordRequest represents the request body for password change.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required,min=12,max=128"`
+	NewPassword     string `json:"new_password" validate:"required,min=12,max=128"`
+}
+
 // AuthResponse represents the response for successful authentication.
 type AuthResponse struct {
 	AccessToken  string `json:"access_token,omitempty"`
@@ -212,11 +218,82 @@ func respondWithError(c *gin.Context, status int, code, message string) {
 
 	c.JSON(status, gin.H{
 		"error": gin.H{
-			"code":          code,
-			"message":       message,
+			"code":           code,
+			"message":        message,
 			"correlation_id": correlationID,
 		},
 	})
+}
+
+// ChangePassword handles PUT /password - changes the authenticated customer's password.
+// Requires valid JWT authentication. Rate limited to 5 attempts per 15 minutes per IP.
+func (h *CustomerHandler) ChangePassword(c *gin.Context) {
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
+		return
+	}
+
+	if len(req.CurrentPassword) < 12 {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "current_password must be at least 12 characters")
+		return
+	}
+
+	if len(req.NewPassword) < 12 {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "new_password must be at least 12 characters")
+		return
+	}
+
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err := h.authService.ChangePassword(
+		c.Request.Context(),
+		userID,
+		req.CurrentPassword,
+		req.NewPassword,
+		"customer",
+	)
+	if err != nil {
+		h.logger.Warn("password change failed",
+			"user_id", userID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+
+		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
+			respondWithError(c, http.StatusUnauthorized, "INVALID_CURRENT_PASSWORD", "Current password is incorrect")
+			return
+		}
+
+		respondWithError(c, http.StatusInternalServerError, "PASSWORD_CHANGE_FAILED", err.Error())
+		return
+	}
+
+	if h.auditRepo != nil {
+		audit := &models.AuditLog{
+			ActorID:      &userID,
+			ActorType:    models.AuditActorCustomer,
+			Action:       "password.change",
+			ResourceType: "user",
+			ResourceID:   &userID,
+			Success:      true,
+		}
+		if err := h.auditRepo.Append(c.Request.Context(), audit); err != nil {
+			h.logger.Warn("failed to write audit log for password change",
+				"user_id", userID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}
+
+	h.logger.Info("customer password changed",
+		"user_id", userID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Password updated successfully"}})
 }
 
 // hashToken computes a SHA-256 hash of a token for secure comparison.

@@ -533,25 +533,161 @@ export const snapshotApi = {
 // Export types for use in other modules
 export type { AuthTokens as AuthTokensType };
 
+// Profile Types
+export interface CustomerProfile {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateProfileRequest {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface UpdatePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+// 2FA Types
+export interface Initiate2FAResponse {
+  qr_code_url: string;
+  secret: string;
+}
+
+export interface Enable2FARequest {
+  totp_code: string;
+}
+
+export interface Enable2FAResponse {
+  backup_codes: string[];
+}
+
+export interface BackupCodesResponse {
+  backup_codes: string[];
+}
+
 // Settings Types
 export interface ApiKey {
   id: string;
   name: string;
-  key: string;
-  created: string;
-  lastUsed: string;
+  key?: string;
+  permissions: string[];
+  is_active: boolean;
+  expires_at?: string;
+  created_at: string;
+  last_used_at?: string;
 }
 
 export interface Webhook {
   id: string;
   url: string;
   events: string[];
-  status: string;
-  lastTriggered: string;
+  is_active: boolean;
+  fail_count: number;
+  last_success_at?: string;
+  last_failure_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Request/Response types for Settings API
+export interface CreateApiKeyRequest {
+  name: string;
+  permissions: string[];
+  expires_at?: string;
+}
+
+export interface CreateWebhookRequest {
+  url: string;
+  events: string[];
+  secret: string;
+}
+
+export interface UpdateWebhookRequest {
+  url?: string;
+  events?: string[];
+  is_active?: boolean;
+}
+
+export interface TestWebhookResponse {
+  success: boolean;
+  status_code?: number;
+  response_body?: string;
+  error?: string;
 }
 
 // Settings API
 export const settingsApi = {
+  /**
+   * Get customer profile
+   * GET /customer/profile
+   */
+  async getProfile(): Promise<CustomerProfile> {
+    return apiClient.get<CustomerProfile>("/customer/profile");
+  },
+
+  /**
+   * Update customer profile
+   * PUT /customer/profile
+   */
+  async updateProfile(request: UpdateProfileRequest): Promise<CustomerProfile> {
+    return apiClient.put<CustomerProfile>("/customer/profile", request);
+  },
+
+  /**
+   * Update customer password
+   * PUT /customer/password
+   */
+  async updatePassword(request: UpdatePasswordRequest): Promise<{ message: string }> {
+    return apiClient.put<{ message: string }>("/customer/password", request);
+  },
+
+  /**
+   * Initiate 2FA setup
+   * POST /2fa/initiate
+   */
+  async initiate2FA(): Promise<Initiate2FAResponse> {
+    return apiClient.post<Initiate2FAResponse>("/2fa/initiate", {});
+  },
+
+  /**
+   * Enable 2FA with TOTP code
+   * POST /2fa/enable
+   */
+  async enable2FA(request: Enable2FARequest): Promise<Enable2FAResponse> {
+    return apiClient.post<Enable2FAResponse>("/2fa/enable", request);
+  },
+
+  /**
+   * Disable 2FA
+   * POST /2fa/disable
+   */
+  async disable2FA(): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/2fa/disable", {});
+  },
+
+  /**
+   * Get backup codes
+   * GET /2fa/backup-codes
+   */
+  async getBackupCodes(): Promise<BackupCodesResponse> {
+    return apiClient.get<BackupCodesResponse>("/2fa/backup-codes");
+  },
+
+  /**
+   * Regenerate backup codes
+   * POST /2fa/backup-codes/regenerate
+   */
+  async regenerateBackupCodes(): Promise<BackupCodesResponse> {
+    return apiClient.post<BackupCodesResponse>("/2fa/backup-codes/regenerate", {});
+  },
+
   /**
    * Get customer API keys
    * GET /customer/api-keys
@@ -561,10 +697,66 @@ export const settingsApi = {
   },
 
   /**
+   * Create a new API key
+   * POST /customer/api-keys
+   */
+  async createApiKey(request: CreateApiKeyRequest): Promise<ApiKey> {
+    return apiClient.post<ApiKey>("/customer/api-keys", request);
+  },
+
+  /**
+   * Rotate an API key (returns new key)
+   * POST /customer/api-keys/:id/rotate
+   */
+  async rotateApiKey(keyId: string): Promise<ApiKey> {
+    return apiClient.post<ApiKey>(`/customer/api-keys/${keyId}/rotate`, {});
+  },
+
+  /**
+   * Delete an API key
+   * DELETE /customer/api-keys/:id
+   */
+  async deleteApiKey(keyId: string): Promise<void> {
+    return apiClient.delete<void>(`/customer/api-keys/${keyId}`);
+  },
+
+  /**
    * Get customer Webhooks
    * GET /customer/webhooks
    */
   async getWebhooks(): Promise<Webhook[]> {
     return apiClient.get<Webhook[]>("/customer/webhooks");
+  },
+
+  /**
+   * Create a new webhook
+   * POST /customer/webhooks
+   */
+  async createWebhook(request: CreateWebhookRequest): Promise<Webhook> {
+    return apiClient.post<Webhook>("/customer/webhooks", request);
+  },
+
+  /**
+   * Update a webhook
+   * PUT /customer/webhooks/:id
+   */
+  async updateWebhook(webhookId: string, request: UpdateWebhookRequest): Promise<Webhook> {
+    return apiClient.put<Webhook>(`/customer/webhooks/${webhookId}`, request);
+  },
+
+  /**
+   * Delete a webhook
+   * DELETE /customer/webhooks/:id
+   */
+  async deleteWebhook(webhookId: string): Promise<void> {
+    return apiClient.delete<void>(`/customer/webhooks/${webhookId}`);
+  },
+
+  /**
+   * Test a webhook
+   * POST /customer/webhooks/:id/test
+   */
+  async testWebhook(webhookId: string): Promise<TestWebhookResponse> {
+    return apiClient.post<TestWebhookResponse>(`/customer/webhooks/${webhookId}/test`, {});
   }
 };

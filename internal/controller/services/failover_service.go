@@ -619,3 +619,13 @@ func (s *FailoverService) logFailoverAudit(ctx context.Context, adminID string, 
 		}
 	}
 }
+
+const systemActorID = "system:auto-failover"
+
+func (s *FailoverService) AutoFailover(ctx context.Context, nodeID, correlationID string) (*FailoverResult, error) {
+	s.logger.Info("auto-failover triggered",
+		"node_id", nodeID,
+		"correlation_id", correlationID)
+
+	return s.ApproveFailover(ctx, systemActorID, nodeID)
+}

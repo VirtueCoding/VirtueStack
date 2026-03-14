@@ -1,26 +1,22 @@
-// Package customer provides HTTP handlers for the Customer API.
-// These endpoints are designed for customer self-service operations.
-// All endpoints require JWT authentication and enforce customer isolation.
 package customer
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	"google.golang.org/grpc"
 )
 
-// CustomerHandler handles customer-facing API requests.
-// It provides endpoints for VM management, authentication, backups, and other
-// self-service operations. All operations are authenticated via JWT and
-// enforce customer isolation (users can only access their own resources).
 type CustomerHandler struct {
 	vmService       *services.VMService
 	backupService   *services.BackupService
 	authService     *services.AuthService
 	templateService *services.TemplateService
 	webhookService  *services.WebhookService
+	customerService *services.CustomerService
 	vmRepo          *repository.VMRepository
 	backupRepo      *repository.BackupRepository
 	templateRepo    *repository.TemplateRepository
@@ -28,19 +24,24 @@ type CustomerHandler struct {
 	apiKeyRepo      *repository.CustomerAPIKeyRepository
 	auditRepo       *repository.AuditRepository
 	bandwidthRepo   *repository.BandwidthRepository
+	nodeAgent       nodeAgentConnPool
 	authConfig      middleware.AuthConfig
 	encryptionKey   string
 	consoleBaseURL  string
 	logger          *slog.Logger
 }
 
-// NewCustomerHandler creates a new CustomerHandler with the given dependencies.
+type nodeAgentConnPool interface {
+	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
+}
+
 func NewCustomerHandler(
 	vmService *services.VMService,
 	backupService *services.BackupService,
 	authService *services.AuthService,
 	templateService *services.TemplateService,
 	webhookService *services.WebhookService,
+	customerService *services.CustomerService,
 	vmRepo *repository.VMRepository,
 	backupRepo *repository.BackupRepository,
 	templateRepo *repository.TemplateRepository,
@@ -48,6 +49,7 @@ func NewCustomerHandler(
 	apiKeyRepo *repository.CustomerAPIKeyRepository,
 	auditRepo *repository.AuditRepository,
 	bandwidthRepo *repository.BandwidthRepository,
+	nodeAgent nodeAgentConnPool,
 	jwtSecret string,
 	issuer string,
 	encryptionKey string,
@@ -60,6 +62,7 @@ func NewCustomerHandler(
 		authService:     authService,
 		templateService: templateService,
 		webhookService:  webhookService,
+		customerService: customerService,
 		vmRepo:          vmRepo,
 		backupRepo:      backupRepo,
 		templateRepo:    templateRepo,
@@ -67,6 +70,7 @@ func NewCustomerHandler(
 		apiKeyRepo:      apiKeyRepo,
 		auditRepo:       auditRepo,
 		bandwidthRepo:   bandwidthRepo,
+		nodeAgent:       nodeAgent,
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey:   encryptionKey,
 		consoleBaseURL:  consoleBaseURL,
@@ -74,19 +78,16 @@ func NewCustomerHandler(
 	}
 }
 
-// TaskResponse represents the response for async task operations.
 type TaskResponse struct {
 	TaskID string `json:"task_id"`
 }
 
-// ConsoleTokenResponse represents the response for console token requests.
 type ConsoleTokenResponse struct {
 	Token     string `json:"token"`
 	URL       string `json:"url"`
 	ExpiresAt string `json:"expires_at"`
 }
 
-// BandwidthResponse represents bandwidth usage data.
 type BandwidthResponse struct {
 	UsedBytes   int64  `json:"used_bytes"`
 	LimitBytes  int64  `json:"limit_bytes"`
