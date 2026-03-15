@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.25
 FROM golang:${GO_VERSION}-alpine AS builder
 
 # Install build dependencies
@@ -64,8 +64,7 @@ RUN apk add --no-cache \
     bash
 
 # Install Air for hot reload and Delve for debugging
-# Pin air to v1.61.7 (last version supporting Go 1.23)
-# Pin delve to v1.23.1 (last version supporting Go 1.23)
+# Updated for Go 1.25 compatibility
 RUN go install github.com/air-verse/air@v1.61.7 && \
     go install github.com/go-delve/delve/cmd/dlv@v1.23.1
 
