@@ -32,12 +32,16 @@ func (fallbackTemplateStorage) ImportTemplate(ctx context.Context, name, sourceP
 	return "", "", fmt.Errorf("template storage backend is not configured")
 }
 
-func (fallbackTemplateStorage) DeleteTemplate(ctx context.Context, rbdImage, rbdSnapshot string) error {
+func (fallbackTemplateStorage) DeleteTemplate(ctx context.Context, templateRef, snapshotRef string) error {
 	return fmt.Errorf("template storage backend is not configured")
 }
 
-func (fallbackTemplateStorage) GetTemplateSize(ctx context.Context, rbdImage, rbdSnapshot string) (int64, error) {
+func (fallbackTemplateStorage) GetTemplateSize(ctx context.Context, templateRef, snapshotRef string) (int64, error) {
 	return 0, fmt.Errorf("template storage backend is not configured")
+}
+
+func (fallbackTemplateStorage) GetStorageType() string {
+	return "fallback"
 }
 
 // HTTP server constants.

@@ -202,18 +202,37 @@ func (r *NodeRepository) UpdateAllocatedResources(ctx context.Context, nodeID st
 
 // GetLeastLoadedNode returns the online node in the given location with the most available capacity.
 // Returns ErrNotFound if no eligible node exists.
-func (r *NodeRepository) GetLeastLoadedNode(ctx context.Context, locationID string) (*models.Node, error) {
-	const q = `
-		SELECT ` + nodeSelectCols + `
-		FROM nodes
-		WHERE location_id = $1
-		  AND status = 'online'
-		ORDER BY (total_vcpu - allocated_vcpu) DESC,
-		         (total_memory_mb - allocated_memory_mb) DESC
-		LIMIT 1`
-	node, err := ScanRow(ctx, r.db, q, []any{locationID}, scanNode)
-	if err != nil {
-		return nil, fmt.Errorf("getting least loaded node in location %s: %w", locationID, err)
+func (r *NodeRepository) GetLeastLoadedNode(ctx context.Context, locationID, storageBackend string) (*models.Node, error) {
+	var node models.Node
+	var err error
+
+	if storageBackend != "" {
+		const q = `
+			SELECT ` + nodeSelectCols + `
+			FROM nodes
+			WHERE location_id = $1
+			  AND status = 'online'
+			  AND storage_backend = $2
+			ORDER BY (total_vcpu - allocated_vcpu) DESC,
+			         (total_memory_mb - allocated_memory_mb) DESC
+			LIMIT 1`
+		node, err = ScanRow(ctx, r.db, q, []any{locationID, storageBackend}, scanNode)
+		if err != nil {
+			return nil, fmt.Errorf("getting least loaded node in location %s with storage %s: %w", locationID, storageBackend, err)
+		}
+	} else {
+		const q = `
+			SELECT ` + nodeSelectCols + `
+			FROM nodes
+			WHERE location_id = $1
+			  AND status = 'online'
+			ORDER BY (total_vcpu - allocated_vcpu) DESC,
+			         (total_memory_mb - allocated_memory_mb) DESC
+			LIMIT 1`
+		node, err = ScanRow(ctx, r.db, q, []any{locationID}, scanNode)
+		if err != nil {
+			return nil, fmt.Errorf("getting least loaded node in location %s: %w", locationID, err)
+		}
 	}
 	return &node, nil
 }

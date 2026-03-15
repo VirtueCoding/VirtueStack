@@ -83,6 +83,12 @@ func (s *PlanService) Create(ctx context.Context, req *models.PlanCreateRequest)
 		SortOrder:        req.SortOrder,
 	}
 
+	if req.StorageBackend != "" {
+		plan.StorageBackend = req.StorageBackend
+	} else {
+		plan.StorageBackend = models.DefaultStorageBackend
+	}
+
 	if err := s.planRepo.Create(ctx, plan); err != nil {
 		return nil, fmt.Errorf("creating plan: %w", err)
 	}

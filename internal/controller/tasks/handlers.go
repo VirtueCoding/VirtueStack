@@ -90,6 +90,20 @@ type NodeAgentClient interface {
 	// CloneSnapshot clones a protected snapshot to a target pool.
 	// Returns the name of the cloned image in the target pool.
 	CloneSnapshot(ctx context.Context, nodeID, vmID, snapshotName, targetPool string) (string, error)
+	// CreateQCOWSnapshot creates a qemu-img internal snapshot for QCOW-backed VMs.
+	CreateQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error
+	// DeleteQCOWSnapshot deletes a qemu-img internal snapshot for QCOW-backed VMs.
+	DeleteQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error
+	// CreateQCOWBackup creates a backup file from a QCOW disk using qemu-img convert.
+	// If snapshotName is provided, it exports from that specific snapshot.
+	// Returns the size of the backup file in bytes.
+	CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error)
+	// RestoreQCOWBackup restores a VM from a QCOW backup file.
+	RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error
+	// DeleteQCOWBackupFile deletes a QCOW backup file from the backup storage.
+	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
+	// GetQCOWDiskInfo returns information about a QCOW disk including size.
+	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error)
 }
 
 // CreateVMRequest contains parameters for VM creation via node agent.
@@ -150,6 +164,21 @@ type MigrateVMOptions struct {
 	AutoConverge       bool   // Force convergence if migration stalls
 }
 
+// DiskTransferOptions contains options for disk transfer between nodes.
+type DiskTransferOptions struct {
+	SourceNodeID         string    // ID of the source node
+	TargetNodeID         string    // ID of the target node
+	SourceDiskPath       string    // Path to the source disk file
+	TargetDiskPath       string    // Path where disk will be stored on target
+	SnapshotName         string    // Optional snapshot name for consistent copy
+	DiskSizeGB           int       // Size of the disk in GB
+	SourceStorageBackend string    // Storage backend of source (ceph/qcow)
+	TargetStorageBackend string    // Storage backend of target (ceph/qcow)
+	Compress             bool      // Enable compression during transfer
+	ConvertFormat        bool      // Convert disk format (for mixed storage)
+	ProgressCallback     func(int) // Callback for progress updates (0-100)
+}
+
 // VMCreatePayload represents the payload for vm.create tasks.
 type VMCreatePayload struct {
 	VMID       string   `json:"vm_id"`
@@ -178,12 +207,41 @@ type VMDeletePayload struct {
 	VMID string `json:"vm_id"`
 }
 
+// MigrationStrategy defines the type of migration to perform.
+type MigrationStrategy string
+
+const (
+	// MigrationStrategyLiveSharedStorage indicates live migration with shared storage (Ceph).
+	// No disk copy needed, VM remains running during migration.
+	MigrationStrategyLiveSharedStorage MigrationStrategy = "live_shared"
+	// MigrationStrategyDiskCopy indicates migration requiring disk copy between nodes (QCOW).
+	// For running VMs: copy disk, sync delta, switchover.
+	// For stopped VMs: simple disk copy.
+	MigrationStrategyDiskCopy MigrationStrategy = "disk_copy"
+	// MigrationStrategyCold indicates cold migration with format conversion.
+	// Used for mixed storage (Ceph↔QCOW) migrations.
+	MigrationStrategyCold MigrationStrategy = "cold"
+)
+
 // VMMigratePayload represents the payload for vm.migrate tasks.
 type VMMigratePayload struct {
-	VMID              string `json:"vm_id"`
-	SourceNodeID      string `json:"source_node_id"`
-	TargetNodeID      string `json:"target_node_id"`
-	PreMigrationState string `json:"pre_migration_state,omitempty"`
+	VMID                 string            `json:"vm_id"`
+	SourceNodeID         string            `json:"source_node_id"`
+	TargetNodeID         string            `json:"target_node_id"`
+	PreMigrationState    string            `json:"pre_migration_state,omitempty"`
+	SourceStorageBackend string            `json:"source_storage_backend,omitempty"`
+	TargetStorageBackend string            `json:"target_storage_backend,omitempty"`
+	SourceStoragePath    string            `json:"source_storage_path,omitempty"`
+	TargetStoragePath    string            `json:"target_storage_path,omitempty"`
+	SourceCephPool       string            `json:"source_ceph_pool,omitempty"`
+	TargetCephPool       string            `json:"target_ceph_pool,omitempty"`
+	MigrationStrategy    MigrationStrategy `json:"migration_strategy"`
+	Live                 bool              `json:"live"`
+	SourceDiskPath       string            `json:"source_disk_path,omitempty"`
+	TargetDiskPath       string            `json:"target_disk_path,omitempty"`
+	DiskSizeGB           int               `json:"disk_size_gb,omitempty"`
+	// DiskTransferProgress tracks the progress of disk copy (0-100).
+	DiskTransferProgress int `json:"disk_transfer_progress,omitempty"`
 }
 
 // BackupCreatePayload represents the payload for backup.create tasks.

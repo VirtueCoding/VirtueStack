@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,13 @@ const (
 	defaultCloudInitPath  = "/var/lib/virtuestack/cloud-init"
 	defaultISOStoragePath = "/var/lib/virtuestack/iso"
 	defaultDNSNameservers = "8.8.8.8,8.8.4.4"
+	defaultStorageBackend = "ceph"
+	defaultStoragePath    = "/var/lib/virtuestack"
+
+	// Directory structure constants for file-based storage
+	DefaultVmsDir       = "vms"
+	DefaultTemplatesDir = "templates"
+	DefaultBackupsDir   = "backups"
 )
 
 // SMTPConfig holds SMTP email configuration.
@@ -59,6 +67,13 @@ type BackupConfig struct {
 	RemotePath  string `yaml:"remote_path" env:"BACKUP_REMOTE_PATH"`
 }
 
+// FileStorageConfig holds file-based storage configuration.
+type FileStorageConfig struct {
+	TemplateImportPaths []string `yaml:"template_import_paths" env:"TEMPLATE_IMPORT_PATHS"`
+	BackupRetentionDays int      `yaml:"backup_retention_days" env:"BACKUP_RETENTION_DAYS"`
+	MaxTemplateSizeGB   int      `yaml:"max_template_size_gb" env:"MAX_TEMPLATE_SIZE_GB"`
+}
+
 // PowerDNSConfig holds PowerDNS integration configuration.
 type PowerDNSConfig struct {
 	APIURL   string `yaml:"api_url" env:"POWERDNS_API_URL"`
@@ -84,10 +99,11 @@ type ControllerConfig struct {
 	CephMonitors   []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
 
 	// Optional configurations
-	SMTP     SMTPConfig     `yaml:"smtp"`
-	Telegram TelegramConfig `yaml:"telegram"`
-	Backup   BackupConfig   `yaml:"backup"`
-	PowerDNS PowerDNSConfig `yaml:"powerdns"`
+	SMTP        SMTPConfig        `yaml:"smtp"`
+	Telegram    TelegramConfig    `yaml:"telegram"`
+	Backup      BackupConfig      `yaml:"backup"`
+	PowerDNS    PowerDNSConfig    `yaml:"powerdns"`
+	FileStorage FileStorageConfig `yaml:"file_storage"`
 }
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
@@ -101,7 +117,11 @@ type NodeAgentConfig struct {
 	// VNC configuration
 	VNCHost string `yaml:"vnc_host" env:"VNC_HOST"`
 
-	// Ceph storage configuration
+	// Storage configuration
+	StorageBackend string `yaml:"storage_backend" env:"STORAGE_BACKEND"` // "ceph" or "qcow"
+	StoragePath    string `yaml:"storage_path" env:"STORAGE_PATH"`       // Base path for file storage (e.g., /var/lib/virtuestack)
+
+	// Ceph storage configuration (used when StorageBackend == "ceph")
 	CephPool string `yaml:"ceph_pool" env:"CEPH_POOL"`
 	CephUser string `yaml:"ceph_user" env:"CEPH_USER"`
 	CephConf string `yaml:"ceph_conf" env:"CEPH_CONF"`
@@ -168,6 +188,8 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 // Required fields: ControllerGRPCAddr, NodeID, TLSCertFile, TLSKeyFile, TLSCAFile.
 func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 	cfg := &NodeAgentConfig{
+		StorageBackend: defaultStorageBackend,
+		StoragePath:    defaultStoragePath,
 		CephPool:       defaultCephPool,
 		CephUser:       defaultCephUser,
 		CephConf:       defaultCephConf,
@@ -278,14 +300,26 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	if v := os.Getenv("POWERDNS_API_URL"); v != "" {
 		cfg.PowerDNS.APIURL = v
 	}
-	if v := os.Getenv("POWERDNS_API_KEY"); v != "" {
-		cfg.PowerDNS.APIKey = v
-	}
 	if v := os.Getenv("POWERDNS_SERVER_ID"); v != "" {
 		cfg.PowerDNS.ServerID = v
 	}
 	if v := os.Getenv("POWERDNS_ZONE_NAME"); v != "" {
 		cfg.PowerDNS.ZoneName = v
+	}
+
+	// File storage config
+	if v := os.Getenv("TEMPLATE_IMPORT_PATHS"); v != "" {
+		cfg.FileStorage.TemplateImportPaths = splitAndTrimCSV(v)
+	}
+	if v := os.Getenv("BACKUP_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.FileStorage.BackupRetentionDays = n
+		}
+	}
+	if v := os.Getenv("MAX_TEMPLATE_SIZE_GB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.FileStorage.MaxTemplateSizeGB = n
+		}
 	}
 }
 
@@ -303,6 +337,12 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	}
 	if v := os.Getenv("VNC_HOST"); v != "" {
 		cfg.VNCHost = v
+	}
+	if v := os.Getenv("STORAGE_BACKEND"); v != "" {
+		cfg.StorageBackend = v
+	}
+	if v := os.Getenv("STORAGE_PATH"); v != "" {
+		cfg.StoragePath = v
 	}
 	if v := os.Getenv("CEPH_POOL"); v != "" {
 		cfg.CephPool = v
@@ -403,6 +443,26 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 	}
 	if cfg.TLSCAFile == "" {
 		missing = append(missing, "TLS_CA_FILE")
+	}
+
+	// Validate storage backend specific requirements
+	if cfg.StorageBackend == "qcow" {
+		if cfg.StoragePath == "" {
+			missing = append(missing, "STORAGE_PATH (required when storage_backend is qcow)")
+		}
+	} else if cfg.StorageBackend == "ceph" {
+		// Validate Ceph settings
+		if cfg.CephPool == "" {
+			missing = append(missing, "CEPH_POOL (required when storage_backend is ceph)")
+		}
+		if cfg.CephUser == "" {
+			missing = append(missing, "CEPH_USER (required when storage_backend is ceph)")
+		}
+		if cfg.CephConf == "" {
+			missing = append(missing, "CEPH_CONF (required when storage_backend is ceph)")
+		}
+	} else if cfg.StorageBackend != "" && cfg.StorageBackend != "ceph" && cfg.StorageBackend != "qcow" {
+		return fmt.Errorf("invalid storage_backend %q: must be 'ceph' or 'qcow'", cfg.StorageBackend)
 	}
 
 	if len(missing) > 0 {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/ceph/go-ceph/rados"
 	"github.com/ceph/go-ceph/rbd"
@@ -19,7 +20,7 @@ const (
 	VMDiskNameFmt = "vs-%s-disk0"
 )
 
-// SnapshotInfo holds metadata about an RBD snapshot.
+// SnapshotInfo holds metadata about a storage snapshot.
 type SnapshotInfo struct {
 	// Name is the snapshot name.
 	Name string
@@ -27,6 +28,8 @@ type SnapshotInfo struct {
 	Size int64
 	// Protected indicates whether the snapshot is protected from deletion.
 	Protected bool
+	// CreatedAt is the time when the snapshot was created.
+	CreatedAt time.Time
 }
 
 // RBDManager handles Ceph RBD operations for VM disk management.
@@ -433,12 +436,12 @@ func (m *RBDManager) FlattenImage(ctx context.Context, imageName string) error {
 
 // PoolStats contains storage pool statistics.
 type PoolStats struct {
-	// TotalBytes is the total capacity of the pool in bytes.
-	TotalBytes int64
-	// UsedBytes is the used capacity of the pool in bytes.
-	UsedBytes int64
-	// AvailableBytes is the available capacity of the pool in bytes.
-	AvailableBytes int64
+	// Total is the total capacity of the pool in bytes.
+	Total int64
+	// Used is the used capacity of the pool in bytes.
+	Used int64
+	// Free is the available capacity of the pool in bytes.
+	Free int64
 }
 
 // GetPoolStats returns storage statistics for the configured pool.
@@ -454,8 +457,8 @@ func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
 	// Parse the JSON response
 	var dfResp struct {
 		Pools []struct {
-			Name   string `json:"name"`
-			Stats  struct {
+			Name  string `json:"name"`
+			Stats struct {
 				BytesUsed    int64 `json:"bytes_used"`
 				MaxAvailable int64 `json:"max_avail"`
 				Stored       int64 `json:"stored"`
@@ -476,18 +479,18 @@ func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
 	for _, pool := range dfResp.Pools {
 		if pool.Name == m.pool {
 			return &PoolStats{
-				TotalBytes:     pool.Stats.BytesUsed + pool.Stats.MaxAvailable,
-				UsedBytes:      pool.Stats.BytesUsed,
-				AvailableBytes: pool.Stats.MaxAvailable,
+				Total: pool.Stats.BytesUsed + pool.Stats.MaxAvailable,
+				Used:  pool.Stats.BytesUsed,
+				Free:  pool.Stats.MaxAvailable,
 			}, nil
 		}
 	}
 
 	// Pool not found in response, return cluster-wide stats as fallback
 	return &PoolStats{
-		TotalBytes:     dfResp.Stats.TotalBytes,
-		UsedBytes:      dfResp.Stats.TotalUsedBytes,
-		AvailableBytes: dfResp.Stats.TotalAvailBytes,
+		Total: dfResp.Stats.TotalBytes,
+		Used:  dfResp.Stats.TotalUsedBytes,
+		Free:  dfResp.Stats.TotalAvailBytes,
 	}, nil
 }
 
@@ -499,4 +502,9 @@ func (m *RBDManager) IsConnected() bool {
 	// Try a simple command to check connection
 	_, err := m.conn.GetClusterStats()
 	return err == nil
+}
+
+// GetStorageType returns the storage backend type.
+func (m *RBDManager) GetStorageType() StorageType {
+	return StorageTypeCEPH
 }

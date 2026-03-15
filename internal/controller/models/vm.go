@@ -17,24 +17,32 @@ const (
 
 // VM represents a virtual machine record as stored in the database.
 type VM struct {
-	ID                    string     `json:"id" db:"id"`
-	CustomerID            string     `json:"customer_id" db:"customer_id"`
-	NodeID                *string    `json:"node_id,omitempty" db:"node_id"`
-	PlanID                string     `json:"plan_id" db:"plan_id"`
-	Hostname              string     `json:"hostname" db:"hostname"`
-	Status                string     `json:"status" db:"status"`
-	VCPU                  int        `json:"vcpu" db:"vcpu"`
-	MemoryMB              int        `json:"memory_mb" db:"memory_mb"`
-	DiskGB                int        `json:"disk_gb" db:"disk_gb"`
-	PortSpeedMbps         int        `json:"port_speed_mbps" db:"port_speed_mbps"`
-	BandwidthLimitGB      int        `json:"bandwidth_limit_gb" db:"bandwidth_limit_gb"`
-	BandwidthUsedBytes    int64      `json:"bandwidth_used_bytes" db:"bandwidth_used_bytes"`
-	BandwidthResetAt      time.Time  `json:"bandwidth_reset_at" db:"bandwidth_reset_at"`
-	MACAddress            string     `json:"mac_address" db:"mac_address"`
-	TemplateID            *string    `json:"template_id,omitempty" db:"template_id"`
-	LibvirtDomainName     *string    `json:"libvirt_domain_name,omitempty" db:"libvirt_domain_name"`
-	RootPasswordEncrypted *string    `json:"-" db:"root_password_encrypted"` // Never expose in JSON
-	WHMCSServiceID        *int       `json:"whmcs_service_id,omitempty" db:"whmcs_service_id"`
+	ID                    string    `json:"id" db:"id"`
+	CustomerID            string    `json:"customer_id" db:"customer_id"`
+	NodeID                *string   `json:"node_id,omitempty" db:"node_id"`
+	PlanID                string    `json:"plan_id" db:"plan_id"`
+	Hostname              string    `json:"hostname" db:"hostname"`
+	Status                string    `json:"status" db:"status"`
+	VCPU                  int       `json:"vcpu" db:"vcpu"`
+	MemoryMB              int       `json:"memory_mb" db:"memory_mb"`
+	DiskGB                int       `json:"disk_gb" db:"disk_gb"`
+	PortSpeedMbps         int       `json:"port_speed_mbps" db:"port_speed_mbps"`
+	BandwidthLimitGB      int       `json:"bandwidth_limit_gb" db:"bandwidth_limit_gb"`
+	BandwidthUsedBytes    int64     `json:"bandwidth_used_bytes" db:"bandwidth_used_bytes"`
+	BandwidthResetAt      time.Time `json:"bandwidth_reset_at" db:"bandwidth_reset_at"`
+	MACAddress            string    `json:"mac_address" db:"mac_address"`
+	TemplateID            *string   `json:"template_id,omitempty" db:"template_id"`
+	LibvirtDomainName     *string   `json:"libvirt_domain_name,omitempty" db:"libvirt_domain_name"`
+	RootPasswordEncrypted *string   `json:"-" db:"root_password_encrypted"` // Never expose in JSON
+	WHMCSServiceID        *int      `json:"whmcs_service_id,omitempty" db:"whmcs_service_id"`
+	// StorageBackend: "ceph" or "qcow". Defaults to "ceph" for backward compatibility.
+	StorageBackend string `json:"storage_backend" db:"storage_backend"`
+	// DiskPath: path to disk file for qcow2 storage. Empty for ceph (uses CephPool/RBDImage).
+	DiskPath string `json:"disk_path,omitempty" db:"disk_path"`
+	// CephPool: Ceph pool name for backward compatibility.
+	CephPool string `json:"ceph_pool" db:"ceph_pool"`
+	// RBDImage: RBD image name for ceph storage.
+	RBDImage string `json:"rbd_image" db:"rbd_image"`
 	Timestamps
 	SoftDelete
 }

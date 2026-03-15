@@ -73,7 +73,7 @@ type NodeAgentServiceClient interface {
 	ForceStopVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error)
 	// DeleteVM permanently removes a virtual machine and its disk image.
 	// The VM must be stopped before deletion.
-	DeleteVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error)
+	DeleteVM(ctx context.Context, in *DeleteVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error)
 	// ReinstallVM reimages a virtual machine from a new template.
 	// All existing data on the VM will be lost.
 	ReinstallVM(ctx context.Context, in *ReinstallVMRequest, opts ...grpc.CallOption) (*CreateVMResponse, error)
@@ -181,7 +181,7 @@ func (c *nodeAgentServiceClient) ForceStopVM(ctx context.Context, in *VMIdentifi
 	return out, nil
 }
 
-func (c *nodeAgentServiceClient) DeleteVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error) {
+func (c *nodeAgentServiceClient) DeleteVM(ctx context.Context, in *DeleteVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error) {
 	out := new(VMOperationResponse)
 	err := c.cc.Invoke(ctx, NodeAgentService_DeleteVM_FullMethodName, in, out, opts...)
 	if err != nil {
@@ -468,7 +468,7 @@ type NodeAgentServiceServer interface {
 	ForceStopVM(context.Context, *VMIdentifier) (*VMOperationResponse, error)
 	// DeleteVM permanently removes a virtual machine and its disk image.
 	// The VM must be stopped before deletion.
-	DeleteVM(context.Context, *VMIdentifier) (*VMOperationResponse, error)
+	DeleteVM(context.Context, *DeleteVMRequest) (*VMOperationResponse, error)
 	// ReinstallVM reimages a virtual machine from a new template.
 	// All existing data on the VM will be lost.
 	ReinstallVM(context.Context, *ReinstallVMRequest) (*CreateVMResponse, error)
@@ -549,7 +549,7 @@ func (UnimplementedNodeAgentServiceServer) StopVM(context.Context, *StopVMReques
 func (UnimplementedNodeAgentServiceServer) ForceStopVM(context.Context, *VMIdentifier) (*VMOperationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForceStopVM not implemented")
 }
-func (UnimplementedNodeAgentServiceServer) DeleteVM(context.Context, *VMIdentifier) (*VMOperationResponse, error) {
+func (UnimplementedNodeAgentServiceServer) DeleteVM(context.Context, *DeleteVMRequest) (*VMOperationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteVM not implemented")
 }
 func (UnimplementedNodeAgentServiceServer) ReinstallVM(context.Context, *ReinstallVMRequest) (*CreateVMResponse, error) {
@@ -710,7 +710,7 @@ func _NodeAgentService_ForceStopVM_Handler(srv interface{}, ctx context.Context,
 }
 
 func _NodeAgentService_DeleteVM_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(VMIdentifier)
+	in := new(DeleteVMRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -722,7 +722,7 @@ func _NodeAgentService_DeleteVM_Handler(srv interface{}, ctx context.Context, de
 		FullMethod: NodeAgentService_DeleteVM_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeAgentServiceServer).DeleteVM(ctx, req.(*VMIdentifier))
+		return srv.(NodeAgentServiceServer).DeleteVM(ctx, req.(*DeleteVMRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

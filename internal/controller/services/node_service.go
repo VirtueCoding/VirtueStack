@@ -105,15 +105,17 @@ func (s *NodeService) RegisterNode(ctx context.Context, req *models.NodeCreateRe
 
 	// Prepare node record
 	node := &models.Node{
-		Hostname:      req.Hostname,
-		GRPCAddress:   req.GRPCAddress,
-		ManagementIP:  req.ManagementIP,
-		LocationID:    req.LocationID,
-		Status:        models.NodeStatusOnline,
-		TotalVCPU:     req.TotalVCPU,
-		TotalMemoryMB: req.TotalMemoryMB,
-		CephPool:      req.CephPool,
-		IPMIAddress:   req.IPMIAddress,
+		Hostname:       req.Hostname,
+		GRPCAddress:    req.GRPCAddress,
+		ManagementIP:   req.ManagementIP,
+		LocationID:     req.LocationID,
+		Status:         models.NodeStatusOnline,
+		TotalVCPU:      req.TotalVCPU,
+		TotalMemoryMB:  req.TotalMemoryMB,
+		StorageBackend: req.StorageBackend,
+		StoragePath:    req.StoragePath,
+		CephPool:       req.CephPool,
+		IPMIAddress:    req.IPMIAddress,
 	}
 
 	// Encrypt IPMI credentials if provided
@@ -436,12 +438,12 @@ func (s *NodeService) ResetFailoverCircuitBreaker(nodeID string) {
 
 // GetLeastLoadedNode returns the best node for VM placement in a given location.
 // It selects the node with the most available capacity that is online and accepting placements.
-func (s *NodeService) GetLeastLoadedNode(ctx context.Context, locationID string) (*models.Node, error) {
+func (s *NodeService) GetLeastLoadedNode(ctx context.Context, locationID, storageBackend string) (*models.Node, error) {
 	if locationID == "" {
 		return nil, fmt.Errorf("location ID is required")
 	}
 
-	node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
+	node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID, storageBackend)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			return nil, fmt.Errorf("no available nodes in location %s", locationID)

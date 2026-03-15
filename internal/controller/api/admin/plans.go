@@ -152,6 +152,9 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	if req.SortOrder != nil {
 		plan.SortOrder = *req.SortOrder
 	}
+	if req.StorageBackend != nil {
+		plan.StorageBackend = *req.StorageBackend
+	}
 
 	err = h.planService.Update(c.Request.Context(), plan)
 	if err != nil {

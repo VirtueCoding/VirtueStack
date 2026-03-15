@@ -54,19 +54,21 @@ type TaskResponse struct {
 
 // CreateVMResponse represents the response for VM creation.
 type CreateVMResponse struct {
-	TaskID string `json:"task_id"`
-	VMID   string `json:"vm_id"`
+	TaskID         string `json:"task_id"`
+	VMID           string `json:"vm_id"`
+	StorageBackend string `json:"storage_backend,omitempty"`
+	DiskPath       string `json:"disk_path,omitempty"`
 }
 
 // TaskStatusResponse represents the response for task status queries.
 type TaskStatusResponse struct {
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
 	Status    models.TaskStatus `json:"status"`
-	Progress  int             `json:"progress"`
-	Message   string          `json:"message,omitempty"`
-	Result    any             `json:"result,omitempty"`
-	CreatedAt string          `json:"created_at"`
+	Progress  int               `json:"progress"`
+	Message   string            `json:"message,omitempty"`
+	Result    any               `json:"result,omitempty"`
+	CreatedAt string            `json:"created_at"`
 }
 
 // VMStatusResponse represents the response for VM status queries.

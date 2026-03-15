@@ -14,10 +14,17 @@ const (
 
 // Backup represents a full or incremental backup of a VM's disk.
 type Backup struct {
-	ID               string     `json:"id" db:"id"`
-	VMID             string     `json:"vm_id" db:"vm_id"`
-	Type             string     `json:"type" db:"type"` // "full" or "incremental"
-	RBDSnapshot      *string    `json:"rbd_snapshot,omitempty" db:"rbd_snapshot"`
+	ID   string `json:"id" db:"id"`
+	VMID string `json:"vm_id" db:"vm_id"`
+	Type string `json:"type" db:"type"` // "full" or "incremental"
+	// StorageBackend indicates the storage type: "ceph" or "qcow"
+	StorageBackend string `json:"storage_backend" db:"storage_backend"`
+	// RBDSnapshot is the RBD snapshot name for Ceph backups (backward compatibility)
+	RBDSnapshot *string `json:"rbd_snapshot,omitempty" db:"rbd_snapshot"`
+	// FilePath is the path to the backup file for QCOW backups
+	FilePath *string `json:"file_path,omitempty" db:"file_path"`
+	// SnapshotName is the internal QCOW snapshot name for QCOW backups
+	SnapshotName     *string    `json:"snapshot_name,omitempty" db:"snapshot_name"`
 	DiffFromSnapshot *string    `json:"diff_from_snapshot,omitempty" db:"diff_from_snapshot"`
 	StoragePath      *string    `json:"storage_path,omitempty" db:"storage_path"`
 	SizeBytes        *int64     `json:"size_bytes,omitempty" db:"size_bytes"`
@@ -26,14 +33,19 @@ type Backup struct {
 	ExpiresAt        *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 }
 
-// Snapshot represents a point-in-time snapshot of a VM's disk stored in Ceph.
+// Snapshot represents a point-in-time snapshot of a VM's disk.
 type Snapshot struct {
-	ID          string    `json:"id" db:"id"`
-	VMID        string    `json:"vm_id" db:"vm_id"`
-	Name        string    `json:"name" db:"name"`
-	RBDSnapshot string    `json:"rbd_snapshot" db:"rbd_snapshot"`
-	SizeBytes   *int64    `json:"size_bytes,omitempty" db:"size_bytes"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	ID   string `json:"id" db:"id"`
+	VMID string `json:"vm_id" db:"vm_id"`
+	Name string `json:"name" db:"name"`
+	// StorageBackend indicates the storage type: "ceph" or "qcow"
+	StorageBackend string `json:"storage_backend" db:"storage_backend"`
+	// RBDSnapshot is the RBD snapshot name for Ceph storage
+	RBDSnapshot string `json:"rbd_snapshot" db:"rbd_snapshot"`
+	// QCOWSnapshot is the internal qemu-img snapshot name for QCOW storage
+	QCOWSnapshot *string   `json:"qcow_snapshot,omitempty" db:"qcow_snapshot"`
+	SizeBytes    *int64    `json:"size_bytes,omitempty" db:"size_bytes"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 }
 
 // WebhookEvent constants define the event types that can trigger a webhook delivery.

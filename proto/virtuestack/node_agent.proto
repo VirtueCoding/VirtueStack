@@ -86,7 +86,7 @@ service NodeAgentService {
 
   // DeleteVM permanently removes a virtual machine and its disk image.
   // The VM must be stopped before deletion.
-  rpc DeleteVM(VMIdentifier) returns (VMOperationResponse);
+  rpc DeleteVM(DeleteVMRequest) returns (VMOperationResponse);
 
   // ReinstallVM reimages a virtual machine from a new template.
   // All existing data on the VM will be lost.
@@ -108,8 +108,23 @@ service NodeAgentService {
   // The VM will remain on the source node.
   rpc AbortMigration(VMIdentifier) returns (VMOperationResponse);
 
-  // NEW: Post-migration hook for bandwidth re-application
+  // Post-migration hook for bandwidth re-application
   rpc PostMigrateSetup(PostMigrateSetupRequest) returns (VMOperationResponse);
+
+  // Create a point-in-time snapshot of a VM disk for migration.
+  rpc CreateDiskSnapshot(CreateDiskSnapshotRequest) returns (CreateDiskSnapshotResponse);
+
+  // Remove a disk snapshot created during migration.
+  rpc DeleteDiskSnapshot(DeleteDiskSnapshotRequest) returns (VMOperationResponse);
+
+  // Transfer a disk from this node to a target node (streaming).
+  rpc TransferDisk(TransferDiskRequest) returns (stream DiskChunk);
+
+  // Receive a disk transfer from a source node (streaming).
+  rpc ReceiveDisk(stream DiskChunk) returns (ReceiveDiskResponse);
+
+  // Prepare a VM on this node using a transferred disk.
+  rpc PrepareMigratedVM(PrepareMigratedVMRequest) returns (VMOperationResponse);
 
   // ========================================================================
   // Console Operations (Bidirectional Streaming)
@@ -216,6 +231,16 @@ message VMIdentifier {
   string vm_id = 1;
 }
 
+// DeleteVMRequest contains parameters for VM deletion.
+message DeleteVMRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 2;
+  // Disk path for QCOW storage backend
+  string disk_path = 3;
+}
+
 // VMOperationResponse is the standard response for VM operations that don't
 // return complex data.
 message VMOperationResponse {
@@ -277,6 +302,10 @@ message CreateVMRequest {
   string ceph_pool = 21;
   // DNS nameserver addresses
   repeated string nameservers = 22;
+  // Storage backend type: "ceph" or "qcow" (defaults to "ceph" for backward compatibility)
+  string storage_backend = 23;
+  // Template file path for QCOW storage backend (e.g., /var/lib/virtuestack/templates/ubuntu-2204.qcow2)
+  string template_file_path = 24;
 }
 
 // CreateVMResponse is returned after a VM creation attempt.
@@ -328,6 +357,10 @@ message ReinstallVMRequest {
   repeated string nameservers = 11;
   // New hostname for the VM
   string hostname = 12;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 13;
+  // Template file path for QCOW storage backend
+  string template_file_path = 14;
 }
 
 // ResizeVMRequest contains the new resource allocation for a VM.
@@ -340,6 +373,10 @@ message ResizeVMRequest {
   int32 new_memory_mb = 3;
   // New disk size in gigabytes (0 to keep current, must be larger than current)
   int32 new_disk_gb = 4;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 5;
+  // Disk path for QCOW storage backend (required if storage_backend is "qcow")
+  string disk_path = 6;
 }
 
 // ============================================================================
@@ -650,4 +687,116 @@ message NodeHealthResponse {
   bool libvirt_connected = 9;
   // Whether Ceph cluster connection is established
   bool ceph_connected = 10;
+}
+
+// ============================================================================
+// DISK TRANSFER MESSAGES
+// ============================================================================
+
+// CreateDiskSnapshotRequest creates a point-in-time disk snapshot.
+message CreateDiskSnapshotRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Name for the snapshot
+  string snapshot_name = 2;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 3;
+  // Disk path for QCOW storage
+  string disk_path = 4;
+}
+
+// CreateDiskSnapshotResponse is returned after disk snapshot creation.
+message CreateDiskSnapshotResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Name of the created snapshot
+  string snapshot_name = 2;
+  // Whether the operation succeeded
+  bool success = 3;
+  // Error message if operation failed
+  string error_message = 4;
+}
+
+// DeleteDiskSnapshotRequest removes a disk snapshot.
+message DeleteDiskSnapshotRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Name of the snapshot to delete
+  string snapshot_name = 2;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 3;
+  // Disk path for QCOW storage
+  string disk_path = 4;
+}
+
+// TransferDiskRequest initiates a disk transfer to a target node.
+message TransferDiskRequest {
+  // Path to the source disk file
+  string source_disk_path = 1;
+  // gRPC address of the target node
+  string target_node_address = 2;
+  // Path where the disk will be stored on the target
+  string target_disk_path = 3;
+  // Optional snapshot name for consistent copy
+  string snapshot_name = 4;
+  // Enable compression during transfer
+  bool compress = 5;
+  // Storage backend type
+  string storage_backend = 6;
+}
+
+// DiskChunk represents a chunk of disk data for streaming transfer.
+message DiskChunk {
+  // Raw disk data
+  bytes data = 1;
+  // Offset in the file
+  int64 offset = 2;
+  // Total size of the file
+  int64 total = 3;
+  // Target disk path (set in first message for receive)
+  string target_disk_path = 4;
+}
+
+// ReceiveDiskResponse is returned after disk receive completes.
+message ReceiveDiskResponse {
+  // Path where the disk was stored
+  string target_disk_path = 1;
+  // Total bytes received
+  int64 bytes_received = 2;
+  // Whether the operation succeeded
+  bool success = 3;
+  // Error message if operation failed
+  string error_message = 4;
+}
+
+// PrepareMigratedVMRequest creates a VM definition using a transferred disk.
+message PrepareMigratedVMRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Path to the transferred disk
+  string disk_path = 2;
+  // Hostname for the VM
+  string hostname = 3;
+  // Number of virtual CPUs
+  int32 vcpu = 4;
+  // Memory in megabytes
+  int32 memory_mb = 5;
+  // Storage backend type: "ceph" or "qcow"
+  string storage_backend = 6;
+  // MAC address for the network interface
+  string mac_address = 7;
+  // IPv4 address
+  string ipv4_address = 8;
+  // IPv6 address
+  string ipv6_address = 9;
+  // Port speed in Mbps
+  int32 port_speed_mbps = 10;
+  // Ceph pool name
+  string ceph_pool = 11;
+  // Ceph monitor addresses
+  repeated string ceph_monitors = 12;
+  // Ceph user name
+  string ceph_user = 13;
+  // Ceph secret UUID
+  string ceph_secret_uuid = 14;
 }

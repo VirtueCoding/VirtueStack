@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -12,11 +13,21 @@ import (
 
 // NodeUpdateRequest represents the request body for updating a node.
 type NodeUpdateRequest struct {
-	GRPCAddress *string `json:"grpc_address,omitempty" validate:"omitempty,max=255"`
-	LocationID  *string `json:"location_id,omitempty" validate:"omitempty,uuid"`
-	TotalVCPU   *int    `json:"total_vcpu,omitempty" validate:"omitempty,min=1"`
-	TotalMemory *int    `json:"total_memory_mb,omitempty" validate:"omitempty,min=1024"`
-	IPMIAddress *string `json:"ipmi_address,omitempty" validate:"omitempty,ip"`
+	GRPCAddress    *string `json:"grpc_address,omitempty" validate:"omitempty,max=255"`
+	LocationID     *string `json:"location_id,omitempty" validate:"omitempty,uuid"`
+	TotalVCPU      *int    `json:"total_vcpu,omitempty" validate:"omitempty,min=1"`
+	TotalMemory    *int    `json:"total_memory_mb,omitempty" validate:"omitempty,min=1024"`
+	IPMIAddress    *string `json:"ipmi_address,omitempty" validate:"omitempty,ip"`
+	StorageBackend *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow"`
+	StoragePath    *string `json:"storage_path,omitempty" validate:"omitempty,max=500"`
+}
+
+// validateStorageConfig validates storage_backend and storage_path consistency.
+func validateStorageConfig(storageBackend, storagePath string) error {
+	if storageBackend == models.StorageBackendQcow && storagePath == "" {
+		return errors.New("storage_path is required when storage_backend is 'qcow'")
+	}
+	return nil
 }
 
 // ListNodes handles GET /nodes - lists all hypervisor nodes with optional filtering.
@@ -61,6 +72,11 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 			return
 		}
 		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	if err := validateStorageConfig(req.StorageBackend, req.StoragePath); err != nil {
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
 
@@ -157,6 +173,21 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 		return
 	}
 
+	if req.StorageBackend != nil || req.StoragePath != nil {
+		currentBackend := node.StorageBackend
+		currentPath := node.StoragePath
+		if req.StorageBackend != nil {
+			currentBackend = *req.StorageBackend
+		}
+		if req.StoragePath != nil {
+			currentPath = *req.StoragePath
+		}
+		if err := validateStorageConfig(currentBackend, currentPath); err != nil {
+			respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+	}
+
 	// Apply updates
 	if req.GRPCAddress != nil {
 		node.GRPCAddress = *req.GRPCAddress
@@ -172,6 +203,12 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 	}
 	if req.IPMIAddress != nil {
 		node.IPMIAddress = req.IPMIAddress
+	}
+	if req.StorageBackend != nil {
+		node.StorageBackend = *req.StorageBackend
+	}
+	if req.StoragePath != nil {
+		node.StoragePath = *req.StoragePath
 	}
 
 	if err := h.nodeService.UpdateNode(c.Request.Context(), node); err != nil {

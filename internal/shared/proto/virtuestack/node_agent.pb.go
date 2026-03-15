@@ -297,6 +297,72 @@ func (x *VMIdentifier) GetVmId() string {
 	return ""
 }
 
+// DeleteVMRequest contains parameters for VM deletion.
+type DeleteVMRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// UUID of the virtual machine
+	VmId string `protobuf:"bytes,1,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
+	// Storage backend type: "ceph" or "qcow"
+	StorageBackend string `protobuf:"bytes,2,opt,name=storage_backend,json=storageBackend,proto3" json:"storage_backend,omitempty"`
+	// Disk path for QCOW storage backend
+	DiskPath string `protobuf:"bytes,3,opt,name=disk_path,json=diskPath,proto3" json:"disk_path,omitempty"`
+}
+
+func (x *DeleteVMRequest) Reset() {
+	*x = DeleteVMRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_virtuestack_node_agent_proto_msgTypes[100]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DeleteVMRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteVMRequest) ProtoMessage() {}
+
+func (x *DeleteVMRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_virtuestack_node_agent_proto_msgTypes[100]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (*DeleteVMRequest) Descriptor() ([]byte, []int) {
+	return file_virtuestack_node_agent_proto_rawDescGZIP(), []int{100}
+}
+
+func (x *DeleteVMRequest) GetVmId() string {
+	if x != nil {
+		return x.VmId
+	}
+	return ""
+}
+
+func (x *DeleteVMRequest) GetStorageBackend() string {
+	if x != nil {
+		return x.StorageBackend
+	}
+	return ""
+}
+
+func (x *DeleteVMRequest) GetDiskPath() string {
+	if x != nil {
+		return x.DiskPath
+	}
+	return ""
+}
+
 // VMOperationResponse is the standard response for VM operations that don't
 // return complex data.
 type VMOperationResponse struct {
@@ -415,6 +481,10 @@ type CreateVMRequest struct {
 	CephPool string `protobuf:"bytes,21,opt,name=ceph_pool,json=cephPool,proto3" json:"ceph_pool,omitempty"`
 	// DNS nameserver addresses
 	Nameservers []string `protobuf:"bytes,22,rep,name=nameservers,proto3" json:"nameservers,omitempty"`
+	// Storage backend type: "ceph" or "qcow"
+	StorageBackend string `protobuf:"bytes,23,opt,name=storage_backend,json=storageBackend,proto3" json:"storage_backend,omitempty"`
+	// Template file path for QCOW storage backend
+	TemplateFilePath string `protobuf:"bytes,24,opt,name=template_file_path,json=templateFilePath,proto3" json:"template_file_path,omitempty"`
 }
 
 func (x *CreateVMRequest) Reset() {
@@ -603,6 +673,20 @@ func (x *CreateVMRequest) GetNameservers() []string {
 	return nil
 }
 
+func (x *CreateVMRequest) GetStorageBackend() string {
+	if x != nil {
+		return x.StorageBackend
+	}
+	return ""
+}
+
+func (x *CreateVMRequest) GetTemplateFilePath() string {
+	if x != nil {
+		return x.TemplateFilePath
+	}
+	return ""
+}
+
 // CreateVMResponse is returned after a VM creation attempt.
 type CreateVMResponse struct {
 	state         protoimpl.MessageState
@@ -777,6 +861,10 @@ type ReinstallVMRequest struct {
 	Nameservers []string `protobuf:"bytes,11,rep,name=nameservers,proto3" json:"nameservers,omitempty"`
 	// New hostname for the VM
 	Hostname string `protobuf:"bytes,12,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	// Storage backend type: "ceph" or "qcow"
+	StorageBackend string `protobuf:"bytes,13,opt,name=storage_backend,json=storageBackend,proto3" json:"storage_backend,omitempty"`
+	// Template file path for QCOW storage backend
+	TemplateFilePath string `protobuf:"bytes,14,opt,name=template_file_path,json=templateFilePath,proto3" json:"template_file_path,omitempty"`
 }
 
 func (x *ReinstallVMRequest) Reset() {
@@ -895,6 +983,20 @@ func (x *ReinstallVMRequest) GetHostname() string {
 	return ""
 }
 
+func (x *ReinstallVMRequest) GetStorageBackend() string {
+	if x != nil {
+		return x.StorageBackend
+	}
+	return ""
+}
+
+func (x *ReinstallVMRequest) GetTemplateFilePath() string {
+	if x != nil {
+		return x.TemplateFilePath
+	}
+	return ""
+}
+
 // ResizeVMRequest contains the new resource allocation for a VM.
 type ResizeVMRequest struct {
 	state         protoimpl.MessageState
@@ -909,6 +1011,10 @@ type ResizeVMRequest struct {
 	NewMemoryMb int32 `protobuf:"varint,3,opt,name=new_memory_mb,json=newMemoryMb,proto3" json:"new_memory_mb,omitempty"`
 	// New disk size in gigabytes (0 to keep current, must be larger than current)
 	NewDiskGb int32 `protobuf:"varint,4,opt,name=new_disk_gb,json=newDiskGb,proto3" json:"new_disk_gb,omitempty"`
+	// Storage backend type: "ceph" or "qcow"
+	StorageBackend string `protobuf:"bytes,5,opt,name=storage_backend,json=storageBackend,proto3" json:"storage_backend,omitempty"`
+	// Disk path for QCOW storage backend
+	DiskPath string `protobuf:"bytes,6,opt,name=disk_path,json=diskPath,proto3" json:"disk_path,omitempty"`
 }
 
 func (x *ResizeVMRequest) Reset() {
@@ -969,6 +1075,20 @@ func (x *ResizeVMRequest) GetNewDiskGb() int32 {
 		return x.NewDiskGb
 	}
 	return 0
+}
+
+func (x *ResizeVMRequest) GetStorageBackend() string {
+	if x != nil {
+		return x.StorageBackend
+	}
+	return ""
+}
+
+func (x *ResizeVMRequest) GetDiskPath() string {
+	if x != nil {
+		return x.DiskPath
+	}
+	return ""
 }
 
 // MigrateVMRequest specifies the parameters for VM migration.

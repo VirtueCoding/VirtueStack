@@ -710,6 +710,30 @@ func (c *NodeAgentGRPCClient) GetVMNodeID(ctx context.Context, vmID string) (str
 	return "", errors.New("GetVMNodeID is not supported by node agent gRPC client")
 }
 
+func (c *NodeAgentGRPCClient) CreateQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
+	return errors.New("CreateQCOWSnapshot is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) DeleteQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
+	return errors.New("DeleteQCOWSnapshot is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error) {
+	return 0, errors.New("CreateQCOWBackup is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error {
+	return errors.New("RestoreQCOWBackup is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error {
+	return errors.New("DeleteQCOWBackupFile is not supported by node agent gRPC API")
+}
+
+func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
+	return nil, errors.New("GetQCOWDiskInfo is not supported by node agent gRPC API")
+}
+
 func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models.NodeHeartbeat {
 	loadAvg := make([]float32, len(resp.GetLoadAverage()))
 	for i, v := range resp.GetLoadAverage() {

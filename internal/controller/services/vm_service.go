@@ -118,29 +118,33 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 
 	var node *models.Node
 	if locationID != "" {
-		node, err = s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
+		node, err = s.nodeRepo.GetLeastLoadedNode(ctx, locationID, plan.StorageBackend)
 		if err != nil {
 			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return nil, "", fmt.Errorf("no available nodes in location %s", locationID)
+				return nil, "", fmt.Errorf("no available nodes in location %s with storage backend %s", locationID, plan.StorageBackend)
 			}
 			return nil, "", fmt.Errorf("finding node: %w", err)
 		}
 	} else {
-		// Get any online node if no location specified
 		nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: strPtr(models.NodeStatusOnline)})
 		if err != nil {
 			return nil, "", fmt.Errorf("listing nodes: %w", err)
 		}
-		if len(nodes) == 0 {
-			return nil, "", fmt.Errorf("no available nodes")
+		var filteredNodes []models.Node
+		for _, n := range nodes {
+			if n.StorageBackend == plan.StorageBackend {
+				filteredNodes = append(filteredNodes, n)
+			}
 		}
-		// Pick the one with most available memory
-		node = &nodes[0]
-		for i := range nodes {
-			availableMemory := nodes[i].TotalMemoryMB - nodes[i].AllocatedMemoryMB
+		if len(filteredNodes) == 0 {
+			return nil, "", fmt.Errorf("no available nodes with storage backend %s", plan.StorageBackend)
+		}
+		node = &filteredNodes[0]
+		for i := range filteredNodes {
+			availableMemory := filteredNodes[i].TotalMemoryMB - filteredNodes[i].AllocatedMemoryMB
 			bestMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
 			if availableMemory > bestMemory {
-				node = &nodes[i]
+				node = &filteredNodes[i]
 			}
 		}
 	}
@@ -181,6 +185,7 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		LibvirtDomainName:     &libvirtDomainName,
 		RootPasswordEncrypted: &encryptedPassword,
 		WHMCSServiceID:        req.WHMCSServiceID,
+		StorageBackend:        plan.StorageBackend,
 	}
 
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
@@ -213,6 +218,8 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		"bandwidth_limit_gb":    vm.BandwidthLimitGB,
 		"ssh_keys":              req.SSHKeys,
 		"ceph_pool":             node.CephPool,
+		"storage_backend":       plan.StorageBackend,
+		"storage_path":          node.StoragePath,
 	}
 
 	if ipv4Address != nil {

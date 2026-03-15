@@ -34,16 +34,54 @@ const (
 	DefaultListenAddr = ":50052"
 )
 
+// initializeStorage creates the appropriate storage backend based on configuration.
+// Returns the StorageBackend interface, storage type, and template manager.
+func initializeStorage(cfg *config.NodeAgentConfig, logger *slog.Logger) (storage.StorageBackend, storage.StorageType, any, error) {
+	storageBackend := cfg.StorageBackend
+	if storageBackend == "" {
+		storageBackend = "ceph"
+	}
+
+	switch storageBackend {
+	case "qcow":
+		qcowMgr, err := storage.NewQCOWManager(cfg.StoragePath, logger)
+		if err != nil {
+			return nil, storage.StorageTypeQCOW, nil, fmt.Errorf("creating QCOW manager: %w", err)
+		}
+
+		templatesPath := cfg.StoragePath + "/templates"
+		vmsPath := cfg.StoragePath + "/vms"
+		qcowTemplateMgr, err := storage.NewQCOWTemplateManager(templatesPath, vmsPath, logger)
+		if err != nil {
+			return nil, storage.StorageTypeQCOW, nil, fmt.Errorf("creating QCOW template manager: %w", err)
+		}
+
+		logger.Info("initialized QCOW storage backend", "path", cfg.StoragePath)
+		return qcowMgr, storage.StorageTypeQCOW, qcowTemplateMgr, nil
+
+	default:
+		rbdMgr, err := storage.NewRBDManager(cfg.CephConf, cfg.CephUser, cfg.CephPool, logger)
+		if err != nil {
+			return nil, storage.StorageTypeCEPH, nil, fmt.Errorf("connecting to ceph: %w", err)
+		}
+
+		logger.Info("initialized Ceph RBD storage backend", "pool", cfg.CephPool)
+		return rbdMgr, storage.StorageTypeCEPH, nil, nil
+	}
+}
+
 // Server represents the VirtueStack Node Agent gRPC server.
 type Server struct {
-	config      *config.NodeAgentConfig
-	libvirtConn *libvirt.Connect
-	grpcServer  *grpc.Server
-	vmManager   *vm.Manager
-	rbdManager  *storage.RBDManager
-	logger      *slog.Logger
-	listenAddr  string
-	bgWg        sync.WaitGroup
+	config         *config.NodeAgentConfig
+	libvirtConn    *libvirt.Connect
+	grpcServer     *grpc.Server
+	vmManager      *vm.Manager
+	storageBackend storage.StorageBackend
+	storageType    storage.StorageType
+	templateMgr    any // *storage.TemplateManager for ceph, *storage.QCOWTemplateManager for qcow
+	logger         *slog.Logger
+	listenAddr     string
+	bgWg           sync.WaitGroup
 }
 
 // NewServer creates a new Node Agent server.
@@ -70,11 +108,11 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	}
 	vmManager := vm.NewManager(libvirtConn, logger, dataDir)
 
-	// Create RBD manager for Ceph storage operations
-	rbdManager, err := storage.NewRBDManager(cfg.CephConf, cfg.CephUser, cfg.CephPool, logger)
+	// Initialize storage backend based on configuration
+	storageBackend, storageType, templateMgr, err := initializeStorage(cfg, logger)
 	if err != nil {
 		libvirtConn.Close()
-		return nil, fmt.Errorf("connecting to ceph: %w", err)
+		return nil, fmt.Errorf("initializing storage: %w", err)
 	}
 
 	// Determine listen address
@@ -85,19 +123,21 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	}
 
 	s := &Server{
-		config:      cfg,
-		libvirtConn: libvirtConn,
-		vmManager:   vmManager,
-		rbdManager:  rbdManager,
-		logger:      logging.WithComponent(logger, "node-agent"),
-		listenAddr:  listenAddr,
+		config:         cfg,
+		libvirtConn:    libvirtConn,
+		vmManager:      vmManager,
+		storageBackend: storageBackend,
+		storageType:    storageType,
+		templateMgr:    templateMgr,
+		logger:         logging.WithComponent(logger, "node-agent"),
+		listenAddr:     listenAddr,
 	}
 
 	// Setup gRPC server with mTLS
 	grpcServer, err := s.createGRPCServer()
 	if err != nil {
 		libvirtConn.Close()
-		rbdManager.Close()
+		s.closeStorage()
 		return nil, fmt.Errorf("creating gRPC server: %w", err)
 	}
 	s.grpcServer = grpcServer
@@ -200,9 +240,7 @@ func (s *Server) Stop() {
 	// Wait for background goroutines to complete
 	s.bgWg.Wait()
 
-	if s.rbdManager != nil {
-		s.rbdManager.Close()
-	}
+	s.closeStorage()
 
 	if s.libvirtConn != nil {
 		if _, err := s.libvirtConn.Close(); err != nil {
@@ -211,6 +249,18 @@ func (s *Server) Stop() {
 	}
 
 	s.logger.Info("node agent server stopped")
+}
+
+// closeStorage closes the storage backend if it has a Close method.
+func (s *Server) closeStorage() {
+	if s.storageBackend == nil {
+		return
+	}
+
+	// RBDManager has a Close method, QCOWManager doesn't need one
+	if closer, ok := s.storageBackend.(interface{ Close() }); ok {
+		closer.Close()
+	}
 }
 
 // trackBackgroundGoroutine tracks a background goroutine for graceful shutdown.
@@ -237,26 +287,31 @@ func (s *Server) getDiskUsage() float64 {
 	return float64(used) / float64(total) * 100
 }
 
-// getCephPoolStats returns the Ceph pool storage statistics.
-func (s *Server) getCephPoolStats() (totalGB, usedGB int64) {
-	if s.rbdManager == nil {
+// getStoragePoolStats returns the storage pool statistics.
+func (s *Server) getStoragePoolStats() (totalGB, usedGB int64) {
+	if s.storageBackend == nil {
 		return 0, 0
 	}
-	stats, err := s.rbdManager.GetPoolStats(context.Background())
+	stats, err := s.storageBackend.GetPoolStats(context.Background())
 	if err != nil {
-		s.logger.Warn("could not get ceph pool stats", "error", err)
+		s.logger.Warn("could not get storage pool stats", "error", err, "backend", s.storageType)
 		return 0, 0
 	}
 	gb := int64(1024 * 1024 * 1024)
-	return stats.TotalBytes / gb, stats.UsedBytes / gb
+	return stats.Total / gb, stats.Used / gb
 }
 
-// isCephConnected returns true if the Ceph connection is healthy.
-func (s *Server) isCephConnected() bool {
-	if s.rbdManager == nil {
+// isStorageConnected returns true if the storage backend connection is healthy.
+func (s *Server) isStorageConnected() bool {
+	if s.storageBackend == nil {
 		return false
 	}
-	return s.rbdManager.IsConnected()
+	if s.storageType == storage.StorageTypeCEPH {
+		if rbdMgr, ok := s.storageBackend.(*storage.RBDManager); ok {
+			return rbdMgr.IsConnected()
+		}
+	}
+	return true
 }
 
 func (s *Server) isLibvirtAlive() bool {
@@ -356,7 +411,7 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 		LoadAverage:      resources.LoadAverage[:],
 		UptimeSeconds:    resources.UptimeSeconds,
 		LibvirtConnected: h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:    h.server.isCephConnected(),
+		CephConnected:    h.server.isStorageConnected(),
 	}, nil
 }
 
@@ -410,7 +465,7 @@ func (h *grpcHandler) GetNodeResources(ctx context.Context, req *nodeagentpb.Emp
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
 	}
 
-	totalDiskGB, usedDiskGB := h.server.getCephPoolStats()
+	totalDiskGB, usedDiskGB := h.server.getStoragePoolStats()
 
 	return &nodeagentpb.NodeResourcesResponse{
 		TotalVcpu:     resources.TotalVCPU,
@@ -431,28 +486,71 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	// Convert request to DomainConfig
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "create")
+	logger.Info("creating VM", "hostname", req.GetHostname(), "vcpu", req.GetVcpu(), "memory_mb", req.GetMemoryMb())
+
+	storageBackend := req.GetStorageBackend()
+	if storageBackend == "" {
+		storageBackend = h.server.config.StorageBackend
+		if storageBackend == "" {
+			storageBackend = vm.StorageBackendCeph
+		}
+	}
+
 	cfg := &vm.DomainConfig{
 		VMID:           req.GetVmId(),
 		Hostname:       req.GetHostname(),
 		VCPU:           int(req.GetVcpu()),
 		MemoryMB:       int(req.GetMemoryMb()),
-		CephPool:       req.GetCephPool(),
-		CephMonitors:   req.GetCephMonitors(),
-		CephUser:       req.GetCephUser(),
-		CephSecretUUID: req.GetCephSecretUuid(),
+		StorageBackend: storageBackend,
 		MACAddress:     req.GetMacAddress(),
 		IPv4Address:    req.GetIpv4Address(),
 		IPv6Address:    req.GetIpv6Address(),
-		PortSpeedKbps:  int(req.GetPortSpeedMbps()) * 1000, // Convert Mbps to Kbps
+		PortSpeedKbps:  int(req.GetPortSpeedMbps()) * 1000,
 	}
 
-	// Use config defaults if not provided
-	if cfg.CephPool == "" {
-		cfg.CephPool = h.server.config.CephPool
-	}
-	if cfg.CephUser == "" {
-		cfg.CephUser = h.server.config.CephUser
+	switch storageBackend {
+	case vm.StorageBackendQcow:
+		templatePath := req.GetTemplateFilePath()
+		if templatePath == "" {
+			return nil, status.Error(codes.InvalidArgument, "template_file_path is required for qcow storage backend")
+		}
+
+		templateMgr, ok := h.server.templateMgr.(*storage.QCOWTemplateManager)
+		if !ok {
+			return nil, status.Error(codes.Internal, "QCOW template manager not available")
+		}
+
+		diskPath, err := templateMgr.CloneForVM(ctx, templatePath, req.GetVmId(), int(req.GetDiskGb()))
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "cloning QCOW template: %v", err)
+		}
+		cfg.DiskPath = diskPath
+		logger.Info("cloned QCOW template", "template", templatePath, "disk_path", diskPath)
+
+	case vm.StorageBackendCeph:
+		cfg.CephPool = req.GetCephPool()
+		cfg.CephMonitors = req.GetCephMonitors()
+		cfg.CephUser = req.GetCephUser()
+		cfg.CephSecretUUID = req.GetCephSecretUuid()
+
+		if cfg.CephPool == "" {
+			cfg.CephPool = h.server.config.CephPool
+		}
+		if cfg.CephUser == "" {
+			cfg.CephUser = h.server.config.CephUser
+		}
+
+		if req.GetTemplateRbdImage() != "" && req.GetTemplateRbdSnapshot() != "" {
+			diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+			if err := h.server.storageBackend.CloneFromTemplate(ctx, req.GetCephPool(), req.GetTemplateRbdImage(), req.GetTemplateRbdSnapshot(), diskName); err != nil {
+				return nil, status.Errorf(codes.Internal, "cloning RBD template: %v", err)
+			}
+			logger.Info("cloned RBD template", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
+		}
+
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
 	}
 
 	result, err := h.server.vmManager.CreateVM(ctx, cfg)
@@ -522,13 +620,45 @@ func (h *grpcHandler) ForceStopVM(ctx context.Context, req *nodeagentpb.VMIdenti
 }
 
 // DeleteVM permanently removes a virtual machine and its disk image.
-func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
+func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMRequest) (*nodeagentpb.VMOperationResponse, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete")
+	logger.Info("deleting VM")
+
 	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
-		return nil, h.mapError(err, "deleting VM")
+		return nil, h.mapError(err, "deleting VM domain")
+	}
+
+	storageBackend := req.GetStorageBackend()
+	if storageBackend == "" {
+		storageBackend = h.server.config.StorageBackend
+		if storageBackend == "" {
+			storageBackend = vm.StorageBackendCeph
+		}
+	}
+
+	switch storageBackend {
+	case vm.StorageBackendQcow:
+		diskPath := req.GetDiskPath()
+		if diskPath == "" {
+			diskPath = fmt.Sprintf("%s/vms/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+		}
+		if err := h.server.storageBackend.Delete(ctx, diskPath); err != nil {
+			logger.Warn("failed to delete QCOW disk", "error", err, "path", diskPath)
+		} else {
+			logger.Info("QCOW disk deleted", "path", diskPath)
+		}
+
+	case vm.StorageBackendCeph:
+		diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+		if err := h.server.storageBackend.Delete(ctx, diskName); err != nil {
+			logger.Warn("failed to delete RBD disk", "error", err, "name", diskName)
+		} else {
+			logger.Info("RBD disk deleted", "name", diskName)
+		}
 	}
 
 	return &nodeagentpb.VMOperationResponse{

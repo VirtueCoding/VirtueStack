@@ -3,6 +3,17 @@ package models
 
 import "time"
 
+const (
+	// StorageBackendCeph indicates Ceph/RBD storage backend.
+	StorageBackendCeph = "ceph"
+	// StorageBackendQcow indicates local QCOW2 file-based storage.
+	StorageBackendQcow = "qcow"
+)
+
+// DefaultStorageBackend is the default storage backend for plans.
+// This ensures backward compatibility for existing plans.
+const DefaultStorageBackend = StorageBackendCeph
+
 // Plan represents a VPS service plan with resource allocations and pricing information.
 type Plan struct {
 	ID               string `json:"id" db:"id"`
@@ -14,12 +25,15 @@ type Plan struct {
 	BandwidthLimitGB int    `json:"bandwidth_limit_gb" db:"bandwidth_limit_gb"`
 	PortSpeedMbps    int    `json:"port_speed_mbps" db:"port_speed_mbps"`
 	// Billing amounts stored in integer minor units (cents) to avoid floating-point issues.
-	PriceMonthly int64     `json:"price_monthly" db:"price_monthly"`
-	PriceHourly  int64     `json:"price_hourly" db:"price_hourly"`
-	IsActive     bool      `json:"is_active" db:"is_active"`
-	SortOrder    int       `json:"sort_order" db:"sort_order"`
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	PriceMonthly int64 `json:"price_monthly" db:"price_monthly"`
+	PriceHourly  int64 `json:"price_hourly" db:"price_hourly"`
+	// StorageBackend specifies the storage backend type (e.g., "ceph", "qcow").
+	// Defaults to "ceph" for backward compatibility.
+	StorageBackend string    `json:"storage_backend" db:"storage_backend"`
+	IsActive       bool      `json:"is_active" db:"is_active"`
+	SortOrder      int       `json:"sort_order" db:"sort_order"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // PlanCreateRequest holds the fields required to create a new service plan.
@@ -34,6 +48,7 @@ type PlanCreateRequest struct {
 	PortSpeedMbps    int    `json:"port_speed_mbps" validate:"required,min=1"`
 	PriceMonthly     int64  `json:"price_monthly" validate:"min=0"`
 	PriceHourly      int64  `json:"price_hourly" validate:"min=0"`
+	StorageBackend   string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow"`
 	IsActive         bool   `json:"is_active"`
 	SortOrder        int    `json:"sort_order" validate:"min=0"`
 }
@@ -51,6 +66,7 @@ type PlanUpdateRequest struct {
 	PortSpeedMbps    *int    `json:"port_speed_mbps,omitempty" validate:"omitempty,min=1"`
 	PriceMonthly     *int64  `json:"price_monthly,omitempty" validate:"omitempty,min=0"`
 	PriceHourly      *int64  `json:"price_hourly,omitempty" validate:"omitempty,min=0"`
+	StorageBackend   *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow"`
 	IsActive         *bool   `json:"is_active,omitempty"`
 	SortOrder        *int    `json:"sort_order,omitempty" validate:"omitempty,min=0"`
 }

@@ -13,38 +13,88 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
+const (
+	// StorageBackendCeph indicates Ceph/RBD storage backend.
+	StorageBackendCeph = "ceph"
+	// StorageBackendQcow indicates local QCOW2 file-based storage.
+	StorageBackendQcow = "qcow"
+)
+
 // TemplateStorage abstracts storage operations for template images.
-// This interface allows the TemplateService to handle RBD image operations
-// without depending directly on Ceph implementation details.
+// This interface allows the TemplateService to handle different storage backends
+// (Ceph RBD or QCOW2 file-based) without depending on implementation details.
 type TemplateStorage interface {
-	// ImportTemplate imports a template image from a source path into RBD storage.
-	// Returns the RBD image name and snapshot name.
-	ImportTemplate(ctx context.Context, name, sourcePath string) (rbdImage, rbdSnapshot string, err error)
-	// DeleteTemplate removes a template image from RBD storage.
-	DeleteTemplate(ctx context.Context, rbdImage, rbdSnapshot string) error
+	// ImportTemplate imports a template image from a source path into storage.
+	// Returns the template reference and snapshot reference (for Ceph) or file path (for QCOW).
+	ImportTemplate(ctx context.Context, name, sourcePath string) (templateRef string, snapshotRef string, err error)
+	// DeleteTemplate removes a template image from storage.
+	DeleteTemplate(ctx context.Context, templateRef, snapshotRef string) error
 	// GetTemplateSize returns the size of a template image in bytes.
-	GetTemplateSize(ctx context.Context, rbdImage, rbdSnapshot string) (int64, error)
+	GetTemplateSize(ctx context.Context, templateRef, snapshotRef string) (int64, error)
+	// GetStorageType returns the storage backend type: "ceph" or "qcow".
+	GetStorageType() string
 }
 
 // TemplateService provides business logic for managing OS templates.
-// Templates are OS images stored in Ceph RBD that can be used for VM provisioning.
+// Templates are OS images stored in Ceph RBD or QCOW2 that can be used for VM provisioning.
 type TemplateService struct {
-	templateRepo *repository.TemplateRepository
-	storage      TemplateStorage
-	logger       *slog.Logger
+	templateRepo   *repository.TemplateRepository
+	storageMap     map[string]TemplateStorage
+	defaultStorage TemplateStorage
+	logger         *slog.Logger
 }
 
 // NewTemplateService creates a new TemplateService with the given dependencies.
+// For backward compatibility, if only one storage backend is provided, it becomes the default.
 func NewTemplateService(
 	templateRepo *repository.TemplateRepository,
 	storage TemplateStorage,
 	logger *slog.Logger,
 ) *TemplateService {
-	return &TemplateService{
-		templateRepo: templateRepo,
-		storage:      storage,
-		logger:       logger.With("component", "template-service"),
+	storageMap := make(map[string]TemplateStorage)
+	if storage != nil {
+		storageMap[storage.GetStorageType()] = storage
 	}
+
+	return &TemplateService{
+		templateRepo:   templateRepo,
+		storageMap:     storageMap,
+		defaultStorage: storage,
+		logger:         logger.With("component", "template-service"),
+	}
+}
+
+// NewTemplateServiceWithBackends creates a new TemplateService with multiple storage backends.
+func NewTemplateServiceWithBackends(
+	templateRepo *repository.TemplateRepository,
+	storageBackends map[string]TemplateStorage,
+	defaultBackend string,
+	logger *slog.Logger,
+) *TemplateService {
+	var defaultStorage TemplateStorage
+	if defaultBackend != "" {
+		defaultStorage = storageBackends[defaultBackend]
+	} else if len(storageBackends) > 0 {
+		for _, s := range storageBackends {
+			defaultStorage = s
+			break
+		}
+	}
+
+	return &TemplateService{
+		templateRepo:   templateRepo,
+		storageMap:     storageBackends,
+		defaultStorage: defaultStorage,
+		logger:         logger.With("component", "template-service"),
+	}
+}
+
+// GetStorage returns the appropriate storage backend for the given type.
+func (s *TemplateService) GetStorage(storageType string) TemplateStorage {
+	if storage, ok := s.storageMap[storageType]; ok {
+		return storage
+	}
+	return s.defaultStorage
 }
 
 // ListActive returns all active templates ordered by sort_order.
@@ -71,9 +121,25 @@ func (s *TemplateService) Create(ctx context.Context, template *models.Template)
 	if template == nil {
 		return fmt.Errorf("template is required")
 	}
-	if template.Name == "" || template.OSFamily == "" || template.OSVersion == "" || template.RBDImage == "" || template.RBDSnapshot == "" {
+	if template.Name == "" || template.OSFamily == "" || template.OSVersion == "" {
 		return fmt.Errorf("missing required template fields")
 	}
+
+	storageBackend := template.StorageBackend
+	if storageBackend == "" {
+		storageBackend = StorageBackendCeph
+	}
+
+	if storageBackend == StorageBackendCeph {
+		if template.RBDImage == "" || template.RBDSnapshot == "" {
+			return fmt.Errorf("rbd_image and rbd_snapshot are required for ceph storage")
+		}
+	} else if storageBackend == StorageBackendQcow {
+		if template.FilePath == "" {
+			return fmt.Errorf("file_path is required for qcow storage")
+		}
+	}
+
 	if template.MinDiskGB < 1 {
 		return fmt.Errorf("min_disk_gb must be at least 1")
 	}
@@ -90,7 +156,7 @@ func (s *TemplateService) Create(ctx context.Context, template *models.Template)
 		return fmt.Errorf("creating template: %w", err)
 	}
 
-	s.logger.Info("template created", "template_id", template.ID, "name", template.Name)
+	s.logger.Info("template created", "template_id", template.ID, "name", template.Name, "storage_backend", storageBackend)
 	return nil
 }
 
@@ -108,66 +174,67 @@ func (s *TemplateService) GetByID(ctx context.Context, id string) (*models.Templ
 }
 
 // Import imports a new OS template from a source file.
-// The source file is imported into RBD storage and a database record is created.
+// The source file is imported into storage and a database record is created.
 // Parameters:
 //   - name: Human-readable name for the template (e.g., "Ubuntu 22.04 LTS")
 //   - osFamily: Operating system family (e.g., "linux", "windows")
 //   - osVersion: Operating system version (e.g., "22.04", "2022")
 //   - sourcePath: Path to the source image file (qcow2, raw, etc.)
-func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion, sourcePath string) (*models.Template, error) {
-	// Verify source file exists
+//   - storageBackend: Storage backend type ("ceph" or "qcow")
+func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion, sourcePath, storageBackend string) (*models.Template, error) {
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("source file not found: %s", sourcePath)
 	}
 
-	// Check if template name already exists
 	existing, err := s.templateRepo.GetByName(ctx, name)
 	if err == nil && existing != nil {
 		return nil, fmt.Errorf("template with name %s already exists", name)
 	}
 
-	// Import the image into RBD storage
-	var rbdImage, rbdSnapshot string
-	if s.storage != nil {
-		rbdImage, rbdSnapshot, err = s.storage.ImportTemplate(ctx, name, sourcePath)
-		if err != nil {
-			return nil, fmt.Errorf("importing template to storage: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("storage backend is not configured - cannot import templates without a storage backend")
+	if storageBackend == "" {
+		storageBackend = StorageBackendCeph
 	}
 
-	// Determine minimum disk size from source file
-	minDiskGB := 10 // Default minimum
-	if s.storage != nil {
-		sizeBytes, err := s.storage.GetTemplateSize(ctx, rbdImage, rbdSnapshot)
-		if err == nil && sizeBytes > 0 {
-			// Convert to GB and add 20% buffer
-			minDiskGB = int(float64(sizeBytes) / (1024 * 1024 * 1024) * 1.2)
-			if minDiskGB < 10 {
-				minDiskGB = 10
-			}
+	storage := s.GetStorage(storageBackend)
+	if storage == nil {
+		return nil, fmt.Errorf("storage backend %s is not configured", storageBackend)
+	}
+
+	var templateRef, snapshotRef string
+	templateRef, snapshotRef, err = storage.ImportTemplate(ctx, name, sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("importing template to storage: %w", err)
+	}
+
+	minDiskGB := 10
+	sizeBytes, err := storage.GetTemplateSize(ctx, templateRef, snapshotRef)
+	if err == nil && sizeBytes > 0 {
+		minDiskGB = int(float64(sizeBytes) / (1024 * 1024 * 1024) * 1.2)
+		if minDiskGB < 10 {
+			minDiskGB = 10
 		}
 	}
 
-	// Create template record
 	template := &models.Template{
 		Name:              name,
 		OSFamily:          osFamily,
 		OSVersion:         osVersion,
-		RBDImage:          rbdImage,
-		RBDSnapshot:       rbdSnapshot,
 		MinDiskGB:         minDiskGB,
-		SupportsCloudInit: true, // Assume cloud-init support for modern images
+		SupportsCloudInit: true,
 		IsActive:          true,
 		SortOrder:         0,
+		StorageBackend:    storageBackend,
+	}
+
+	if storageBackend == StorageBackendCeph {
+		template.RBDImage = templateRef
+		template.RBDSnapshot = snapshotRef
+	} else {
+		template.FilePath = templateRef
 	}
 
 	if err := s.templateRepo.Create(ctx, template); err != nil {
-		// Attempt to clean up the imported image
-		if s.storage != nil {
-			_ = s.storage.DeleteTemplate(ctx, rbdImage, rbdSnapshot)
-		}
+		_ = storage.DeleteTemplate(ctx, templateRef, snapshotRef)
 		return nil, fmt.Errorf("creating template record: %w", err)
 	}
 
@@ -176,8 +243,9 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 		"name", name,
 		"os_family", osFamily,
 		"os_version", osVersion,
-		"rbd_image", rbdImage,
-		"rbd_snapshot", rbdSnapshot,
+		"storage_backend", storageBackend,
+		"template_ref", templateRef,
+		"snapshot_ref", snapshotRef,
 		"min_disk_gb", minDiskGB,
 		"source_path", filepath.Base(sourcePath))
 
@@ -188,7 +256,6 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 // The template is first deactivated, then removed from storage and database.
 // Note: Templates with referencing VMs will have their template_id set to NULL.
 func (s *TemplateService) Delete(ctx context.Context, id string) error {
-	// Get template to retrieve RBD info
 	template, err := s.templateRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -197,24 +264,39 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("getting template: %w", err)
 	}
 
-	// Delete from database first
 	if err := s.templateRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("deleting template: %w", err)
 	}
 
-	// Delete from storage
-	if s.storage != nil {
-		if err := s.storage.DeleteTemplate(ctx, template.RBDImage, template.RBDSnapshot); err != nil {
+	storageBackend := template.StorageBackend
+	if storageBackend == "" {
+		storageBackend = StorageBackendCeph
+	}
+
+	storage := s.GetStorage(storageBackend)
+	if storage != nil {
+		var templateRef, snapshotRef string
+		if storageBackend == StorageBackendCeph {
+			templateRef = template.RBDImage
+			snapshotRef = template.RBDSnapshot
+		} else {
+			templateRef = template.FilePath
+			snapshotRef = ""
+		}
+
+		if err := storage.DeleteTemplate(ctx, templateRef, snapshotRef); err != nil {
 			s.logger.Warn("failed to delete template from storage",
 				"template_id", id,
-				"rbd_image", template.RBDImage,
+				"storage_backend", storageBackend,
+				"template_ref", templateRef,
 				"error", err)
 		}
 	}
 
 	s.logger.Info("template deleted",
 		"template_id", id,
-		"name", template.Name)
+		"name", template.Name,
+		"storage_backend", storageBackend)
 
 	return nil
 }
@@ -279,6 +361,12 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 	}
 	if req.Description != nil {
 		template.Description = *req.Description
+	}
+	if req.StorageBackend != nil {
+		template.StorageBackend = *req.StorageBackend
+	}
+	if req.FilePath != nil {
+		template.FilePath = *req.FilePath
 	}
 
 	if err := s.templateRepo.Update(ctx, template); err != nil {

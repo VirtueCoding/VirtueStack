@@ -17,6 +17,7 @@ type TemplateImportRequest struct {
 	OSFamily          string `json:"os_family" validate:"required,max=50"`
 	OSVersion         string `json:"os_version" validate:"required,max=50"`
 	SourcePath        string `json:"source_path" validate:"required,max=512"`
+	StorageBackend    string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow"`
 	SupportsCloudInit bool   `json:"supports_cloudinit"`
 	IsActive          bool   `json:"is_active"`
 }
@@ -239,7 +240,7 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 	}
 
 	// Import template through service
-	template, err := h.templateService.Import(c.Request.Context(), req.Name, req.OSFamily, req.OSVersion, req.SourcePath)
+	template, err := h.templateService.Import(c.Request.Context(), req.Name, req.OSFamily, req.OSVersion, req.SourcePath, req.StorageBackend)
 	if err != nil {
 		h.logger.Error("failed to import template",
 			"name", req.Name,

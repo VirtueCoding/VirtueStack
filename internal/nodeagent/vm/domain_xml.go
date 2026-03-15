@@ -7,6 +7,18 @@ import (
 	"text/template"
 )
 
+// Storage backend types for VM disks.
+const (
+	// StorageBackendCeph indicates Ceph/RBD storage backend.
+	StorageBackendCeph = "ceph"
+	// StorageBackendQcow indicates local QCOW2 file-based storage.
+	StorageBackendQcow = "qcow"
+)
+
+// VMDiskFileFmt is the format for file-based VM disk paths.
+// Arguments: base path, vmID
+const VMDiskFileFmt = "%s/%s-disk0.qcow2"
+
 // DomainConfig contains all parameters needed to generate a libvirt domain XML.
 type DomainConfig struct {
 	// VMID is the unique identifier for the virtual machine.
@@ -17,13 +29,23 @@ type DomainConfig struct {
 	VCPU int
 	// MemoryMB is the amount of memory in megabytes.
 	MemoryMB int
+	// StorageBackend specifies the disk storage backend: "ceph" or "qcow".
+	// Defaults to "ceph" if empty for backward compatibility.
+	StorageBackend string
+	// DiskPath is the full path to the QCOW2 disk file for file-based storage.
+	// Required when StorageBackend is "qcow".
+	DiskPath string
 	// CephPool is the Ceph pool name for the VM disk (e.g., "vs-vms").
+	// Required when StorageBackend is "ceph".
 	CephPool string
 	// CephMonitors is the list of Ceph monitor addresses.
+	// Required when StorageBackend is "ceph".
 	CephMonitors []string
 	// CephUser is the Ceph user name for authentication.
+	// Required when StorageBackend is "ceph".
 	CephUser string
 	// CephSecretUUID is the UUID of the Ceph secret for authentication.
+	// Required when StorageBackend is "ceph".
 	CephSecretUUID string
 	// MACAddress is the MAC address for the primary network interface.
 	MACAddress string
@@ -48,6 +70,7 @@ type CreateResult struct {
 }
 
 // domainXMLTemplate is the libvirt domain XML template for VirtueStack VMs.
+// The DiskXML field is generated dynamically based on StorageBackend.
 const domainXMLTemplate = `<domain type='kvm'>
   <name>{{.DomainName}}</name>
   <uuid>{{.VMID}}</uuid>
@@ -78,18 +101,7 @@ const domainXMLTemplate = `<domain type='kvm'>
   </pm>
   <devices>
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
-    <disk type='network' device='disk'>
-      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
-      <auth username='{{.CephUser}}'>
-        <secret type='ceph' uuid='{{.CephSecretUUID}}'/>
-      </auth>
-      <source protocol='rbd' name='{{.CephPool}}/{{.DiskName}}'>
-        {{range .CephMonitors}}
-        <host name='{{.}}' port='6789'/>
-        {{end}}
-      </source>
-      <target dev='vda' bus='virtio'/>
-    </disk>
+{{.DiskXML}}
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
       <source file='{{.CloudInitISOPath}}'/>
@@ -183,22 +195,18 @@ const domainXMLTemplate = `<domain type='kvm'>
 
 // templateData holds the data for domain XML template execution.
 type templateData struct {
-	DomainName       string
-	VMID             string
-	MemoryMB         int
-	VCPU             int
-	CephUser         string
-	CephSecretUUID   string
-	CephPool         string
-	DiskName         string
-	CephMonitors     []string
-	MACAddress       string
-	IPv4Address      string
-	IPv6Address      string
-	PortSpeedKbps    int
-	BurstKB          int
+	DomainName        string
+	VMID              string
+	MemoryMB          int
+	VCPU              int
+	DiskXML           string
+	MACAddress        string
+	IPv4Address       string
+	IPv6Address       string
+	PortSpeedKbps     int
+	BurstKB           int
 	HasBandwidthLimit bool
-	CloudInitISOPath string
+	CloudInitISOPath  string
 }
 
 // GenerateDomainXML generates a libvirt domain XML from the given configuration.
@@ -208,28 +216,44 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 		return "", fmt.Errorf("validating domain config: %w", err)
 	}
 
+	backend := cfg.StorageBackend
+	if backend == "" {
+		backend = StorageBackendCeph
+	}
+
+	var diskXML string
+	var err error
+
+	switch backend {
+	case StorageBackendCeph:
+		diskXML, err = generateRBDDiskXML(cfg)
+	case StorageBackendQcow:
+		diskXML, err = generateFileDiskXML(cfg)
+	default:
+		return "", fmt.Errorf("unsupported storage backend: %s", backend)
+	}
+	if err != nil {
+		return "", fmt.Errorf("generating disk XML: %w", err)
+	}
+
 	tmpl, err := template.New("domain").Parse(domainXMLTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parsing domain template: %w", err)
 	}
 
 	data := templateData{
-		DomainName:       domainName(cfg.VMID),
-		VMID:             cfg.VMID,
-		MemoryMB:         cfg.MemoryMB,
-		VCPU:             cfg.VCPU,
-		CephUser:         cfg.CephUser,
-		CephSecretUUID:   cfg.CephSecretUUID,
-		CephPool:         cfg.CephPool,
-		DiskName:         diskName(cfg.VMID),
-		CephMonitors:     cfg.CephMonitors,
-		MACAddress:       cfg.MACAddress,
-		IPv4Address:      cfg.IPv4Address,
-		IPv6Address:      cfg.IPv6Address,
-		PortSpeedKbps:    cfg.PortSpeedKbps,
-		BurstKB:          cfg.BurstKB,
+		DomainName:        domainName(cfg.VMID),
+		VMID:              cfg.VMID,
+		MemoryMB:          cfg.MemoryMB,
+		VCPU:              cfg.VCPU,
+		DiskXML:           diskXML,
+		MACAddress:        cfg.MACAddress,
+		IPv4Address:       cfg.IPv4Address,
+		IPv6Address:       cfg.IPv6Address,
+		PortSpeedKbps:     cfg.PortSpeedKbps,
+		BurstKB:           cfg.BurstKB,
 		HasBandwidthLimit: cfg.PortSpeedKbps > 0,
-		CloudInitISOPath: cfg.CloudInitISOPath,
+		CloudInitISOPath:  cfg.CloudInitISOPath,
 	}
 
 	var buf bytes.Buffer
@@ -240,7 +264,7 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 	return buf.String(), nil
 }
 
-// validateDomainConfig validates that all required fields are set.
+// validateDomainConfig validates that all required fields are set based on the storage backend.
 func validateDomainConfig(cfg *DomainConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
@@ -257,6 +281,33 @@ func validateDomainConfig(cfg *DomainConfig) error {
 	if cfg.MemoryMB <= 0 {
 		missing = append(missing, "MemoryMB")
 	}
+	if cfg.MACAddress == "" {
+		missing = append(missing, "MACAddress")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))
+	}
+
+	backend := cfg.StorageBackend
+	if backend == "" {
+		backend = StorageBackendCeph
+	}
+
+	switch backend {
+	case StorageBackendCeph:
+		return validateCephConfig(cfg)
+	case StorageBackendQcow:
+		return validateQcowConfig(cfg)
+	default:
+		return fmt.Errorf("unsupported storage backend: %s", backend)
+	}
+}
+
+// validateCephConfig validates fields required for Ceph/RBD storage.
+func validateCephConfig(cfg *DomainConfig) error {
+	var missing []string
+
 	if cfg.CephPool == "" {
 		missing = append(missing, "CephPool")
 	}
@@ -269,12 +320,18 @@ func validateDomainConfig(cfg *DomainConfig) error {
 	if cfg.CephSecretUUID == "" {
 		missing = append(missing, "CephSecretUUID")
 	}
-	if cfg.MACAddress == "" {
-		missing = append(missing, "MACAddress")
-	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("missing Ceph storage fields: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// validateQcowConfig validates fields required for QCOW2 file storage.
+func validateQcowConfig(cfg *DomainConfig) error {
+	if cfg.DiskPath == "" {
+		return fmt.Errorf("missing DiskPath for qcow storage backend")
 	}
 
 	return nil
@@ -293,4 +350,41 @@ func diskName(vmID string) string {
 // DomainNameFromID converts a VM ID to its libvirt domain name.
 func DomainNameFromID(vmID string) string {
 	return domainName(vmID)
+}
+
+// generateRBDDiskXML generates the disk XML element for Ceph/RBD storage.
+// Uses network-attached RBD with authentication.
+func generateRBDDiskXML(cfg *DomainConfig) (string, error) {
+	var hostsXML strings.Builder
+	for _, monitor := range cfg.CephMonitors {
+		hostsXML.WriteString(fmt.Sprintf("\n        <host name='%s' port='6789'/>", monitor))
+	}
+
+	return fmt.Sprintf(`    <disk type='network' device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
+      <auth username='%s'>
+        <secret type='ceph' uuid='%s'/>
+      </auth>
+      <source protocol='rbd' name='%s/%s'>%s
+      </source>
+      <target dev='vda' bus='virtio'/>
+    </disk>`,
+		cfg.CephUser,
+		cfg.CephSecretUUID,
+		cfg.CephPool,
+		diskName(cfg.VMID),
+		hostsXML.String(),
+	), nil
+}
+
+// generateFileDiskXML generates the disk XML element for local QCOW2 file storage.
+// Uses file-based disk with discard support for thin provisioning.
+func generateFileDiskXML(cfg *DomainConfig) (string, error) {
+	return fmt.Sprintf(`    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' cache='none' io='native' discard='unmap'/>
+      <source file='%s'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>`,
+		cfg.DiskPath,
+	), nil
 }

@@ -38,16 +38,30 @@ type BackupNodeAgentClient interface {
 	CloneSnapshot(ctx context.Context, nodeID, vmID, snapshotName, backupPath string) error
 	// GetVMInfo returns basic VM info needed for backup operations.
 	GetVMNodeID(ctx context.Context, vmID string) (nodeID string, err error)
+	// CreateQCOWSnapshot creates a qemu-img internal snapshot for QCOW-backed VMs.
+	CreateQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error
+	// DeleteQCOWSnapshot deletes a qemu-img internal snapshot for QCOW-backed VMs.
+	DeleteQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error
+	// CreateQCOWBackup creates a backup file from a QCOW disk using qemu-img convert.
+	// If snapshotName is provided, it exports from that specific snapshot.
+	CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error)
+	// RestoreQCOWBackup restores a VM from a QCOW backup file.
+	RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error
+	// DeleteQCOWBackupFile deletes a QCOW backup file from the backup storage.
+	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
+	// GetQCOWDiskInfo returns information about a QCOW disk including size.
+	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error)
 }
 
 // BackupService provides business logic for managing VM backups and snapshots.
-// It coordinates between the database, storage (Ceph), and node agents.
+// It coordinates between the database, storage (Ceph or QCOW), and node agents.
 type BackupService struct {
 	backupRepo    *repository.BackupRepository
 	snapshotRepo  *repository.BackupRepository // Same repo handles both
 	vmRepo        *repository.VMRepository
 	nodeAgent     BackupNodeAgentClient
 	taskPublisher TaskPublisher
+	backupPath    string
 	logger        *slog.Logger
 }
 
@@ -92,6 +106,35 @@ func (a *BackupNodeAgentAdapter) GetVMNodeID(ctx context.Context, vmID string) (
 	return *vm.NodeID, nil
 }
 
+func (a *BackupNodeAgentAdapter) CreateQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
+	return a.nodeAgent.CreateQCOWSnapshot(ctx, nodeID, vmID, diskPath, snapshotName)
+}
+
+func (a *BackupNodeAgentAdapter) DeleteQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
+	return a.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vmID, diskPath, snapshotName)
+}
+
+func (a *BackupNodeAgentAdapter) CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error) {
+	return a.nodeAgent.CreateQCOWBackup(ctx, nodeID, vmID, diskPath, snapshotName, backupPath, compress)
+}
+
+func (a *BackupNodeAgentAdapter) RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error {
+	return a.nodeAgent.RestoreQCOWBackup(ctx, nodeID, vmID, backupPath, targetPath)
+}
+
+func (a *BackupNodeAgentAdapter) DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error {
+	return a.nodeAgent.DeleteQCOWBackupFile(ctx, nodeID, backupPath)
+}
+
+func (a *BackupNodeAgentAdapter) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
+	return a.nodeAgent.GetQCOWDiskInfo(ctx, nodeID, diskPath)
+}
+
+const (
+	storageBackendCeph = "ceph"
+	storageBackendQCOW = "qcow"
+)
+
 // NewBackupService creates a new BackupService with the given dependencies.
 func NewBackupService(
 	backupRepo *repository.BackupRepository,
@@ -99,14 +142,19 @@ func NewBackupService(
 	vmRepo *repository.VMRepository,
 	nodeAgent BackupNodeAgentClient,
 	taskPublisher TaskPublisher,
+	backupPath string,
 	logger *slog.Logger,
 ) *BackupService {
+	if backupPath == "" {
+		backupPath = "/var/lib/virtuestack/backups"
+	}
 	return &BackupService{
 		backupRepo:    backupRepo,
 		snapshotRepo:  snapshotRepo,
 		vmRepo:        vmRepo,
 		nodeAgent:     nodeAgent,
 		taskPublisher: taskPublisher,
+		backupPath:    backupPath,
 		logger:        logger.With("component", "backup-service"),
 	}
 }
@@ -117,8 +165,9 @@ func NewBackupService(
 
 // CreateBackup creates a full backup of a VM.
 // The backup is stored in the configured backup storage location.
+// For Ceph VMs: creates RBD snapshot and clones to backup pool.
+// For QCOW VMs: creates qemu-img snapshot and copies to backup directory.
 func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*models.Backup, error) {
-	// Verify VM exists and get its node
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -131,60 +180,114 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 		return nil, fmt.Errorf("VM has no node assigned")
 	}
 
-	// Create backup record
+	storageBackend := vm.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
 	backup := &models.Backup{
-		ID:     uuid.New().String(),
-		VMID:   vmID,
-		Type:   "full",
-		Status: models.BackupStatusCreating,
+		ID:             uuid.New().String(),
+		VMID:           vmID,
+		Type:           "full",
+		Status:         models.BackupStatusCreating,
+		StorageBackend: storageBackend,
 	}
 
 	if err := s.backupRepo.CreateBackup(ctx, backup); err != nil {
 		return nil, fmt.Errorf("creating backup record: %w", err)
 	}
 
-	// Generate snapshot name for the backup
 	snapshotName := fmt.Sprintf("backup-%s-%d", backup.ID[:8], time.Now().Unix())
 
-	// If we have a node agent, perform the actual backup
-	if s.nodeAgent != nil {
-		// Create a snapshot first
-		if err := s.nodeAgent.CreateSnapshot(ctx, *vm.NodeID, vmID, snapshotName); err != nil {
-			// Update backup status to failed
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-			return nil, fmt.Errorf("creating backup snapshot: %w", err)
-		}
-
-		// Clone snapshot to backup storage
-		backupPath := fmt.Sprintf("backups/%s/%s", vmID, backup.ID)
-		if err := s.nodeAgent.CloneSnapshot(ctx, *vm.NodeID, vmID, snapshotName, backupPath); err != nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-			return nil, fmt.Errorf("cloning backup: %w", err)
-		}
-
-		// Update backup with storage path
-		backup.StoragePath = &backupPath
-		backup.RBDSnapshot = &snapshotName
-	} else {
+	if s.nodeAgent == nil {
 		s.logger.Warn("nodeAgent not configured, skipping backup storage operations",
 			"vm_id", vmID,
 			"backup_id", backup.ID)
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted)
+		return backup, nil
 	}
 
-	// Mark backup as completed
+	if storageBackend == storageBackendQCOW {
+		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
+	}
+	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
+}
+
+func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
+	nodeID := *vm.NodeID
+	diskPath := vm.DiskPath
+	if diskPath == "" {
+		diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+	}
+
+	if err := s.nodeAgent.CreateQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, snapshotName); err != nil {
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
+		return nil, fmt.Errorf("creating QCOW snapshot: %w", err)
+	}
+
+	backupDir := fmt.Sprintf("%s/%s", s.backupPath, vm.ID)
+	backupFileName := fmt.Sprintf("%s-%s.qcow2", backup.ID[:8], time.Now().Format("20060102-150405"))
+	backupFilePath := fmt.Sprintf("%s/%s", backupDir, backupFileName)
+
+	sizeBytes, err := s.nodeAgent.CreateQCOWBackup(ctx, nodeID, vm.ID, diskPath, snapshotName, backupFilePath, false)
+	if err != nil {
+		_ = s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, snapshotName)
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
+		return nil, fmt.Errorf("creating QCOW backup file: %w", err)
+	}
+
+	backup.FilePath = &backupFilePath
+	backup.SnapshotName = &snapshotName
+	backup.SizeBytes = &sizeBytes
+
 	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
 		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
 	}
 
-	// Set default expiration (30 days)
 	expiresAt := time.Now().AddDate(0, 0, 30)
 	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
 		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
 	}
 
-	s.logger.Info("backup created",
+	s.logger.Info("QCOW backup created",
 		"backup_id", backup.ID,
-		"vm_id", vmID,
+		"vm_id", vm.ID,
+		"name", name,
+		"file_path", backupFilePath,
+		"size_bytes", sizeBytes)
+
+	return backup, nil
+}
+
+func (s *BackupService) createCephBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
+	nodeID := *vm.NodeID
+
+	if err := s.nodeAgent.CreateSnapshot(ctx, nodeID, vm.ID, snapshotName); err != nil {
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
+		return nil, fmt.Errorf("creating backup snapshot: %w", err)
+	}
+
+	backupPath := fmt.Sprintf("backups/%s/%s", vm.ID, backup.ID)
+	if err := s.nodeAgent.CloneSnapshot(ctx, nodeID, vm.ID, snapshotName, backupPath); err != nil {
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
+		return nil, fmt.Errorf("cloning backup: %w", err)
+	}
+
+	backup.StoragePath = &backupPath
+	backup.RBDSnapshot = &snapshotName
+
+	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
+		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
+	}
+
+	expiresAt := time.Now().AddDate(0, 0, 30)
+	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
+		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
+	}
+
+	s.logger.Info("Ceph backup created",
+		"backup_id", backup.ID,
+		"vm_id", vm.ID,
 		"name", name,
 		"type", "full")
 
@@ -210,7 +313,6 @@ func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *s
 // RestoreBackup restores a VM from a backup.
 // This operation stops the VM, restores the disk, and leaves the VM stopped.
 func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) error {
-	// Get backup
 	backup, err := s.backupRepo.GetBackupByID(ctx, backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -223,7 +325,6 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		return fmt.Errorf("backup is not in completed state (status: %s)", backup.Status)
 	}
 
-	// Get VM
 	vm, err := s.vmRepo.GetByID(ctx, backup.VMID)
 	if err != nil {
 		return fmt.Errorf("getting VM: %w", err)
@@ -233,38 +334,65 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		return fmt.Errorf("VM has no node assigned")
 	}
 
-	// Update backup status to restoring
 	if err := s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusRestoring); err != nil {
 		return fmt.Errorf("updating backup status: %w", err)
 	}
 
-	// Perform restore via node agent
-	if s.nodeAgent != nil && backup.RBDSnapshot != nil {
-		if err := s.nodeAgent.RestoreSnapshot(ctx, *vm.NodeID, vm.ID, *backup.RBDSnapshot); err != nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-			return fmt.Errorf("restoring backup: %w", err)
-		}
-	} else if s.nodeAgent == nil {
+	storageBackend := backup.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
+	if s.nodeAgent == nil {
 		s.logger.Warn("nodeAgent not configured, skipping backup restore",
 			"backup_id", backupID,
 			"vm_id", backup.VMID)
+		return nil
 	}
 
-	// Mark backup as completed again
+	nodeID := *vm.NodeID
+
+	if storageBackend == storageBackendQCOW {
+		if backup.FilePath == nil {
+			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
+			return fmt.Errorf("backup has no file path for QCOW restore")
+		}
+
+		diskPath := vm.DiskPath
+		if diskPath == "" {
+			diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+		}
+
+		if err := s.nodeAgent.RestoreQCOWBackup(ctx, nodeID, vm.ID, *backup.FilePath, diskPath); err != nil {
+			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
+			return fmt.Errorf("restoring QCOW backup: %w", err)
+		}
+	} else {
+		if backup.RBDSnapshot == nil {
+			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
+			return fmt.Errorf("backup has no RBD snapshot for Ceph restore")
+		}
+
+		if err := s.nodeAgent.RestoreSnapshot(ctx, nodeID, vm.ID, *backup.RBDSnapshot); err != nil {
+			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
+			return fmt.Errorf("restoring backup: %w", err)
+		}
+	}
+
 	if err := s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusCompleted); err != nil {
 		s.logger.Warn("failed to update backup status after restore", "backup_id", backupID, "error", err)
 	}
 
 	s.logger.Info("backup restored",
 		"backup_id", backupID,
-		"vm_id", backup.VMID)
+		"vm_id", backup.VMID,
+		"storage_backend", storageBackend)
 
 	return nil
 }
 
 // DeleteBackup removes a backup from storage and the database.
 func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error {
-	// Get backup
 	backup, err := s.backupRepo.GetBackupByID(ctx, backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -273,14 +401,47 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 		return fmt.Errorf("getting backup: %w", err)
 	}
 
-	// Delete from database
+	storageBackend := backup.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
+	if s.nodeAgent != nil {
+		vm, err := s.vmRepo.GetByID(ctx, backup.VMID)
+		if err == nil && vm.NodeID != nil {
+			nodeID := *vm.NodeID
+
+			if storageBackend == storageBackendQCOW && backup.FilePath != nil {
+				if err := s.nodeAgent.DeleteQCOWBackupFile(ctx, nodeID, *backup.FilePath); err != nil {
+					s.logger.Warn("failed to delete QCOW backup file",
+						"backup_id", backupID,
+						"file_path", *backup.FilePath,
+						"error", err)
+				}
+				if backup.SnapshotName != nil {
+					diskPath := vm.DiskPath
+					if diskPath == "" {
+						diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+					}
+					if err := s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, *backup.SnapshotName); err != nil {
+						s.logger.Warn("failed to delete QCOW snapshot",
+							"backup_id", backupID,
+							"snapshot_name", *backup.SnapshotName,
+							"error", err)
+					}
+				}
+			}
+		}
+	}
+
 	if err := s.backupRepo.DeleteBackup(ctx, backupID); err != nil {
 		return fmt.Errorf("deleting backup: %w", err)
 	}
 
 	s.logger.Info("backup deleted",
 		"backup_id", backupID,
-		"vm_id", backup.VMID)
+		"vm_id", backup.VMID,
+		"storage_backend", storageBackend)
 
 	return nil
 }
@@ -290,9 +451,9 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 // ============================================================================
 
 // CreateSnapshot creates a point-in-time snapshot of a VM's disk.
-// Snapshots are quick and stored in Ceph RBD (no external storage needed).
+// For Ceph VMs: creates RBD snapshot.
+// For QCOW VMs: creates qemu-img internal snapshot.
 func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (*models.Snapshot, error) {
-	// Verify VM exists and get its node
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -305,33 +466,58 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 		return nil, fmt.Errorf("VM has no node assigned")
 	}
 
-	// Generate snapshot ID and RBD snapshot name
-	snapshotID := uuid.New().String()
-	rbdSnapshot := fmt.Sprintf("snap-%s", snapshotID[:8])
+	storageBackend := vm.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
 
-	// Create snapshot via node agent
-	if s.nodeAgent != nil {
-		if err := s.nodeAgent.CreateSnapshot(ctx, *vm.NodeID, vmID, rbdSnapshot); err != nil {
-			return nil, fmt.Errorf("creating snapshot: %w", err)
-		}
-	} else {
+	snapshotID := uuid.New().String()
+
+	snapshot := &models.Snapshot{
+		ID:             snapshotID,
+		VMID:           vmID,
+		Name:           name,
+		StorageBackend: storageBackend,
+	}
+
+	nodeID := *vm.NodeID
+
+	if s.nodeAgent == nil {
 		s.logger.Warn("nodeAgent not configured, skipping snapshot storage operation",
 			"vm_id", vmID,
 			"snapshot_id", snapshotID)
-	}
+	} else {
+		if storageBackend == storageBackendQCOW {
+			diskPath := vm.DiskPath
+			if diskPath == "" {
+				diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vmID)
+			}
 
-	// Create snapshot record
-	snapshot := &models.Snapshot{
-		ID:          snapshotID,
-		VMID:        vmID,
-		Name:        name,
-		RBDSnapshot: rbdSnapshot,
+			qcowSnapshotName := fmt.Sprintf("snap-%s", snapshotID[:8])
+			if err := s.nodeAgent.CreateQCOWSnapshot(ctx, nodeID, vmID, diskPath, qcowSnapshotName); err != nil {
+				return nil, fmt.Errorf("creating QCOW snapshot: %w", err)
+			}
+			snapshot.QCOWSnapshot = &qcowSnapshotName
+		} else {
+			rbdSnapshot := fmt.Sprintf("snap-%s", snapshotID[:8])
+			if err := s.nodeAgent.CreateSnapshot(ctx, nodeID, vmID, rbdSnapshot); err != nil {
+				return nil, fmt.Errorf("creating snapshot: %w", err)
+			}
+			snapshot.RBDSnapshot = rbdSnapshot
+		}
 	}
 
 	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
-		// Attempt to clean up the created snapshot
 		if s.nodeAgent != nil {
-			_ = s.nodeAgent.DeleteSnapshot(ctx, *vm.NodeID, vmID, rbdSnapshot)
+			if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
+				diskPath := vm.DiskPath
+				if diskPath == "" {
+					diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vmID)
+				}
+				_ = s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vmID, diskPath, *snapshot.QCOWSnapshot)
+			} else if snapshot.RBDSnapshot != "" {
+				_ = s.nodeAgent.DeleteSnapshot(ctx, nodeID, vmID, snapshot.RBDSnapshot)
+			}
 		}
 		return nil, fmt.Errorf("creating snapshot record: %w", err)
 	}
@@ -340,7 +526,7 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 		"snapshot_id", snapshot.ID,
 		"vm_id", vmID,
 		"name", name,
-		"rbd_snapshot", rbdSnapshot)
+		"storage_backend", storageBackend)
 
 	return snapshot, nil
 }
@@ -356,7 +542,6 @@ func (s *BackupService) ListSnapshots(ctx context.Context, vmID string) ([]model
 
 // DeleteSnapshot removes a snapshot from storage and the database.
 func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) error {
-	// Get snapshot
 	snapshot, err := s.snapshotRepo.GetSnapshotByID(ctx, snapshotID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -365,19 +550,34 @@ func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) e
 		return fmt.Errorf("getting snapshot: %w", err)
 	}
 
-	// Get VM to find node
 	vm, err := s.vmRepo.GetByID(ctx, snapshot.VMID)
 	if err != nil {
 		return fmt.Errorf("getting VM: %w", err)
 	}
 
-	// Delete from storage
 	if s.nodeAgent != nil && vm.NodeID != nil {
-		if err := s.nodeAgent.DeleteSnapshot(ctx, *vm.NodeID, snapshot.VMID, snapshot.RBDSnapshot); err != nil {
-			s.logger.Warn("failed to delete snapshot from storage",
-				"snapshot_id", snapshotID,
-				"error", err)
-			// Continue with database deletion
+		nodeID := *vm.NodeID
+		storageBackend := snapshot.StorageBackend
+		if storageBackend == "" {
+			storageBackend = storageBackendCeph
+		}
+
+		if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
+			diskPath := vm.DiskPath
+			if diskPath == "" {
+				diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+			}
+			if err := s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, *snapshot.QCOWSnapshot); err != nil {
+				s.logger.Warn("failed to delete snapshot from storage",
+					"snapshot_id", snapshotID,
+					"error", err)
+			}
+		} else if snapshot.RBDSnapshot != "" {
+			if err := s.nodeAgent.DeleteSnapshot(ctx, nodeID, snapshot.VMID, snapshot.RBDSnapshot); err != nil {
+				s.logger.Warn("failed to delete snapshot from storage",
+					"snapshot_id", snapshotID,
+					"error", err)
+			}
 		}
 	} else if s.nodeAgent == nil {
 		s.logger.Warn("nodeAgent not configured, skipping snapshot storage deletion",
@@ -385,7 +585,6 @@ func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) e
 			"vm_id", snapshot.VMID)
 	}
 
-	// Delete from database
 	if err := s.snapshotRepo.DeleteSnapshot(ctx, snapshotID); err != nil {
 		return fmt.Errorf("deleting snapshot: %w", err)
 	}
@@ -421,7 +620,6 @@ func (s *BackupService) CheckSnapshotQuota(ctx context.Context, vmID string, quo
 
 // CreateSnapshotAsync creates a snapshot asynchronously via NATS task.
 func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, customerID string) (*models.Snapshot, string, error) {
-	// Verify VM exists and get its node
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -434,27 +632,35 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 		return nil, "", fmt.Errorf("VM has no node assigned")
 	}
 
-	// Check quota
 	if err := s.CheckSnapshotQuota(ctx, vmID, DefaultSnapshotQuota); err != nil {
 		return nil, "", err
 	}
 
-	// Generate snapshot ID
+	storageBackend := vm.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
 	snapshotID := uuid.New().String()
 
-	// Create pending snapshot record
 	snapshot := &models.Snapshot{
-		ID:          snapshotID,
-		VMID:        vmID,
-		Name:        name,
-		RBDSnapshot: fmt.Sprintf("snap-%s", snapshotID[:8]),
+		ID:             snapshotID,
+		VMID:           vmID,
+		Name:           name,
+		StorageBackend: storageBackend,
+	}
+
+	if storageBackend == storageBackendCeph {
+		snapshot.RBDSnapshot = fmt.Sprintf("snap-%s", snapshotID[:8])
+	} else {
+		qcowSnap := fmt.Sprintf("snap-%s", snapshotID[:8])
+		snapshot.QCOWSnapshot = &qcowSnap
 	}
 
 	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
 		return nil, "", fmt.Errorf("creating snapshot record: %w", err)
 	}
 
-	// Publish task if task publisher is available
 	if s.taskPublisher != nil {
 		payload := map[string]any{
 			"vm_id":       vmID,
@@ -465,7 +671,6 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 
 		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSnapshotCreate, payload)
 		if err != nil {
-			// Clean up the pending snapshot record
 			_ = s.snapshotRepo.DeleteSnapshot(ctx, snapshotID)
 			return nil, "", fmt.Errorf("publishing snapshot task: %w", err)
 		}
@@ -824,8 +1029,25 @@ func (s *BackupService) RestoreSnapshot(ctx context.Context, snapshotID string) 
 		return fmt.Errorf("VM has no node assigned")
 	}
 
-	if s.nodeAgent != nil {
-		if err := s.nodeAgent.RestoreSnapshot(ctx, *vm.NodeID, vm.ID, snapshot.RBDSnapshot); err != nil {
+	if s.nodeAgent == nil {
+		s.logger.Warn("nodeAgent not configured, skipping snapshot restore",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID)
+		return nil
+	}
+
+	nodeID := *vm.NodeID
+	storageBackend := snapshot.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
+	if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
+		return fmt.Errorf("QCOW snapshot revert not supported via this method - use backup restore")
+	}
+
+	if snapshot.RBDSnapshot != "" {
+		if err := s.nodeAgent.RestoreSnapshot(ctx, nodeID, vm.ID, snapshot.RBDSnapshot); err != nil {
 			return fmt.Errorf("restoring snapshot: %w", err)
 		}
 	}
