@@ -1,4 +1,8 @@
-# VirtueStack LLM Scope Document
+# VirtueStack AGENTS.md
+
+> **AI Agent Reference Document**  
+> This file provides complete technical context for AI agents working on the VirtueStack codebase.  
+> For human-friendly overview, see [README.md](README.md).
 
 **Version:** 2.0  
 **Last Updated:** March 2026  
@@ -90,12 +94,13 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── load/                            # k6 load tests (1 file)
 │
 ├── docs/                                   # Documentation
-│   ├── VIRTUESTACK_KICKSTART_V2.md      # Architecture specification (2292 lines)
-│   ├── MASTER_CODING_STANDARD_V2.md     # Quality gates
-│   ├── llmscope.md                      # This file
+│   ├── ARCHITECTURE.md                  # Architecture specification (2292 lines)
 │   ├── API.md                           # API reference
 │   ├── INSTALL.md                       # Installation guide
 │   └── USAGE.md                         # Usage documentation
+│
+├── AGENTS.md                              # AI Agent reference (this document)
+├── CODING_STANDARD.md                     # Quality gates and coding rules
 │
 ├── docker-compose.yml                      # Docker Compose configuration
 ├── Makefile                               # Build automation
@@ -797,7 +802,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 
 ## 14. QUALITY GATES COMPLIANCE
 
-**Reference:** `docs/MASTER_CODING_STANDARD_V2.md`
+**Reference:** `CODING_STANDARD.md`
 
 | QG | Status | Implementation |
 |----|--------|----------------|
@@ -890,8 +895,8 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 
 ### When Adding Features
 
-1. **Check Architecture Plan:** Reference `docs/VIRTUESTACK_KICKSTART_V2.md`
-2. **Follow Coding Standard:** Reference `docs/MASTER_CODING_STANDARD_V2.md`
+1. **Check Architecture Plan:** Reference `docs/ARCHITECTURE.md`
+2. **Follow Coding Standard:** Reference `CODING_STANDARD.md`
 3. **Use Existing Patterns:**
    - Storage: Add to `StorageBackend` interface, implement for both backends
    - APIs: Add handler in appropriate tier (`api/admin/`, `api/customer/`, `api/provisioning/`)
@@ -983,5 +988,5 @@ docker compose up -d
 **END OF LLM SCOPE DOCUMENT**
 
 *This document is a living reference. Update as implementation progresses.*
-*For architecture details, see `VIRTUESTACK_KICKSTART_V2.md`.*
-*For coding standards, see `MASTER_CODING_STANDARD_V2.md`.*
+*For architecture details, see `ARCHITECTURE.md`.*
+*For coding standards, see `CODING_STANDARD.md`.*

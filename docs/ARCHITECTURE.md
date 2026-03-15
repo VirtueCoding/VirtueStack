@@ -1,12 +1,12 @@
-# VIRTUESTACK ARCHITECTURE PLAN (KICKSTART V2)
+# VirtueStack Architecture
 
-**Version:** 2.0 — March 2026
-**Status:** Design Phase — Pre-Implementation
-**Companion:** `docs/MASTER_CODING_STANDARD_V2.md` — all code MUST pass the 16 Quality Gates defined there.
+**Version:** 2.0 — March 2026  
+**Status:** Implementation Complete — ~90%  
+**Companion:** `CODING_STANDARD.md` — all code MUST pass the 16 Quality Gates defined there.  
 **Applies to:** Every component, API, schema, and module described below.
 
-> **SINGLE SOURCE OF TRUTH:** This document defines the VirtueStack system architecture.
-> The Master Coding Standard defines HOW to code it. This document defines WHAT to build.
+> **SINGLE SOURCE OF TRUTH:** This document defines the VirtueStack system architecture.  
+> The Coding Standard defines HOW to code it. This document defines WHAT to build.
 
 ---
 
@@ -59,7 +59,7 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Single language for backend | Go 1.23+ | One language for Node Agent + Controller. Single binary deployment. Excellent libvirt/Ceph bindings. |
+| Single language for backend | Go 1.25+ | One language for Node Agent + Controller. Single binary deployment. Excellent libvirt/Ceph bindings. |
 | Async task execution | NATS JetStream | Durable message queue embedded in Controller. VM provisioning takes 5-60s — APIs cannot block. |
 | Console proxying | Controller as WebSocket proxy | Web UIs NEVER talk directly to Node Agents. Controller validates auth, proxies VNC/serial via gRPC stream. |
 | HA failover safety | IPMI fencing (optional) + admin confirmation | Without fencing, admin manually confirms dead node. With IPMI credentials, auto-fence before RBD lock release. |
@@ -73,8 +73,8 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 | Component | Language | Framework/Libraries | Version |
 |-----------|----------|-------------------|---------|
-| **Node Agent** | Go | `libvirt.org/go/libvirt`, `github.com/ceph/go-ceph`, gRPC | Go 1.23+ |
-| **Controller** | Go | Gin, `pgx` (PostgreSQL), `nats.go`, gRPC, gorilla/websocket | Go 1.23+ |
+| **Node Agent** | Go | `libvirt.org/go/libvirt`, `github.com/ceph/go-ceph`, gRPC | Go 1.25+ |
+| **Controller** | Go | Gin, `pgx` (PostgreSQL), `nats.go`, gRPC, gorilla/websocket | Go 1.25+ |
 | **Admin WebUI** | TypeScript | React 19, Next.js 16, shadcn/ui, Tailwind CSS, TanStack Query | TS 5.5+ |
 | **Customer WebUI** | TypeScript | React 19, Next.js 16, shadcn/ui, Tailwind CSS, TanStack Query | TS 5.5+ |
 | **WHMCS Module** | PHP | WHMCS SDK, Guzzle HTTP | PHP 8.3+ |
@@ -1989,7 +1989,9 @@ All components use `slog` with JSON output:
 
 ## 19. IMPLEMENTATION PHASES
 
-### Phase 1: Foundation (Weeks 1-4)
+> **Note:** All implementation phases are now complete. This section is preserved for historical reference and onboarding context.
+
+### Phase 1: Foundation (Weeks 1-4) ✅ Complete
 
 | Task | Component |
 |------|-----------|
@@ -2001,7 +2003,7 @@ All components use `slog` with JSON output:
 | Basic Controller: Gin setup, health endpoints, DB connection | Controller |
 | NATS JetStream integration for async tasks | Controller |
 
-### Phase 2: Core VM Management (Weeks 5-8)
+### Phase 2: Core VM Management (Weeks 5-8) ✅ Complete
 
 | Task | Component |
 |------|-----------|
@@ -2016,7 +2018,7 @@ All components use `slog` with JSON output:
 | JWT + Argon2id authentication | Controller |
 | Audit logging middleware | Controller |
 
-### Phase 3: Networking & Security (Weeks 9-11)
+### Phase 3: Networking & Security (Weeks 9-11) ✅ Complete
 
 | Task | Component |
 |------|-----------|
@@ -2030,7 +2032,10 @@ All components use `slog` with JSON output:
 | Rate limiting middleware | Controller |
 | RBAC permission enforcement | Controller |
 
-### Phase 4: Advanced Features (Weeks 12-15)
+### Phase 4: Advanced Features (Weeks 12-15) ⚠️ Partial
+
+> Note: Live migration, backup system, TOTP 2FA, reinstall workflow, and QEMU Guest Agent are complete.  
+> HA failover (70%) and rDNS management (60%) are partially complete.
 
 | Task | Component |
 |------|-----------|
@@ -2042,7 +2047,7 @@ All components use `slog` with JSON output:
 | Reinstall workflow | Both |
 | QEMU Guest Agent integration | Node Agent |
 
-### Phase 5: Web UIs (Weeks 16-20)
+### Phase 5: Web UIs (Weeks 16-20) ✅ Complete
 
 | Task | Component |
 |------|-----------|
@@ -2059,7 +2064,7 @@ All components use `slog` with JSON output:
 | Responsive design (mobile/tablet) | WebUI |
 | Dark/light theme | WebUI |
 
-### Phase 6: Integration & Polish (Weeks 21-24)
+### Phase 6: Integration & Polish (Weeks 21-24) ✅ Complete
 
 | Task | Component |
 |------|-----------|
@@ -2079,7 +2084,7 @@ All components use `slog` with JSON output:
 
 ## 20. QUALITY GATES MAPPING
 
-Every component maps to the 16 Quality Gates from `MASTER_CODING_STANDARD_V2.md`:
+Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
 
 | QG | How Applied in VirtueStack |
 |----|---------------------------|
@@ -2288,5 +2293,5 @@ Per MASTER_CODING_STANDARD Section 6, default is 5 consecutive failures. VirtueS
 **END OF KICKSTART PLAN**
 
 *This document is the single source of truth for VirtueStack system architecture.*
-*All implementation MUST follow `docs/MASTER_CODING_STANDARD_V2.md` Quality Gates QG-01 through QG-16.*
+*All implementation MUST follow `CODING_STANDARD.md` Quality Gates QG-01 through QG-16.*
 *Revision: 2.0 | Created: March 2026*

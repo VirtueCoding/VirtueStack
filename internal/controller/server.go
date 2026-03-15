@@ -3,6 +3,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -57,6 +59,7 @@ type Server struct {
 	router     *gin.Engine
 	httpServer *http.Server
 	dbPool     *pgxpool.Pool
+	powerDNSDB *sql.DB // MySQL connection to PowerDNS database
 	natsConn   *nats.Conn
 	jetstream  nats.JetStreamContext
 	taskWorker *tasks.Worker
@@ -74,6 +77,7 @@ type Server struct {
 	backupService    *services.BackupService
 	migrationService *services.MigrationService
 	failoverMonitor  *services.FailoverMonitor
+	rdnsService      *services.RDNSService
 	// API Handlers
 	provisioningHandler *provisioning.ProvisioningHandler
 	customerHandler     *customer.CustomerHandler
@@ -246,6 +250,18 @@ func (s *Server) InitializeServices() error {
 		s.config.EncryptionKey,
 	)
 
+	// Initialize PowerDNS rDNS service if MySQL connection is configured
+	if s.config.PowerDNS.MySQLURL != "" {
+		var err error
+		s.powerDNSDB, err = sql.Open("mysql", s.config.PowerDNS.MySQLURL)
+		if err != nil {
+			s.logger.Warn("failed to connect to PowerDNS MySQL database", "error", err)
+		} else {
+			s.rdnsService = services.NewRDNSService(s.powerDNSDB, s.logger)
+			s.logger.Info("PowerDNS rDNS service initialized")
+		}
+	}
+
 	// Initialize handlers
 	s.provisioningHandler = provisioning.NewProvisioningHandler(
 		s.vmService,
@@ -272,6 +288,8 @@ func (s *Server) InitializeServices() error {
 		apiKeyRepo,
 		auditRepo,
 		bandwidthRepo,
+		ipRepo,
+		s.rdnsService,
 		s.nodeClient,
 		s.config.JWTSecret,
 		"virtuestack",

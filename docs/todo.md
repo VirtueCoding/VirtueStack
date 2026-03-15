@@ -3,7 +3,7 @@
 **Comprehensive Audit of Planned / Partial / Not Implemented / Stub Code**
 
 **Generated:** March 15, 2026  
-**Based on:** llmscope.md, VIRTUESTACK_KICKSTART_V2.md, MASTER_CODING_STANDARD_V2.md, and full codebase analysis
+**Based on:** AGENTS.md, ARCHITECTURE.md, CODING_STANDARD.md, and full codebase analysis
 
 ---
 
@@ -101,7 +101,7 @@
 
 ## 2. HIGH PRIORITY - Core Features
 
-### 2.1 HA Failover System (llmscope.md: 70% complete)
+### 2.1 HA Failover System (AGENTS.md: 70% complete)
 
 **Status:** Detection works, auto-recovery pending IPMI stress testing  
 **Completion Target:** 95%  
@@ -133,26 +133,29 @@ Task HA-3: VM Redistribution Load Test
 - Verify resource allocation accuracy
 ```
 
-### 2.2 PowerDNS rDNS Integration (llmscope.md: 60% complete)
+### 2.2 PowerDNS rDNS Integration (AGENTS.md: 85% complete)
 
-**Status:** Service implemented, integration pending  
+**Status:** Customer API complete, Admin API pending  
 **Completion Target:** 100%  
-**Effort:** Small (3-5 days)
+**Effort:** Small (1-2 days remaining)
 
 | # | Item | Status | File | Details |
 |---|------|--------|------|---------|
 | 1 | rDNS Service Implementation | ✅ DONE | `rdns_service.go` | Full PowerDNS MySQL integration |
-| 2 | Customer API Endpoints | ❌ MISSING | N/A | Need endpoints in customer API |
+| 2 | Customer API Endpoints | ✅ DONE | `customer/rdns.go` | 4 endpoints with ownership verification |
 | 3 | Admin API Endpoints | ❌ MISSING | N/A | Need bulk rDNS management |
 | 4 | WebUI Integration | ❌ MISSING | N/A | Frontend forms needed |
 | 5 | SOA Serial Management | ✅ DONE | `rdns_service.go:186-238` | Auto-increment implemented |
 
 **Implementation Plan:**
 ```
-Task RDNS-1: Customer API Endpoints
-- GET /vms/:id/rdns - Get current PTR records
-- PUT /vms/:id/rdns - Update PTR record
-- Add rate limiting (10/hour per customer)
+Task RDNS-1: Customer API Endpoints ✅ COMPLETE
+- GET /vms/:id/ips - List all IPs with rDNS info
+- GET /vms/:id/ips/:ipId/rdns - Get rDNS for specific IP
+- PUT /vms/:id/ips/:ipId/rdns - Update PTR record (rate limited: 10/hour)
+- DELETE /vms/:id/ips/:ipId/rdns - Clear PTR record
+- Security: Customer can only manage their own assigned IPs
+- Audit logging for all rDNS changes
 
 Task RDNS-2: Admin API Endpoints  
 - GET /admin/rdns - List all PTR records
@@ -578,7 +581,7 @@ Task ISO-3: ISO Management
 
 ## 7. QUALITY GATES COMPLIANCE
 
-Per `MASTER_CODING_STANDARD_V2.md`, all new code must pass:
+Per `CODING_STANDARD.md`, all new code must pass:
 
 | Gate | Status | Notes |
 |------|--------|-------|
@@ -647,9 +650,9 @@ None identified. All work can proceed in parallel with proper coordination.
 
 ## 10. REFERENCES
 
-- [LLM Scope Document](llmscope.md) - Architecture overview
-- [Kickstart V2](VIRTUESTACK_KICKSTART_V2.md) - Detailed architecture specification
-- [Master Coding Standard](MASTER_CODING_STANDARD_V2.md) - Quality gates and coding rules
+- [AGENTS.md](../AGENTS.md) - Architecture overview
+- [Architecture](ARCHITECTURE.md) - Detailed architecture specification
+- [Coding Standard](../CODING_STANDARD.md) - Quality gates and coding rules
 - [API Documentation](API.md) - API reference
 - [README.md](../README.md) - Project overview and quick start
 

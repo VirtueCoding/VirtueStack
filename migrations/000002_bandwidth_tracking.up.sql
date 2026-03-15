@@ -1,6 +1,6 @@
 -- VirtueStack Bandwidth Tracking Migration
 -- Creates bandwidth_usage and bandwidth_throttle tables
--- Reference: VIRTUESTACK_KICKSTART_V2.md lines 720-750
+-- Reference: ARCHITECTURE.md lines 720-750
 
 BEGIN;
 

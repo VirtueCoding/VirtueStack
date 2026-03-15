@@ -133,6 +133,12 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 			vms.GET("/:id/metrics", handler.GetMetrics)
 			vms.GET("/:id/bandwidth", handler.GetBandwidth)
 			vms.GET("/:id/network", handler.GetNetworkHistory)
+
+			// rDNS management (customer can only manage their own IPs)
+			vms.GET("/:id/ips", handler.ListVMIPs)
+			vms.GET("/:id/ips/:ipId/rdns", handler.GetRDNS)
+			vms.PUT("/:id/ips/:ipId/rdns", middleware.RDNSUpdateRateLimit(), handler.UpdateRDNS)
+			vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteRDNS)
 		}
 
 		// Backups

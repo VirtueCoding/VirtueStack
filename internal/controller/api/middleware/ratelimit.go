@@ -352,6 +352,16 @@ func BackupCreateRateLimit(isAdmin bool) gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{Requests: 5, Window: time.Hour, KeyFunc: keyByUserID})
 }
 
+// RDNSUpdateRateLimit limits rDNS update operations: Customer 10/hour, Admin unlimited.
+// Endpoint: PUT /vms/:id/ips/:ipId/rdns
+func RDNSUpdateRateLimit() gin.HandlerFunc {
+	return RateLimit(RateLimitConfig{
+		Requests: 10,
+		Window:   time.Hour,
+		KeyFunc:  keyByUserID,
+	})
+}
+
 // ─── Redis-backed distributed rate limiter ───────────────────────────────────
 
 // RateLimiterBackend defines the interface for rate limiting backends.

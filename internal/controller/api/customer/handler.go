@@ -24,6 +24,8 @@ type CustomerHandler struct {
 	apiKeyRepo      *repository.CustomerAPIKeyRepository
 	auditRepo       *repository.AuditRepository
 	bandwidthRepo   *repository.BandwidthRepository
+	ipRepo          *repository.IPRepository
+	rdnsService     *services.RDNSService
 	nodeAgent       nodeAgentConnPool
 	authConfig      middleware.AuthConfig
 	encryptionKey   string
@@ -49,6 +51,8 @@ func NewCustomerHandler(
 	apiKeyRepo *repository.CustomerAPIKeyRepository,
 	auditRepo *repository.AuditRepository,
 	bandwidthRepo *repository.BandwidthRepository,
+	ipRepo *repository.IPRepository,
+	rdnsService *services.RDNSService,
 	nodeAgent nodeAgentConnPool,
 	jwtSecret string,
 	issuer string,
@@ -70,6 +74,8 @@ func NewCustomerHandler(
 		apiKeyRepo:      apiKeyRepo,
 		auditRepo:       auditRepo,
 		bandwidthRepo:   bandwidthRepo,
+		ipRepo:          ipRepo,
+		rdnsService:     rdnsService,
 		nodeAgent:       nodeAgent,
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey:   encryptionKey,

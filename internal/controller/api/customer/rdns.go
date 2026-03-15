@@ -1,0 +1,376 @@
+package customer
+
+import (
+	"net/http"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// RDNSRequest represents the request body for updating rDNS.
+type RDNSRequest struct {
+	Hostname string `json:"hostname" validate:"required,hostname_rfc1123,max=253"`
+}
+
+// RDNSResponse represents the response for rDNS operations.
+type RDNSResponse struct {
+	IPAddress    string  `json:"ip_address"`
+	RDNSHostname *string `json:"rdns_hostname,omitempty"`
+}
+
+// ListVMIPs handles GET /vms/:id/ips - lists all IP addresses for a VM with rDNS info.
+// Customers can only view IPs for their own VMs.
+func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+
+	// Validate UUID
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Verify VM ownership
+	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to get VM for IP list",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_IP_LIST_FAILED", "Failed to retrieve VM IPs")
+		return
+	}
+
+	// Get IPs for the VM
+	filter := repository.IPAddressListFilter{
+		VMID: &vmID,
+	}
+	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	if err != nil {
+		h.logger.Error("failed to list IPs for VM",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: ips,
+	})
+}
+
+// GetRDNS handles GET /vms/:id/ips/:ipId/rdns - gets the rDNS for a specific IP.
+// Customers can only view rDNS for IPs assigned to their own VMs.
+func (h *CustomerHandler) GetRDNS(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+	ipID := c.Param("ipId")
+
+	// Validate UUIDs
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	// Verify VM ownership
+	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to get VM for rDNS",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		return
+	}
+
+	// Get the IP address and verify it belongs to the VM
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, repository.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		h.logger.Error("failed to get IP address",
+			"ip_id", ipID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		return
+	}
+
+	// Verify the IP belongs to the VM
+	if ip.VMID == nil || *ip.VMID != vmID {
+		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		return
+	}
+
+	// Verify the IP is assigned to the customer
+	if ip.CustomerID == nil || *ip.CustomerID != customerID {
+		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{
+		Data: RDNSResponse{
+			IPAddress:    ip.Address,
+			RDNSHostname: ip.RDNSHostname,
+		},
+	})
+}
+
+// UpdateRDNS handles PUT /vms/:id/ips/:ipId/rdns - updates the rDNS for a specific IP.
+// Customers can only update rDNS for IPs assigned to their own VMs.
+// Rate limited: 10 requests per hour per customer.
+func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+	ipID := c.Param("ipId")
+
+	// Validate UUIDs
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	// Parse and validate request
+	var req RDNSRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	// Verify VM ownership
+	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to get VM for rDNS update",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		return
+	}
+
+	// Get the IP address and verify it belongs to the VM and customer
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, repository.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		h.logger.Error("failed to get IP address for rDNS update",
+			"ip_id", ipID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		return
+	}
+
+	// Verify the IP belongs to the VM
+	if ip.VMID == nil || *ip.VMID != vmID {
+		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		return
+	}
+
+	// Verify the IP is assigned to the customer
+	if ip.CustomerID == nil || *ip.CustomerID != customerID {
+		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		return
+	}
+
+	// Update rDNS in the database
+	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, req.Hostname); err != nil {
+		h.logger.Error("failed to update rDNS in database",
+			"ip_id", ipID,
+			"customer_id", customerID,
+			"hostname", req.Hostname,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		return
+	}
+
+	// Update rDNS in PowerDNS if the service is available
+	if h.rdnsService != nil {
+		if err := h.rdnsService.SetReverseDNS(c.Request.Context(), ip.Address, req.Hostname); err != nil {
+			h.logger.Error("failed to update rDNS in PowerDNS",
+				"ip_id", ipID,
+				"ip_address", ip.Address,
+				"customer_id", customerID,
+				"hostname", req.Hostname,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			// Don't fail the request - the DB is the source of truth
+			// The PowerDNS sync can be retried later
+		}
+	}
+
+	// Write audit log
+	if h.auditRepo != nil {
+		_, _ = h.auditRepo.Create(c.Request.Context(), &models.AuditLog{
+			ActorID:       customerID,
+			ActorType:     "customer",
+			Action:        "rdns.update",
+			ResourceType:  "ip_address",
+			ResourceID:    ipID,
+			ResourceName:  &ip.Address,
+			Changes:       map[string]interface{}{"rdns_hostname": req.Hostname},
+			CorrelationID: middleware.GetCorrelationID(c),
+			IP:            c.ClientIP(),
+			Success:       true,
+		})
+	}
+
+	h.logger.Info("rDNS updated",
+		"ip_id", ipID,
+		"ip_address", ip.Address,
+		"customer_id", customerID,
+		"hostname", req.Hostname,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{
+		Data: RDNSResponse{
+			IPAddress:    ip.Address,
+			RDNSHostname: &req.Hostname,
+		},
+	})
+}
+
+// DeleteRDNS handles DELETE /vms/:id/ips/:ipId/rdns - removes the rDNS for a specific IP.
+// Customers can only delete rDNS for IPs assigned to their own VMs.
+func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	vmID := c.Param("id")
+	ipID := c.Param("ipId")
+
+	// Validate UUIDs
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	// Verify VM ownership
+	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		h.logger.Error("failed to get VM for rDNS delete",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		return
+	}
+
+	// Get the IP address and verify it belongs to the VM and customer
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, repository.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		h.logger.Error("failed to get IP address for rDNS delete",
+			"ip_id", ipID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		return
+	}
+
+	// Verify the IP belongs to the VM
+	if ip.VMID == nil || *ip.VMID != vmID {
+		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		return
+	}
+
+	// Verify the IP is assigned to the customer
+	if ip.CustomerID == nil || *ip.CustomerID != customerID {
+		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		return
+	}
+
+	// Clear rDNS in the database
+	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, ""); err != nil {
+		h.logger.Error("failed to clear rDNS in database",
+			"ip_id", ipID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		return
+	}
+
+	// Delete rDNS from PowerDNS if the service is available
+	if h.rdnsService != nil {
+		if err := h.rdnsService.DeleteReverseDNS(c.Request.Context(), ip.Address); err != nil {
+			h.logger.Error("failed to delete rDNS from PowerDNS",
+				"ip_id", ipID,
+				"ip_address", ip.Address,
+				"customer_id", customerID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			// Don't fail the request - the DB is the source of truth
+		}
+	}
+
+	// Write audit log
+	if h.auditRepo != nil {
+		_, _ = h.auditRepo.Create(c.Request.Context(), &models.AuditLog{
+			ActorID:       customerID,
+			ActorType:     "customer",
+			Action:        "rdns.delete",
+			ResourceType:  "ip_address",
+			ResourceID:    ipID,
+			ResourceName:  &ip.Address,
+			CorrelationID: middleware.GetCorrelationID(c),
+			IP:            c.ClientIP(),
+			Success:       true,
+		})
+	}
+
+	h.logger.Info("rDNS deleted",
+		"ip_id", ipID,
+		"ip_address", ip.Address,
+		"customer_id", customerID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.Status(http.StatusNoContent)
+}

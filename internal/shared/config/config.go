@@ -80,6 +80,7 @@ type PowerDNSConfig struct {
 	APIKey   string `yaml:"api_key" env:"POWERDNS_API_KEY"`
 	ServerID string `yaml:"server_id" env:"POWERDNS_SERVER_ID"`
 	ZoneName string `yaml:"zone_name" env:"POWERDNS_ZONE_NAME"`
+	MySQLURL string `yaml:"mysql_url" env:"POWERDNS_MYSQL_URL"` // MySQL connection string for direct database integration
 }
 
 // ControllerConfig holds all configuration for the VirtueStack Controller.
@@ -305,6 +306,9 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("POWERDNS_ZONE_NAME"); v != "" {
 		cfg.PowerDNS.ZoneName = v
+	}
+	if v := os.Getenv("POWERDNS_MYSQL_URL"); v != "" {
+		cfg.PowerDNS.MySQLURL = v
 	}
 
 	// File storage config

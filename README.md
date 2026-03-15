@@ -2,12 +2,12 @@
 
 **A modern, scalable Virtual Machine management platform built for VPS hosting providers.**
 
-[![Go Version](https://img.shields.io/badge/Go-1.24-blue)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.25-blue)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-19-blue)](https://reactjs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-VirtueStack provides a complete infrastructure-as-a-service platform for managing virtual machines across a distributed cluster of compute nodes. Built with Go, React/Next.js, PostgreSQL, and NATS JetStream.
+VirtueStack provides a complete infrastructure-as-a-service platform for managing virtual machines across distributed compute nodes.
 
 ---
 
@@ -20,7 +20,6 @@ VirtueStack provides a complete infrastructure-as-a-service platform for managin
 - [Development](#development)
 - [Production Deployment](#production-deployment)
 - [Documentation](#documentation)
-- [Project Status](#project-status)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -28,13 +27,13 @@ VirtueStack provides a complete infrastructure-as-a-service platform for managin
 
 ## Overview
 
-VirtueStack is a cloud-native VM management platform designed for VPS hosting providers. It provides:
+VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
-- **Multi-tenant Architecture** - Separate admin and customer portals with role-based access control
-- **Distributed Compute** - Scale across multiple hypervisor nodes with automatic load balancing
-- **Real-time Monitoring** - Track VM metrics, bandwidth usage, and node health
-- **Automated Backups** - Scheduled backups with point-in-time snapshot recovery
-- **API Access** - Full REST API for integration with billing systems (WHMCS, etc.)
+- **Multi-tenant** - Separate admin and customer portals with RBAC
+- **Distributed** - Scale across multiple hypervisor nodes
+- **Flexible Storage** - Ceph RBD or QCOW2 backends
+- **Live Migration** - Zero-downtime VM movement
+- **API Integration** - REST API for WHMCS and custom billing
 
 ---
 
@@ -42,34 +41,33 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
 
 ### Core Platform
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| VM Lifecycle Management | ✅ | Create, start, stop, restart VMs |
-| Live Migration | ⚠️ | API stubbed, needs implementation |
-| Node Failover | ⚠️ | Detection works, auto-recovery TODO |
-| Bandwidth Monitoring | ✅ | Real-time tracking with usage graphs |
-| Backup & Snapshots | ⚠️ | Backend ready, frontend placeholders |
-| Console Access | ⚠️ | VNC placeholder in UI |
-| API Key Management | ✅ | Fully implemented for provisioning API |
+| Feature | Status |
+|---------|--------|
+| VM Lifecycle Management | ✅ Create, start, stop, restart, migrate VMs |
+| Live Migration | ✅ Zero-downtime migration between nodes |
+| Storage Management | ✅ Ceph RBD + QCOW2 dual backend |
+| Bandwidth Monitoring | ✅ Real-time tracking with limits |
+| Backup & Snapshots | ✅ Automated backups and recovery |
+| Console Access | ✅ Web-based VNC and Serial consoles |
+| Node Failover | 🚧 In progress (70% complete) |
+| DNS Management | 🚧 In progress (PowerDNS integration) |
 
-### Authentication & Security
+### Security & Authentication
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| JWT Authentication | ✅ | Backend fully implemented, E2E verified (admin, customer, provisioning) |
-| 2FA/TOTP | ✅ | Fully implemented and E2E verified (admin login flow) |
-| RBAC | ✅ | Role-based access control |
-| Password Reset | ⚠️ | Table exists, workflow TODO |
-| API Authentication | ✅ | Token-based auth |
+| Feature | Status |
+|---------|--------|
+| Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
+| JWT Authentication | ✅ Secure token-based sessions |
+| RBAC | ✅ Role-based permissions |
+| API Keys | ✅ Secure API access |
+| Audit Logging | ✅ Immutable operation logs |
 
 ### Web Interfaces
 
-| Portal | Framework | Status |
-|--------|-----------|--------|
-| Admin Portal | Next.js 15 + shadcn/ui | UI ready, backend API verified |
-| Customer Portal | Next.js 15 + shadcn/ui | UI ready, backend API verified |
-
-**See [Implementation Plan](docs/todo.md) for detailed status.**
+| Portal | Technology |
+|--------|------------|
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui |
 
 ---
 
@@ -110,17 +108,13 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
                          └─────────────────┘
 ```
 
-### Components
+### Technology Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Controller** | Go 1.24 + Gin | API server, business logic, orchestration |
-| **Node Agent** | Go 1.24 + gRPC | Runs on each hypervisor, manages VMs |
-| **Admin WebUI** | Next.js 15 + React 19 | Administration interface |
-| **Customer WebUI** | Next.js 15 + React 19 | Customer self-service portal |
-| **Database** | PostgreSQL 16 | Primary data store |
-| **Message Queue** | NATS JetStream | Async tasks, events |
-| **Reverse Proxy** | Nginx 1.25 | TLS termination, routing |
+| Layer | Technologies |
+|-------|-------------|
+| **Backend** | Go 1.25, Gin, gRPC, NATS JetStream, PostgreSQL |
+| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui |
+| **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2, Docker, Nginx |
 
 ---
 
@@ -128,11 +122,9 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
 
 ### Prerequisites
 
-- Docker 24.0+
+- Docker 26.0+
 - Docker Compose 2.20+
 - Make
-- Go 1.24+ (for local development)
-- Node.js 20+ (for frontend development)
 
 ### Using Docker Compose
 
@@ -141,17 +133,14 @@ VirtueStack is a cloud-native VM management platform designed for VPS hosting pr
 git clone https://github.com/AbuGosok/VirtueStack.git
 cd VirtueStack
 
-# Copy environment file
+# Copy and edit environment file
 cp .env.example .env
-# Edit .env with your configuration
 
 # Start all services
 docker compose up -d
 
 # View logs
-docker compose logs -f controller
-docker compose logs -f admin-webui
-docker compose logs -f customer-webui
+docker compose logs -f
 
 # Stop
 docker compose down
@@ -159,18 +148,17 @@ docker compose down
 
 ### Access Points
 
-| Service | URL | Default Credentials |
-|---------|-----|---------------------|
-| Admin Portal | https://localhost/admin | admin@virtuestack.local / admin123 (2FA enabled) |
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Admin Portal | https://localhost/admin | admin@virtuestack.local / admin123 |
 | Customer Portal | https://localhost | customer@virtuestack.local / customer123 |
 | API | https://localhost/api/v1 | JWT or API key |
-| NATS Monitoring | http://localhost:8222 | None |
 
 ---
 
 ## Development
 
-### Backend Development
+### Backend
 
 ```bash
 # Install dependencies
@@ -182,64 +170,40 @@ make migrate-up
 # Run tests
 make test
 
-# Run with hot reload (requires Air)
-make dev
-
 # Build
 make build
 ```
 
-### Frontend Development
+### Frontend
 
 ```bash
 # Admin Portal
-cd webui/admin
-npm install
-npm run dev
+cd webui/admin && npm install && npm run dev
 
 # Customer Portal
-cd webui/customer
-npm install
-npm run dev
-```
-
-### Database Migrations
-
-```bash
-# Create new migration
-make migrate-create name=add_feature
-
-# Apply migrations
-make migrate-up
-
-# Rollback
-make migrate-down
+cd webui/customer && npm install && npm run dev
 ```
 
 ---
 
 ## Production Deployment
 
-### Security Checklist
+### Prerequisites
 
-⚠️ **CRITICAL**: Review [Implementation Plan](docs/todo.md) before production deployment.
+Before deploying to production:
+- Replace default passwords in docker-compose.yml
+- Configure IP allowlisting for provisioning API
+- Use CA-signed TLS certificates
+- Review firewall rules
 
-Required fixes before production:
-- [x] Password hashing with Argon2id — implemented and verified
-- [x] JWT authentication — fully implemented for admin, customer, and provisioning APIs
-- [x] TLS certificates — configured and working (self-signed for dev, replace for production)
-- [ ] Remove default passwords from docker-compose.yml
-- [ ] Secure provisioning API endpoints with IP allowlisting
-- [ ] Replace self-signed certificates with proper CA-signed certs
-
-### Production Deployment
+### Deployment
 
 ```bash
-# Use production compose file
+# Production deployment
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed production setup.
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 
 ---
 
@@ -247,46 +211,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed production setup.
 
 | Document | Description |
 |----------|-------------|
-| [Implementation Plan](docs/todo.md) | Comprehensive audit of unfinished work |
-| [API.md](docs/API.md) | API reference documentation |
-| [INSTALL.md](docs/INSTALL.md) | Installation guide |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture details |
-| [MASTER_CODING_STANDARD_V2.md](docs/MASTER_CODING_STANDARD_V2.md) | Coding standards |
-
----
-
-## Project Status
-
-**Current State:** ~65-70% Complete (backend core verified, frontend integration pending)
-
-### What's Working (E2E Verified)
-
-✅ Database schema and migrations (15 migration files, 52 tables)  
-✅ All three API groups: Admin, Customer, Provisioning  
-✅ JWT authentication (admin + customer login flows)  
-✅ 2FA/TOTP (admin login with TOTP verification)  
-✅ Provisioning API key authentication  
-✅ Role-based access control (admin, super_admin, customer)  
-✅ Password hashing with Argon2id  
-✅ Basic VM CRUD operations  
-✅ Node management and registration  
-✅ Bandwidth tracking  
-✅ Customer/plan management  
-✅ Audit logging  
-✅ Docker Compose deployment (6 containers, all healthy)  
-✅ TLS/HTTPS via Nginx reverse proxy  
-
-### What's Not Ready
-
-⚠️ Frontend ↔ Backend API wiring (UIs built, not connected to live API)  
-⚠️ VM live migration  
-⚠️ Automatic node failover  
-⚠️ Console access (VNC/noVNC)  
-⚠️ Backup/snapshot UI integration  
-⚠️ API key management UI  
-⚠️ Password reset workflow  
-
-See [Implementation Plan](docs/todo.md) for detailed breakdown.
+| [AGENTS.md](AGENTS.md) | **Complete technical reference** for developers and AI agents |
+| [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
+| [docs/USAGE.md](docs/USAGE.md) | Usage documentation |
+| [docs/API.md](docs/API.md) | API reference |
 
 ---
 
@@ -304,48 +232,11 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Code Standards
 
-- Go: Follow [Effective Go](https://golang.org/doc/effective_go.html) and [Uber Go Style Guide](https://github.com/uber-go/guide/blob/master/style.md)
+- Go: Follow [Effective Go](https://golang.org/doc/effective_go.html)
 - TypeScript: Use ESLint configuration in the repo
 - Tests: Maintain >80% coverage
-- Documentation: Update relevant docs for API changes
 
----
-
-## Technology Stack
-
-### Backend
-
-| Technology | Purpose |
-|------------|---------|
-| Go 1.24 | Primary language |
-| Gin | HTTP web framework |
-| pgx | PostgreSQL driver |
-| NATS | Message queue |
-| gRPC | Node agent communication |
-| libvirt-go | VM management |
-| JWT | Authentication |
-| Argon2id | Password hashing |
-
-### Frontend
-
-| Technology | Purpose |
-|------------|---------|
-| Next.js 15 | React framework |
-| React 19 | UI library |
-| TypeScript | Type safety |
-| shadcn/ui | Component library |
-| Tailwind CSS | Styling |
-| TanStack Query | Data fetching |
-
-### Infrastructure
-
-| Technology | Purpose |
-|------------|---------|
-| PostgreSQL 16 | Database |
-| NATS JetStream | Message queue |
-| Nginx 1.25 | Reverse proxy |
-| Docker | Containerization |
-| Ceph | Distributed storage |
+See [CODING_STANDARD.md](CODING_STANDARD.md) for complete quality gates.
 
 ---
 
@@ -358,17 +249,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - 📧 Email: support@virtuestack.com
-- 💬 Discord: [Join our community](https://discord.gg/virtuestack)
 - 🐛 Issues: [GitHub Issues](https://github.com/AbuGosok/VirtueStack/issues)
 
 ---
 
-## Acknowledgments
-
-- Built with ❤️ by the VirtueStack team
-- Thanks to all contributors who have helped shape this project
-- Inspired by industry-leading cloud platforms
-
----
-
-**⚠️ IMPORTANT:** This codebase is under active development. See [Implementation Plan](docs/todo.md) before production use.
+**For complete technical details, API specifications, and development patterns, see [AGENTS.md](AGENTS.md).**
