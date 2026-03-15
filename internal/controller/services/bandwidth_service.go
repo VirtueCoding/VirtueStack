@@ -10,6 +10,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // BandwidthThrottler abstracts bandwidth throttling operations on node agents.
@@ -247,7 +248,7 @@ func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 	logger := s.logger.With("operation", "check_all_vms")
 
 	// List all active VMs
-	vms, _, err := s.vmRepo.List(ctx, models.VMListFilter{Status: strPtr(models.VMStatusRunning)})
+	vms, _, err := s.vmRepo.List(ctx, models.VMListFilter{Status: util.StringPtr(models.VMStatusRunning)})
 	if err != nil {
 		return 0, fmt.Errorf("listing running VMs: %w", err)
 	}
@@ -292,9 +293,4 @@ func (s *BandwidthService) checkAndThrottle(ctx context.Context, vm *models.VM) 
 	}
 
 	return nil
-}
-
-// strPtr returns a pointer to a string.
-func strPtr(s string) *string {
-	return &s
 }

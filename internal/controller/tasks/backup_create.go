@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
 
@@ -56,6 +57,11 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 
 	logger = logger.With("vm_id", payload.VMID, "backup_name", payload.BackupName)
 	logger.Info("backup.create task started", "backup_type", payload.BackupType)
+
+	backupStart := time.Now()
+	defer func() {
+		controllermetrics.BackupDuration.WithLabelValues(payload.BackupType).Observe(time.Since(backupStart).Seconds())
+	}()
 
 	if task.IsTerminal() {
 		logger.Info("task already in terminal state, skipping",

@@ -288,7 +288,7 @@ test.describe('Admin VM List', () => {
       
       // Should show different page
       const newRows = await vmListPage.getVMRows();
-      expect(await newRows.count()).toBeGreaterThanOrEqual(0);
+      expect(await newRows.count()).toBeGreaterThan(0);
       
       // Go back
       await vmListPage.goToPreviousPage();

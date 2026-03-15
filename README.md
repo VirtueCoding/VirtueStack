@@ -34,6 +34,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 - **Flexible Storage** - Ceph RBD or QCOW2 backends
 - **Live Migration** - Zero-downtime VM movement
 - **API Integration** - REST API for WHMCS and custom billing
+- **High Availability** - Automatic node failover with IPMI fencing
+- **Monitoring** - Prometheus metrics with Grafana dashboards
 
 ---
 
@@ -43,31 +45,55 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Feature | Status |
 |---------|--------|
-| VM Lifecycle Management | ✅ Create, start, stop, restart, migrate VMs |
+| VM Lifecycle Management | ✅ Create, start, stop, restart, reinstall VMs |
 | Live Migration | ✅ Zero-downtime migration between nodes |
 | Storage Management | ✅ Ceph RBD + QCOW2 dual backend |
-| Bandwidth Monitoring | ✅ Real-time tracking with limits |
-| Backup & Snapshots | ✅ Automated backups and recovery |
-| Console Access | ✅ Web-based VNC and Serial consoles |
-| Node Failover | 🚧 In progress (70% complete) |
-| DNS Management | 🚧 In progress (PowerDNS integration) |
+| Bandwidth Monitoring | ✅ Real-time tracking with limits and overage throttling |
+| Backup & Snapshots | ✅ Automated backups, snapshots, and recovery |
+| Console Access | ✅ Web-based VNC (noVNC) and Serial (xterm.js) consoles |
+| HA Node Failover | ✅ IPMI fencing, STONITH, Ceph blocklist, VM redistribution |
+| PowerDNS rDNS | ✅ Reverse DNS with MySQL direct access, IPv4+IPv6 PTR |
+| IPv6 Support | ✅ /48 prefix allocation, /64 per-VM subnets |
+| WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module |
+| ISO Mounting | ✅ Upload and attach ISO images to VMs |
+| Webhooks | ✅ Customer webhook delivery with retry and logging |
 
 ### Security & Authentication
 
 | Feature | Status |
 |---------|--------|
 | Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
-| JWT Authentication | ✅ Secure token-based sessions |
-| RBAC | ✅ Role-based permissions |
-| API Keys | ✅ Secure API access |
-| Audit Logging | ✅ Immutable operation logs |
+| JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
+| RBAC | ✅ Role-based permissions (customer and admin) |
+| API Keys | ✅ Secure API access with expiration |
+| Audit Logging | ✅ Immutable operation logs with partitioning |
+| Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
+| Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
+| Row Level Security | ✅ PostgreSQL RLS for customer data isolation |
+
+### Monitoring & Observability
+
+| Feature | Status |
+|---------|--------|
+| Prometheus Metrics | ✅ Controller (10) and Node Agent (7) metric endpoints |
+| Grafana Dashboards | ✅ Pre-built dashboard templates |
+| Alerting Rules | ✅ Prometheus alerting configuration |
+| Background Collector | ✅ Periodic resource and health data collection |
 
 ### Web Interfaces
 
-| Portal | Technology |
-|--------|------------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui |
-| Customer Portal | Next.js 16 + React 19 + shadcn/ui |
+| Portal | Technology | Pages |
+|--------|------------|-------|
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, IP Sets, Audit Logs |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics), Settings (profile, 2FA, API keys) |
+
+### API System
+
+| Tier | Base Path | Auth | Rate Limit |
+|------|-----------|------|------------|
+| Admin | `/api/v1/admin/*` | JWT + 2FA | 500/min |
+| Customer | `/api/v1/customer/*` | JWT + Refresh | 100 read / 30 write per min |
+| Provisioning | `/api/v1/provisioning/*` | API Key | 1000/min |
 
 ---
 
@@ -211,10 +237,12 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 
 | Document | Description |
 |----------|-------------|
-| [AGENTS.md](AGENTS.md) | **Complete technical reference** for developers and AI agents |
+| [AGENTS.md](AGENTS.md) | Technical reference for AI agents and LLM-assisted development |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture specification |
 | [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
 | [docs/USAGE.md](docs/USAGE.md) | Usage documentation |
 | [docs/API.md](docs/API.md) | API reference |
+| [CODING_STANDARD.md](CODING_STANDARD.md) | Quality gates and coding rules |
 
 ---
 
@@ -254,3 +282,27 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **For complete technical details, API specifications, and development patterns, see [AGENTS.md](AGENTS.md).**
+
+---
+
+## Project Status
+
+**Overall: 100% Complete**
+
+| Component | Status |
+|-----------|--------|
+| Controller APIs | 100% |
+| Node Agent | 100% |
+| Database Schema (21 migrations) | 100% |
+| Authentication (JWT, 2FA, API Keys) | 100% |
+| VM Lifecycle | 100% |
+| Storage (Ceph RBD + QCOW) | 100% |
+| Live Migration | 100% |
+| Backup & Snapshots | 100% |
+| WebSocket Console | 100% |
+| Web UIs | 100% |
+| WHMCS Module | 100% |
+| Networking | 100% |
+| HA Failover | 100% |
+| PowerDNS rDNS | 100% |
+| Monitoring | 100% |

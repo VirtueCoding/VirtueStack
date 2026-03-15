@@ -103,6 +103,14 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			nodes.DELETE("/:id", handler.DeleteNode)
 			nodes.POST("/:id/drain", handler.DrainNode)
 			nodes.POST("/:id/failover", handler.FailoverNode)
+			nodes.POST("/:id/undrain", handler.UndrainNode)
+		}
+
+		// Failover requests
+		failoverRequests := protected.Group("/failover-requests")
+		{
+			failoverRequests.GET("", handler.ListFailoverRequests)
+			failoverRequests.GET("/:id", handler.GetFailoverRequest)
 		}
 
 		// VM management
@@ -114,6 +122,10 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			vms.PUT("/:id", handler.UpdateVM)
 			vms.DELETE("/:id", handler.DeleteVM)
 			vms.POST("/:id/migrate", handler.MigrateVM)
+			vms.GET("/:id/ips", handler.GetVMIPs)
+			vms.GET("/:id/ips/:ipId/rdns", handler.GetIPRDNS)
+			vms.PUT("/:id/ips/:ipId/rdns", handler.UpdateIPRDNS)
+			vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteIPRDNS)
 		}
 
 		// Plan management

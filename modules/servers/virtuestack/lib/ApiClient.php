@@ -35,6 +35,7 @@ final class ApiClient
     private int $timeout;
     private bool $verifySsl;
     private string $userAgent;
+    private bool $debug;
 
     /**
      * @param string $apiUrl    Base URL for Controller API (e.g., https://controller.example.com/api/v1)
@@ -46,7 +47,8 @@ final class ApiClient
         string $apiUrl,
         string $apiKey,
         int $timeout = self::DEFAULT_TIMEOUT,
-        bool $verifySsl = true
+        bool $verifySsl = true,
+        bool $debug = false
     ) {
         $apiUrl = rtrim($apiUrl, '/');
         
@@ -62,6 +64,7 @@ final class ApiClient
         $this->apiKey = $apiKey;
         $this->timeout = max(5, $timeout);
         $this->verifySsl = $verifySsl;
+        $this->debug = $debug;
         $this->userAgent = 'VirtueStack-WHMCS/1.0 (PHP ' . PHP_VERSION . ')';
     }
 
@@ -489,7 +492,9 @@ final class ApiClient
     {
         $url = $this->apiUrl . $path;
         
-        $this->log('debug', "API Request: {$method} {$url}");
+        if ($this->debug) {
+            $this->log('debug', "API Request: {$method} {$url}");
+        }
 
         $ch = curl_init();
         if ($ch === false) {
@@ -538,7 +543,9 @@ final class ApiClient
             throw new RuntimeException('Invalid response from API');
         }
 
-        $this->log('debug', "API Response: HTTP {$httpCode}");
+        if ($this->debug) {
+            $this->log('debug', "API Response: HTTP {$httpCode}");
+        }
 
         // Decode JSON response
         try {

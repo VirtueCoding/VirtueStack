@@ -37,12 +37,13 @@ const (
 
 // Resource constants define the types of resources in the system.
 const (
-	ResourceVM       = "vm"
-	ResourceNode     = "node"
-	ResourcePlan     = "plan"
-	ResourceTemplate = "template"
-	ResourceCustomer = "customer"
-	ResourceAuditLog = "audit_log"
+	ResourceVM        = "vm"
+	ResourceNode      = "node"
+	ResourcePlan      = "plan"
+	ResourceTemplate  = "template"
+	ResourceCustomer  = "customer"
+	ResourceAuditLog  = "audit_log"
+	ResourceIPAddress = "ip_address"
 )
 
 // DestructiveActions lists operations that require re-authentication.

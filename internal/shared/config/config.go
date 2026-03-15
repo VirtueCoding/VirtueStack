@@ -72,6 +72,7 @@ type FileStorageConfig struct {
 	TemplateImportPaths []string `yaml:"template_import_paths" env:"TEMPLATE_IMPORT_PATHS"`
 	BackupRetentionDays int      `yaml:"backup_retention_days" env:"BACKUP_RETENTION_DAYS"`
 	MaxTemplateSizeGB   int      `yaml:"max_template_size_gb" env:"MAX_TEMPLATE_SIZE_GB"`
+	ISOStoragePath      string   `yaml:"iso_storage_path" env:"ISO_STORAGE_PATH"`
 }
 
 // PowerDNSConfig holds PowerDNS integration configuration.
@@ -139,6 +140,9 @@ type NodeAgentConfig struct {
 
 	// Logging
 	LogLevel string `yaml:"log_level" env:"LOG_LEVEL"`
+
+	// Metrics
+	MetricsAddr string `yaml:"metrics_addr" env:"METRICS_ADDR"`
 }
 
 // LoadControllerConfig loads the controller configuration from environment variables
@@ -197,6 +201,7 @@ func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 		CloudInitPath:  defaultCloudInitPath,
 		ISOStoragePath: defaultISOStoragePath,
 		LogLevel:       defaultLogLevel,
+		MetricsAddr:    ":9091",
 	}
 
 	// Load from YAML file if specified
@@ -307,8 +312,14 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	if v := os.Getenv("POWERDNS_ZONE_NAME"); v != "" {
 		cfg.PowerDNS.ZoneName = v
 	}
+	if v := os.Getenv("PDNS_MYSQL_DSN"); v != "" {
+		cfg.PowerDNS.MySQLURL = v
+	}
 	if v := os.Getenv("POWERDNS_MYSQL_URL"); v != "" {
 		cfg.PowerDNS.MySQLURL = v
+	}
+	if v := os.Getenv("POWERDNS_API_KEY"); v != "" {
+		cfg.PowerDNS.APIKey = v
 	}
 
 	// File storage config
@@ -324,6 +335,9 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.FileStorage.MaxTemplateSizeGB = n
 		}
+	}
+	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
+		cfg.FileStorage.ISOStoragePath = v
 	}
 }
 
@@ -377,6 +391,9 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
+	}
+	if v := os.Getenv("METRICS_ADDR"); v != "" {
+		cfg.MetricsAddr = v
 	}
 }
 

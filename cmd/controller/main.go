@@ -103,7 +103,7 @@ func main() {
 		TaskRepo:       repository.NewTaskRepository(dbPool),
 		TemplateRepo:   repository.NewTemplateRepository(dbPool),
 		IPAMService:    server.GetIPAMService(),
-		NodeClient:     services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), nodeClient, logger),
+		NodeClient:     services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), repository.NewVMRepository(dbPool), nodeClient, logger),
 		DNSNameservers: cfg.DNSNameservers,
 		CephUser:       cfg.CephUser,
 		CephSecretUUID: cfg.CephSecretUUID,

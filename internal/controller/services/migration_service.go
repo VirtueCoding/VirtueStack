@@ -11,6 +11,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // MigrationService provides live migration operations for VirtueStack.
@@ -345,7 +346,7 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 
 	// Get all online nodes
 	filter := models.NodeListFilter{
-		Status: strPtr(models.NodeStatusOnline),
+		Status: util.StringPtr(models.NodeStatusOnline),
 		PaginationParams: models.PaginationParams{
 			Page:    1,
 			PerPage: models.MaxPerPage,
@@ -476,7 +477,7 @@ func (s *MigrationService) CancelMigration(ctx context.Context, vmID, adminID st
 
 	restoreStatus := models.VMStatusRunning
 	filter := repository.TaskListFilter{
-		Type: strPtr(models.TaskTypeVMMigrate),
+		Type: util.StringPtr(models.TaskTypeVMMigrate),
 		PaginationParams: models.PaginationParams{
 			Page:    1,
 			PerPage: 20,

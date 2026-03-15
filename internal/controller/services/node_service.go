@@ -219,6 +219,30 @@ func (s *NodeService) DrainNode(ctx context.Context, nodeID string) error {
 	return nil
 }
 
+func (s *NodeService) UndrainNode(ctx context.Context, nodeID string) error {
+	node, err := s.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return fmt.Errorf("node not found: %s", nodeID)
+		}
+		return fmt.Errorf("getting node: %w", err)
+	}
+
+	if node.Status != models.NodeStatusDraining {
+		return fmt.Errorf("node %s is not in draining state (current: %s)", nodeID, node.Status)
+	}
+
+	if err := s.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusOnline); err != nil {
+		return fmt.Errorf("updating node status: %w", err)
+	}
+
+	s.logger.Info("node restored to online mode",
+		"node_id", nodeID,
+		"hostname", node.Hostname)
+
+	return nil
+}
+
 // FailoverNode sets a node's status to failed and triggers alerting.
 // This should be called when a node becomes unresponsive or experiences critical failures.
 // In a production system, this would also trigger:

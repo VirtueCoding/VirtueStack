@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"google.golang.org/grpc"
 )
 
@@ -19,6 +21,7 @@ import (
 // and caching for metrics to reduce load on node agents.
 type NodeAgentGRPCClient struct {
 	nodeRepo *repository.NodeRepository
+	vmRepo   *repository.VMRepository
 	connPool GRPCConnectionPool
 	cache    *metricsCache
 	logger   *slog.Logger
@@ -74,15 +77,17 @@ type NodeResourcesResponse struct {
 // NewNodeAgentGRPCClient creates a new NodeAgentGRPCClient with caching.
 func NewNodeAgentGRPCClient(
 	nodeRepo *repository.NodeRepository,
+	vmRepo *repository.VMRepository,
 	connPool GRPCConnectionPool,
 	logger *slog.Logger,
 ) *NodeAgentGRPCClient {
 	return &NodeAgentGRPCClient{
 		nodeRepo: nodeRepo,
+		vmRepo:   vmRepo,
 		connPool: connPool,
 		cache: &metricsCache{
 			data: make(map[string]*cachedMetrics),
-			ttl:  5 * time.Second, // 5-second cache as required
+			ttl:  5 * time.Second,
 		},
 		logger: logger.With("component", "node-agent-client"),
 	}
@@ -159,12 +164,86 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 		return fmt.Errorf("getting node %s: %w", nodeID, err)
 	}
 
-	node.Status = "draining"
-	if err := c.nodeRepo.UpdateStatus(ctx, nodeID, node.Status); err != nil {
-		return fmt.Errorf("updating node status to draining: %w", err)
+	if node.Status != models.NodeStatusDraining {
+		if err := c.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusDraining); err != nil {
+			return fmt.Errorf("updating node status to draining: %w", err)
+		}
 	}
 
-	c.logger.Info("node marked for evacuation, VM migration should be initiated", "node_id", nodeID)
+	vmFilter := models.VMListFilter{
+		NodeID: &nodeID,
+		PaginationParams: models.PaginationParams{
+			Page:    1,
+			PerPage: models.MaxPerPage,
+		},
+	}
+
+	vms, _, err := c.vmRepo.List(ctx, vmFilter)
+	if err != nil {
+		return fmt.Errorf("listing VMs on node %s: %w", nodeID, err)
+	}
+
+	if len(vms) == 0 {
+		c.logger.Info("no VMs to evacuate", "node_id", nodeID)
+		return nil
+	}
+
+	c.logger.Info("evacuating VMs from node", "node_id", nodeID, "vm_count", len(vms))
+
+	for _, vm := range vms {
+		if vm.Status != models.VMStatusRunning {
+			c.logger.Debug("skipping non-running VM during evacuation",
+				"vm_id", vm.ID,
+				"status", vm.Status)
+			continue
+		}
+
+		targetNodes, _, err := c.nodeRepo.List(ctx, models.NodeListFilter{
+			Status: util.StringPtr(models.NodeStatusOnline),
+		})
+		if err != nil {
+			c.logger.Warn("failed to list target nodes for VM migration",
+				"vm_id", vm.ID,
+				"error", err)
+			continue
+		}
+
+		for _, targetNode := range targetNodes {
+			if targetNode.ID == nodeID {
+				continue
+			}
+
+			availCPU := targetNode.TotalVCPU - targetNode.AllocatedVCPU
+			availMem := targetNode.TotalMemoryMB - targetNode.AllocatedMemoryMB
+
+			if availCPU < vm.VCPU || availMem < vm.MemoryMB {
+				continue
+			}
+
+			if err := c.StartVM(ctx, targetNode.ID, vm.ID); err != nil {
+				c.logger.Warn("failed to start VM on target node",
+					"vm_id", vm.ID,
+					"target_node_id", targetNode.ID,
+					"error", err)
+				continue
+			}
+
+			if err := c.vmRepo.UpdateNodeAssignment(ctx, vm.ID, targetNode.ID); err != nil {
+				c.logger.Warn("failed to reassign VM to target node",
+					"vm_id", vm.ID,
+					"target_node_id", targetNode.ID,
+					"error", err)
+			}
+
+			c.logger.Info("evacuated VM to target node",
+				"vm_id", vm.ID,
+				"old_node_id", nodeID,
+				"new_node_id", targetNode.ID)
+			break
+		}
+	}
+
+	c.logger.Info("node evacuation completed", "node_id", nodeID)
 	return nil
 }
 
@@ -340,7 +419,7 @@ func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string)
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	resp, err := client.DeleteVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{VmId: vmID})
 	if err != nil {
 		return fmt.Errorf("calling DeleteVM: %w", err)
 	}
@@ -733,6 +812,89 @@ func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, 
 func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
 	return nil, errors.New("GetQCOWDiskInfo is not supported by node agent gRPC API")
 }
+
+func (c *NodeAgentGRPCClient) TransferDisk(ctx context.Context, opts *tasks.DiskTransferOptions) error {
+	sourceNode, err := c.nodeRepo.GetByID(ctx, opts.SourceNodeID)
+	if err != nil {
+		return fmt.Errorf("getting source node %s: %w", opts.SourceNodeID, err)
+	}
+
+	targetNode, err := c.nodeRepo.GetByID(ctx, opts.TargetNodeID)
+	if err != nil {
+		return fmt.Errorf("getting target node %s: %w", opts.TargetNodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, opts.SourceNodeID, sourceNode.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to source node %s: %w", opts.SourceNodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(opts.SourceNodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	stream, err := client.TransferDisk(ctx, &nodeagentpb.TransferDiskRequest{
+		SourceDiskPath:    opts.SourceDiskPath,
+		TargetNodeAddress: targetNode.GRPCAddress,
+		TargetDiskPath:    opts.TargetDiskPath,
+		SnapshotName:      opts.SnapshotName,
+		Compress:          opts.Compress,
+		StorageBackend:    opts.SourceStorageBackend,
+	})
+	if err != nil {
+		return fmt.Errorf("initiating disk transfer: %w", err)
+	}
+
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("receiving disk transfer: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *NodeAgentGRPCClient) PrepareMigratedVM(ctx context.Context, targetNodeID, vmID, diskPath string, vm *models.VM) error {
+	node, err := c.nodeRepo.GetByID(ctx, targetNodeID)
+	if err != nil {
+		return fmt.Errorf("getting target node %s: %w", targetNodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, targetNodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to target node %s: %w", targetNodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(targetNodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.PrepareMigratedVM(ctx, &nodeagentpb.PrepareMigratedVMRequest{
+		VmId:           vmID,
+		DiskPath:       diskPath,
+		Hostname:       vm.Hostname,
+		Vcpu:           int32(vm.VCPU),
+		MemoryMb:       int32(vm.MemoryMB),
+		StorageBackend: vm.StorageBackend,
+		MacAddress:     vm.MACAddress,
+		PortSpeedMbps:  int32(vm.PortSpeedMbps),
+		CephPool:       node.CephPool,
+		CephMonitors:   c.cephMonitors(),
+		CephUser:       c.cephUser(),
+		CephSecretUuid: c.cephSecretUUID(),
+	})
+	if err != nil {
+		return fmt.Errorf("preparing migrated VM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("prepare migrated VM failed: %s", resp.GetErrorMessage())
+	}
+	return nil
+}
+
+func (c *NodeAgentGRPCClient) cephMonitors() []string { return nil }
+func (c *NodeAgentGRPCClient) cephUser() string       { return "" }
+func (c *NodeAgentGRPCClient) cephSecretUUID() string { return "" }
 
 func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models.NodeHeartbeat {
 	loadAvg := make([]float32, len(resp.GetLoadAverage()))

@@ -158,6 +158,30 @@ export const apiClient = {
   },
 };
 
+function getAccessTokenFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)vs_access_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function decodeJWTPayload(token: string): { exp?: number } | null {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      "="
+    );
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+let tokenValidUntil = 0;
+
 export const customerAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
     await fetchCsrfToken();
@@ -176,12 +200,36 @@ export const customerAuthApi = {
     try {
       await apiClient.post("/customer/auth/logout", {}, true);
     } catch {
-      // Server-side logout failed, cookies will be cleared by server
     }
+    tokenValidUntil = 0;
   },
 
   async ensureValidToken(): Promise<boolean> {
-    return true;
+    const token = getAccessTokenFromCookie();
+
+    if (token) {
+      const payload = decodeJWTPayload(token);
+      if (payload && typeof payload.exp === "number") {
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp - now >= 60) {
+          return true;
+        }
+      }
+    }
+
+    if (Date.now() < tokenValidUntil) {
+      return true;
+    }
+
+    try {
+      const tokens = await customerAuthApi.refreshToken();
+      tokenValidUntil =
+        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
+      return true;
+    } catch {
+      tokenValidUntil = 0;
+      return false;
+    }
   },
 };
 
@@ -512,4 +560,79 @@ export const settingsApi = {
   async testWebhook(webhookId: string): Promise<TestWebhookResponse> {
     return apiClient.post<TestWebhookResponse>(`/customer/webhooks/${webhookId}/test`, {});
   }
+};
+
+export interface ISORecord {
+  id: string;
+  vm_id: string;
+  file_name: string;
+  file_size: number;
+  sha256: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ISOUploadResponse {
+  id: string;
+  file_name: string;
+  file_size: number;
+  sha256: string;
+}
+
+export const isoApi = {
+  async listISOs(vmId: string): Promise<ISORecord[]> {
+    return apiClient.get<ISORecord[]>(`/customer/vms/${vmId}/iso`);
+  },
+
+  async uploadISO(
+    vmId: string,
+    file: File,
+    onProgress?: (progress: number) => void
+  ): Promise<ISOUploadResponse> {
+    const url = `${API_BASE_URL}/customer/vms/${vmId}/iso/upload`;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const csrfToken = getCsrfToken();
+    const headers: HeadersInit = {
+      Accept: "application/json",
+    };
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await parseError(response);
+      throw error;
+    }
+
+    const data = await response.json();
+    return data.data as ISOUploadResponse;
+  },
+
+  async deleteISO(vmId: string, isoId: string): Promise<void> {
+    return apiClient.delete<void>(`/customer/vms/${vmId}/iso/${isoId}`);
+  },
+
+  async attachISO(vmId: string, isoId: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(
+      `/customer/vms/${vmId}/iso/${isoId}/attach`,
+      {}
+    );
+  },
+
+  async detachISO(vmId: string, isoId: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(
+      `/customer/vms/${vmId}/iso/${isoId}/detach`,
+      {}
+    );
+  },
 };

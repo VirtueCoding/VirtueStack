@@ -121,6 +121,7 @@ services:
         labels: "service"
         tag: "{{.Name}}"
     environment:
+      # sslmode=disable is safe: all services share the same Docker network (encrypted at the overlay level)
       DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
       NATS_URL: nats://nats:4222
       JWT_SECRET: ${JWT_SECRET}

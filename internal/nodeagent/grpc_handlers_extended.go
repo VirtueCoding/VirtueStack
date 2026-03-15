@@ -563,7 +563,6 @@ func (h *grpcHandler) RevertSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 		return nil, status.Error(codes.InvalidArgument, "vm_id and snapshot_id are required")
 	}
 
-	// VM must be stopped
 	vmStatus, err := h.server.vmManager.GetStatus(ctx, req.GetVmId())
 	if err != nil {
 		return nil, h.mapError(err, "getting VM status")
@@ -576,34 +575,9 @@ func (h *grpcHandler) RevertSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 
 	diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
 
-	// Rollback the RBD image to the snapshot
-	// This is done by cloning the snapshot to a new image and swapping
-	snapName := req.GetSnapshotId()
-	tempImage := diskName + "-revert-temp"
-
-	if err := h.server.storageBackend.CloneSnapshotToPool(ctx,
-		h.server.config.CephPool, diskName, snapName,
-		h.server.config.CephPool, tempImage,
-	); err != nil {
-		return nil, status.Errorf(codes.Internal, "cloning snapshot for revert: %v", err)
+	if err := h.server.storageBackend.Rollback(ctx, diskName, req.GetSnapshotId()); err != nil {
+		return nil, status.Errorf(codes.Internal, "rolling back disk to snapshot: %v", err)
 	}
-
-	// Flatten the cloned image
-	if err := h.server.storageBackend.FlattenImage(ctx, tempImage); err != nil {
-		_ = h.server.storageBackend.Delete(ctx, tempImage)
-		return nil, status.Errorf(codes.Internal, "flattening reverted image: %v", err)
-	}
-
-	// Delete old disk and rename temp
-	if err := h.server.storageBackend.Delete(ctx, diskName); err != nil {
-		_ = h.server.storageBackend.Delete(ctx, tempImage)
-		return nil, status.Errorf(codes.Internal, "deleting old disk: %v", err)
-	}
-
-	// Note: RBD doesn't support rename directly. The clone+flatten approach
-	// creates the image with the temp name. We'll need the controller to
-	// track the new image name, or use a symlink approach.
-	// For now, we re-create from the temp image.
 
 	return &nodeagentpb.VMOperationResponse{
 		VmId:    req.GetVmId(),
@@ -650,14 +624,29 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 		return nil, status.Error(codes.InvalidArgument, "command is required")
 	}
 
-	// Whitelist allowed commands for security
+	// Whitelist allowed commands: read-only diagnostic commands only.
+	// Removed cat, ls, ip, hostname, whoami to prevent info leakage
+	// (file contents, directory listings, network config, usernames).
 	allowedCommands := map[string]bool{
-		"cat": true, "ls": true, "df": true, "free": true, "uname": true,
-		"ip": true, "hostname": true, "whoami": true, "date": true, "uptime": true,
+		"df": true, "free": true, "uname": true, "date": true, "uptime": true,
 	}
-	cmdBase := strings.Split(req.GetCommand(), " ")[0]
-	cmdBase = strings.TrimPrefix(cmdBase, "/usr/bin/")
-	cmdBase = strings.TrimPrefix(cmdBase, "/bin/")
+	fullCmd := req.GetCommand()
+	cmdBase := strings.Split(fullCmd, " ")[0]
+
+	// Validate command path is restricted to system binary directories
+	allowedPaths := []string{"/usr/bin/", "/bin/"}
+	validPath := false
+	for _, prefix := range allowedPaths {
+		if strings.HasPrefix(cmdBase, prefix) {
+			validPath = true
+			cmdBase = strings.TrimPrefix(cmdBase, prefix)
+			break
+		}
+	}
+	if !validPath {
+		return nil, status.Errorf(codes.PermissionDenied, "command path must be in /usr/bin or /bin")
+	}
+
 	if !allowedCommands[cmdBase] {
 		return nil, status.Errorf(codes.PermissionDenied, "command %q is not in the allowed whitelist", cmdBase)
 	}
@@ -669,7 +658,6 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	defer domain.Free()
 
 	// Build the guest-exec command
-	fullCmd := req.GetCommand()
 	args := req.GetArgs()
 
 	execCmd := map[string]interface{}{
@@ -687,7 +675,7 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 		timeout = 10
 	}
 
-	output, err := domain.QemuAgentCommand(string(cmdJSON), libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT, timeout)
+	output, err := domain.QemuAgentCommand(string(cmdJSON), libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT, uint32(timeout))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "guest exec: %v", err)
 	}
@@ -705,7 +693,7 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	// Get the execution status
 	time.Sleep(500 * time.Millisecond)
 	statusCmd := fmt.Sprintf(`{"execute":"guest-exec-status","arguments":{"pid":%d}}`, execResp.Return.PID)
-	statusOutput, err := domain.QemuAgentCommand(statusCmd, libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT, timeout)
+	statusOutput, err := domain.QemuAgentCommand(statusCmd, libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT, uint32(timeout))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "getting exec status: %v", err)
 	}
@@ -1115,8 +1103,6 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 
 // ReceiveDisk receives a disk transfer from a source node and writes it to local storage.
 func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDiskServer) error {
-	ctx := stream.Context()
-
 	// Receive the first message to get metadata
 	firstMsg, err := stream.Recv()
 	if err != nil {

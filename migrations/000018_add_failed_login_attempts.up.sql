@@ -1,3 +1,5 @@
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS failed_login_attempts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) NOT NULL,
@@ -10,3 +12,5 @@ ON failed_login_attempts(email, attempted_at);
 
 -- Add comment for documentation
 COMMENT ON TABLE failed_login_attempts IS 'Tracks failed login attempts for account lockout protection';
+
+COMMIT;

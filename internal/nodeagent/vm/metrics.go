@@ -37,6 +37,14 @@ type VMMetrics struct {
 	NetworkRXBytes int64
 	// NetworkTXBytes is the total bytes transmitted on network interfaces since VM start.
 	NetworkTXBytes int64
+	DiskReadOps    int64
+	DiskWriteOps   int64
+	NetworkRXPkts  int64
+	NetworkTXPkts  int64
+	NetworkRXErrs  int64
+	NetworkTXErrs  int64
+	NetworkRXDrop  int64
+	NetworkTXDrop  int64
 }
 
 // NodeResources contains aggregate resource information for a compute node.

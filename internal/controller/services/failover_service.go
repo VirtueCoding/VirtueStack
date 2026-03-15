@@ -14,6 +14,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // FailoverService provides high-availability failover operations for VirtueStack.
@@ -24,6 +25,7 @@ type FailoverService struct {
 	vmRepo        *repository.VMRepository
 	nodeAgent     NodeAgentClient
 	auditRepo     *repository.AuditRepository
+	failoverRepo  *repository.FailoverRepository
 	encryptionKey string
 	logger        *slog.Logger
 }
@@ -34,6 +36,7 @@ func NewFailoverService(
 	vmRepo *repository.VMRepository,
 	nodeAgent NodeAgentClient,
 	auditRepo *repository.AuditRepository,
+	failoverRepo *repository.FailoverRepository,
 	encryptionKey string,
 	logger *slog.Logger,
 ) *FailoverService {
@@ -42,6 +45,7 @@ func NewFailoverService(
 		vmRepo:        vmRepo,
 		nodeAgent:     nodeAgent,
 		auditRepo:     auditRepo,
+		failoverRepo:  failoverRepo,
 		encryptionKey: encryptionKey,
 		logger:        logger.With("component", "failover-service"),
 	}
@@ -89,7 +93,6 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 		"admin_id", adminID,
 		"target_node_id", targetNodeID)
 
-	// Step 1: Verify node exists and is in failed state
 	node, err := s.verifyFailedNode(ctx, targetNodeID)
 	if err != nil {
 		return nil, err
@@ -100,31 +103,51 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 		NodeHostname: node.Hostname,
 	}
 
-	// Step 2: Execute STONITH if IPMI credentials exist
+	var failoverReq *models.FailoverRequest
+	if s.failoverRepo != nil {
+		failoverReq = &models.FailoverRequest{
+			NodeID:      targetNodeID,
+			RequestedBy: adminID,
+			Status:      models.FailoverStatusApproved,
+		}
+		if err := s.failoverRepo.Create(ctx, failoverReq); err != nil {
+			s.logger.Warn("failed to create failover request record", "error", err)
+		}
+	}
+
+	finalizeRequest := func(status string, resultData any) {
+		if s.failoverRepo != nil && failoverReq != nil {
+			if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, status, resultData); err != nil {
+				s.logger.Warn("failed to update failover request status", "error", err)
+			}
+		}
+	}
+
+	if s.failoverRepo != nil && failoverReq != nil {
+		_ = s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, models.FailoverStatusInProgress, nil)
+	}
+
 	if node.IPMIAddress != nil && *node.IPMIAddress != "" {
 		if err := s.executeSTONITH(ctx, node); err != nil {
-			s.logger.Error("STONITH failed, aborting failover",
+			s.logger.Error("STONITH failed, continuing with failover",
 				"node_id", targetNodeID,
 				"error", err)
-			return nil, fmt.Errorf("STONITH failed: %w", err)
+		} else {
+			result.STONITHExecuted = true
+			s.logger.Info("STONITH completed successfully",
+				"node_id", targetNodeID,
+				"ipmi_address", *node.IPMIAddress)
 		}
-		result.STONITHExecuted = true
-		s.logger.Info("STONITH completed successfully",
-			"node_id", targetNodeID,
-			"ipmi_address", *node.IPMIAddress)
 	} else {
 		s.logger.Info("no IPMI configured, assuming manual power-off confirmed",
 			"node_id", targetNodeID)
 	}
 
-	// Step 3: Blocklist the failed node in Ceph
 	if err := s.blocklistNodeInCeph(ctx, node); err != nil {
-		// Log but don't fail - the blocklist is critical but we should still attempt recovery
 		s.logger.Error("failed to blocklist node in Ceph",
 			"node_id", targetNodeID,
 			"management_ip", node.ManagementIP,
 			"error", err)
-		// Continue with failover despite blocklist failure
 	} else {
 		result.BlocklistAdded = true
 		s.logger.Info("node blocklisted in Ceph",
@@ -132,16 +155,15 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 			"management_ip", node.ManagementIP)
 	}
 
-	// Step 4: Release RBD locks for VMs on this node
-	// Note: The Ceph blocklist should prevent the failed node from writing,
-	// but explicitly releasing locks is recommended for clean recovery.
 	if err := s.releaseRBDLocks(ctx, node); err != nil {
-		return nil, fmt.Errorf("releasing RBD locks: %w", err)
+		s.logger.Error("failed to release RBD locks, continuing with failover",
+			"node_id", targetNodeID,
+			"error", err)
 	}
 
-	// Step 5: Get all VMs on the failed node
 	vms, err := s.getVMsOnNode(ctx, targetNodeID)
 	if err != nil {
+		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("getting VMs on failed node: %w", err)
 	}
 	result.TotalVMs = len(vms)
@@ -149,20 +171,21 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 	if len(vms) == 0 {
 		s.logger.Info("no VMs to migrate on failed node",
 			"node_id", targetNodeID)
+		finalizeRequest(models.FailoverStatusCompleted, result)
 		return result, nil
 	}
 
-	// Step 6: Find surviving nodes for VM placement
 	survivingNodes, err := s.findSurvivingNodes(ctx, node)
 	if err != nil {
+		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("finding surviving nodes: %w", err)
 	}
 
 	if len(survivingNodes) == 0 {
+		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": "no surviving nodes available"})
 		return nil, fmt.Errorf("no surviving nodes available for VM migration")
 	}
 
-	// Step 7: Migrate each VM to a suitable surviving node
 	result.MigratedVMs = make([]MigratedVM, 0)
 	result.FailedMigrations = make([]FailedMigration, 0)
 
@@ -175,7 +198,6 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 		}
 	}
 
-	// Log audit trail
 	s.logFailoverAudit(ctx, adminID, result)
 
 	s.logger.Info("failover completed",
@@ -183,6 +205,8 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 		"total_vms", result.TotalVMs,
 		"migrated", len(result.MigratedVMs),
 		"failed", len(result.FailedMigrations))
+
+	finalizeRequest(models.FailoverStatusCompleted, result)
 
 	return result, nil
 }
@@ -331,25 +355,47 @@ func (s *FailoverService) blocklistNodeInCeph(ctx context.Context, node *models.
 func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node) error {
 	s.logger.Info("releasing RBD locks for failed node",
 		"node_id", node.ID,
-		"ceph_pool", node.CephPool)
+		"ceph_pool", node.CephPool,
+		"storage_backend", node.StorageBackend)
 
 	vms, err := s.getVMsOnNode(ctx, node.ID)
 	if err != nil {
 		return fmt.Errorf("listing VMs on failed node: %w", err)
 	}
 
+	var firstErr error
 	for _, vm := range vms {
+		if vm.StorageBackend != "" && vm.StorageBackend != "ceph" {
+			s.logger.Debug("skipping RBD lock release for non-Ceph VM",
+				"vm_id", vm.ID,
+				"backend", vm.StorageBackend)
+			continue
+		}
+
 		image := fmt.Sprintf("%s/vm-%s", node.CephPool, vm.ID)
 
 		listCmd := exec.CommandContext(ctx, "rbd", "lock", "list", image, "--format", "json")
 		listOut, err := listCmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("listing RBD locks for %s: %w, output: %s", image, err, string(listOut))
+			s.logger.Warn("failed to list RBD locks, skipping VM",
+				"image", image,
+				"error", err,
+				"output", string(listOut))
+			if firstErr == nil {
+				firstErr = fmt.Errorf("listing RBD locks for %s: %w", image, err)
+			}
+			continue
 		}
 
 		locks, err := parseRBDLocks(listOut)
 		if err != nil {
-			return fmt.Errorf("parsing RBD lock list for %s: %w", image, err)
+			s.logger.Warn("failed to parse RBD lock list, skipping VM",
+				"image", image,
+				"error", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("parsing RBD locks for %s: %w", image, err)
+			}
+			continue
 		}
 
 		for _, lock := range locks {
@@ -360,7 +406,13 @@ func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node
 			removeCmd := exec.CommandContext(ctx, "rbd", "lock", "remove", image, lock.ID, lock.Locker)
 			removeOut, err := removeCmd.CombinedOutput()
 			if err != nil {
-				return fmt.Errorf("removing RBD lock for %s (id=%s, locker=%s): %w, output: %s", image, lock.ID, lock.Locker, err, string(removeOut))
+				s.logger.Warn("failed to remove RBD lock",
+					"image", image,
+					"lock_id", lock.ID,
+					"locker", lock.Locker,
+					"error", err,
+					"output", string(removeOut))
+				continue
 			}
 
 			s.logger.Info("released RBD lock",
@@ -373,7 +425,7 @@ func (s *FailoverService) releaseRBDLocks(ctx context.Context, node *models.Node
 	}
 
 	s.logger.Info("RBD lock release completed", "node_id", node.ID, "vm_count", len(vms))
-	return nil
+	return firstErr
 }
 
 type rbdLock struct {
@@ -444,7 +496,7 @@ func (s *FailoverService) getVMsOnNode(ctx context.Context, nodeID string) ([]mo
 func (s *FailoverService) findSurvivingNodes(ctx context.Context, failedNode *models.Node) ([]models.Node, error) {
 	// Get all online nodes
 	filter := models.NodeListFilter{
-		Status: strPtr(models.NodeStatusOnline),
+		Status: util.StringPtr(models.NodeStatusOnline),
 	}
 
 	nodes, _, err := s.nodeRepo.List(ctx, filter)
@@ -545,6 +597,26 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 		s.logger.Warn("failed to update allocated resources on target node",
 			"node_id", targetNode.ID,
 			"error", err)
+	}
+
+	// Decrement allocated resources from the old (failed) node
+	if vm.NodeID != nil {
+		oldNode, err := s.nodeRepo.GetByID(ctx, *vm.NodeID)
+		if err == nil {
+			oldVCPU := oldNode.AllocatedVCPU - vm.VCPU
+			oldMemory := oldNode.AllocatedMemoryMB - vm.MemoryMB
+			if oldVCPU < 0 {
+				oldVCPU = 0
+			}
+			if oldMemory < 0 {
+				oldMemory = 0
+			}
+			if err := s.nodeRepo.UpdateAllocatedResources(ctx, *vm.NodeID, oldVCPU, oldMemory); err != nil {
+				s.logger.Warn("failed to decrement allocated resources on failed node",
+					"node_id", *vm.NodeID,
+					"error", err)
+			}
+		}
 	}
 
 	return &MigratedVM{

@@ -21,6 +21,8 @@ require_once __DIR__ . '/lib/VirtueStackHelper.php';
 use VirtueStack\WHMCS\ApiClient;
 use VirtueStack\WHMCS\VirtueStackHelper;
 
+use WHMCS\Database\Capsule;
+
 // ============================================================================
 // PROVISIONING COMPLETION HOOK
 // ============================================================================
@@ -133,10 +135,7 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function (array $vars) {
 // Track VirtueStack order completion
 document.addEventListener('DOMContentLoaded', function() {
     // Check if any VirtueStack services were ordered
-    var vsServices = document.querySelectorAll('[data-virtuestack-service]');
-    if (vsServices.length > 0) {
-        console.log('VirtueStack VPS provisioning initiated. Check your email for details.');
-    }
+    // VirtueStack: checkout page hook active
 });
 </script>
 HTML;
@@ -373,8 +372,12 @@ function getPendingProvisioningServices(): array
         ";
 
         $result = full_query($query);
+        if (!$result) {
+            logActivity('VirtueStack: SQL query failed in getPendingProvisioningServices');
+            return [];
+        }
         
-        while ($row = mysql_fetch_assoc($result)) {
+        while ($row = mysqli_fetch_assoc($result)) {
             $services[] = [
                 'service_id' => (int) $row['service_id'],
                 'client_id' => (int) $row['client_id'],
@@ -637,32 +640,27 @@ function handleProvisioningWebhook(): void
 function getApiClientForService(int $serviceId): ?ApiClient
 {
     try {
-        // Get server details for the service
-        $query = "
-            SELECT 
-                s.server,
-                srv.hostname,
-                srv.ipaddress,
-                srv.username,
-                srv.password,
-                srv.secure,
-                srv.port
-            FROM tblhosting s
-            INNER JOIN tblservers srv ON s.server = srv.id
-            WHERE s.id = ?
-        ";
-
-        $result = full_query($query, [$serviceId]);
-        $row = mysql_fetch_assoc($result);
+        $row = Capsule::table('tblhosting')
+            ->join('tblservers', 'tblhosting.server', '=', 'tblservers.id')
+            ->where('tblhosting.id', $serviceId)
+            ->first([
+                'tblhosting.server',
+                'tblservers.hostname',
+                'tblservers.ipaddress',
+                'tblservers.username',
+                'tblservers.password',
+                'tblservers.secure',
+                'tblservers.port',
+            ]);
 
         if (!$row) {
             return null;
         }
 
-        $hostname = $row['hostname'] ?: $row['ipaddress'];
-        $secure = $row['secure'] === 'on';
-        $port = (int) ($row['port'] ?: 443);
-        $apiKey = decrypt($row['password']);
+        $hostname = $row->hostname ?: $row->ipaddress;
+        $secure = $row->secure === 'on';
+        $port = (int) ($row->port ?: 443);
+        $apiKey = decrypt($row->password);
 
         $protocol = $secure ? 'https' : 'http';
         $apiUrl = "{$protocol}://{$hostname}:{$port}/api/v1";
@@ -683,18 +681,19 @@ function getApiClientForService(int $serviceId): ?ApiClient
  */
 function findServiceByTaskId(string $taskId): int
 {
-    $query = "
-        SELECT cfv.relid
-        FROM tblcustomfieldsvalues cfv
-        INNER JOIN tblcustomfields cf ON cf.id = cfv.fieldid
-        WHERE cf.fieldname = 'task_id'
-        AND cfv.value = ?
-    ";
+    try {
+        $fieldId = getCustomFieldId('task_id');
+        if ($fieldId <= 0) {
+            return 0;
+        }
 
-    $result = full_query($query, [$taskId]);
-    $row = mysql_fetch_assoc($result);
-
-    return $row ? (int) $row['relid'] : 0;
+        return (int) Capsule::table('tblcustomfieldsvalues')
+            ->where('fieldid', $fieldId)
+            ->where('value', $taskId)
+            ->value('relid') ?? 0;
+    } catch (\Exception $e) {
+        return 0;
+    }
 }
 
 /**
@@ -707,18 +706,21 @@ function findServiceByTaskId(string $taskId): int
  */
 function getServiceField(int $serviceId, string $fieldName): string
 {
-    $query = "
-        SELECT cfv.value
-        FROM tblcustomfieldsvalues cfv
-        INNER JOIN tblcustomfields cf ON cf.id = cfv.fieldid
-        WHERE cfv.relid = ?
-        AND cf.fieldname = ?
-    ";
+    try {
+        $fieldId = getCustomFieldId($fieldName);
+        if ($fieldId <= 0) {
+            return '';
+        }
 
-    $result = full_query($query, [$serviceId, $fieldName]);
-    $row = mysql_fetch_assoc($result);
+        $value = Capsule::table('tblcustomfieldsvalues')
+            ->where('relid', $serviceId)
+            ->where('fieldid', $fieldId)
+            ->value('value');
 
-    return $row ? (string) $row['value'] : '';
+        return $value !== null ? (string) $value : '';
+    } catch (\Exception $e) {
+        return '';
+    }
 }
 
 /**
@@ -730,34 +732,36 @@ function getServiceField(int $serviceId, string $fieldName): string
  */
 function updateServiceField(int $serviceId, string $fieldName, string $value): void
 {
-    // Get or create field ID
-    $fieldId = getCustomFieldId($fieldName);
-    
-    if ($fieldId <= 0) {
-        $fieldId = createCustomField($fieldName);
-    }
+    try {
+        $fieldId = getCustomFieldId($fieldName);
 
-    if ($fieldId <= 0) {
-        return;
-    }
+        if ($fieldId <= 0) {
+            $fieldId = createCustomField($fieldName);
+        }
 
-    // Check if value exists
-    $exists = getServiceField($serviceId, $fieldName) !== '';
+        if ($fieldId <= 0) {
+            return;
+        }
 
-    if ($exists) {
-        $query = "
-            UPDATE tblcustomfieldsvalues
-            SET value = ?
-            WHERE relid = ?
-            AND fieldid = ?
-        ";
-        full_query($query, [$value, $serviceId, $fieldId]);
-    } else {
-        $query = "
-            INSERT INTO tblcustomfieldsvalues (fieldid, relid, value)
-            VALUES (?, ?, ?)
-        ";
-        full_query($query, [$fieldId, $serviceId, $value]);
+        $exists = Capsule::table('tblcustomfieldsvalues')
+            ->where('relid', $serviceId)
+            ->where('fieldid', $fieldId)
+            ->exists();
+
+        if ($exists) {
+            Capsule::table('tblcustomfieldsvalues')
+                ->where('relid', $serviceId)
+                ->where('fieldid', $fieldId)
+                ->update(['value' => $value]);
+        } else {
+            Capsule::table('tblcustomfieldsvalues')->insert([
+                'fieldid' => $fieldId,
+                'relid' => $serviceId,
+                'value' => $value,
+            ]);
+        }
+    } catch (\Exception $e) {
+        logActivity("VirtueStack: Failed to update service field {$fieldName}: " . $e->getMessage());
     }
 }
 
@@ -770,15 +774,14 @@ function updateServiceField(int $serviceId, string $fieldName, string $value): v
  */
 function getCustomFieldId(string $fieldName): int
 {
-    $query = "
-        SELECT id FROM tblcustomfields
-        WHERE fieldname = ? AND type = 'product'
-    ";
-
-    $result = full_query($query, [$fieldName]);
-    $row = mysql_fetch_assoc($result);
-
-    return $row ? (int) $row['id'] : 0;
+    try {
+        return (int) Capsule::table('tblcustomfields')
+            ->where('fieldname', $fieldName)
+            ->where('type', 'product')
+            ->value('id') ?? 0;
+    } catch (\Exception $e) {
+        return 0;
+    }
 }
 
 /**
@@ -790,13 +793,20 @@ function getCustomFieldId(string $fieldName): int
  */
 function createCustomField(string $fieldName): int
 {
-    $query = "
-        INSERT INTO tblcustomfields (type, relid, fieldname, fieldtype, adminonly)
-        VALUES ('product', 0, ?, 'text', 'on')
-    ";
-
-    full_query($query, [$fieldName]);
-    return (int) mysql_insert_id();
+    try {
+        return (int) Capsule::table('tblcustomfields')->insertGetId([
+            'type' => 'product',
+            'relid' => 0,
+            'fieldname' => $fieldName,
+            'fieldtype' => 'text',
+            'adminonly' => 'on',
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+    } catch (\Exception $e) {
+        logActivity('VirtueStack: Failed to create custom field: ' . $e->getMessage());
+        return 0;
+    }
 }
 
 /**
@@ -807,8 +817,13 @@ function createCustomField(string $fieldName): int
  */
 function updateServiceDedicatedIp(int $serviceId, string $ipAddress): void
 {
-    $query = "UPDATE tblhosting SET dedicatedip = ? WHERE id = ?";
-    full_query($query, [$ipAddress, $serviceId]);
+    try {
+        Capsule::table('tblhosting')
+            ->where('id', $serviceId)
+            ->update(['dedicatedip' => $ipAddress]);
+    } catch (\Exception $e) {
+        logActivity("VirtueStack: Failed to update dedicated IP for service {$serviceId}: " . $e->getMessage());
+    }
 }
 
 /**
@@ -840,12 +855,15 @@ function verifyWebhookSignature(string $body, string $signature): bool
  */
 function getWebhookSecret(): string
 {
-    // This should be stored in WHMCS configuration
-    $query = "SELECT value FROM tblconfiguration WHERE setting = 'VirtueStackWebhookSecret'";
-    $result = full_query($query);
-    $row = mysql_fetch_assoc($result);
-    
-    return $row ? decrypt($row['value']) : '';
+    try {
+        $value = Capsule::table('tblconfiguration')
+            ->where('setting', 'VirtueStackWebhookSecret')
+            ->value('value');
+
+        return $value ? decrypt($value) : '';
+    } catch (\Exception $e) {
+        return '';
+    }
 }
 
 /**
@@ -885,23 +903,21 @@ function syncVMStatuses(): void
  */
 function getActiveVirtueStackServices(): array
 {
-    $services = [];
-    
-    $query = "
-        SELECT s.id AS service_id
-        FROM tblhosting s
-        INNER JOIN tblproducts p ON s.packageid = p.id
-        WHERE p.servertype = 'virtuestack'
-        AND s.domainstatus = 'Active'
-    ";
-
-    $result = full_query($query);
-    
-    while ($row = mysql_fetch_assoc($result)) {
-        $services[] = $row;
+    try {
+        return Capsule::table('tblhosting')
+            ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
+            ->where('tblproducts.servertype', 'virtuestack')
+            ->where('tblhosting.domainstatus', 'Active')
+            ->select('tblhosting.id as service_id')
+            ->get()
+            ->map(function ($row) {
+                return (array) $row;
+            })
+            ->toArray();
+    } catch (\Exception $e) {
+        logActivity('VirtueStack: Error fetching active services: ' . $e->getMessage());
+        return [];
     }
-
-    return $services;
 }
 
 /**
@@ -1043,35 +1059,29 @@ function getVirtueStackLocations(): array
  */
 function sendProvisioningEmail(int $serviceId, array $vmData): void
 {
-    // Get service and client details
-    $query = "
-        SELECT 
-            s.userid,
-            s.domain,
-            p.name AS product_name
-        FROM tblhosting s
-        INNER JOIN tblproducts p ON s.packageid = p.id
-        WHERE s.id = ?
-    ";
+    try {
+        $service = Capsule::table('tblhosting')
+            ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
+            ->where('tblhosting.id', $serviceId)
+            ->first(['tblhosting.userid', 'tblhosting.domain', 'tblproducts.name as product_name']);
 
-    $result = full_query($query, [$serviceId]);
-    $service = mysql_fetch_assoc($result);
+        if (!$service) {
+            return;
+        }
 
-    if (!$service) {
-        return;
+        $emailParams = [
+            'service_id' => $serviceId,
+            'product_name' => $service->product_name,
+            'vm_id' => $vmData['vm_id'],
+            'ip_address' => $vmData['ip_address'],
+            'password' => $vmData['password'],
+            'hostname' => $service->domain,
+        ];
+
+        sendMessage('VirtueStack VPS Welcome', $service->userid, $emailParams);
+    } catch (\Exception $e) {
+        logActivity("VirtueStack: Failed to send provisioning email for service {$serviceId}: " . $e->getMessage());
     }
-
-    // Send email via WHMCS
-    $emailParams = [
-        'service_id' => $serviceId,
-        'product_name' => $service['product_name'],
-        'vm_id' => $vmData['vm_id'],
-        'ip_address' => $vmData['ip_address'],
-        'password' => $vmData['password'],
-        'hostname' => $service['domain'],
-    ];
-
-    sendMessage('VirtueStack VPS Welcome', $service['userid'], $emailParams);
 }
 
 /**

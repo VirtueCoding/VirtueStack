@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto lint test test-race migrate-up migrate-down certs clean help
+.PHONY: all build build-controller build-node-agent proto lint test test-race migrate-up migrate-down certs clean help backup-db
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -102,6 +102,10 @@ vuln:
 ## clean: Remove build artifacts
 clean:
 	rm -rf $(BIN_DIR) coverage.out coverage.html
+
+## backup-db: Create an encrypted database backup (requires DATABASE_URL and ENCRYPTION_KEY)
+backup-db:
+	./scripts/backup-config.sh
 
 ## docker-build: Build Docker images
 docker-build:

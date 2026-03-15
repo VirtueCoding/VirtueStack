@@ -28,6 +28,8 @@ type AdminHandler struct {
 	auditRepo        *repository.AuditRepository
 	ipRepo           *repository.IPRepository
 	settingsRepo     *repository.SettingsRepository
+	failoverRepo     *repository.FailoverRepository
+	rdnsService      *services.RDNSService
 	authConfig       middleware.AuthConfig
 	logger           *slog.Logger
 }
@@ -46,6 +48,8 @@ func NewAdminHandler(
 	auditRepo *repository.AuditRepository,
 	ipRepo *repository.IPRepository,
 	settingsRepo *repository.SettingsRepository,
+	failoverRepo *repository.FailoverRepository,
+	rdnsService *services.RDNSService,
 	jwtSecret string,
 	issuer string,
 	logger *slog.Logger,
@@ -63,6 +67,8 @@ func NewAdminHandler(
 		auditRepo:        auditRepo,
 		ipRepo:           ipRepo,
 		settingsRepo:     settingsRepo,
+		failoverRepo:     failoverRepo,
+		rdnsService:      rdnsService,
 		authConfig:       middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		logger:           logger.With("component", "admin-handler"),
 	}

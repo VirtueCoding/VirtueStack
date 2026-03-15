@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { isoApi, ApiClientError } from "@/lib/api-client"
 
 interface ISOUploadProps {
   vmId: string
-  onUploadComplete?: (fileName: string) => void
+  onUploadComplete?: (isoId: string, fileName: string) => void
 }
 
 type UploadState = "idle" | "dragOver" | "uploading" | "success" | "error"
@@ -43,7 +44,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     return true
   }
 
-  const startUpload = (file: File) => {
+  const startUpload = async (file: File) => {
     if (!validateFile(file)) return
 
     setFile({
@@ -54,20 +55,19 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     setProgress(0)
     setErrorMessage("")
 
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        const increment = 10
-        const newProgress = Math.min(prev + increment, 100)
-
-        if (newProgress >= 100) {
-          clearInterval(interval)
-          setUploadState("success")
-          onUploadComplete?.(file.name)
-        }
-
-        return newProgress
-      })
-    }, 300)
+    try {
+      const result = await isoApi.uploadISO(vmId, file, setProgress)
+      setProgress(100)
+      setUploadState("success")
+      onUploadComplete?.(result.id, result.file_name)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setErrorMessage(err.message)
+      } else {
+        setErrorMessage("Upload failed. Please try again.")
+      }
+      setUploadState("error")
+    }
   }
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -161,7 +161,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
           <div className="space-y-2">
             <Progress value={progress} className="h-2" />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{Math.round(progress)}% uploaded</span>
+              <span>Uploading...</span>
               <span>Do not close this window</span>
             </div>
           </div>
@@ -239,7 +239,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
           </p>
         </div>
         <p className="text-xs text-muted-foreground max-w-[200px]">
-          Only .iso files are accepted
+          Only .iso files are accepted (max 10 GB)
         </p>
       </div>
     )

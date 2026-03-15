@@ -7,6 +7,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -101,7 +102,7 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	// Count active VMs
 	activeFilter := models.VMListFilter{
 		CustomerID: &customerID,
-		Status:     strPtr("running"),
+		Status:     util.StringPtr("running"),
 		PaginationParams: models.PaginationParams{
 			Page:    1,
 			PerPage: 1,
@@ -262,7 +263,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 	filter := repository.AuditLogFilter{
 		PaginationParams: pagination,
 		ActorID:          &customerID,
-		ActorType:        strPtr("customer"),
+		ActorType:        util.StringPtr("customer"),
 	}
 
 	// Optional action filter

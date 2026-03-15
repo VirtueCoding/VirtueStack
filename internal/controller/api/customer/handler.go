@@ -18,6 +18,7 @@ type CustomerHandler struct {
 	webhookService  *services.WebhookService
 	customerService *services.CustomerService
 	vmRepo          *repository.VMRepository
+	nodeRepo        *repository.NodeRepository
 	backupRepo      *repository.BackupRepository
 	templateRepo    *repository.TemplateRepository
 	customerRepo    *repository.CustomerRepository
@@ -30,6 +31,7 @@ type CustomerHandler struct {
 	authConfig      middleware.AuthConfig
 	encryptionKey   string
 	consoleBaseURL  string
+	isoStoragePath  string
 	logger          *slog.Logger
 }
 
@@ -45,6 +47,7 @@ func NewCustomerHandler(
 	webhookService *services.WebhookService,
 	customerService *services.CustomerService,
 	vmRepo *repository.VMRepository,
+	nodeRepo *repository.NodeRepository,
 	backupRepo *repository.BackupRepository,
 	templateRepo *repository.TemplateRepository,
 	customerRepo *repository.CustomerRepository,
@@ -58,6 +61,7 @@ func NewCustomerHandler(
 	issuer string,
 	encryptionKey string,
 	consoleBaseURL string,
+	isoStoragePath string,
 	logger *slog.Logger,
 ) *CustomerHandler {
 	return &CustomerHandler{
@@ -68,6 +72,7 @@ func NewCustomerHandler(
 		webhookService:  webhookService,
 		customerService: customerService,
 		vmRepo:          vmRepo,
+		nodeRepo:        nodeRepo,
 		backupRepo:      backupRepo,
 		templateRepo:    templateRepo,
 		customerRepo:    customerRepo,
@@ -80,6 +85,7 @@ func NewCustomerHandler(
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey:   encryptionKey,
 		consoleBaseURL:  consoleBaseURL,
+		isoStoragePath:  isoStoragePath,
 		logger:          logger.With("component", "customer-handler"),
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
@@ -120,11 +121,11 @@ func (h *CustomerHandler) validateConsoleAccess(ctx context.Context, customerID,
 	}
 
 	if vm.Status != models.VMStatusRunning {
-		return nil, sharederrors.New(sharederrors.ErrConflict, "VM must be running to access console")
+		return nil, fmt.Errorf("%w: VM must be running to access console", sharederrors.ErrConflict)
 	}
 
 	if vm.NodeID == nil {
-		return nil, sharederrors.New(sharederrors.ErrConflict, "VM has no node assigned")
+		return nil, fmt.Errorf("%w: VM has no node assigned", sharederrors.ErrConflict)
 	}
 
 	return vm, nil
@@ -236,6 +237,8 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 	}
 
 	ws.SetReadLimit(webSocketBufferSize)
+	controllermetrics.WSConnectionsActive.Inc()
+	defer controllermetrics.WSConnectionsActive.Dec()
 	ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
 	ws.SetPongHandler(func(string) error {
 		ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))

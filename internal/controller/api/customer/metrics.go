@@ -2,7 +2,6 @@ package customer
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"

@@ -158,6 +158,30 @@ export const apiClient = {
   },
 };
 
+function getAccessTokenFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)vs_access_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function decodeJWTPayload(token: string): { exp?: number } | null {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      "="
+    );
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+let tokenValidUntil = 0;
+
 export const adminAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
     await fetchCsrfToken();
@@ -176,12 +200,36 @@ export const adminAuthApi = {
     try {
       await apiClient.post("/admin/auth/logout", {}, true);
     } catch {
-      // Server-side logout failed, cookies will be cleared by server
     }
+    tokenValidUntil = 0;
   },
 
   async ensureValidToken(): Promise<boolean> {
-    return true;
+    const token = getAccessTokenFromCookie();
+
+    if (token) {
+      const payload = decodeJWTPayload(token);
+      if (payload && typeof payload.exp === "number") {
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp - now >= 60) {
+          return true;
+        }
+      }
+    }
+
+    if (Date.now() < tokenValidUntil) {
+      return true;
+    }
+
+    try {
+      const tokens = await adminAuthApi.refreshToken();
+      tokenValidUntil =
+        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
+      return true;
+    } catch {
+      tokenValidUntil = 0;
+      return false;
+    }
   },
 };
 

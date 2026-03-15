@@ -446,6 +446,31 @@ func (m *QCOWManager) FlattenImage(ctx context.Context, imageName string) error 
 	return nil
 }
 
+// Rollback reverts a QCOW2 image to a previous internal snapshot state in-place.
+// This uses qemu-img snapshot -a to apply the snapshot, restoring the disk
+// contents to the state at the time the snapshot was taken.
+func (m *QCOWManager) Rollback(ctx context.Context, imageName, snapshotName string) error {
+	imagePath := m.imagePath(imageName)
+	logger := m.logger.With("image", imagePath, "snapshot", snapshotName)
+	logger.Info("rolling back QCOW2 image to snapshot")
+
+	if _, err := os.Stat(imagePath); err != nil {
+		if os.IsNotExist(err) {
+			return NewStorageError(ErrCodeNotFound, fmt.Sprintf("image %q", imageName), err)
+		}
+		return fmt.Errorf("checking image %q: %w", imagePath, err)
+	}
+
+	output, err := m.runCommand(ctx, "qemu-img", "snapshot", "-a", snapshotName, imagePath)
+	if err != nil {
+		return fmt.Errorf("rolling back image %s to snapshot %s: %w", imageName, snapshotName, err)
+	}
+
+	logger.Debug("qemu-img output", "output", string(output))
+	logger.Info("image rolled back to snapshot successfully")
+	return nil
+}
+
 // GetPoolStats returns storage statistics for the base directory.
 // Uses syscall.Statfs to get filesystem capacity and usage.
 func (m *QCOWManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {

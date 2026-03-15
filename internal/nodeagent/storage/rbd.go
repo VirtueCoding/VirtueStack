@@ -494,6 +494,34 @@ func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
 	}, nil
 }
 
+// Rollback reverts an RBD image to a previous snapshot state in-place.
+// This is the Ceph-native way to restore a VM to a snapshot without
+// cloning, flattening, or renaming any images.
+func (m *RBDManager) Rollback(ctx context.Context, imageName, snapshotName string) error {
+	logger := m.logger.With("image", imageName, "snapshot", snapshotName)
+	logger.Info("rolling back RBD image to snapshot")
+
+	ioctx, err := m.openIOContext(m.pool)
+	if err != nil {
+		return fmt.Errorf("opening IO context for rollback: %w", err)
+	}
+	defer ioctx.Destroy()
+
+	image := rbd.GetImage(ioctx, imageName)
+	if err := image.Open(true); err != nil {
+		return fmt.Errorf("opening image %q for rollback: %w", imageName, err)
+	}
+	defer image.Close()
+
+	snapshot := image.GetSnapshot(snapshotName)
+	if err := snapshot.Rollback(); err != nil {
+		return fmt.Errorf("rolling back image %q to snapshot %q: %w", imageName, snapshotName, err)
+	}
+
+	logger.Info("rolled back image to snapshot")
+	return nil
+}
+
 // IsConnected checks if the Ceph connection is still alive.
 func (m *RBDManager) IsConnected() bool {
 	if m.conn == nil {

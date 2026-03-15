@@ -221,7 +221,7 @@
                 iframe.contentWindow.postMessage({
                     action: 'openConsole',
                     type: type
-                }, '*');
+                }, document.location.origin);
             }
         }
     </script>

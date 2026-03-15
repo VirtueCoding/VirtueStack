@@ -109,6 +109,42 @@ func (s *RDNSService) DeleteReverseDNS(ctx context.Context, ipAddress string) er
 	return nil
 }
 
+func (s *RDNSService) GetReverseDNS(ctx context.Context, ipAddress string) (string, error) {
+	addr, err := netip.ParseAddr(ipAddress)
+	if err != nil {
+		return "", fmt.Errorf("invalid IP address %q: %w", ipAddress, err)
+	}
+
+	ptrName, zoneName := generatePTRName(addr)
+	if ptrName == "" {
+		return "", fmt.Errorf("failed to generate PTR name for IP %s", ipAddress)
+	}
+
+	zoneID, err := s.getZoneID(ctx, zoneName)
+	if err != nil {
+		return "", fmt.Errorf("getting zone ID for %s: %w", zoneName, err)
+	}
+
+	const query = `SELECT content FROM records WHERE domain_id = ? AND name = ? AND type = 'PTR' LIMIT 1`
+	var content string
+	err = s.db.QueryRowContext(ctx, query, zoneID, ptrName).Scan(&content)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("querying PTR record: %w", err)
+	}
+
+	return content, nil
+}
+
+func (s *RDNSService) IsConnected() bool {
+	if s.db == nil {
+		return false
+	}
+	return s.db.PingContext(context.Background()) == nil
+}
+
 // getZoneID retrieves the zone ID from PowerDNS domains table.
 func (s *RDNSService) getZoneID(ctx context.Context, zoneName string) (int64, error) {
 	const query = `SELECT id FROM domains WHERE name = ?`

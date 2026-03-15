@@ -25,7 +25,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       nats:
-        image: nats:latest
+        image: nats:2.10.25-alpine
         ports:
           - 4222:4222
     steps:

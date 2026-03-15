@@ -704,8 +704,10 @@ function virtuestack_getJwtSecret(array $params): string
     $secret = VirtueStackHelper::getConfigValue($params, 'jwt_secret', '');
     
     if (empty($secret)) {
-        // Fall back to API key as secret (not recommended for production)
-        $secret = virtuestack_getApiKey($params);
+        throw new \RuntimeException(
+            'VirtueStack: jwt_secret configuration is required. '
+            . 'Set it in the server configuration to prevent JWT signing with API key.'
+        );
     }
 
     return $secret;

@@ -7,6 +7,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -157,10 +158,10 @@ func (h *AdminHandler) GetIPSet(c *gin.Context) {
 	}
 
 	// Count by status
-	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: strPtr("assigned")}
+	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("assigned")}
 	assignedIPs, _, _ := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
 
-	availableFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: strPtr("available")}
+	availableFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("available")}
 	availableIPs, _, _ := h.ipRepo.ListIPAddresses(c.Request.Context(), availableFilter)
 
 	detail := IPSetDetail{
@@ -254,7 +255,7 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 	}
 
 	// Check for assigned IPs
-	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: strPtr("assigned")}
+	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("assigned")}
 	assignedIPs, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
 	if err == nil && len(assignedIPs) > 0 {
 		respondWithError(c, http.StatusConflict, "IPSET_IN_USE", "Cannot delete IP set with assigned IPs")
@@ -311,7 +312,7 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 	// List available IPs
 	filter := repository.IPAddressListFilter{
 		IPSetID:          &ipSetID,
-		Status:           strPtr("available"),
+		Status:           util.StringPtr("available"),
 		PaginationParams: pagination,
 	}
 
@@ -329,9 +330,4 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 		Data: ips,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
 	})
-}
-
-// strPtr returns a pointer to a string.
-func strPtr(s string) *string {
-	return &s
 }

@@ -20,6 +20,7 @@ type ProvisioningHandler struct {
 	authService   *services.AuthService
 	taskRepo      *repository.TaskRepository
 	vmRepo        *repository.VMRepository
+	ipRepo        *repository.IPRepository
 	authConfig    middleware.AuthConfig
 	encryptionKey string
 	logger        *slog.Logger
@@ -31,6 +32,7 @@ func NewProvisioningHandler(
 	authService *services.AuthService,
 	taskRepo *repository.TaskRepository,
 	vmRepo *repository.VMRepository,
+	ipRepo *repository.IPRepository,
 	jwtSecret string,
 	issuer string,
 	encryptionKey string,
@@ -41,6 +43,7 @@ func NewProvisioningHandler(
 		authService:   authService,
 		taskRepo:      taskRepo,
 		vmRepo:        vmRepo,
+		ipRepo:        ipRepo,
 		authConfig:    middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
 		encryptionKey: encryptionKey,
 		logger:        logger.With("component", "provisioning-handler"),

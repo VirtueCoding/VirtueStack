@@ -79,6 +79,13 @@ import (
 //	  GET    /notifications/events        - List notification events
 //	  GET    /notifications/events/types  - Get available event types
 //
+//	ISO Management:
+//	  POST   /vms/:id/iso/upload            - Upload ISO file (multipart)
+//	  GET    /vms/:id/iso                   - List uploaded ISOs
+//	  DELETE /vms/:id/iso/:isoId            - Delete an ISO
+//	  POST   /vms/:id/iso/:isoId/attach     - Attach ISO to VM
+//	  POST   /vms/:id/iso/:isoId/detach     - Detach ISO from VM
+//
 //	2FA (Two-Factor Authentication):
 //	  POST   /2fa/initiate  - Generate TOTP secret and QR URL
 //	  POST   /2fa/enable    - Verify TOTP code and enable 2FA
@@ -139,6 +146,13 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 			vms.GET("/:id/ips/:ipId/rdns", handler.GetRDNS)
 			vms.PUT("/:id/ips/:ipId/rdns", middleware.RDNSUpdateRateLimit(), handler.UpdateRDNS)
 			vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteRDNS)
+
+			// ISO management
+			vms.POST("/:id/iso/upload", handler.UploadISO)
+			vms.GET("/:id/iso", handler.ListISOs)
+			vms.DELETE("/:id/iso/:isoId", handler.DeleteISO)
+			vms.POST("/:id/iso/:isoId/attach", handler.AttachISO)
+			vms.POST("/:id/iso/:isoId/detach", handler.DetachISO)
 		}
 
 		// Backups
@@ -197,5 +211,10 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 		// WebSocket console endpoints
 		protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
 		protected.GET("/ws/serial/:vmId", handler.HandleSerialWebSocket)
+
+		// Notifications
+		if notifyHandler != nil {
+			RegisterNotificationRoutes(protected, notifyHandler)
+		}
 	}
 }

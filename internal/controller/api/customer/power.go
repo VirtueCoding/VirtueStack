@@ -2,8 +2,6 @@ package customer
 
 import (
 	"net/http"
-	"slices"
-	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"

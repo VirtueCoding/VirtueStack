@@ -43,6 +43,8 @@ type VM struct {
 	CephPool string `json:"ceph_pool" db:"ceph_pool"`
 	// RBDImage: RBD image name for ceph storage.
 	RBDImage string `json:"rbd_image" db:"rbd_image"`
+	// AttachedISO: UUID of the currently attached ISO, nil if none.
+	AttachedISO *string `json:"attached_iso,omitempty" db:"attached_iso"`
 	Timestamps
 	SoftDelete
 }

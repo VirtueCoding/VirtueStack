@@ -413,16 +413,14 @@
             if (consoleType === 'vnc' && consoleIframe && consoleIframe.contentWindow) {
                 consoleIframe.contentWindow.postMessage({
                     type: 'virtuestack:ctrlaltdel'
-                }, '*');
+                }, document.location.origin);
             }
         }
         
         // Toggle fullscreen mode
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.log('Fullscreen error:', err);
-                });
+                document.documentElement.requestFullscreen().catch(function() {});
                 document.body.classList.add('fullscreen-mode');
             } else {
                 document.exitFullscreen();
@@ -450,7 +448,7 @@
                 consoleIframe.contentWindow.postMessage({
                     type: 'virtuestack:paste',
                     text: text
-                }, '*');
+                }, document.location.origin);
                 hidePasteModal();
                 document.getElementById('paste-text').value = '';
             }

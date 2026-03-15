@@ -335,3 +335,34 @@ func (h *AdminHandler) FailoverNode(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"status": "failed"}})
 }
+
+func (h *AdminHandler) UndrainNode(c *gin.Context) {
+	nodeID := c.Param("id")
+
+	if _, err := uuid.Parse(nodeID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+		return
+	}
+
+	err := h.nodeService.UndrainNode(c.Request.Context(), nodeID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+			return
+		}
+		h.logger.Error("failed to undrain node",
+			"node_id", nodeID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "NODE_UNDRAIN_FAILED", err.Error())
+		return
+	}
+
+	h.logAuditEvent(c, "node.undrain", "node", nodeID, nil, true)
+
+	h.logger.Info("node restored to online mode via admin API",
+		"node_id", nodeID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"status": "online"}})
+}

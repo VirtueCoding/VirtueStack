@@ -61,18 +61,19 @@ func ProvisioningAuditLogger(auditRepo *repository.AuditRepository) middleware.A
 // Authentication: X-API-Key header (validated against provisioning_keys table)
 //
 // Endpoints:
-//   POST   /vms                    - Create a new VM (async, returns task_id)
-//   GET    /vms/:id                - Get VM details by ID
-//   GET    /vms/by-service/:id     - Get VM by WHMCS service ID
-//   DELETE /vms/:id                - Terminate a VM (async, returns task_id)
-//   POST   /vms/:id/suspend        - Suspend a VM (billing suspension)
-//   POST   /vms/:id/unsuspend      - Unsuspend a VM
-//   POST   /vms/:id/resize         - Resize VM resources
-//   POST   /vms/:id/password       - Set root password
-//   POST   /vms/:id/password/reset - Reset root password
-//   POST   /vms/:id/power          - Power operations (start/stop/restart)
-//   GET    /vms/:id/status         - Get VM status
-//   GET    /tasks/:id              - Get task status
+//
+//	POST   /vms                    - Create a new VM (async, returns task_id)
+//	GET    /vms/:id                - Get VM details by ID
+//	GET    /vms/by-service/:id     - Get VM by WHMCS service ID
+//	DELETE /vms/:id                - Terminate a VM (async, returns task_id)
+//	POST   /vms/:id/suspend        - Suspend a VM (billing suspension)
+//	POST   /vms/:id/unsuspend      - Unsuspend a VM
+//	POST   /vms/:id/resize         - Resize VM resources
+//	POST   /vms/:id/password       - Set root password
+//	POST   /vms/:id/password/reset - Reset root password
+//	POST   /vms/:id/power          - Power operations (start/stop/restart)
+//	GET    /vms/:id/status         - Get VM status
+//	GET    /tasks/:id              - Get task status
 func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHandler, apiKeyRepo *repository.ProvisioningKeyRepository, auditRepo *repository.AuditRepository) {
 	apiKeyValidator := APIKeyValidatorFunc(apiKeyRepo)
 
@@ -94,6 +95,8 @@ func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHa
 			vms.POST("/:id/password/reset", handler.ResetPassword)
 			vms.POST("/:id/power", handler.PowerOperation)
 			vms.GET("/:id/status", handler.GetStatus)
+			vms.GET("/:id/rdns", handler.GetVMRDNS)
+			vms.PUT("/:id/rdns", handler.SetVMRDNS)
 		}
 
 		tasks := provisioning.Group("/tasks")
@@ -121,6 +124,8 @@ func RegisterProvisioningRoutesSimple(router *gin.RouterGroup, handler *Provisio
 			vms.POST("/:id/password/reset", handler.ResetPassword)
 			vms.POST("/:id/power", handler.PowerOperation)
 			vms.GET("/:id/status", handler.GetStatus)
+			vms.GET("/:id/rdns", handler.GetVMRDNS)
+			vms.PUT("/:id/rdns", handler.SetVMRDNS)
 		}
 
 		tasks := provisioning.Group("/tasks")

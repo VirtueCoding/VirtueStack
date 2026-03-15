@@ -1,0 +1,181 @@
+package admin
+
+import (
+	"net/http"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+type AdminRDNSRequest struct {
+	Hostname string `json:"hostname" validate:"required,hostname_rfc1123,max=253"`
+}
+
+type AdminRDNSResponse struct {
+	IPAddress    string  `json:"ip_address"`
+	RDNSHostname *string `json:"rdns_hostname,omitempty"`
+}
+
+func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
+	ipID := c.Param("ipId")
+
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		h.logger.Error("failed to get IP address",
+			"ip_id", ipID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{
+		Data: AdminRDNSResponse{
+			IPAddress:    ip.Address,
+			RDNSHostname: ip.RDNSHostname,
+		},
+	})
+}
+
+func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
+	ipID := c.Param("ipId")
+
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	var req AdminRDNSRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		if apiErr, ok := err.(*sharederrors.APIError); ok {
+			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to retrieve IP address")
+		return
+	}
+
+	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, req.Hostname); err != nil {
+		h.logger.Error("failed to update rDNS in database",
+			"ip_id", ipID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		return
+	}
+
+	if h.rdnsService != nil {
+		if err := h.rdnsService.SetReverseDNS(c.Request.Context(), ip.Address, req.Hostname); err != nil {
+			h.logger.Error("failed to update rDNS in PowerDNS",
+				"ip_id", ipID,
+				"ip_address", ip.Address,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}
+
+	h.logAuditEvent(c, "rdns.update", "ip_address", ipID, map[string]interface{}{
+		"ip_address":    ip.Address,
+		"rdns_hostname": req.Hostname,
+	}, true)
+
+	c.JSON(http.StatusOK, models.Response{
+		Data: AdminRDNSResponse{
+			IPAddress:    ip.Address,
+			RDNSHostname: &req.Hostname,
+		},
+	})
+}
+
+func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
+	ipID := c.Param("ipId")
+
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		return
+	}
+
+	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			return
+		}
+		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to retrieve IP address")
+		return
+	}
+
+	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, ""); err != nil {
+		h.logger.Error("failed to clear rDNS in database",
+			"ip_id", ipID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		return
+	}
+
+	if h.rdnsService != nil {
+		if err := h.rdnsService.DeleteReverseDNS(c.Request.Context(), ip.Address); err != nil {
+			h.logger.Error("failed to delete rDNS from PowerDNS",
+				"ip_id", ipID,
+				"ip_address", ip.Address,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}
+
+	h.logAuditEvent(c, "rdns.delete", "ip_address", ipID, map[string]interface{}{
+		"ip_address": ip.Address,
+	}, true)
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *AdminHandler) GetVMIPs(c *gin.Context) {
+	vmID := c.Param("id")
+
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	filter := repository.IPAddressListFilter{
+		VMID: &vmID,
+	}
+	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	if err != nil {
+		h.logger.Error("failed to list IPs for VM",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: ips,
+	})
+}

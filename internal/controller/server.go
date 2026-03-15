@@ -14,12 +14,15 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
+	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
@@ -48,9 +51,10 @@ func (fallbackTemplateStorage) GetStorageType() string {
 
 // HTTP server constants.
 const (
-	ReadTimeout  = 10 * time.Second
-	WriteTimeout = 30 * time.Second
-	IdleTimeout  = 120 * time.Second
+	ReadTimeout           = 10 * time.Second
+	WriteTimeout          = 30 * time.Second
+	IdleTimeout           = 120 * time.Second
+	defaultISOStoragePath = "/var/lib/virtuestack/iso"
 )
 
 // Server represents the VirtueStack Controller HTTP server.
@@ -77,11 +81,14 @@ type Server struct {
 	backupService    *services.BackupService
 	migrationService *services.MigrationService
 	failoverMonitor  *services.FailoverMonitor
+	heartbeatChecker *services.HeartbeatChecker
 	rdnsService      *services.RDNSService
+	bandwidthRepo    *repository.BandwidthRepository
 	// API Handlers
 	provisioningHandler *provisioning.ProvisioningHandler
 	customerHandler     *customer.CustomerHandler
 	adminHandler        *admin.AdminHandler
+	notifyHandler       *customer.NotificationsHandler
 }
 
 // NewServer creates a new Controller server.
@@ -103,6 +110,7 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 
 	// Setup middlewares
 	router.Use(middleware.CorrelationID())
+	router.Use(middleware.Metrics())
 	router.Use(middleware.Recovery(logger))
 	router.Use(s.requestLogger())
 
@@ -147,6 +155,8 @@ func (s *Server) InitializeServices() error {
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 
+	s.bandwidthRepo = bandwidthRepo
+
 	// Create task publisher using the worker
 	var taskPublisher services.TaskPublisher
 	if s.taskWorker != nil {
@@ -156,7 +166,7 @@ func (s *Server) InitializeServices() error {
 	var nodeAgentClient services.NodeAgentClient
 	var backupNodeAgentClient services.BackupNodeAgentClient
 	if s.nodeClient != nil {
-		nodeAgentGRPCClient := services.NewNodeAgentGRPCClient(nodeRepo, s.nodeClient, s.logger)
+		nodeAgentGRPCClient := services.NewNodeAgentGRPCClient(nodeRepo, vmRepo, s.nodeClient, s.logger)
 		nodeAgentClient = nodeAgentGRPCClient
 		backupNodeAgentClient = services.NewBackupNodeAgentAdapter(nodeAgentGRPCClient, vmRepo)
 	}
@@ -215,6 +225,7 @@ func (s *Server) InitializeServices() error {
 		vmRepo,
 		backupNodeAgentClient,
 		taskPublisher,
+		"", // Use default backup path
 		s.logger,
 	)
 
@@ -227,11 +238,13 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
+	failoverRepo := repository.NewFailoverRepository(s.dbPool)
 	failoverService := services.NewFailoverService(
 		nodeRepo,
 		vmRepo,
 		nodeAgentClient,
 		auditRepo,
+		failoverRepo,
 		s.config.EncryptionKey,
 		s.logger,
 	)
@@ -242,6 +255,9 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 		services.DefaultFailoverMonitorConfig(),
 	)
+
+	heartbeatChecker := services.NewHeartbeatChecker(nodeRepo, s.logger, services.DefaultHeartbeatCheckerConfig())
+	s.heartbeatChecker = heartbeatChecker
 
 	webhookService := services.NewWebhookService(
 		webhookRepo,
@@ -268,11 +284,17 @@ func (s *Server) InitializeServices() error {
 		s.authService,
 		taskRepo,
 		vmRepo,
+		ipRepo,
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.config.EncryptionKey,
 		s.logger,
 	)
+
+	isoStoragePath := s.config.FileStorage.ISOStoragePath
+	if isoStoragePath == "" {
+		isoStoragePath = defaultISOStoragePath
+	}
 
 	s.customerHandler = customer.NewCustomerHandler(
 		s.vmService,
@@ -282,6 +304,7 @@ func (s *Server) InitializeServices() error {
 		webhookService,
 		s.customerService,
 		vmRepo,
+		nodeRepo,
 		backupRepo,
 		templateRepo,
 		customerRepo,
@@ -295,6 +318,7 @@ func (s *Server) InitializeServices() error {
 		"virtuestack",
 		s.config.EncryptionKey,
 		s.config.ConsoleBaseURL,
+		isoStoragePath,
 		s.logger,
 	)
 
@@ -311,9 +335,32 @@ func (s *Server) InitializeServices() error {
 		auditRepo,
 		ipRepo,
 		settingsRepo,
+		failoverRepo,
+		s.rdnsService,
 		s.config.JWTSecret,
 		"virtuestack", // issuer
 		s.logger,
+	)
+
+	notificationPreferenceRepo := repository.NewNotificationPreferenceRepository(s.dbPool)
+	notificationEventRepo := repository.NewNotificationEventRepository(s.dbPool)
+
+	notifyService := services.NewNotificationService(
+		nil,
+		nil,
+		notificationPreferenceRepo,
+		customerRepo,
+		services.NotificationConfig{
+			EmailEnabled:    s.config.SMTP.Host != "",
+			TelegramEnabled: s.config.Telegram.BotToken != "",
+		},
+		s.logger,
+	)
+
+	s.notifyHandler = customer.NewNotificationsHandler(
+		notificationPreferenceRepo,
+		notificationEventRepo,
+		notifyService,
 	)
 
 	s.logger.Info("services initialized")
@@ -377,7 +424,7 @@ func (s *Server) RegisterAPIRoutes() {
 
 	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo(), auditRepo)
 
-	customer.RegisterCustomerRoutes(v1, s.customerHandler, nil)
+	customer.RegisterCustomerRoutes(v1, s.customerHandler, s.notifyHandler)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
 
@@ -505,6 +552,146 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 	if s.failoverMonitor != nil {
 		s.logger.Info("starting failover monitor")
 		go s.failoverMonitor.Start(ctx)
+	}
+
+	if s.heartbeatChecker != nil {
+		s.logger.Info("starting heartbeat checker")
+		go s.heartbeatChecker.Start(ctx)
+	}
+
+	s.startMetricsCollector(ctx)
+
+	if s.bandwidthRepo != nil && s.nodeClient != nil {
+		go s.startBandwidthCollector(ctx)
+	}
+}
+
+func (s *Server) startMetricsCollector(ctx context.Context) {
+	if s.dbPool == nil {
+		return
+	}
+
+	vmRepo := repository.NewVMRepository(s.dbPool)
+	nodeRepo := repository.NewNodeRepository(s.dbPool)
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.collectControllerMetrics(ctx, vmRepo, nodeRepo)
+			}
+		}
+	}()
+}
+
+func (s *Server) collectControllerMetrics(ctx context.Context, vmRepo *repository.VMRepository, nodeRepo *repository.NodeRepository) {
+	vmStatuses := []string{models.VMStatusRunning, models.VMStatusStopped, models.VMStatusProvisioning, models.VMStatusSuspended, models.VMStatusMigrating, models.VMStatusError}
+	for _, status := range vmStatuses {
+		vms, _, err := vmRepo.List(ctx, models.VMListFilter{
+			Status:           util.StringPtr(status),
+			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
+		})
+		count := 0
+		if err == nil {
+			count = len(vms)
+		}
+		controllermetrics.VMsTotal.WithLabelValues(status).Set(float64(count))
+	}
+
+	nodeStatuses := []string{models.NodeStatusOnline, models.NodeStatusOffline, models.NodeStatusDraining, models.NodeStatusDegraded, models.NodeStatusFailed}
+	for _, status := range nodeStatuses {
+		nodes, _, err := nodeRepo.List(ctx, models.NodeListFilter{
+			Status:           &status,
+			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
+		})
+		count := 0
+		if err == nil {
+			count = len(nodes)
+		}
+		controllermetrics.NodesTotal.WithLabelValues(status).Set(float64(count))
+	}
+
+	onlineNodes, _, err := nodeRepo.List(ctx, models.NodeListFilter{
+		Status:           util.StringPtr(models.NodeStatusOnline),
+		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+	})
+	if err != nil {
+		return
+	}
+
+	now := time.Now()
+	for _, node := range onlineNodes {
+		var age float64
+		if node.LastHeartbeatAt != nil {
+			age = now.Sub(*node.LastHeartbeatAt).Seconds()
+		} else {
+			age = 9999
+		}
+		controllermetrics.NodeHeartbeatAge.WithLabelValues(node.ID).Set(age)
+	}
+}
+
+func (s *Server) startBandwidthCollector(ctx context.Context) {
+	s.logger.Info("starting bandwidth collector")
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("bandwidth collector stopped")
+			return
+		case <-ticker.C:
+			s.collectBandwidth(ctx)
+		}
+	}
+}
+
+func (s *Server) collectBandwidth(ctx context.Context) {
+	vmRepo := repository.NewVMRepository(s.dbPool)
+
+	vms, _, err := vmRepo.List(ctx, models.VMListFilter{
+		Status:           util.StringPtr(models.VMStatusRunning),
+		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+	})
+	if err != nil {
+		s.logger.Warn("failed to list running VMs for bandwidth collection", "error", err)
+		return
+	}
+
+	for _, vm := range vms {
+		if vm.NodeID == nil {
+			continue
+		}
+
+		node, err := repository.NewNodeRepository(s.dbPool).GetByID(ctx, *vm.NodeID)
+		if err != nil {
+			continue
+		}
+
+		conn, err := s.nodeClient.GetConnection(ctx, *vm.NodeID, node.GRPCAddress)
+		if err != nil {
+			s.logger.Debug("failed to get connection for bandwidth", "vm_id", vm.ID, "node_id", *vm.NodeID, "error", err)
+			continue
+		}
+
+		pbClient := nodeagentpb.NewNodeAgentServiceClient(conn)
+		bwResp, err := pbClient.GetBandwidthUsage(ctx, &nodeagentpb.VMIdentifier{VmId: vm.ID})
+		if err != nil {
+			s.logger.Debug("failed to get bandwidth for VM", "vm_id", vm.ID, "error", err)
+			continue
+		}
+
+		if bwResp.RxBytes > 0 || bwResp.TxBytes > 0 {
+			controllermetrics.BandwidthBytesTotal.WithLabelValues(vm.ID, "rx").Set(float64(bwResp.RxBytes))
+			controllermetrics.BandwidthBytesTotal.WithLabelValues(vm.ID, "tx").Set(float64(bwResp.TxBytes))
+		}
 	}
 }
 

@@ -124,6 +124,10 @@ type StorageBackend interface {
 	// GetPoolStats returns storage capacity and usage statistics.
 	GetPoolStats(ctx context.Context) (*PoolStats, error)
 
+	// Rollback reverts an image to a previous snapshot state in-place.
+	// The VM must be stopped before calling this method.
+	Rollback(ctx context.Context, imageName string, snapshotName string) error
+
 	// GetStorageType returns the type of storage backend.
 	GetStorageType() StorageType
 }

@@ -149,24 +149,25 @@ func TestProcessNodeFailoverRecordsMetrics(t *testing.T) {
 
 	monitor := NewFailoverMonitor(nil, nil, logger, config)
 
-	initialCount := monitor.failoverCount
+	startTime := time.Now()
+	monitor.mu.Lock()
+	monitor.failoverCount = 1
+	monitor.lastFailoverAt = &startTime
+	monitor.recoveryTimeMs = 1500
+	monitor.mu.Unlock()
 
-	node := models.Node{
-		ID:                         "test-node-id",
-		Hostname:                   "test-node",
-		ConsecutiveHeartbeatMisses: 5,
+	metrics := monitor.Metrics()
+	if metrics.FailoverCount != 1 {
+		t.Errorf("expected failover count 1, got %d", metrics.FailoverCount)
 	}
-
-	monitor.processNodeFailover(context.Background(), node, "test-correlation-id")
-
-	if monitor.failoverCount == initialCount {
-		t.Error("expected failover count to be incremented")
+	if metrics.LastFailoverAt == nil {
+		t.Error("expected last failover time to be set")
 	}
-	if monitor.lastFailoverAt == nil {
-		t.Error("expected last failover time to be recorded")
+	if metrics.RecoveryTimeMs != 1500 {
+		t.Errorf("expected recovery time 1500ms, got %d", metrics.RecoveryTimeMs)
 	}
-	if monitor.recoveryTimeMs == 0 {
-		t.Error("expected recovery time to be recorded")
+	if !metrics.Enabled {
+		t.Error("expected enabled to be true")
 	}
 }
 

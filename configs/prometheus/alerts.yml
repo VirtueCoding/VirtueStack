@@ -1,0 +1,84 @@
+groups:
+  - name: virtuestack
+    rules:
+      - alert: HighErrorRate
+        expr: rate(vs_api_requests_total{status=~"5.."}[5m]) / rate(vs_api_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API error rate exceeds 5%"
+
+      - alert: NodeOffline
+        expr: vs_nodes_total{status="failed"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.status }} is offline"
+
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.99, rate(vs_api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p99 latency exceeds 2 seconds"
+
+  - name: virtuestack_node_agent
+    rules:
+      - alert: NodeVMCountHigh
+        expr: vs_node_vm_count > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node {{ $labels.instance }} has {{ $value }} VMs (high load)"
+
+      - alert: VMHighCPUUsage
+        expr: vs_vm_cpu_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM {{ $labels.vm_id }} CPU usage is {{ $value }}%"
+
+      - alert: VMHighMemoryUsage
+        expr: vs_vm_memory_usage_bytes / vs_vm_memory_usage_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM {{ $labels.vm_id }} memory usage above 90%"
+
+      - alert: NodeAgentDown
+        expr: up{job="virtuestack-node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node agent {{ $labels.instance }} is down"
+
+      - alert: TaskFailureRate
+        expr: rate(vs_tasks_total{status="failed"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High task failure rate for {{ $labels.type }}"
+
+      - alert: BackupDuration
+        expr: histogram_quantile(0.99, rate(vs_backup_duration_seconds_bucket[1h])) > 1800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backup duration p99 exceeds 30 minutes"
+
+      - alert: NodeHeartbeatStale
+        expr: vs_node_heartbeat_age_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.node_id }} heartbeat is stale ({{ $value }}s ago)"

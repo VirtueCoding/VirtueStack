@@ -433,7 +433,14 @@ final class VirtueStackHelper
     public static function buildWebuiUrl(string $webuiUrl, string $vmId, string $ssoToken): string
     {
         $webuiUrl = rtrim($webuiUrl, '/');
-        return "{$webuiUrl}/vm/{$vmId}?token={$ssoToken}";
+        // SECURITY: SSO token is passed via query parameter for backward compatibility.
+        // This exposes the token in browser history, referrer headers, and server logs.
+        // Mitigated by short JWT expiry (1 hour). For improved security, a future version
+        // should implement a POST-based token exchange that sets an HttpOnly session cookie:
+        //   1. WHMCS module POSTs the SSO token to /api/v1/customer/auth/sso-exchange
+        //   2. Controller validates and returns a Set-Cookie with a short-lived opaque session
+        //   3. Customer WebUI reads the cookie (never the URL) and redirects to /vm/{vmId}
+        return "{$webuiUrl}/vm/{$vmId}?sso_token={$ssoToken}";
     }
 
     /**

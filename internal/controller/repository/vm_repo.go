@@ -32,6 +32,7 @@ func scanVM(row pgx.Row) (models.VM, error) {
 		&vm.BandwidthUsedBytes, &vm.BandwidthResetAt,
 		&vm.MACAddress, &vm.TemplateID, &vm.LibvirtDomainName,
 		&vm.RootPasswordEncrypted, &vm.WHMCSServiceID,
+		&vm.AttachedISO,
 		&vm.CreatedAt, &vm.UpdatedAt, &vm.DeletedAt,
 	)
 	return vm, err
@@ -44,6 +45,7 @@ const vmSelectCols = `
 	bandwidth_used_bytes, bandwidth_reset_at,
 	mac_address, template_id, libvirt_domain_name,
 	root_password_encrypted, whmcs_service_id,
+	attached_iso,
 	created_at, updated_at, deleted_at`
 
 // Create inserts a new VM record into the database.
@@ -313,4 +315,17 @@ func (r *VMRepository) ListAllActive(ctx context.Context) ([]models.VM, error) {
 		return nil, fmt.Errorf("listing active VMs: %w", err)
 	}
 	return vms, nil
+}
+
+// UpdateAttachedISO sets or clears the attached ISO for a VM.
+func (r *VMRepository) UpdateAttachedISO(ctx context.Context, vmID string, isoID *string) error {
+	const q = `UPDATE vms SET attached_iso = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, isoID, vmID)
+	if err != nil {
+		return fmt.Errorf("updating attached ISO for VM %s: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("VM %s not found: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
 }

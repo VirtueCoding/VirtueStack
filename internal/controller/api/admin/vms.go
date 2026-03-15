@@ -230,13 +230,28 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 		}
 
 		// isAdmin=true allows exceeding plan limits
-		err = h.vmService.ResizeVM(c.Request.Context(), vmID, "", newVCPU, newMemory, newDisk, true)
+		taskID, err := h.vmService.ResizeVM(c.Request.Context(), vmID, "", newVCPU, newMemory, newDisk, true)
 		if err != nil {
 			h.logger.Error("failed to resize VM",
 				"vm_id", vmID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 			respondWithError(c, http.StatusInternalServerError, "VM_RESIZE_FAILED", err.Error())
+			return
+		}
+
+		// If disk resize was requested, return 202 Accepted with task ID
+		if taskID != "" {
+			h.logAuditEvent(c, "vm.update", "vm", vmID, req, true)
+			c.JSON(http.StatusAccepted, models.Response{
+				Data: gin.H{
+					"task_id":   taskID,
+					"vm_id":     vmID,
+					"vcpu":      newVCPU,
+					"memory_mb": newMemory,
+					"disk_gb":   newDisk,
+				},
+			})
 			return
 		}
 	}

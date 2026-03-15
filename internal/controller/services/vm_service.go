@@ -14,6 +14,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // TaskPublisher abstracts NATS task publishing for async operations.
@@ -126,7 +127,7 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 			return nil, "", fmt.Errorf("finding node: %w", err)
 		}
 	} else {
-		nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: strPtr(models.NodeStatusOnline)})
+		nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: util.StringPtr(models.NodeStatusOnline)})
 		if err != nil {
 			return nil, "", fmt.Errorf("listing nodes: %w", err)
 		}
@@ -252,7 +253,7 @@ func (s *VMService) StartVM(ctx context.Context, vmID, customerID string, isAdmi
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifying ownership for start: %w", err)
 	}
 
 	// Verify status allows starting
@@ -285,7 +286,7 @@ func (s *VMService) StopVM(ctx context.Context, vmID, customerID string, force b
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifying ownership for stop: %w", err)
 	}
 
 	// Verify status allows stopping
@@ -324,7 +325,7 @@ func (s *VMService) RestartVM(ctx context.Context, vmID, customerID string, isAd
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifying ownership for restart: %w", err)
 	}
 
 	// Verify status allows restart
@@ -361,7 +362,7 @@ func (s *VMService) DeleteVM(ctx context.Context, vmID, customerID string, isAdm
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("verifying ownership for delete: %w", err)
 	}
 
 	// Check if already deleted
@@ -414,7 +415,7 @@ func (s *VMService) ReinstallVM(ctx context.Context, vmID, templateID, customerI
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("verifying ownership for reinstall: %w", err)
 	}
 
 	// Validate new template
@@ -477,17 +478,19 @@ func (s *VMService) ReinstallVM(ctx context.Context, vmID, templateID, customerI
 }
 
 // ResizeVM resizes a VM's resources.
-// This can be done synchronously for CPU/memory or may require async for disk.
-func (s *VMService) ResizeVM(ctx context.Context, vmID, customerID string, newVcpu, newMemoryMB, newDiskGB int, isAdmin bool) error {
+// CPU/memory-only changes are performed synchronously (libvirt hot-plug).
+// Disk resize changes are performed asynchronously via vm.resize task.
+// Returns a task ID when disk resize is required, empty string for synchronous ops.
+func (s *VMService) ResizeVM(ctx context.Context, vmID, customerID string, newVcpu, newMemoryMB, newDiskGB int, isAdmin bool) (string, error) {
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("verifying ownership for resize: %w", err)
 	}
 
 	// Validate resources are being changed
 	if newVcpu == 0 && newMemoryMB == 0 && newDiskGB == 0 {
-		return fmt.Errorf("no resize parameters provided")
+		return "", fmt.Errorf("no resize parameters provided")
 	}
 
 	// Use current values for any unspecified parameters
@@ -505,65 +508,72 @@ func (s *VMService) ResizeVM(ctx context.Context, vmID, customerID string, newVc
 	if !isAdmin {
 		plan, err := s.planRepo.GetByID(ctx, vm.PlanID)
 		if err != nil {
-			return fmt.Errorf("getting plan: %w", err)
+			return "", fmt.Errorf("getting plan: %w", err)
 		}
 		if newVcpu > plan.VCPU {
-			return fmt.Errorf("requested vCPU (%d) exceeds plan limit (%d)", newVcpu, plan.VCPU)
+			return "", fmt.Errorf("requested vCPU (%d) exceeds plan limit (%d)", newVcpu, plan.VCPU)
 		}
 		if newMemoryMB > plan.MemoryMB {
-			return fmt.Errorf("requested memory (%d MB) exceeds plan limit (%d MB)", newMemoryMB, plan.MemoryMB)
+			return "", fmt.Errorf("requested memory (%d MB) exceeds plan limit (%d MB)", newMemoryMB, plan.MemoryMB)
 		}
 		if newDiskGB > plan.DiskGB {
-			return fmt.Errorf("requested disk (%d GB) exceeds plan limit (%d GB)", newDiskGB, plan.DiskGB)
+			return "", fmt.Errorf("requested disk (%d GB) exceeds plan limit (%d GB)", newDiskGB, plan.DiskGB)
 		}
 	}
 
 	// Validate disk is not shrinking (not supported)
 	if newDiskGB < vm.DiskGB {
-		return fmt.Errorf("disk shrinking is not supported (current: %d GB, requested: %d GB)", vm.DiskGB, newDiskGB)
+		return "", fmt.Errorf("disk shrinking is not supported (current: %d GB, requested: %d GB)", vm.DiskGB, newDiskGB)
 	}
 
 	// Check if node is assigned
 	if vm.NodeID == nil {
-		return fmt.Errorf("VM has no node assigned")
+		return "", fmt.Errorf("VM has no node assigned")
 	}
 
-	// For disk resize, we need to stop the VM first
-	requiresStop := newDiskGB > vm.DiskGB
+	requiresDiskResize := newDiskGB > vm.DiskGB
 
-	// If resize requires stop and VM is running, we need to handle it
-	if requiresStop && vm.Status == models.VMStatusRunning {
-		// Stop the VM gracefully
-		if err := s.nodeAgent.StopVM(ctx, *vm.NodeID, vm.ID, 120); err != nil {
-			return fmt.Errorf("stopping VM for resize: %w", err)
+	if requiresDiskResize {
+		taskPayload := map[string]any{
+			"vm_id":         vm.ID,
+			"node_id":       *vm.NodeID,
+			"new_vcpu":      newVcpu,
+			"new_memory_mb": newMemoryMB,
+			"new_disk_gb":   newDiskGB,
 		}
+
+		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMResize, taskPayload)
+		if err != nil {
+			return "", fmt.Errorf("publishing resize task: %w", err)
+		}
+
+		s.logger.Info("VM resize initiated (async, disk change required)",
+			"vm_id", vm.ID,
+			"task_id", taskID,
+			"vcpu", newVcpu,
+			"memory_mb", newMemoryMB,
+			"disk_gb", newDiskGB)
+
+		return taskID, nil
 	}
 
-	// Call node agent to resize VM
+	// Synchronous CPU/memory resize (libvirt hot-plug)
 	if err := s.nodeAgent.ResizeVM(ctx, *vm.NodeID, vm.ID, newVcpu, newMemoryMB, newDiskGB); err != nil {
-		return fmt.Errorf("resizing VM on node agent: %w", err)
+		return "", fmt.Errorf("resizing VM on node agent: %w", err)
 	}
 
 	// Update VM record
 	if err := s.vmRepo.UpdateResources(ctx, vm.ID, newVcpu, newMemoryMB, newDiskGB); err != nil {
-		return fmt.Errorf("updating VM resources: %w", err)
+		return "", fmt.Errorf("updating VM resources: %w", err)
 	}
 
-	// Start the VM if we stopped it
-	if requiresStop && vm.Status == models.VMStatusRunning {
-		if err := s.nodeAgent.StartVM(ctx, *vm.NodeID, vm.ID); err != nil {
-			s.logger.Warn("failed to start VM after resize", "vm_id", vm.ID, "error", err)
-		}
-	}
-
-	s.logger.Info("VM resized",
+	s.logger.Info("VM resized (sync, CPU/memory only)",
 		"vm_id", vm.ID,
 		"vcpu", newVcpu,
 		"memory_mb", newMemoryMB,
-		"disk_gb", newDiskGB,
 		"customer_id", customerID)
 
-	return nil
+	return "", nil
 }
 
 // GetVM retrieves a VM by ID.
@@ -587,7 +597,7 @@ func (s *VMService) GetVMMetrics(ctx context.Context, vmID, customerID string, i
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verifying ownership for metrics: %w", err)
 	}
 
 	// Check if node is assigned
@@ -614,7 +624,7 @@ func (s *VMService) GetVMStatus(ctx context.Context, vmID, customerID string, is
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("verifying ownership for status: %w", err)
 	}
 
 	// If VM has no node, return database status
@@ -638,7 +648,7 @@ func (s *VMService) GetVMDetail(ctx context.Context, vmID, customerID string, is
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verifying ownership for detail: %w", err)
 	}
 
 	detail := &models.VMDetail{
@@ -690,7 +700,7 @@ func (s *VMService) GetVMDetail(ctx context.Context, vmID, customerID string, is
 func (s *VMService) UpdateVMHostname(ctx context.Context, vmID, newHostname, customerID string, isAdmin bool) error {
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifying ownership for hostname update: %w", err)
 	}
 
 	if err := s.vmRepo.UpdateHostname(ctx, vm.ID, newHostname); err != nil {

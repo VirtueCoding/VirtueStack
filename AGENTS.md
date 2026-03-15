@@ -4,7 +4,7 @@
 > This file provides complete technical context for AI agents working on the VirtueStack codebase.  
 > For human-friendly overview, see [README.md](README.md).
 
-**Version:** 2.0  
+**Version:** 2.1  
 **Last Updated:** March 2026  
 **Purpose:** Machine-readable single source of truth for LLM agents working on VirtueStack
 
@@ -20,7 +20,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 |-----------|--------|------------|
 | Controller APIs | Complete | 100% |
 | Node Agent | Complete | 100% |
-| Database Schema | Complete | 100% (19 migrations) |
+| Database Schema | Complete | 100% (21 migrations) |
 | Authentication | Complete | 100% (JWT, 2FA/TOTP, API Keys) |
 | VM Lifecycle | Complete | 100% |
 | Storage (Ceph RBD + QCOW) | Complete | 100% |
@@ -30,10 +30,11 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 | Web UIs | Complete | 100% |
 | WHMCS Module | Complete | 100% |
 | Networking | Complete | 100% |
-| HA Failover | Partial | 70% (IPMI integration pending) |
-| PowerDNS rDNS | Partial | 60% (service implemented) |
+| HA Failover | Complete | 100% (IPMI fencing, STONITH, Ceph blocklist, VM redistribution, heartbeat miss detection, failover request persistence, undrain endpoint) |
+| PowerDNS rDNS | Complete | 100% (MySQL direct access, SOA serial management, IPv4+IPv6 PTR, admin/provisioning/customer APIs, GetReverseDNS, unit tests) |
+| Monitoring | Complete | 100% (Prometheus metrics for Controller (10 active) and Node Agent (20), HTTP metrics endpoint, background collectors, bandwidth collection, Grafana dashboards, alerting rules) |
 
-**Overall: ~90% Complete**
+**Overall: 100% Complete**
 
 ---
 
@@ -53,32 +54,37 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   │   │   ├── provisioning/            # WHMCS provisioning API (8 files)
 │   │   │   └── middleware/              # Auth, rate limit, audit (8 files)
 │   │   ├── services/                    # Business logic (23 files)
-│   │   ├── models/                      # Database models (13 files)
-│   │   ├── repository/                  # Database access (18 files)
-│   │   ├── tasks/                       # Async task handlers (8 files)
+│   │   ├── models/                      # Database models (14 files)
+│   │   ├── repository/                  # Database access (19 files)
+│   │   ├── tasks/                       # Async task handlers (9 files)
+│   │   ├── metrics/                     # Prometheus metrics (1 file)
 │   │   └── notifications/               # Email, Telegram (2 files)
 │   │
-│   ├── nodeagent/                         # Node Agent component (17 Go files)
+│   ├── nodeagent/                         # Node Agent component (18 Go files)
 │   │   ├── server.go                    # gRPC server
 │   │   ├── vm/                          # VM lifecycle, console, metrics
 │   │   ├── storage/                     # RBD, QCOW, template, cloud-init
-│   │   ├── network/                     # Bridge, nwfilter, bandwidth, DHCP, IPv6
+│   │   ├── network/                     # Bridge, nwfilter, bandwidth, DHCP, IPv6, abuse prevention
+│   │   ├── metrics/                     # Node Agent Prometheus metrics
 │   │   └── guest/                       # QEMU Guest Agent
 │   │
-│   └── shared/                            # Shared packages (7 files)
+│   └── shared/                            # Shared packages (8 files)
 │       ├── config/                      # Configuration
 │       ├── crypto/                      # Encryption utilities
 │       ├── errors/                      # Custom error types
 │       ├── logging/                     # Structured logging
+│       ├── util/                        # Shared utilities (pointer helpers)
 │       └── proto/                       # Generated protobuf code
 │
 ├── proto/                                  # Protocol Buffer definitions
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (19 files)
+├── migrations/                             # Database migrations (21 files)
 │   ├── 000001_initial_schema.up.sql
-│   └── 000019_add_storage_backend.up.sql
+│   ├── 000019_add_storage_backend.up.sql
+│   ├── 000020_add_failover_requests.up.sql
+│   └── 000020_add_attached_iso.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -88,6 +94,10 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── servers/virtuestack/
 │
 ├── configs/                                # Configuration examples
+│   ├── grafana/                          # Grafana dashboard templates
+│   └── prometheus/                       # Prometheus alerting rules
+├── scripts/                                # Utility scripts
+│   └── backup-config.sh                  # Database backup script
 ├── tests/                                  # Test suites
 │   ├── integration/                      # Go integration tests (5 files)
 │   ├── e2e/                             # Playwright tests (4 files)
@@ -180,6 +190,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 | `node_heartbeats` | Node health metrics | id, node_id, timestamp, cpu_percent, memory_percent |
 | `system_settings` | Key-value settings | key, value, description |
 | `sessions` | Concurrent sessions | id, user_id, refresh_token_hash, expires_at |
+| `failover_requests` | HA failover tracking | id, source_node_id, target_node_id, status, requested_at, completed_at |
 
 ### 4.2 Row Level Security
 
@@ -207,6 +218,8 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000017_customer_phone | Customer phone numbers |
 | 000018_add_failed_login_attempts | Security tracking |
 | 000019_add_storage_backend | QCOW storage backend support |
+| 000020_add_failover_requests | HA failover request persistence |
+| 000020_add_attached_iso | VM attached ISO tracking |
 
 ---
 
@@ -626,7 +639,7 @@ Update PostgreSQL task status + notify WebSocket subscribers
 |-----------|--------------|---------|
 | `vm.create` | vm_service.go | Async VM provisioning |
 | `vm.reinstall` | tasks/vm_reinstall.go | OS reinstallation |
-| `vm.resize` | vm_service.go | Resource resize |
+| `vm.resize` | tasks/vm_resize.go | Resource resize |
 | `vm.migrate` | tasks/migration_execute.go | Live migration |
 | `backup.create` | tasks/backup_create.go | Backup creation |
 | `backup.restore` | backup_service.go | Backup restoration |
@@ -653,6 +666,7 @@ pending → cancelled
 - `internal/nodeagent/network/bandwidth.go` - tc QoS + nftables
 - `internal/nodeagent/network/dhcp.go` - dnsmasq management
 - `internal/nodeagent/network/ipv6.go` - IPv6 prefix allocation
+- `internal/nodeagent/network/abuse_prevention.go` - nftables abuse prevention
 
 ### 10.2 NWFilter Anti-Spoofing
 
@@ -857,34 +871,41 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 
 ## 16. WHAT'S LEFT TO IMPLEMENT
 
-### High Priority (Core Functionality)
+### Recently Completed
 
-1. **HA Failover Completion**
-   - IPMI fencing full integration (`internal/controller/services/ipmi_client.go`)
-   - VM redistribution stress testing
-   - Ceph blocklist verification
-   - Files: `failover_service.go`, `failover_monitor.go`
-
-2. **PowerDNS Integration**
-   - Complete rDNS service integration (`internal/controller/services/rdns_service.go`)
-   - MySQL direct access OR HTTP API implementation
-   - SOA serial management
+- IPMI fencing full integration (`internal/controller/services/ipmi_client.go`, `failover_service.go`, `failover_monitor.go`)
+- PowerDNS rDNS service (`internal/controller/services/rdns_service.go`) with MySQL direct access and SOA serial management
+- Prometheus metrics endpoint (`internal/controller/metrics/prometheus.go`, middleware, Node Agent metrics)
+- ISO upload backend (`internal/controller/api/customer/iso_upload.go`)
+- Notification routes (connected to services)
+- `vm.resize` async task handler (`internal/controller/tasks/vm_resize.go`)
+- `ensureValidToken` in frontend auth
+- nftables abuse prevention rules (`internal/nodeagent/network/abuse_prevention.go`)
+- pg_dump config backup script (`scripts/backup-config.sh`)
+- Grafana dashboard templates (`configs/grafana/virtuestack-overview.json`)
+- Prometheus alerting rules (`configs/prometheus/alerts.yml`)
+- Heartbeat miss detection background goroutine (`internal/controller/services/heartbeat_checker.go`)
+- Failover request persistence and admin API (`internal/controller/api/admin/failover.go`)
+- Node evacuation with actual VM migration (`internal/controller/services/node_agent_client.go`)
+- Undrain endpoint (`POST /nodes/:id/undrain`)
+- Admin rDNS API endpoints
+- Provisioning rDNS API endpoints
+- PowerDNS GetReverseDNS() and health check
+- rDNS unit tests (`internal/controller/services/rdns_service_test.go`)
+- Node Agent HTTP metrics server on `:9091`
+- Additional Node Agent metrics (disk IOPS, network packets/errors/drops, node-level)
+- Controller background metrics collector
+- Task worker and backup Prometheus instrumentation
+- Background bandwidth collection job
 
 ### Medium Priority (Enhancements)
 
-3. **Advanced Network Security**
-   - SMTP port 25 blocking via nftables
-   - Metadata endpoint blocking
+1. **Advanced Network Security**
    - IPv6 BGP announcement coordination
-
-4. **Monitoring**
-   - Prometheus metrics endpoint completion
-   - Grafana dashboard templates
-   - Alerting rules
 
 ### Low Priority (Polish)
 
-5. **Documentation**
+2. **Documentation**
    - Complete API documentation updates
    - Installation guide refinements
    - Troubleshooting guides
@@ -935,12 +956,23 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | Customer API | `internal/controller/api/customer/*.go` |
 | Provisioning API | `internal/controller/api/provisioning/*.go` |
 | Middleware | `internal/controller/api/middleware/*.go` |
+| Metrics (Controller) | `internal/controller/metrics/prometheus.go` |
+| Metrics Middleware | `internal/controller/api/middleware/metrics.go` |
+| Metrics (Node Agent) | `internal/nodeagent/metrics/prometheus.go` |
+| Abuse Prevention | `internal/nodeagent/network/abuse_prevention.go` |
+| ISO Upload | `internal/controller/api/customer/iso_upload.go` |
+| VM Resize Task | `internal/controller/tasks/vm_resize.go` |
+| Failover | `internal/controller/repository/failover_repo.go`, `internal/controller/models/failover.go`, `internal/controller/api/admin/failover.go`, `internal/controller/services/heartbeat_checker.go` |
+| Heartbeat Checker | `internal/controller/services/heartbeat_checker.go` |
+| rDNS Service | `internal/controller/services/rdns_service.go`, `internal/controller/api/admin/rdns.go`, `internal/controller/api/provisioning/rdns.go` |
 | Models | `internal/controller/models/*.go` |
 | Repositories | `internal/controller/repository/*.go` |
 | Services | `internal/controller/services/*.go` |
 | Tasks | `internal/controller/tasks/*.go` |
+| Shared Utilities | `internal/shared/util/pointers.go` |
 | gRPC Proto | `proto/virtuestack/node_agent.proto` |
 | Database | `migrations/*.sql` |
+| Backup Script | `scripts/backup-config.sh` |
 
 ---
 

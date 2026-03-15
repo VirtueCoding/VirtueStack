@@ -51,7 +51,10 @@ func NewQEMUGuestAgent(domain *libvirt.Domain, logger *slog.Logger) *QEMUGuestAg
 // Returns nil if the agent responds successfully within the timeout.
 func (a *QEMUGuestAgent) Ping(ctx context.Context) error {
 	_, err := a.executeCommand(ctx, cmdPing, "ping")
-	return err
+	if err != nil {
+		return fmt.Errorf("guest agent ping: %w", err)
+	}
+	return nil
 }
 
 // FreezeFilesystems freezes all filesystems in the guest VM.
@@ -60,7 +63,7 @@ func (a *QEMUGuestAgent) Ping(ctx context.Context) error {
 func (a *QEMUGuestAgent) FreezeFilesystems(ctx context.Context) (int, error) {
 	result, err := a.executeCommand(ctx, cmdFreezeFilesystem, "freeze-filesystems")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("guest agent freeze: %w", err)
 	}
 	// Parse the response to get the count of frozen filesystems
 	var response struct {
@@ -78,7 +81,7 @@ func (a *QEMUGuestAgent) FreezeFilesystems(ctx context.Context) (int, error) {
 func (a *QEMUGuestAgent) ThawFilesystems(ctx context.Context) (int, error) {
 	result, err := a.executeCommand(ctx, cmdThawFilesystem, "thaw-filesystems")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("guest agent thaw: %w", err)
 	}
 	// Parse the response to get the count of thawed filesystems
 	var response struct {
@@ -95,7 +98,10 @@ func (a *QEMUGuestAgent) ThawFilesystems(ctx context.Context) (int, error) {
 // Note: This command does not wait for the shutdown to complete.
 func (a *QEMUGuestAgent) Shutdown(ctx context.Context) error {
 	_, err := a.executeCommand(ctx, cmdShutdown, "shutdown")
-	return err
+	if err != nil {
+		return fmt.Errorf("guest agent shutdown: %w", err)
+	}
+	return nil
 }
 
 // SetUserPassword sets the password for a user in the guest VM.
@@ -111,7 +117,10 @@ func (a *QEMUGuestAgent) SetUserPassword(ctx context.Context, username, password
 	)
 
 	_, err := a.executeCommand(ctx, cmd, "set-user-password")
-	return err
+	if err != nil {
+		return fmt.Errorf("guest agent set-user-password: %w", err)
+	}
+	return nil
 }
 
 // executeCommand executes a QEMU Guest Agent command with strict timeout enforcement.

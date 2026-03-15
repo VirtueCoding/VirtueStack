@@ -137,7 +137,7 @@ func (m *Manager) StartVM(ctx context.Context, vmID string) error {
 
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("lookup domain for start: %w", err)
 	}
 	defer domain.Free()
 
@@ -180,7 +180,7 @@ func (m *Manager) StopVM(ctx context.Context, vmID string, timeoutSec int) error
 
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("lookup domain for stop: %w", err)
 	}
 	defer domain.Free()
 
@@ -235,7 +235,7 @@ func (m *Manager) ForceStopVM(ctx context.Context, vmID string) error {
 
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("lookup domain for force stop: %w", err)
 	}
 	defer domain.Free()
 
@@ -271,7 +271,7 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("lookup domain for delete: %w", err)
 	}
 	defer domain.Free()
 
@@ -305,7 +305,7 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 func (m *Manager) GetStatus(ctx context.Context, vmID string) (*VMStatus, error) {
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup domain for status: %w", err)
 	}
 	defer domain.Free()
 
@@ -343,7 +343,7 @@ func (m *Manager) GetStatus(ctx context.Context, vmID string) (*VMStatus, error)
 func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, error) {
 	domain, err := m.lookupDomain(vmID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup domain for metrics: %w", err)
 	}
 	defer domain.Free()
 
@@ -375,10 +375,22 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 		m.logger.Warn("could not get disk stats", "error", err, "vm_id", vmID)
 	}
 
+	// Get disk ops
+	_, _, diskRdOps, diskWrOps, diskOpsErr := m.getDiskStatsFull(domain)
+	if diskOpsErr != nil {
+		m.logger.Warn("could not get disk ops", "error", diskOpsErr, "vm_id", vmID)
+	}
+
 	// Get network stats
 	netRX, netTX, err := m.getNetworkStats(domain)
 	if err != nil {
 		m.logger.Warn("could not get network stats", "error", err, "vm_id", vmID)
+	}
+
+	// Get full network stats (packets, errors, drops)
+	_, _, netRXPkts, netTXPkts, netRXErrs, netTXErrs, netRXDrop, netTXDrop, netFullErr := m.getNetworkStatsFull(domain)
+	if netFullErr != nil {
+		m.logger.Warn("could not get full network stats", "error", netFullErr, "vm_id", vmID)
 	}
 
 	return &VMMetrics{
@@ -388,8 +400,16 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 		MemoryTotalBytes: memTotal,
 		DiskReadBytes:    diskRead,
 		DiskWriteBytes:   diskWrite,
+		DiskReadOps:      diskRdOps,
+		DiskWriteOps:     diskWrOps,
 		NetworkRXBytes:   netRX,
 		NetworkTXBytes:   netTX,
+		NetworkRXPkts:    netRXPkts,
+		NetworkTXPkts:    netTXPkts,
+		NetworkRXErrs:    netRXErrs,
+		NetworkTXErrs:    netTXErrs,
+		NetworkRXDrop:    netRXDrop,
+		NetworkTXDrop:    netTXDrop,
 	}, nil
 }
 
@@ -816,6 +836,14 @@ func (m *Manager) getDiskStats(domain *libvirt.Domain) (int64, int64, error) {
 	return stats.RdBytes, stats.WrBytes, nil
 }
 
+func (m *Manager) getDiskStatsFull(domain *libvirt.Domain) (int64, int64, int64, int64, error) {
+	stats, err := domain.BlockStats("vda")
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return stats.RdBytes, stats.WrBytes, stats.RdReq, stats.WrReq, nil
+}
+
 // getNetworkStats returns the network RX and TX bytes for a domain.
 func (m *Manager) getNetworkStats(domain *libvirt.Domain) (int64, int64, error) {
 	// Get interface stats - we need to find the interface name first
@@ -873,6 +901,71 @@ func (m *Manager) getNetworkStatsFromXML(domain *libvirt.Domain) (int64, int64, 
 	}
 
 	return totalRX, totalTX, nil
+}
+
+func (m *Manager) getNetworkStatsFull(domain *libvirt.Domain) (rxBytes, txBytes, rxPkts, txPkts, rxErrs, txErrs, rxDrop, txDrop int64, err error) {
+	ifaces, err := domain.ListAllInterfaceAddresses(libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
+	if err != nil {
+		return m.getNetworkStatsFullFromXML(domain)
+	}
+
+	for _, iface := range ifaces {
+		stats, err := domain.InterfaceStats(iface.Name)
+		if err != nil {
+			continue
+		}
+		rxBytes += stats.RxBytes
+		txBytes += stats.TxBytes
+		rxPkts += stats.RxPackets
+		txPkts += stats.TxPackets
+		rxErrs += stats.RxErrs
+		txErrs += stats.TxErrs
+		rxDrop += stats.RxDrop
+		txDrop += stats.TxDrop
+	}
+
+	return rxBytes, txBytes, rxPkts, txPkts, rxErrs, txErrs, rxDrop, txDrop, nil
+}
+
+func (m *Manager) getNetworkStatsFullFromXML(domain *libvirt.Domain) (rxBytes, txBytes, rxPkts, txPkts, rxErrs, txErrs, rxDrop, txDrop int64, err error) {
+	xmlDesc, err := domain.GetXMLDesc(0)
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, err
+	}
+
+	var domainDef struct {
+		Devices struct {
+			Interfaces []struct {
+				Target struct {
+					Dev string `xml:"dev,attr"`
+				} `xml:"target"`
+			} `xml:"interface"`
+		} `xml:"devices"`
+	}
+
+	if err := xml.Unmarshal([]byte(xmlDesc), &domainDef); err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, err
+	}
+
+	for _, iface := range domainDef.Devices.Interfaces {
+		if iface.Target.Dev == "" {
+			continue
+		}
+		stats, err := domain.InterfaceStats(iface.Target.Dev)
+		if err != nil {
+			continue
+		}
+		rxBytes += stats.RxBytes
+		txBytes += stats.TxBytes
+		rxPkts += stats.RxPackets
+		txPkts += stats.TxPackets
+		rxErrs += stats.RxErrs
+		txErrs += stats.TxErrs
+		rxDrop += stats.RxDrop
+		txDrop += stats.TxDrop
+	}
+
+	return
 }
 
 // readLoadAverage reads the load average from /proc/loadavg.

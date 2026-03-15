@@ -86,7 +86,7 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 	}
 
 	// Perform resize (admin=true to bypass plan limits)
-	err = h.vmService.ResizeVM(c.Request.Context(), vmID, vm.CustomerID, newVCPU, newMemoryMB, newDiskGB, true)
+	taskID, err := h.vmService.ResizeVM(c.Request.Context(), vmID, vm.CustomerID, newVCPU, newMemoryMB, newDiskGB, true)
 	if err != nil {
 		h.logger.Error("failed to resize VM",
 			"vm_id", vmID,
@@ -109,6 +109,19 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 		"old_disk_gb", vm.DiskGB,
 		"new_disk_gb", newDiskGB,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	if taskID != "" {
+		c.JSON(http.StatusAccepted, models.Response{
+			Data: gin.H{
+				"task_id":   taskID,
+				"vm_id":     vmID,
+				"vcpu":      newVCPU,
+				"memory_mb": newMemoryMB,
+				"disk_gb":   newDiskGB,
+			},
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{

@@ -546,6 +546,7 @@ function encryptPassword(string $password): string
     if (function_exists('encrypt')) {
         return encrypt($password);
     }
+    error_log('VirtueStack CRITICAL: WHMCS encrypt() function not available. Password stored as plaintext.');
     return $password;
 }
 
@@ -604,9 +605,7 @@ function notifyAdmin(string $subject, string $message): void
  */
 function logActivity(string $message): void
 {
-    if (function_exists('logActivity')) {
-        logActivity($message);
-    }
+    \logActivity($message);
 }
 
 /**
@@ -627,11 +626,21 @@ function logWebhook(string $level, string $message, array $context = []): void
         logModuleCall('virtuestack', 'webhook', $logMessage, '', '', '');
     }
 
-    // Also write to module log
     $logFile = dirname(__FILE__) . '/logs/webhook.log';
     $logDir = dirname($logFile);
     if (!is_dir($logDir)) {
         mkdir($logDir, 0755, true);
+    }
+
+    $maxLogSize = 10 * 1024 * 1024;
+    if (file_exists($logFile) && filesize($logFile) > $maxLogSize) {
+        $backupFile = $logFile . '.' . date('Y-m-d-His');
+        rename($logFile, $backupFile);
+        $logFiles = glob($logDir . '/webhook.log.*');
+        if (count($logFiles) > 5) {
+            usort($logFiles);
+            array_map('unlink', array_slice($logFiles, 0, count($logFiles) - 5));
+        }
     }
 
     $logEntry = sprintf(

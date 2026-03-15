@@ -8,18 +8,23 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/network"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -72,16 +77,18 @@ func initializeStorage(cfg *config.NodeAgentConfig, logger *slog.Logger) (storag
 
 // Server represents the VirtueStack Node Agent gRPC server.
 type Server struct {
-	config         *config.NodeAgentConfig
-	libvirtConn    *libvirt.Connect
-	grpcServer     *grpc.Server
-	vmManager      *vm.Manager
-	storageBackend storage.StorageBackend
-	storageType    storage.StorageType
-	templateMgr    any // *storage.TemplateManager for ceph, *storage.QCOWTemplateManager for qcow
-	logger         *slog.Logger
-	listenAddr     string
-	bgWg           sync.WaitGroup
+	config             *config.NodeAgentConfig
+	libvirtConn        *libvirt.Connect
+	grpcServer         *grpc.Server
+	vmManager          *vm.Manager
+	storageBackend     storage.StorageBackend
+	storageType        storage.StorageType
+	templateMgr        any // *storage.TemplateManager for ceph, *storage.QCOWTemplateManager for qcow
+	abusePreventionMgr *network.AbusePreventionManager
+	logger             *slog.Logger
+	listenAddr         string
+	metricsAddr        string
+	bgWg               sync.WaitGroup
 }
 
 // NewServer creates a new Node Agent server.
@@ -122,15 +129,22 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 			"addr", cfg.ControllerGRPCAddr)
 	}
 
+	metricsAddr := cfg.MetricsAddr
+	if metricsAddr == "" {
+		metricsAddr = ":9091"
+	}
+
 	s := &Server{
-		config:         cfg,
-		libvirtConn:    libvirtConn,
-		vmManager:      vmManager,
-		storageBackend: storageBackend,
-		storageType:    storageType,
-		templateMgr:    templateMgr,
-		logger:         logging.WithComponent(logger, "node-agent"),
-		listenAddr:     listenAddr,
+		config:             cfg,
+		libvirtConn:        libvirtConn,
+		vmManager:          vmManager,
+		storageBackend:     storageBackend,
+		storageType:        storageType,
+		templateMgr:        templateMgr,
+		abusePreventionMgr: network.NewAbusePreventionManager(logger),
+		logger:             logging.WithComponent(logger, "node-agent"),
+		listenAddr:         listenAddr,
+		metricsAddr:        metricsAddr,
 	}
 
 	// Setup gRPC server with mTLS
@@ -210,6 +224,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.logger.Info("starting gRPC server", "address", s.listenAddr, "node_id", s.config.NodeID)
 
+	s.startMetricsCollector(ctx)
+	s.startMetricsHTTPServer(ctx)
+
 	// Start serving in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
@@ -249,6 +266,129 @@ func (s *Server) Stop() {
 	}
 
 	s.logger.Info("node agent server stopped")
+}
+
+const metricsCollectInterval = 60 * time.Second
+
+func (s *Server) startMetricsCollector(ctx context.Context) {
+	s.trackBackgroundGoroutine(func() {
+		ticker := time.NewTicker(metricsCollectInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.collectVMMetrics(ctx)
+			}
+		}
+	})
+}
+
+func (s *Server) collectVMMetrics(ctx context.Context) {
+	domains, err := s.libvirtConn.ListAllDomains(0)
+	if err != nil {
+		s.logger.Warn("failed to list domains for metrics collection", "error", err)
+		return
+	}
+	defer func() {
+		for _, dom := range domains {
+			dom.Free()
+		}
+	}()
+
+	vmCount := len(domains)
+	metrics.NodeVMCount.Set(float64(vmCount))
+
+	for _, dom := range domains {
+		name, err := dom.GetName()
+		if err != nil {
+			continue
+		}
+
+		vmID := strings.TrimPrefix(name, "vs-")
+		if vmID == name {
+			continue
+		}
+
+		state, _, err := dom.GetState()
+		if err != nil {
+			continue
+		}
+
+		statusStr := vmMapLibvirtState(state)
+		metrics.VMStatus.WithLabelValues(vmID).Set(metrics.StatusToValue(statusStr))
+
+		if state != libvirt.DOMAIN_RUNNING {
+			continue
+		}
+
+		vmMetrics, err := s.vmManager.GetMetrics(ctx, vmID)
+		if err != nil {
+			continue
+		}
+
+		metrics.VMCPUUsagePercent.WithLabelValues(vmID).Set(vmMetrics.CPUUsagePercent)
+		metrics.VMMemoryUsageBytes.WithLabelValues(vmID).Set(float64(vmMetrics.MemoryUsageBytes))
+		metrics.VMDiskReadBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskReadBytes))
+		metrics.VMDiskWriteBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskWriteBytes))
+		metrics.VMDiskReadOpsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskReadOps))
+		metrics.VMDiskWriteOpsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskWriteOps))
+		metrics.VMNetworkRXBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkRXBytes))
+		metrics.VMNetworkTXBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkTXBytes))
+		metrics.VMNetworkRXPacketsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkRXPkts))
+		metrics.VMNetworkTXPacketsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkTXPkts))
+		metrics.VMNetworkRXErrorsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkRXErrs))
+		metrics.VMNetworkTXErrorsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkTXErrs))
+		metrics.VMNetworkRXDropsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkRXDrop))
+		metrics.VMNetworkTXDropsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkTXDrop))
+	}
+}
+
+func (s *Server) startMetricsHTTPServer(ctx context.Context) {
+	s.trackBackgroundGoroutine(func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+
+		srv := &http.Server{
+			Addr:    s.metricsAddr,
+			Handler: mux,
+		}
+
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
+
+		s.logger.Info("starting metrics HTTP server", "address", s.metricsAddr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("metrics HTTP server error", "error", err)
+		}
+	})
+}
+
+func vmMapLibvirtState(state libvirt.DomainState) string {
+	switch state {
+	case libvirt.DOMAIN_RUNNING:
+		return "running"
+	case libvirt.DOMAIN_BLOCKED:
+		return "blocked"
+	case libvirt.DOMAIN_PAUSED:
+		return "paused"
+	case libvirt.DOMAIN_SHUTDOWN:
+		return "shutting_down"
+	case libvirt.DOMAIN_SHUTOFF:
+		return "stopped"
+	case libvirt.DOMAIN_CRASHED:
+		return "crashed"
+	case libvirt.DOMAIN_PMSUSPENDED:
+		return "suspended"
+	default:
+		return "unknown"
+	}
 }
 
 // closeStorage closes the storage backend if it has a Close method.
@@ -325,6 +465,13 @@ func (s *Server) isLibvirtAlive() bool {
 // newBandwidthManager creates a new NodeBandwidthManager for bandwidth operations.
 func (s *Server) newBandwidthManager() *network.NodeBandwidthManager {
 	return network.NewNodeBandwidthManager(s.libvirtConn, s.logger)
+}
+
+// getVMTapInterface looks up the tap interface name for a VM from its domain XML.
+func (s *Server) getVMTapInterface(ctx context.Context, vmID string) (string, error) {
+	bwm := s.newBandwidthManager()
+	domainName := vm.DomainNameFromID(vmID)
+	return bwm.GetInterfaceName(ctx, domainName)
 }
 
 // getVNCPort extracts the VNC port from a running domain's XML.
@@ -558,6 +705,13 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		return nil, h.mapError(err, "creating VM")
 	}
 
+	// Apply abuse prevention nftables rules (block SMTP, block metadata endpoint)
+	if tapIface, tapErr := h.server.getVMTapInterface(ctx, req.GetVmId()); tapErr != nil {
+		logger.Warn("failed to get tap interface for abuse prevention", "error", tapErr)
+	} else if tapErr := h.server.abusePreventionMgr.ApplyVMRules(ctx, tapIface); tapErr != nil {
+		logger.Warn("failed to apply abuse prevention rules", "error", tapErr, "tap", tapIface)
+	}
+
 	return &nodeagentpb.CreateVMResponse{
 		VmId:              req.GetVmId(),
 		Success:           true,
@@ -627,6 +781,13 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete")
 	logger.Info("deleting VM")
+
+	// Remove abuse prevention nftables rules before deletion
+	if tapIface, tapErr := h.server.getVMTapInterface(ctx, req.GetVmId()); tapErr != nil {
+		logger.Warn("failed to get tap interface for abuse prevention cleanup", "error", tapErr)
+	} else if tapErr := h.server.abusePreventionMgr.RemoveVMRules(ctx, tapIface); tapErr != nil {
+		logger.Warn("failed to remove abuse prevention rules", "error", tapErr, "tap", tapIface)
+	}
 
 	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
 		return nil, h.mapError(err, "deleting VM domain")

@@ -33,7 +33,7 @@ ENV CGO_ENABLED=0 \
 COPY go.mod go.sum ./
 
 # Download dependencies (go.mod and go.sum are pre-validated)
-RUN GONOSUMCHECK=* GOFLAGS=-mod=mod go mod download && go mod verify
+RUN GOFLAGS=-mod=mod go mod download && go mod verify
 
 # Copy source code
 COPY . .

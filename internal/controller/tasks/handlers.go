@@ -104,6 +104,12 @@ type NodeAgentClient interface {
 	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
 	// GetQCOWDiskInfo returns information about a QCOW disk including size.
 	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error)
+	// ResizeVM modifies the resource allocation (vCPU, memory, disk) for a VM on the specified node.
+	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
+	// TransferDisk transfers a disk from a source node to a target node via streaming gRPC.
+	TransferDisk(ctx context.Context, opts *DiskTransferOptions) error
+	// PrepareMigratedVM creates a VM definition on the target node using a transferred disk.
+	PrepareMigratedVM(ctx context.Context, targetNodeID, vmID, diskPath string, vm *models.VM) error
 }
 
 // CreateVMRequest contains parameters for VM creation via node agent.
@@ -286,12 +292,16 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 	worker.RegisterHandler(models.TaskTypeSnapshotDelete, func(ctx context.Context, task *models.Task) error {
 		return handleSnapshotDelete(ctx, task, deps)
 	})
+	worker.RegisterHandler(models.TaskTypeVMResize, func(ctx context.Context, task *models.Task) error {
+		return handleVMResize(ctx, task, deps)
+	})
 
 	deps.Logger.Info("all task handlers registered",
 		"handlers", []string{
 			models.TaskTypeVMCreate,
 			models.TaskTypeVMReinstall,
 			models.TaskTypeVMMigrate,
+			models.TaskTypeVMResize,
 			models.TaskTypeBackupCreate,
 			models.TaskTypeVMDelete,
 			models.TaskTypeBackupRestore,

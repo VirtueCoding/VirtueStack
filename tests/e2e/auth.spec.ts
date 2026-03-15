@@ -1,4 +1,40 @@
 import { test, expect, Page } from '@playwright/test';
+import { createHmac } from 'crypto';
+
+function base32Decode(input: string): Buffer {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const cleaned = input.replace(/=+$/, '');
+  const bits: string[] = [];
+  for (const char of cleaned.toUpperCase()) {
+    const val = alphabet.indexOf(char);
+    if (val === -1) continue;
+    bits.push(val.toString(2).padStart(5, '0'));
+  }
+  const octets = bits.join('');
+  const bytes = Buffer.alloc(Math.floor(octets.length / 8));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(octets.slice(i * 8, i * 8 + 8), 2);
+  }
+  return bytes;
+}
+
+function generateTOTP(secret: string, period = 30, digits = 6): string {
+  const epoch = Math.floor(Date.now() / 1000 / period);
+  const counter = Buffer.alloc(8);
+  counter.writeUInt32BE(0, 0);
+  counter.writeUInt32BE(epoch, 4);
+  const key = base32Decode(secret.replace(/ /g, ''));
+  const hmac = createHmac('sha1', key);
+  hmac.update(counter);
+  const bytes = hmac.digest();
+  const offset = bytes[bytes.length - 1] & 0x0f;
+  const binary =
+    ((bytes[offset] & 0x7f) << 24) |
+    ((bytes[offset + 1] & 0xff) << 16) |
+    ((bytes[offset + 2] & 0xff) << 8) |
+    (bytes[offset + 3] & 0xff);
+  return (binary % Math.pow(10, digits)).toString().padStart(digits, '0');
+}
 
 /**
  * Authentication E2E Tests
@@ -125,9 +161,7 @@ test.describe('Admin Authentication', () => {
     await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
     await loginPage.expect2FARequired();
     
-    // Generate valid TOTP code (requires TOTP library)
-    // For now, this is a placeholder for the actual implementation
-    const validCode = '123456'; // Replace with actual TOTP generation
+    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET!);
     await loginPage.enter2FACode(validCode);
     
     // Should redirect to admin dashboard
@@ -208,8 +242,8 @@ test.describe('Customer Authentication', () => {
     await loginPage.login(customerWith2FA, 'Password123!');
     await loginPage.expect2FARequired();
     
-    // Enter valid TOTP code
-    await loginPage.enter2FACode('123456'); // Replace with actual code
+    const validCode = generateTOTP(process.env.CUSTOMER_TOTP_SECRET!);
+    await loginPage.enter2FACode(validCode);
     
     await expect(page).toHaveURL(/\/dashboard|\/vms/);
   });

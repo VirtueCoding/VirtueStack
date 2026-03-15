@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -104,7 +105,7 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 	// Get the IP address and verify it belongs to the VM
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
-		if sharederrors.Is(err, repository.ErrNotFound) {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
@@ -184,7 +185,7 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 	// Get the IP address and verify it belongs to the VM and customer
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
-		if sharederrors.Is(err, repository.ErrNotFound) {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
@@ -231,23 +232,23 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 				"hostname", req.Hostname,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			// Don't fail the request - the DB is the source of truth
-			// The PowerDNS sync can be retried later
 		}
 	}
 
 	// Write audit log
 	if h.auditRepo != nil {
-		_, _ = h.auditRepo.Create(c.Request.Context(), &models.AuditLog{
-			ActorID:       customerID,
+		changes, _ := json.Marshal(map[string]interface{}{"rdns_hostname": req.Hostname})
+		correlationID := middleware.GetCorrelationID(c)
+		clientIP := c.ClientIP()
+		_ = h.auditRepo.Append(c.Request.Context(), &models.AuditLog{
+			ActorID:       &customerID,
 			ActorType:     "customer",
+			ActorIP:       &clientIP,
 			Action:        "rdns.update",
 			ResourceType:  "ip_address",
-			ResourceID:    ipID,
-			ResourceName:  &ip.Address,
-			Changes:       map[string]interface{}{"rdns_hostname": req.Hostname},
-			CorrelationID: middleware.GetCorrelationID(c),
-			IP:            c.ClientIP(),
+			ResourceID:    &ipID,
+			Changes:       changes,
+			CorrelationID: &correlationID,
 			Success:       true,
 		})
 	}
@@ -302,7 +303,7 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 	// Get the IP address and verify it belongs to the VM and customer
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
-		if sharederrors.Is(err, repository.ErrNotFound) {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
@@ -347,21 +348,21 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 				"customer_id", customerID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			// Don't fail the request - the DB is the source of truth
 		}
 	}
 
 	// Write audit log
 	if h.auditRepo != nil {
-		_, _ = h.auditRepo.Create(c.Request.Context(), &models.AuditLog{
-			ActorID:       customerID,
+		correlationID := middleware.GetCorrelationID(c)
+		clientIP := c.ClientIP()
+		_ = h.auditRepo.Append(c.Request.Context(), &models.AuditLog{
+			ActorID:       &customerID,
 			ActorType:     "customer",
+			ActorIP:       &clientIP,
 			Action:        "rdns.delete",
 			ResourceType:  "ip_address",
-			ResourceID:    ipID,
-			ResourceName:  &ip.Address,
-			CorrelationID: middleware.GetCorrelationID(c),
-			IP:            c.ClientIP(),
+			ResourceID:    &ipID,
+			CorrelationID: &correlationID,
 			Success:       true,
 		})
 	}

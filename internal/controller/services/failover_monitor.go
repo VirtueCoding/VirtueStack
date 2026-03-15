@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,11 +42,11 @@ func DefaultFailoverMonitorConfig() FailoverMonitorConfig {
 // FailoverMonitor is a background service that monitors node heartbeats
 // and automatically triggers failover when consecutive_heartbeat_misses exceeds threshold.
 type FailoverMonitor struct {
-	nodeRepo    *repository.NodeRepository
-	failoverSvc *FailoverService
-	logger      *slog.Logger
-	config      FailoverMonitorConfig
-	// metrics
+	nodeRepo       *repository.NodeRepository
+	failoverSvc    *FailoverService
+	logger         *slog.Logger
+	config         FailoverMonitorConfig
+	mu             sync.Mutex
 	failoverCount  int64
 	lastFailoverAt *time.Time
 	recoveryTimeMs int64
@@ -184,9 +185,11 @@ func (m *FailoverMonitor) processNodeFailover(ctx context.Context, node models.N
 
 	// Record metrics
 	duration := time.Since(startTime)
+	m.mu.Lock()
 	m.failoverCount++
 	m.lastFailoverAt = &startTime
 	m.recoveryTimeMs = duration.Milliseconds()
+	m.mu.Unlock()
 
 	m.logger.Info("auto-failover completed for node",
 		"correlation_id", correlationID,
@@ -202,6 +205,8 @@ func (m *FailoverMonitor) processNodeFailover(ctx context.Context, node models.N
 
 // Metrics returns current failover monitor metrics.
 func (m *FailoverMonitor) Metrics() FailoverMonitorMetrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return FailoverMonitorMetrics{
 		FailoverCount:  m.failoverCount,
 		LastFailoverAt: m.lastFailoverAt,

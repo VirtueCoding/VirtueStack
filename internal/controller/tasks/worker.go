@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	taskmetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
-	"golang.org/x/sync/errgroup"
 )
 
 // JetStream constants.
@@ -107,20 +107,14 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	}
 
 	w.logger.Info("task worker started",
-		"num_workers", numWorkers,
 		"stream", StreamName,
 		"consumer", ConsumerName,
 	)
 
-	g, gctx := errgroup.WithContext(ctx)
-	for i := 0; i < numWorkers; i++ {
-		workerID := i
-		g.Go(func() error {
-			w.logger.Debug("worker started", "worker_id", workerID)
-			<-gctx.Done()
-			return nil
-		})
-	}
+	// NATS QueueSubscribe handles concurrency via its deliver policy and
+	// consumer AckWait/MaxDeliver settings; no additional goroutine pool needed.
+	// The numWorkers parameter is accepted for future use if a bounded pool is introduced.
+	_ = numWorkers
 
 	go func() {
 		<-ctx.Done()
@@ -163,6 +157,8 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 
 		logger.Info("processing task")
 
+		taskStart := time.Now()
+
 		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusRunning, nil, ""); err != nil {
 			logger.Error("failed to update task status to running", "error", err)
 			msg.Nak()
@@ -177,6 +173,8 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 			errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
 			logger.Error(errMsg)
 			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, errMsg)
+			taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
+			taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 			msg.Ack()
 			return
 		}
@@ -185,6 +183,8 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 		if err != nil {
 			logger.Error("task handler failed", "error", err)
 			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, err.Error())
+			taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
+			taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 			msg.Nak()
 			return
 		}
@@ -192,6 +192,9 @@ func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
 		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
 			logger.Error("failed to update task status to completed", "error", err)
 		}
+
+		taskmetrics.TasksTotal.WithLabelValues(task.Type, "completed").Inc()
+		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 
 		logger.Info("task completed successfully")
 		msg.Ack()
