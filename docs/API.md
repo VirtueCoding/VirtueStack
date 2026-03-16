@@ -74,7 +74,7 @@ VirtueStack exposes a three-tier RESTful API designed for different consumers:
 |------|-----------|----------|----------------|------------------|
 | **Admin** | `/api/v1/admin` | System administrators | JWT + mandatory 2FA | Full platform management |
 | **Customer** | `/api/v1/customer` | VPS customers | JWT + optional 2FA | Self-service VM management |
-| **Provisioning** | `/api/v1/provisioning` | Billing systems (WHMCS) | API Key (X-API-Key) | Automated VM provisioning |
+| **Provisioning** | `/api/v1/provisioning` | Billing systems (WHMCS) | API Key (X-API-Key) | Automated VM provisioning (payment-gated by billing system) |
 
 All requests and responses use JSON. The API is stateless — all necessary state is carried in JWT tokens or API keys.
 
@@ -345,22 +345,26 @@ Rate limiting uses a sliding-window algorithm with per-endpoint limits.
 | **Admin — General** | 500 requests | per minute |
 | **Customer — Read** | 100 requests | per minute |
 | **Customer — Write** | 30 requests | per minute |
-| **Provisioning — All** | 1000 requests | per minute |
+| **Provisioning — All** | 100 requests | per minute (per API key) |
 
-Specific per-action limits:
+Specific per-action limits (Customer / Admin):
 
-| Action | Limit | Window |
-|--------|-------|--------|
-| VM Create | 5 requests | per minute |
-| VM Delete | 10 requests | per minute |
-| VM Start | 20 requests | per minute |
-| VM Stop | 20 requests | per minute |
-| VM List | 100 requests | per minute |
-| Console Token | 10 requests | per minute |
-| Backup Create | 5 requests | per minute |
-| rDNS Update | 30 requests | per minute |
-| Login | 10 requests | per minute |
-| Password Change | 3 requests | per minute |
+| Action | Customer | Admin | Window |
+|--------|----------|-------|--------|
+| VM Create | 10/min | 100/min | per minute |
+| VM Delete | 5/min | 50/min | per minute |
+| VM Start | 20/min | 200/min | per minute |
+| VM Stop | 20/min | 200/min | per minute |
+| VM List | 60/min | 300/min | per minute |
+| Console Token | 10/min | 50/min | per minute |
+| Backup Create | 5/hour | 50/hour | per hour |
+| rDNS Update | 10/hour | unlimited | per hour |
+| Login | 5 per 15 min | 5 per 15 min | per 15 minutes |
+| Password Change | 5 per 15 min | 5 per 15 min | per 15 minutes |
+
+Rate limit keys:
+- **Admin/Customer:** keyed by `user_id` (falls back to IP if unauthenticated)
+- **Provisioning:** keyed by API key ID (falls back to IP if unauthenticated)
 
 **Rate limit headers (included in all responses):**
 
@@ -1705,6 +1709,8 @@ List VMs owned by the authenticated customer.
 
 Create a new VM. Uses the authenticated customer's ID automatically.
 
+> **Note:** This endpoint does not integrate with any billing system. In WHMCS deployments, VMs are created via the Provisioning API (payment-gated by WHMCS). This endpoint is intended for non-WHMCS deployments (e.g., prepaid credits, free tier). It has no per-endpoint rate limit and falls through to the general Customer Write limit (30/min).
+
 **Request Body:**
 
 | Field | Type | Required | Constraints |
@@ -2384,7 +2390,7 @@ WebSocket endpoint for serial console access. Requires a valid serial token.
 **Base Path:** `/api/v1/provisioning`  
 **Authentication:** API Key via `X-API-Key` header  
 **CSRF:** Not required (API key auth)  
-**Rate Limit:** 1000 requests/minute
+**Rate Limit:** 100 requests/minute per API key
 
 Designed for integration with billing systems like WHMCS. All VM operations use admin-level privileges.
 
