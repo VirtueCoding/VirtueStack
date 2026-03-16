@@ -554,7 +554,15 @@ func (s *WebhookService) GetPendingRetries(ctx context.Context, before time.Time
 }
 
 func (s *WebhookService) CalculateNextRetry(attemptCount int) time.Duration {
-	return time.Duration(1<<uint(attemptCount-1)) * time.Minute
+	if attemptCount < 1 {
+		return time.Minute
+	}
+	delay := time.Duration(1<<uint(attemptCount-1)) * time.Minute
+	maxDelay := 24 * time.Hour
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	return delay
 }
 
 func (s *WebhookService) VerifySignature(payload []byte, signature, secret string) bool {

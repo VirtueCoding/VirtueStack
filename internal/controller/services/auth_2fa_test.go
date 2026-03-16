@@ -3,14 +3,17 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +23,109 @@ type mock2FACustomerRepo struct {
 	updateErr   error
 	getErr      error
 	updateCalls int
+}
+
+func (m *mock2FACustomerRepo) GetByEmail(ctx context.Context, email string) (*models.Customer, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	return m.customer, nil
+}
+
+func (m *mock2FACustomerRepo) Create(ctx context.Context, customer *models.Customer) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) UpdateProfile(ctx context.Context, customerID string, params repository.ProfileUpdateParams) (*models.Customer, error) {
+	return m.customer, nil
+}
+
+func (m *mock2FACustomerRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) SoftDelete(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) CreateSession(ctx context.Context, session *models.Session) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) GetSession(ctx context.Context, id string) (*models.Session, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mock2FACustomerRepo) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mock2FACustomerRepo) DeleteSession(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) CountSessionsByUser(ctx context.Context, userID, userType string) (int, error) {
+	return 0, nil
+}
+
+func (m *mock2FACustomerRepo) DeleteOldestSession(ctx context.Context, userID, userType string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error) {
+	return nil, nil
+}
+
+func (m *mock2FACustomerRepo) UpdateSessionLastReauthAt(ctx context.Context, sessionID string, timestamp time.Time) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) GetFailedLoginCount(ctx context.Context, email string, window time.Duration) (int, error) {
+	return 0, nil
+}
+
+func (m *mock2FACustomerRepo) RecordFailedLogin(ctx context.Context, email string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) ClearFailedLogins(ctx context.Context, email string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) UpdateCustomerPasswordHash(ctx context.Context, id, passwordHash string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) CreatePasswordReset(ctx context.Context, reset *models.PasswordReset) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) GetPasswordResetByTokenHash(ctx context.Context, tokenHash string) (*models.PasswordReset, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mock2FACustomerRepo) MarkPasswordResetUsed(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error {
+	return nil
+}
+
+func (m *mock2FACustomerRepo) List(ctx context.Context, filter repository.CustomerListFilter) ([]models.Customer, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mock2FACustomerRepo) UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error {
+	return nil
 }
 
 func (m *mock2FACustomerRepo) GetByID(ctx context.Context, id string) (*models.Customer, error) {
@@ -341,7 +447,9 @@ func hashTestPassword(password string) (string, error) {
 }
 
 func generateValidTOTPCode(secret string) string {
-	return "123456"
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		panic("failed to generate TOTP code: " + err.Error())
+	}
+	return code
 }
-
-var _ repository.CustomerRepository = (*mock2FACustomerRepo)(nil)

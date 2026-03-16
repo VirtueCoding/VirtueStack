@@ -462,12 +462,13 @@ func (s *NodeService) ResetFailoverCircuitBreaker(nodeID string) {
 
 // GetLeastLoadedNode returns the best node for VM placement in a given location.
 // It selects the node with the most available capacity that is online and accepting placements.
-func (s *NodeService) GetLeastLoadedNode(ctx context.Context, locationID, storageBackend string) (*models.Node, error) {
+// Nodes can host VMs with any storage backend (ceph or qcow).
+func (s *NodeService) GetLeastLoadedNode(ctx context.Context, locationID string) (*models.Node, error) {
 	if locationID == "" {
 		return nil, fmt.Errorf("location ID is required")
 	}
 
-	node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID, storageBackend)
+	node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			return nil, fmt.Errorf("no available nodes in location %s", locationID)

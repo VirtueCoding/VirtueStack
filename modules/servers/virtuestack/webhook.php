@@ -19,6 +19,7 @@ declare(strict_types=1);
 // Load WHMCS environment
 $whmcsPath = dirname(__FILE__, 4);
 require_once $whmcsPath . '/init.php';
+require_once __DIR__ . '/lib/shared_functions.php';
 
 use WHMCS\Database\Capsule;
 
@@ -67,7 +68,7 @@ function handleWebhook(): void
 
     // Verify signature
     $signature = $_SERVER[SIGNATURE_HEADER] ?? '';
-    if (!verifySignature($body, $signature)) {
+    if (!verifyWebhookSignature($body, $signature)) {
         logWebhook('error', 'Invalid webhook signature');
         sendResponse(401, ['error' => 'Invalid signature']);
         return;
@@ -118,6 +119,61 @@ function handleWebhook(): void
 
             case 'vm.resized':
                 handleVMResized($vmId, $whmcsServiceId, $result);
+                break;
+
+            case 'vm.started':
+                if ($whmcsServiceId > 0) {
+                    updateServiceField($whmcsServiceId, 'vm_status', 'running');
+                } else if (!empty($vmId)) {
+                    $serviceId = findServiceByVmId($vmId);
+                    if ($serviceId > 0) {
+                        updateServiceField($serviceId, 'vm_status', 'running');
+                    }
+                }
+                break;
+
+            case 'vm.stopped':
+                if ($whmcsServiceId > 0) {
+                    updateServiceField($whmcsServiceId, 'vm_status', 'stopped');
+                } else if (!empty($vmId)) {
+                    $serviceId = findServiceByVmId($vmId);
+                    if ($serviceId > 0) {
+                        updateServiceField($serviceId, 'vm_status', 'stopped');
+                    }
+                }
+                break;
+
+            case 'vm.reinstalled':
+                if ($whmcsServiceId > 0) {
+                    updateServiceField($whmcsServiceId, 'provisioning_status', 'active');
+                    updateServiceField($whmcsServiceId, 'vm_status', 'running');
+                    logActivity("VirtueStack: VM reinstalled for service {$whmcsServiceId}");
+                }
+                break;
+
+            case 'vm.migrated':
+                if ($whmcsServiceId > 0) {
+                    $newNodeId = $data['node_id'] ?? '';
+                    updateServiceField($whmcsServiceId, 'node_id', $newNodeId);
+                    logActivity("VirtueStack: VM migrated for service {$whmcsServiceId} to node {$newNodeId}");
+                }
+                break;
+
+            case 'backup.completed':
+                if ($whmcsServiceId > 0) {
+                    logActivity("VirtueStack: Backup completed for service {$whmcsServiceId}");
+                }
+                break;
+
+            case 'backup.failed':
+                if ($whmcsServiceId > 0) {
+                    $errorMsg = $data['message'] ?? $data['error'] ?? 'Unknown error';
+                    logActivity("VirtueStack: Backup FAILED for service {$whmcsServiceId}: {$errorMsg}");
+                    notifyAdmin(
+                        'VirtueStack Backup Failure',
+                        "Backup failed for service ID {$whmcsServiceId}\n\nError: {$errorMsg}"
+                    );
+                }
                 break;
 
             case 'task.completed':
@@ -318,7 +374,7 @@ function handleVMResized(string $vmId, int $serviceId, array $result): void
         return;
     }
 
-    logActivity("VirtueStack: VM resized via webhook - Service {$serviceId}: " . json_encode($result));
+    logActivity("VirtueStack: VM resized via webhook - Service {$serviceId}: " . substr(json_encode($result, JSON_UNESCAPED_SLASHES), 0, 500));
 }
 
 /**
@@ -357,182 +413,8 @@ function handleTaskFailed(string $taskId, array $data): void
 }
 
 // ============================================================================
-// HELPER FUNCTIONS
+// WEBHOOK-SPECIFIC HELPER FUNCTIONS
 // ============================================================================
-
-/**
- * Verify webhook signature.
- *
- * @param string $body      Request body
- * @param string $signature Signature from header
- *
- * @return bool
- */
-function verifySignature(string $body, string $signature): bool
-{
-    if (empty($signature)) {
-        return false;
-    }
-
-    $secret = getWebhookSecret();
-    if (empty($secret)) {
-        logWebhook('warning', 'Webhook secret not configured, rejecting request');
-        return false;
-    }
-
-    $expectedSignature = hash_hmac('sha256', $body, $secret);
-    return hash_equals($expectedSignature, $signature);
-}
-
-/**
- * Get webhook secret from WHMCS configuration.
- *
- * @return string
- */
-function getWebhookSecret(): string
-{
-    try {
-        $result = Capsule::table('tblconfiguration')
-            ->where('setting', WEBHOOK_SECRET_SETTING)
-            ->value('value');
-
-        return $result ? decrypt($result) : '';
-    } catch (\Exception $e) {
-        return '';
-    }
-}
-
-/**
- * Find service ID by task ID.
- *
- * @param string $taskId Task UUID
- *
- * @return int
- */
-function findServiceByTaskId(string $taskId): int
-{
-    try {
-        $fieldId = getCustomFieldId('task_id');
-        if ($fieldId <= 0) {
-            return 0;
-        }
-
-        return (int) Capsule::table('tblcustomfieldsvalues')
-            ->where('fieldid', $fieldId)
-            ->where('value', $taskId)
-            ->value('relid') ?? 0;
-    } catch (\Exception $e) {
-        return 0;
-    }
-}
-
-/**
- * Find service ID by VM ID.
- *
- * @param string $vmId VM UUID
- *
- * @return int
- */
-function findServiceByVmId(string $vmId): int
-{
-    try {
-        $fieldId = getCustomFieldId('vm_id');
-        if ($fieldId <= 0) {
-            return 0;
-        }
-
-        return (int) Capsule::table('tblcustomfieldsvalues')
-            ->where('fieldid', $fieldId)
-            ->where('value', $vmId)
-            ->value('relid') ?? 0;
-    } catch (\Exception $e) {
-        return 0;
-    }
-}
-
-/**
- * Get custom field ID by name.
- *
- * @param string $fieldName Field name
- *
- * @return int
- */
-function getCustomFieldId(string $fieldName): int
-{
-    try {
-        return (int) Capsule::table('tblcustomfields')
-            ->where('fieldname', $fieldName)
-            ->where('type', 'product')
-            ->value('id') ?? 0;
-    } catch (\Exception $e) {
-        return 0;
-    }
-}
-
-/**
- * Update service custom field value.
- *
- * @param int    $serviceId Service ID
- * @param string $fieldName Field name
- * @param string $value     New value
- */
-function updateServiceField(int $serviceId, string $fieldName, string $value): void
-{
-    try {
-        $fieldId = getCustomFieldId($fieldName);
-
-        if ($fieldId <= 0) {
-            // Create the field
-            $fieldId = (int) Capsule::table('tblcustomfields')->insertGetId([
-                'type' => 'product',
-                'relid' => 0,
-                'fieldname' => $fieldName,
-                'fieldtype' => 'text',
-                'adminonly' => 'on',
-                'created_at' => date('Y-m-d H:i:s'),
-                'updated_at' => date('Y-m-d H:i:s'),
-            ]);
-        }
-
-        // Check if value exists
-        $exists = Capsule::table('tblcustomfieldsvalues')
-            ->where('relid', $serviceId)
-            ->where('fieldid', $fieldId)
-            ->exists();
-
-        if ($exists) {
-            Capsule::table('tblcustomfieldsvalues')
-                ->where('relid', $serviceId)
-                ->where('fieldid', $fieldId)
-                ->update(['value' => $value]);
-        } else {
-            Capsule::table('tblcustomfieldsvalues')->insert([
-                'fieldid' => $fieldId,
-                'relid' => $serviceId,
-                'value' => $value,
-            ]);
-        }
-    } catch (\Exception $e) {
-        logWebhook('error', "Failed to update service field {$fieldName}: " . $e->getMessage());
-    }
-}
-
-/**
- * Update service dedicated IP.
- *
- * @param int    $serviceId Service ID
- * @param string $ipAddress IP address
- */
-function updateServiceDedicatedIp(int $serviceId, string $ipAddress): void
-{
-    try {
-        Capsule::table('tblhosting')
-            ->where('id', $serviceId)
-            ->update(['dedicatedip' => $ipAddress]);
-    } catch (\Exception $e) {
-        logWebhook('error', "Failed to update dedicated IP: " . $e->getMessage());
-    }
-}
 
 /**
  * Encrypt password using WHMCS encryption.
@@ -546,8 +428,9 @@ function encryptPassword(string $password): string
     if (function_exists('encrypt')) {
         return encrypt($password);
     }
-    error_log('VirtueStack CRITICAL: WHMCS encrypt() function not available. Password stored as plaintext.');
-    return $password;
+
+    error_log('VirtueStack CRITICAL: WHMCS encrypt() function not available. Cannot store password securely.');
+    return '';
 }
 
 /**

@@ -37,6 +37,7 @@ func testLogger() *slog.Logger {
 }
 
 // TestRequireReauthForDestructive tests the re-authentication check for destructive actions.
+// auditRepo is nil because RequireReauthForDestructive does not interact with the audit log.
 func TestRequireReauthForDestructive(t *testing.T) {
 	logger := testLogger()
 	ctx := context.Background()
@@ -82,8 +83,8 @@ func TestRequireReauthForDestructive(t *testing.T) {
 	})
 
 	t.Run("DestructiveActionAtWindowBoundary", func(t *testing.T) {
-		// Re-authenticated exactly 5 minutes ago (at boundary - should still be valid)
-		lastReauth := time.Now().Add(-5 * time.Minute)
+		// Re-authenticated 4 minutes 59 seconds ago (just within 5-minute window)
+		lastReauth := time.Now().Add(-5*time.Minute + time.Second)
 		mock := &mockCustomerRepository{lastReauthAt: &lastReauth}
 		service := NewRBACService(nil, mock, logger)
 

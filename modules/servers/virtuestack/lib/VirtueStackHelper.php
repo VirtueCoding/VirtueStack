@@ -387,9 +387,9 @@ final class VirtueStackHelper
     public static function log(string $action, string $request, string $response, string $data = ''): void
     {
         if (function_exists('logModuleCall')) {
-            // Sanitize sensitive data
             $request = self::sanitizeLog($request);
             $response = self::sanitizeLog($response);
+            $data = self::sanitizeLog($data);
             
             logModuleCall('virtuestack', $action, $request, $response, $data, '');
         }
@@ -424,6 +424,18 @@ final class VirtueStackHelper
     /**
      * Build the Customer WebUI URL with SSO token.
      *
+     * SECURITY WARNING: SSO token is passed via query parameter for backward compatibility.
+     * This exposes the token in browser history, referrer headers, and server logs.
+     * The JWT expiry is short (1 hour) to limit the exposure window.
+     *
+     * RECOMMENDED: Implement a POST-based token exchange flow instead:
+     *   1. WHMCS module stores a short-lived opaque token server-side (WHMCS DB or file)
+     *   2. Customer is redirected to WebUI with the opaque token in the URL (not the JWT)
+     *   3. WebUI POSTs the opaque token to /api/v1/customer/auth/sso-exchange
+     *   4. Controller validates the opaque token and returns a Set-Cookie with an HttpOnly session
+     *   5. WebUI reads the session cookie and redirects to /vm/{vmId}
+     *   6. The opaque token is single-use and expires within minutes
+     *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID
      * @param string $ssoToken   SSO JWT token
@@ -433,18 +445,14 @@ final class VirtueStackHelper
     public static function buildWebuiUrl(string $webuiUrl, string $vmId, string $ssoToken): string
     {
         $webuiUrl = rtrim($webuiUrl, '/');
-        // SECURITY: SSO token is passed via query parameter for backward compatibility.
-        // This exposes the token in browser history, referrer headers, and server logs.
-        // Mitigated by short JWT expiry (1 hour). For improved security, a future version
-        // should implement a POST-based token exchange that sets an HttpOnly session cookie:
-        //   1. WHMCS module POSTs the SSO token to /api/v1/customer/auth/sso-exchange
-        //   2. Controller validates and returns a Set-Cookie with a short-lived opaque session
-        //   3. Customer WebUI reads the cookie (never the URL) and redirects to /vm/{vmId}
         return "{$webuiUrl}/vm/{$vmId}?sso_token={$ssoToken}";
     }
 
     /**
      * Build the Console WebUI URL with SSO token.
+     *
+     * SECURITY WARNING: Same concern as buildWebuiUrl(). Token is exposed in URL.
+     * See buildWebuiUrl() for the recommended POST-based token exchange flow.
      *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID

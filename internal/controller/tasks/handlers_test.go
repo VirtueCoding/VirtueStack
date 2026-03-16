@@ -48,9 +48,10 @@ func TestHashPassword(t *testing.T) {
 			errContains: "special character",
 		},
 		{
-			name:     "empty password",
-			password: "",
-			wantErr:  false, // Returns empty string, not error
+			name:        "empty password",
+			password:    "",
+			wantErr:     true,
+			errContains: "at least 8 characters",
 		},
 	}
 
@@ -71,13 +72,6 @@ func TestHashPassword(t *testing.T) {
 
 			if err != nil {
 				t.Errorf("hashPassword() unexpected error = %v", err)
-				return
-			}
-
-			if tt.password == "" {
-				if hash != "" {
-					t.Errorf("hashPassword() with empty password should return empty hash, got %q", hash)
-				}
 				return
 			}
 

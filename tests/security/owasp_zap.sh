@@ -40,6 +40,49 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 ZAP_IMAGE="owasp/zap2docker-stable"
 ZAP_CONTAINER="zap-scan-${TIMESTAMP}"
 
+# --------------------------------------------------------------------------
+# Authenticated Scanning Configuration
+# --------------------------------------------------------------------------
+# To run authenticated scans, set the following environment variables:
+#
+#   ZAP_ADMIN_EMAIL      - Admin account email for login
+#   ZAP_ADMIN_PASSWORD   - Admin account password
+#   ZAP_CUSTOMER_EMAIL   - Customer account email for login
+#   ZAP_CUSTOMER_PASSWORD - Customer account password
+#
+# Authenticated scanning works by:
+#   1. Starting ZAP in daemon mode (full/ajax scan types)
+#   2. Using ZAP's authentication scripts to log in via the UI
+#   3. Running spider and active scan with the authenticated session
+#
+# Example usage with admin credentials:
+#   ZAP_ADMIN_EMAIL=admin@virtuestack.local \
+#   ZAP_ADMIN_PASSWORD=AdminTest123! \
+#   ./owasp_zap.sh http://localhost:3000 full
+#
+# Example usage with customer credentials:
+#   ZAP_CUSTOMER_EMAIL=customer@virtuestack.local \
+#   ZAP_CUSTOMER_PASSWORD=CustomerTest123! \
+#   ./owasp_zap.sh http://localhost:3000 ajax
+#
+# If 2FA/TOTP is enabled on the admin account, you must either:
+#   - Disable 2FA for the test admin account, or
+#   - Provide ZAP_TOTP_SECRET to generate valid TOTP codes
+#   - Use a ZAP authentication script that handles the 2FA flow
+#
+# The ZAP container will use these credentials to authenticate via the
+# /login endpoint and maintain session cookies during scanning.
+# Authenticated scans discover vulnerabilities behind login walls that
+# unauthenticated scans cannot reach (e.g., XSS in VM detail pages,
+# IDOR in backup endpoints, etc.).
+# --------------------------------------------------------------------------
+
+# Auth credentials (read from environment, not set here for security)
+ZAP_ADMIN_EMAIL="${ZAP_ADMIN_EMAIL:-}"
+ZAP_ADMIN_PASSWORD="${ZAP_ADMIN_PASSWORD:-}"
+ZAP_CUSTOMER_EMAIL="${ZAP_CUSTOMER_EMAIL:-}"
+ZAP_CUSTOMER_PASSWORD="${ZAP_CUSTOMER_PASSWORD:-}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -183,6 +226,92 @@ wait_for_ajax_spider() {
     return 0
 }
 
+# Function to authenticate ZAP with admin credentials
+authenticate_zap_admin() {
+    if [ -z "${ZAP_ADMIN_EMAIL}" ] || [ -z "${ZAP_ADMIN_PASSWORD}" ]; then
+        echo -e "${YELLOW}Admin credentials not set, skipping authenticated admin scan${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Authenticating ZAP with admin credentials...${NC}"
+
+    # Use ZAP API to set up form-based authentication
+    docker exec ${ZAP_CONTAINER} zap-cli -v \
+        --zap-url http://localhost:8080 \
+        authentication.set_form_authentication \
+        --context-id 1 \
+        --login-url "${TARGET_URL}/login" \
+        --username-field "email" \
+        --password-field "password" \
+        --form-based-auth-config "{\"loginRequest\":\"POST ${TARGET_URL}/login\",\"postData\":\"email=${ZAP_ADMIN_EMAIL}&password=${ZAP_ADMIN_PASSWORD}\"}" 2>/dev/null || true
+
+    # Set the credentials for the context
+    docker exec ${ZAP_CONTAINER} zap-cli -v \
+        --zap-url http://localhost:8080 \
+        users.new \
+        --context-id 1 \
+        --username "admin-test-user" \
+        --password "${ZAP_ADMIN_PASSWORD}" 2>/dev/null || true
+
+    # Set the user as the authenticated user for scanning
+    docker exec ${ZAP_CONTAINER} zap-cli -v \
+        --zap-url http://localhost:8080 \
+        forcedUser.set_authenticated_user \
+        --context-id 1 \
+        --user-id 1 2>/dev/null || true
+
+    # Perform the login to establish session
+    local authResponse=$(curl -s -c - "${TARGET_URL}/api/v1/admin/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${ZAP_ADMIN_EMAIL}\",\"password\":\"${ZAP_ADMIN_PASSWORD}\"}" 2>/dev/null)
+
+    if echo "${authResponse}" | grep -q "access_token\|token"; then
+        local token=$(echo "${authResponse}" | jq -r '.data.access_token // .access_token // .token // empty' 2>/dev/null)
+        if [ -n "${token}" ]; then
+            # Set ZAP session cookie via API
+            docker exec ${ZAP_CONTAINER} zap-cli -v \
+                --zap-url http://localhost:8080 \
+                httpSessions.add_session_token \
+                --session-name "admin-session" \
+                --token-name "Authorization" \
+                --token-value "Bearer ${token}" 2>/dev/null || true
+        fi
+    fi
+
+    echo -e "${GREEN}Admin authentication configured${NC}"
+    return 0
+}
+
+# Function to authenticate ZAP with customer credentials
+authenticate_zap_customer() {
+    if [ -z "${ZAP_CUSTOMER_EMAIL}" ] || [ -z "${ZAP_CUSTOMER_PASSWORD}" ]; then
+        echo -e "${YELLOW}Customer credentials not set, skipping authenticated customer scan${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Authenticating ZAP with customer credentials...${NC}"
+
+    # Perform the login to establish session
+    local authResponse=$(curl -s -c - "${TARGET_URL}/api/v1/customer/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${ZAP_CUSTOMER_EMAIL}\",\"password\":\"${ZAP_CUSTOMER_PASSWORD}\"}" 2>/dev/null)
+
+    if echo "${authResponse}" | grep -q "access_token\|token"; then
+        local token=$(echo "${authResponse}" | jq -r '.data.access_token // .access_token // .token // empty' 2>/dev/null)
+        if [ -n "${token}" ]; then
+            docker exec ${ZAP_CONTAINER} zap-cli -v \
+                --zap-url http://localhost:8080 \
+                httpSessions.add_session_token \
+                --session-name "customer-session" \
+                --token-name "Authorization" \
+                --token-value "Bearer ${token}" 2>/dev/null || true
+        fi
+    fi
+
+    echo -e "${GREEN}Customer authentication configured${NC}"
+    return 0
+}
+
 # Function to run baseline scan
 run_baseline_scan() {
     echo -e "${YELLOW}Running baseline scan...${NC}"
@@ -219,7 +348,11 @@ run_full_scan() {
     
     # Wait for ZAP
     wait_for_zap
-    
+
+    # Set up authenticated scanning if credentials are provided
+    authenticate_zap_admin || true
+    authenticate_zap_customer || true
+
     # Spider the target
     echo -e "${YELLOW}Spidering target...${NC}"
     docker exec ${ZAP_CONTAINER} zap-cli spider "${TARGET_URL}" || true
@@ -368,7 +501,11 @@ run_ajax_scan() {
         zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
     
     wait_for_zap
-    
+
+    # Set up authenticated scanning if credentials are provided
+    authenticate_zap_admin || true
+    authenticate_zap_customer || true
+
     # Run AJAX spider
     echo -e "${YELLOW}Running AJAX spider...${NC}"
     docker exec ${ZAP_CONTAINER} zap-cli ajax-spider "${TARGET_URL}" || true

@@ -22,6 +22,14 @@ var (
 		[]string{"vm_id"},
 	)
 
+	VMMemoryLimitBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "vs_vm_memory_limit_bytes",
+			Help: "VM allocated memory limit in bytes",
+		},
+		[]string{"vm_id"},
+	)
+
 	VMDiskReadBytesTotal = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "vs_vm_disk_read_bytes_total",

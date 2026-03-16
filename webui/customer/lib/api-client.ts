@@ -1,15 +1,5 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
-export interface ApiError {
-  code: string;
-  message: string;
-  correlation_id?: string;
-}
-
-export interface ApiResponse<T> {
-  data: T;
-}
-
 export interface AuthTokens {
   token_type: string;
   expires_in: number;
@@ -55,7 +45,7 @@ async function fetchCsrfToken(): Promise<void> {
   }
 }
 
-function buildHeaders(includeAuth = true, includeCsrf = false): HeadersInit {
+function buildHeaders(includeCsrf = false): HeadersInit {
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     "Accept": "application/json",
@@ -93,7 +83,6 @@ async function parseError(response: Response): Promise<ApiClientError> {
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
-  includeAuth = true
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
@@ -104,7 +93,7 @@ export async function apiRequest<T>(
     ...options,
     credentials: "include",
     headers: {
-      ...buildHeaders(includeAuth, isStateChanging),
+      ...buildHeaders(isStateChanging),
       ...options.headers,
     },
   };
@@ -117,7 +106,7 @@ export async function apiRequest<T>(
   }
 
   if (response.status === 204) {
-    return undefined as T;
+    return undefined as unknown as T;
   }
 
   const data = await response.json();
@@ -125,36 +114,33 @@ export async function apiRequest<T>(
 }
 
 export const apiClient = {
-  get<T>(endpoint: string, includeAuth = true): Promise<T> {
-    return apiRequest<T>(endpoint, { method: "GET" }, includeAuth);
+  get<T>(endpoint: string): Promise<T> {
+    return apiRequest<T>(endpoint, { method: "GET" });
   },
 
-  post<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  post<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "POST", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  put<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  put<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "PUT", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  patch<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  patch<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "PATCH", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  delete<T>(endpoint: string, includeAuth = true): Promise<T> {
-    return apiRequest<T>(endpoint, { method: "DELETE" }, includeAuth);
+  delete<T>(endpoint: string): Promise<T> {
+    return apiRequest<T>(endpoint, { method: "DELETE" });
   },
 };
 
@@ -185,20 +171,20 @@ let tokenValidUntil = 0;
 export const customerAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
     await fetchCsrfToken();
-    return apiClient.post<AuthTokens>("/customer/auth/login", credentials, false);
+    return apiClient.post<AuthTokens>("/customer/auth/login", credentials);
   },
 
   async verify2FA(request: Verify2FARequest): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/customer/auth/verify-2fa", request, false);
+    return apiClient.post<AuthTokens>("/customer/auth/verify-2fa", request);
   },
 
   async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/customer/auth/refresh", {}, false);
+    return apiClient.post<AuthTokens>("/customer/auth/refresh", {});
   },
 
   async logout(): Promise<void> {
     try {
-      await apiClient.post("/customer/auth/logout", {}, true);
+      await apiClient.post("/customer/auth/logout", {});
     } catch {
     }
     tokenValidUntil = 0;
@@ -265,7 +251,7 @@ export interface VM {
   id: string;
   name: string;
   hostname: string;
-  status: "running" | "stopped" | "error" | "provisioning";
+  status: "running" | "stopped" | "error" | "provisioning" | "suspended" | "migrating" | "reinstalling" | "deleted";
   ipv4: string;
   vcpu: number;
   memory_mb: number;
@@ -289,6 +275,10 @@ export interface VMOperationResponse {
 export const vmApi = {
   async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
     return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
+  },
+
+  async getSerialToken(vmId: string): Promise<ConsoleTokenResponse> {
+    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/serial-token`, {});
   },
 
   async startVM(vmId: string): Promise<VMOperationResponse> {
@@ -405,7 +395,7 @@ export const snapshotApi = {
   },
 };
 
-export type { AuthTokens as AuthTokensType };
+
 
 export interface CustomerProfile {
   id: string;
@@ -521,6 +511,10 @@ export const settingsApi = {
     return apiClient.get<BackupCodesResponse>("/customer/2fa/backup-codes");
   },
 
+  async get2FAStatus(): Promise<{ enabled: boolean }> {
+    return apiClient.get<{ enabled: boolean }>("/customer/2fa/status");
+  },
+
   async regenerateBackupCodes(): Promise<BackupCodesResponse> {
     return apiClient.post<BackupCodesResponse>("/customer/2fa/backup-codes/regenerate", {});
   },
@@ -587,35 +581,60 @@ export const isoApi = {
   async uploadISO(
     vmId: string,
     file: File,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
+    signal?: AbortSignal,
   ): Promise<ISOUploadResponse> {
     const url = `${API_BASE_URL}/customer/vms/${vmId}/iso/upload`;
-
-    const formData = new FormData();
-    formData.append("file", file);
-
     const csrfToken = getCsrfToken();
-    const headers: HeadersInit = {
-      Accept: "application/json",
-    };
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
 
-    const response = await fetch(url, {
-      method: "POST",
-      credentials: "include",
-      headers,
-      body: formData,
+    return new Promise<ISOUploadResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append("file", file);
+
+      xhr.open("POST", url);
+      xhr.withCredentials = true;
+
+      if (csrfToken) {
+        xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+      }
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data.data as ISOUploadResponse);
+          } catch {
+            reject(new ApiClientError("Invalid response", "PARSE_ERROR", xhr.status));
+          }
+        } else {
+          reject(new ApiClientError(
+            xhr.statusText || "Upload failed",
+            "UPLOAD_ERROR",
+            xhr.status,
+          ));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new ApiClientError("Network error during upload", "NETWORK_ERROR", 0));
+      };
+
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          xhr.abort();
+          reject(new DOMException("Upload cancelled", "AbortError"));
+        });
+      }
+
+      xhr.send(formData);
     });
-
-    if (!response.ok) {
-      const error = await parseError(response);
-      throw error;
-    }
-
-    const data = await response.json();
-    return data.data as ISOUploadResponse;
   },
 
   async deleteISO(vmId: string, isoId: string): Promise<void> {

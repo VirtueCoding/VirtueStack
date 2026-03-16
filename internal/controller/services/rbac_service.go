@@ -144,8 +144,10 @@ func (s *RBACService) logDeniedAndReturn(ctx context.Context, userID, userRole, 
 		ErrorMessage: &errMsg,
 	}
 
-	if err := s.auditRepo.Append(ctx, auditLog); err != nil {
-		s.logger.Error("failed to log denied permission to audit", "error", err)
+	if s.auditRepo != nil {
+		if err := s.auditRepo.Append(ctx, auditLog); err != nil {
+			s.logger.Error("failed to log denied permission to audit", "error", err)
+		}
 	}
 
 	return false

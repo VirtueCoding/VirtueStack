@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -85,7 +86,13 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 			c.Request.Method == http.MethodHead ||
 			c.Request.Method == http.MethodOptions {
 			// Generate new token for GET requests
-			token := generateToken()
+			token, err := generateToken()
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"error": "Failed to generate CSRF token",
+				})
+				return
+			}
 
 			// Set HttpOnly cookie
 			c.SetCookie(
@@ -136,7 +143,13 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 		}
 
 		// Token is valid, regenerate for this request
-		token := generateToken()
+		token, err := generateToken()
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to generate CSRF token",
+			})
+			return
+		}
 
 		// Set new HttpOnly cookie
 		c.SetCookie(
@@ -157,12 +170,10 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 }
 
 // generateToken creates a cryptographically secure random token.
-func generateToken() string {
+func generateToken() (string, error) {
 	b := make([]byte, csrfTokenLength)
 	if _, err := rand.Read(b); err != nil {
-		// This should never happen in practice, but fall back to panic
-		// as we cannot safely proceed without proper entropy
-		panic("failed to generate CSRF token: " + err.Error())
+		return "", fmt.Errorf("failed to generate CSRF token: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
 }

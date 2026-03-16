@@ -34,6 +34,7 @@ func scanVM(row pgx.Row) (models.VM, error) {
 		&vm.RootPasswordEncrypted, &vm.WHMCSServiceID,
 		&vm.AttachedISO,
 		&vm.CreatedAt, &vm.UpdatedAt, &vm.DeletedAt,
+		&vm.StorageBackend, &vm.DiskPath, &vm.CephPool, &vm.RBDImage,
 	)
 	return vm, err
 }
@@ -46,7 +47,8 @@ const vmSelectCols = `
 	mac_address, template_id, libvirt_domain_name,
 	root_password_encrypted, whmcs_service_id,
 	attached_iso,
-	created_at, updated_at, deleted_at`
+	created_at, updated_at, deleted_at,
+	storage_backend, disk_path, ceph_pool, rbd_image`
 
 // Create inserts a new VM record into the database.
 // The VM's ID, CreatedAt, and UpdatedAt are populated by the database.
@@ -56,8 +58,9 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 			customer_id, node_id, plan_id, hostname, status,
 			vcpu, memory_mb, disk_gb, port_speed_mbps, bandwidth_limit_gb,
 			mac_address, template_id, libvirt_domain_name,
-			root_password_encrypted, whmcs_service_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			root_password_encrypted, whmcs_service_id,
+			storage_backend, disk_path
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING ` + vmSelectCols
 
 	row := r.db.QueryRow(ctx, q,
@@ -65,6 +68,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 		vm.VCPU, vm.MemoryMB, vm.DiskGB, vm.PortSpeedMbps, vm.BandwidthLimitGB,
 		vm.MACAddress, vm.TemplateID, vm.LibvirtDomainName,
 		vm.RootPasswordEncrypted, vm.WHMCSServiceID,
+		vm.StorageBackend, vm.DiskPath,
 	)
 	created, err := scanVM(row)
 	if err != nil {

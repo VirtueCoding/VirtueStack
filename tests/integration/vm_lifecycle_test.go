@@ -323,10 +323,15 @@ func TestVMResourceValidation(t *testing.T) {
 		// Get hostname of first VM
 		vm1, err := suite.VMRepo.GetByID(ctx, vmID1)
 		require.NoError(t, err)
+		require.NotEmpty(t, vm1.Hostname, "first VM should have a hostname")
 
-		// Try to create second VM with same hostname (should fail or auto-adjust)
-		// Note: This depends on your business logic - adjust as needed
-		_ = vm1.Hostname // Use the hostname
+		// Query to check if duplicate hostnames are enforced at the DB level
+		var count int
+		err = suite.DBPool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM vms WHERE hostname = $1 AND status != $2 AND id != $3
+		`, vm1.Hostname, models.VMStatusDeleted, vmID1).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count, "no other active VM should have the same hostname")
 	})
 }
 

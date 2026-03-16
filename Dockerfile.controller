@@ -22,6 +22,8 @@ RUN apk add --no-cache \
 WORKDIR /build
 
 # Enable Go modules and configure build
+# CGO_ENABLED=0 is correct: Controller does not import go-ceph or libvirt-go directly.
+# Only the Node Agent uses CGO-dependent libraries.
 ENV CGO_ENABLED=0 \
     GOOS=linux \
     GOARCH=amd64 \

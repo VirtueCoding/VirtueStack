@@ -124,7 +124,9 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 	}
 
 	if s.failoverRepo != nil && failoverReq != nil {
-		_ = s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, models.FailoverStatusInProgress, nil)
+		if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, models.FailoverStatusInProgress, nil); err != nil {
+			s.logger.Error("failed to update failover request status to in_progress", "operation", "UpdateStatus", "err", err)
+		}
 	}
 
 	if node.IPMIAddress != nil && *node.IPMIAddress != "" {
@@ -283,8 +285,10 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 	}
 
 	// Wait 10 seconds for power-off to complete
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
 	select {
-	case <-time.After(10 * time.Second):
+	case <-timer.C:
 		// Expected path
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled during STONITH wait: %w", ctx.Err())

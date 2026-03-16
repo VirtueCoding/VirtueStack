@@ -26,6 +26,9 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
   const [file, setFile] = React.useState<UploadedFile | null>(null)
   const [errorMessage, setErrorMessage] = React.useState<string>("")
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const abortControllerRef = React.useRef<AbortController | null>(null)
+
+  const MAX_ISO_SIZE_BYTES = 10 * 1024 * 1024 * 1024
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return "0 Bytes"
@@ -38,6 +41,11 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
   const validateFile = (file: File): boolean => {
     if (!file.name.toLowerCase().endsWith(".iso")) {
       setErrorMessage("Only .iso files are allowed")
+      setUploadState("error")
+      return false
+    }
+    if (file.size > MAX_ISO_SIZE_BYTES) {
+      setErrorMessage("File size exceeds the 10 GB limit")
       setUploadState("error")
       return false
     }
@@ -55,18 +63,28 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     setProgress(0)
     setErrorMessage("")
 
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+
     try {
-      const result = await isoApi.uploadISO(vmId, file, setProgress)
+      const result = await isoApi.uploadISO(vmId, file, setProgress, abortController.signal)
       setProgress(100)
       setUploadState("success")
       onUploadComplete?.(result.id, result.file_name)
     } catch (err) {
-      if (err instanceof ApiClientError) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setUploadState("idle")
+        setFile(null)
+        setProgress(0)
+      } else if (err instanceof ApiClientError) {
         setErrorMessage(err.message)
+        setUploadState("error")
       } else {
         setErrorMessage("Upload failed. Please try again.")
+        setUploadState("error")
       }
-      setUploadState("error")
+    } finally {
+      abortControllerRef.current = null
     }
   }
 
@@ -104,6 +122,10 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
   }
 
   const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
     setUploadState("idle")
     setProgress(0)
     setFile(null)

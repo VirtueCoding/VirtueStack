@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useRouter } from "next/navigation";
 import {
   Server,
   Plus,
@@ -45,6 +46,7 @@ export default function NodesPage() {
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const { toast } = useToast();
+  const router = useRouter();
 
   useEffect(() => {
     async function fetchNodes() {
@@ -143,7 +145,7 @@ export default function NodesPage() {
               Manage hypervisor nodes and cluster capacity
             </p>
           </div>
-          <Button>
+          <Button disabled>
             <Plus className="mr-2 h-4 w-4" />
             Add Node
           </Button>
@@ -225,9 +227,9 @@ export default function NodesPage() {
                                 {node.cpu_allocated} / {node.cpu_total} Cores
                               </span>
                               <span>
-                                {Math.round(
+                                {node.cpu_total > 0 ? Math.round(
                                   (node.cpu_allocated / node.cpu_total) * 100
-                                )}
+                                ) : 0}
                                 %
                               </span>
                             </div>
@@ -235,9 +237,9 @@ export default function NodesPage() {
                               <div
                                 className="h-full bg-primary"
                                 style={{
-                                  width: `${Math.round(
+                                  width: `${node.cpu_total > 0 ? Math.round(
                                     (node.cpu_allocated / node.cpu_total) * 100
-                                  )}%`,
+                                  ) : 0}%`,
                                 }}
                               />
                             </div>
@@ -251,11 +253,11 @@ export default function NodesPage() {
                                 {node.memory_total_gb} GB
                               </span>
                               <span>
-                                {Math.round(
+                                {node.memory_total_gb > 0 ? Math.round(
                                   (node.memory_allocated_gb /
                                     node.memory_total_gb) *
                                     100
-                                )}
+                                ) : 0}
                                 %
                               </span>
                             </div>
@@ -263,11 +265,11 @@ export default function NodesPage() {
                               <div
                                 className="h-full bg-primary"
                                 style={{
-                                  width: `${Math.round(
+                                  width: `${node.memory_total_gb > 0 ? Math.round(
                                     (node.memory_allocated_gb /
                                       node.memory_total_gb) *
                                       100
-                                  )}%`,
+                                  ) : 0}%`,
                                 }}
                               />
                             </div>
@@ -287,6 +289,7 @@ export default function NodesPage() {
                               ) : (
                                 <Eye className="h-4 w-4" />
                               )}
+                              <span className="sr-only">View Details</span>
                             </Button>
                             {node.status === "online" && (
                               <Button
@@ -297,6 +300,7 @@ export default function NodesPage() {
                                 title="Drain Node"
                               >
                                 <ArrowDownToLine className="h-4 w-4 text-warning" />
+                                <span className="sr-only">Drain Node</span>
                               </Button>
                             )}
                             {(node.status === "offline" ||
@@ -311,6 +315,7 @@ export default function NodesPage() {
                                 title="Initiate Failover"
                               >
                                 <RefreshCcw className="h-4 w-4 text-destructive" />
+                                <span className="sr-only">Initiate Failover</span>
                               </Button>
                             )}
                           </div>

@@ -1,22 +1,34 @@
 "use client";
 
 import { useState } from "react";
-import { Bell, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/sidebar";
 import { MobileNav } from "@/components/mobile-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { RequireAuth } from "@/lib/require-auth";
 
 export default function VMSLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      router.push(`/vms?search=${encodeURIComponent(searchQuery.trim())}`);
+    }
+  };
 
   return (
-    <div className="flex min-h-screen">
+    <RequireAuth>
+      <div className="flex min-h-screen">
       {/* Desktop Sidebar */}
       <div className="hidden md:block">
         <Sidebar
@@ -34,29 +46,27 @@ export default function VMSLayout({
 
           {/* Search */}
           <div className="flex-1 md:flex-none">
-            <div className="relative w-full max-w-sm">
+            <form onSubmit={handleSearch} className="relative w-full max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <input
                 type="search"
                 placeholder="Search VMs..."
                 className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-ring"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
-            </div>
+            </form>
           </div>
 
-          {/* Right Actions */}
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="icon">
-              <Bell className="h-4 w-4" />
-              <span className="sr-only">Notifications</span>
-            </Button>
-            <ThemeToggle />
-          </div>
+              <ThemeToggle />
+            </div>
         </header>
 
         {/* Page Content */}
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
-    </div>
+      </div>
+    </RequireAuth>
   );
 }

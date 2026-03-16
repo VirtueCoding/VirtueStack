@@ -20,7 +20,7 @@
 6. [Component 3: Web UIs](#6-component-3-web-uis)
 7. [Component 4: WHMCS Integration Module](#7-component-4-whmcs-integration-module)
 8. [Networking Architecture](#8-networking-architecture)
-9. [Storage Architecture (Ceph RBD)](#9-storage-architecture-ceph-rbd)
+9. [Storage Architecture (Dual Backend)](#9-storage-architecture-dual-backend)
 10. [Security Architecture](#10-security-architecture)
 11. [Database Schema](#11-database-schema)
 12. [API Specifications](#12-api-specifications)
@@ -43,7 +43,7 @@
 
 VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEMU) Virtual Machines / Virtual Private Servers. It provides:
 
-- **Node Agents** running on bare-metal Ubuntu 24.04 servers connected to Ceph shared storage
+- **Node Agents** running on bare-metal Ubuntu 24.04 servers with Ceph RBD (shared) or local QCOW2 (file-based) storage
 - **Controller Orchestrator** (Docker) exposing three secured APIs for provisioning, customer, and admin operations
 - **Two Web UIs** (Docker) — Admin panel and Customer panel with NoVNC/serial console
 - **WHMCS Billing Integration** — automated VM lifecycle management from sales to termination
@@ -52,7 +52,7 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 1. **Security-first**: Every component treats all input as hostile. OWASP 2025 compliance.
 2. **Event-driven**: All long-running operations (VM create, migrate, backup) are async via durable message queue.
-3. **Shared-nothing nodes**: Nodes are stateless compute. All persistent state lives in Ceph (VM disks) and PostgreSQL (config/metadata).
+3. **Shared-nothing nodes**: Nodes are stateless compute. All persistent state lives in Ceph RBD or local QCOW2 files (VM disks) and PostgreSQL (config/metadata).
 4. **Defense in depth**: IP anti-spoofing at hypervisor level, mTLS between components, tenant isolation at database level.
 
 ### Key Architectural Decisions
@@ -87,7 +87,7 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 | **Message Queue** | NATS JetStream | 2.10+ |
 | **Reverse Proxy** | Nginx | 1.25+ |
 | **VM Hypervisor** | KVM/QEMU via libvirt | libvirt 10.x, QEMU 8.x |
-| **Storage** | Ceph RBD | Reef (18.x) or Squid (19.x) |
+| **Storage** | Ceph RBD / QCOW2 file-based | Reef (18.x) or Squid (19.x) / local filesystem |
 | **DNS** | PowerDNS (MySQL backend) | 4.9+ |
 | **Container Runtime** | Docker + Docker Compose | 26+ |
 
@@ -178,16 +178,19 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
            │ └─────────────┘ │                      │ └─────────────────┘ │        │ └───────────────┘ │
            └────────┬────────┘                      └──────────┬──────────┘        └────────┬──────────┘
                     │                                          │                            │
-                    └──────────────────────┬───────────────────┘────────────────────────────┘
-                                           │
-                                  ┌────────▼────────┐
-                                  │   Ceph Cluster   │
-                                  │   (Shared RBD)   │
-                                  │                  │
-                                  │  Pool: vs-vms    │
-                                  │  Pool: vs-images │
-                                  │  Pool: vs-backups│
-                                  └──────────────────┘
+                     └──────────────────────┬───────────────────┘────────────────────────────┘
+                                            │
+                                   ┌────────▼────────┐
+                                   │  Storage Backend │
+                                   │                  │
+                                   │  Option A: Ceph  │
+                                   │  Pool: vs-vms    │
+                                   │  Pool: vs-images │
+                                   │  Pool: vs-backups│
+                                   │                  │
+                                   │  Option B: QCOW2 │
+                                   │  Local: per-node │
+                                   └──────────────────┘
 ```
 
 ### Communication Patterns
@@ -202,6 +205,7 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 | Controller → NATS JetStream | TCP | Token auth | Async task queue |
 | Controller → PowerDNS MySQL | TCP | Password + TLS | rDNS PTR record management |
 | Node Agent → Ceph | TCP (librados) | Cephx auth (`client.virtuestack`) | RBD disk operations |
+| Node Agent → Local FS | POSIX | Local filesystem permissions | QCOW2 disk file operations |
 | Node Agent → libvirt | Unix socket | Local (qemu:///system) | VM management |
 | WHMCS → Controller | HTTPS | API Key (Provisioning API) | VM provisioning/lifecycle |
 
@@ -211,13 +215,13 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 ### Overview
 
-The Node Agent is a Go daemon running on each bare-metal Ubuntu 24.04 server. It manages VMs via libvirt, handles Ceph RBD operations, enforces network security, and streams console data. It is **stateless** — all persistent state lives in Ceph and the Controller's PostgreSQL.
+The Node Agent is a Go daemon running on each bare-metal Ubuntu 24.04 server. It manages VMs via libvirt, handles storage operations (Ceph RBD or local QCOW2), enforces network security, and streams console data. It is **stateless** — all persistent state lives in the configured storage backend and the Controller's PostgreSQL.
 
 ### Installation
 
 - Deployed as a single static Go binary via `scp` or package manager
 - Runs as a `systemd` service: `virtuestack-node-agent.service`
-- Requires: `libvirt-daemon-system`, `qemu-kvm`, `ceph-common`, `cloud-image-utils`, `dnsmasq`
+- Requires: `libvirt-daemon-system`, `qemu-kvm`, `qemu-utils`, `cloud-image-utils`, `dnsmasq` (`ceph-common` only for Ceph backend)
 - Configuration via `/etc/virtuestack/node-agent.yaml` or environment variables
 
 ### Go Project Structure
@@ -236,7 +240,9 @@ internal/
       console.go                  # VNC/serial console streaming
       metrics.go                  # VM resource stats (CPU/RAM/disk/net)
     storage/
+      interface.go                # StorageBackend interface (abstraction)
       rbd.go                      # Ceph RBD operations (clone, resize, snapshot)
+      qcow.go                     # File-based QCOW2 operations (qemu-img)
       template.go                 # Template management (RBD clone + cloud-init)
       cloudinit.go                # Cloud-init ISO generation
     network/
@@ -338,7 +344,7 @@ Every VM is defined with this libvirt domain XML pattern (generated by `domain_x
   </clock>
 
   <devices>
-    <!-- Primary disk: Ceph RBD -->
+    <!-- Primary disk: Ceph RBD (when storage_backend = "ceph") -->
     <disk type='network' device='disk'>
       <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
       <source protocol='rbd' name='vs-vms/vs-{vm_uuid}-disk0'>
@@ -351,6 +357,13 @@ Every VM is defined with this libvirt domain XML pattern (generated by `domain_x
       </auth>
       <target dev='vda' bus='virtio'/>
     </disk>
+
+    <!-- Primary disk: QCOW2 file (when storage_backend = "qcow") -->
+    <!-- <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' cache='writeback' discard='unmap'/>
+      <source file='/var/lib/virtuestack/vms/vs-{vm_uuid}-disk0.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk> -->
 
     <!-- Cloud-init seed ISO (removed after first boot) -->
     <disk type='file' device='cdrom'>
@@ -416,15 +429,17 @@ Every VM is defined with this libvirt domain XML pattern (generated by `domain_x
 
 ### Cloud-Init Provisioning Flow
 
-1. **Admin creates OS template**: Base cloud image → `rbd import` into `vs-images/ubuntu-24.04-base` → protect snapshot `@base`
+1. **Admin creates OS template**: Base cloud image → imported into storage backend → protected snapshot (Ceph) or standalone backing file (QCOW2)
 2. **VM provisioning request arrives** (via gRPC from Controller)
-3. **RBD clone**: `rbd clone vs-images/ubuntu-24.04-base@base vs-vms/vs-{uuid}-disk0` (instant, copy-on-write)
-4. **Resize if needed**: `rbd resize vs-vms/vs-{uuid}-disk0 --size {disk_gb}G`
+3. **Clone from template**:
+   - Ceph: `rbd clone vs-images/ubuntu-24.04-base@base vs-vms/vs-{uuid}-disk0` (instant, copy-on-write)
+   - QCOW2: `qemu-img create -b template.qcow2 -F qcow2 -f qcow2 vm-disk.qcow2` (instant, copy-on-write)
+4. **Resize if needed**: `rbd resize ...` or `qemu-img resize ...`
 5. **Generate cloud-init ISO** (NoCloud datasource):
    - `meta-data`: instance-id, hostname
    - `user-data`: root password (hashed), SSH keys, packages, timezone
    - `network-config`: static IPv4/IPv6 via Netplan
-6. **Define + start VM** via libvirt with domain XML pointing to RBD + cloud-init ISO
+6. **Define + start VM** via libvirt with domain XML pointing to storage backend + cloud-init ISO
 7. **VM boots** → cloud-init configures networking, credentials, hostname
 8. **Report success** to Controller via gRPC response
 
@@ -719,7 +734,7 @@ Both Admin and Customer WebUIs are Next.js 16 applications served as Docker cont
 | **IP Set Management** | Create IP pools per location/VLAN, assign IPs, manage subnets |
 | **Customer Management** | View customers, their VMs, usage, suspend/unsuspend |
 | **Backup Management** | Configure backup schedules, view backup status, manual trigger |
-| **System Settings** | Ceph credentials, SMTP config, Telegram bot, webhook URLs |
+| **System Settings** | Storage backend config, Ceph credentials, SMTP config, Telegram bot, webhook URLs |
 | **Audit Log Viewer** | Search/filter audit logs by user, action, resource, date range |
 | **rDNS Management** | View/edit PTR records for all IPs |
 
@@ -1006,13 +1021,97 @@ The Node Agent manages DHCP leases by:
 | Block outbound to 169.254.169.254 | nftables rule on node | Prevent metadata endpoint spoofing |
 | Rate limit outbound DNS | nftables limit | Prevent DNS amplification |
 | CPU pinning (optional) | libvirt `<cputune>` | Prevent noisy-neighbor CPU abuse |
-| Disk I/O limits | libvirt `<blkiotune>` | Prevent Ceph I/O abuse |
+| Disk I/O limits | libvirt `<blkiotune>` | Prevent storage I/O abuse |
 
 ---
 
-## 9. STORAGE ARCHITECTURE (CEPH RBD)
+## 9. STORAGE ARCHITECTURE (DUAL BACKEND)
 
-### Ceph Pool Design
+VirtueStack supports two storage backends via a common `StorageBackend` interface. The backend is configured per-node and per-plan, allowing mixed deployments (e.g., Ceph for production nodes, QCOW2 for dev/testing).
+
+### Backend Comparison
+
+| Aspect | Ceph RBD | QCOW2 (File-based) |
+|--------|----------|---------------------|
+| **Storage type** | Shared, network-attached | Local, per-node |
+| **Library** | `github.com/ceph/go-ceph` | `qemu-img` CLI |
+| **Live migration** | Native (shared storage) | Disk transfer via gRPC stream |
+| **Snapshot protection** | Native (`rbd snap protect`) | Not supported (no-op with error) |
+| **Pool stats** | Ceph cluster `df` JSON | `syscall.Statfs` on local filesystem |
+| **HA failover** | RBD lock release + blocklist | Disk copy to target node |
+| **Scaling** | Scales with Ceph OSD nodes | Limited by local disk capacity |
+| **Use case** | Production, multi-node clusters | Single-node or dev/test setups |
+
+### Storage Backend Interface
+
+**File:** `internal/nodeagent/storage/interface.go`
+
+```go
+type StorageBackend interface {
+    CloneFromTemplate(ctx, sourcePool, sourceImage, sourceSnap, targetImage string) error
+    CloneSnapshotToPool(ctx, sourcePool, sourceImage, sourceSnap, targetPool, targetImage string) error
+    Resize(ctx, imageName string, newSizeGB int) error
+    Delete(ctx, imageName string) error
+    CreateSnapshot(ctx, imageName, snapshotName string) error
+    DeleteSnapshot(ctx, imageName, snapshotName string) error
+    ProtectSnapshot(ctx, imageName, snapshotName string) error
+    UnprotectSnapshot(ctx, imageName, snapshotName string) error
+    ListSnapshots(ctx, imageName string) ([]SnapshotInfo, error)
+    GetImageSize(ctx, imageName string) (int64, error)
+    ImageExists(ctx, imageName string) (bool, error)
+    FlattenImage(ctx, imageName string) error
+    GetPoolStats(ctx context.Context) (*PoolStats, error)
+    Rollback(ctx, imageName, snapshotName string) error
+    GetStorageType() StorageType
+}
+
+type StorageType string
+const (
+    StorageTypeCEPH StorageType = "ceph"
+    StorageTypeQCOW StorageType = "qcow"
+)
+```
+
+### Backend Selection
+
+A VM's storage backend is determined by its **plan** at creation time and is **immutable** — it cannot be changed after the VM is created. Each node can host VMs with **any** storage backend, as long as the node has the necessary configuration (Ceph credentials for Ceph VMs, `storage_path` for QCOW2 VMs).
+
+| Level | Field | Description |
+|-------|-------|-------------|
+| **Plan** | `plans.storage_backend` | Defines the default backend for VMs created under this plan (`ceph` or `qcow`) |
+| **VM** | `vms.storage_backend` | Set from plan at creation time. **Immutable** — cannot be changed or migrated to a different backend |
+| **Node** | `nodes.storage_backend` / `nodes.storage_path` | Describes what the node is configured for. A node can have both Ceph and QCOW2 configured simultaneously |
+
+**Key rules:**
+1. VM storage backend is inherited from the plan at creation and **cannot be changed**
+2. Nodes can host VMs with any backend (Ceph, QCOW2, or both) — no filtering on node selection
+3. Migration is only allowed between nodes that support the VM's storage backend
+4. Cross-backend migration (e.g., Ceph to QCOW2 or vice versa) is **not supported**
+
+### Configuration (Database Schema)
+
+**Migration:** `migrations/000019_add_storage_backend.up.sql`
+
+```sql
+-- Storage backend per plan
+ALTER TABLE plans ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
+
+-- Storage backend per node (for local QCOW storage)
+ALTER TABLE nodes ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
+ALTER TABLE nodes ADD COLUMN storage_path TEXT;
+
+-- Storage backend per VM (inherits from plan)
+ALTER TABLE vms ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
+ALTER TABLE vms ADD COLUMN disk_path TEXT;  -- For QCOW file path
+```
+
+---
+
+### 9.1 Ceph RBD Backend
+
+**File:** `internal/nodeagent/storage/rbd.go`
+
+#### Ceph Pool Design
 
 | Pool | Purpose | Settings |
 |------|---------|----------|
@@ -1020,7 +1119,7 @@ The Node Agent manages DHCP leases by:
 | `vs-images` | OS template base images | Protected snapshots, read-only by Node Agents |
 | `vs-backups` | Backup exports (optional) | Lower replication factor acceptable |
 
-### Ceph User & Permissions
+#### Ceph User & Permissions
 
 ```bash
 ceph auth get-or-create client.virtuestack \
@@ -1029,7 +1128,7 @@ ceph auth get-or-create client.virtuestack \
   -o /etc/ceph/ceph.client.virtuestack.keyring
 ```
 
-### RBD Naming Convention
+#### RBD Naming Convention
 
 ```
 vs-vms/vs-{vm_uuid}-disk0          # Primary disk
@@ -1037,7 +1136,7 @@ vs-vms/vs-{vm_uuid}-disk1          # Additional disk (if plan allows)
 vs-images/{os_name}-{version}-base  # Template base image
 ```
 
-### Template Creation Workflow (Admin)
+#### Template Creation Workflow (Ceph)
 
 ```
 1. Admin uploads cloud image: ubuntu-24.04-minimal-cloudimg-amd64.img
@@ -1049,12 +1148,117 @@ vs-images/{os_name}-{version}-base  # Template base image
 7. Controller stores template metadata in PostgreSQL
 ```
 
-### RBD Exclusive Locks & Live Migration
+#### VM Provisioning Flow (Ceph)
+
+1. **RBD clone**: `rbd clone vs-images/ubuntu-24.04-base@base vs-vms/vs-{uuid}-disk0` (instant, copy-on-write)
+2. **Resize if needed**: `rbd resize vs-vms/vs-{uuid}-disk0 --size {disk_gb}G`
+3. **Generate cloud-init ISO** (NoCloud datasource)
+4. **Define + start VM** via libvirt with domain XML pointing to RBD + cloud-init ISO
+5. **VM boots** → cloud-init configures networking, credentials, hostname
+
+#### RBD Exclusive Locks & Live Migration
 
 - All VM disks have `exclusive-lock` feature enabled
 - Only one libvirt instance can mount the RBD image at a time
 - During live migration: source libvirt transfers lock to destination automatically
 - During HA failover: lock must be forcibly released (see Section 14)
+
+---
+
+### 9.2 QCOW2 File-Based Backend
+
+**File:** `internal/nodeagent/storage/qcow.go`
+
+The QCOW2 backend stores VM disk images as local files on each node's filesystem. It uses `qemu-img` for all disk operations. This is ideal for single-node deployments or environments without a Ceph cluster.
+
+#### Directory Layout
+
+```
+/var/lib/virtuestack/
+├── templates/                    # OS template images (backing files)
+│   ├── ubuntu-24.04-base.qcow2
+│   ├── debian-12-base.qcow2
+│   └── centos-9-base.qcow2
+├── vms/                          # VM disk images
+│   ├── vs-{vm_uuid}-disk0.qcow2
+│   └── vs-{vm_uuid}-disk1.qcow2
+├── cloud-init/                   # Cloud-init seed ISOs
+│   └── vs-{vm_uuid}-seed.iso
+└── iso/                          # Customer ISO uploads
+    └── {customer_id}/
+```
+
+#### Template Storage
+
+Templates are stored as standalone QCOW2 files in `/var/lib/virtuestack/templates/`. Each template serves as a **backing file** for new VM disks, enabling instant copy-on-write cloning:
+
+```
+Template: /var/lib/virtuestack/templates/ubuntu-24.04-base.qcow2 (read-only backing file)
+    ↓ qemu-img create -b ... -F qcow2 -f qcow2
+VM disk:  /var/lib/virtuestack/vms/vs-{uuid}-disk0.qcow2 (COW overlay)
+```
+
+#### VM Provisioning Flow (QCOW2)
+
+1. **Template clone**: `qemu-img create -b /var/lib/virtuestack/templates/ubuntu-24.04-base.qcow2 -F qcow2 -f qcow2 /var/lib/virtuestack/vms/vs-{uuid}-disk0.qcow2` (instant, copy-on-write)
+2. **Resize if needed**: `qemu-img resize /var/lib/virtuestack/vms/vs-{uuid}-disk0.qcow2 {disk_gb}G`
+3. **Generate cloud-init ISO** (same as Ceph backend)
+4. **Define + start VM** via libvirt with domain XML pointing to the QCOW2 file
+5. **VM boots** → cloud-init configures networking, credentials, hostname
+
+#### Snapshot Operations
+
+QCOW2 supports internal snapshots via `qemu-img snapshot`:
+
+| Operation | Command |
+|-----------|---------|
+| Create | `qemu-img snapshot -c {snap_name} {image_path}` |
+| Delete | `qemu-img snapshot -d {snap_name} {image_path}` |
+| List | `qemu-img snapshot -l {image_path}` |
+| Revert | `qemu-img snapshot -a {snap_name} {image_path}` |
+
+**Limitation**: QCOW2 does not support native snapshot protection. `ProtectSnapshot()` and `UnprotectSnapshot()` return an error. Use external tracking (e.g., database flags) to prevent accidental deletion of important snapshots.
+
+#### Live Migration (QCOW2)
+
+Unlike Ceph RBD (shared storage), QCOW2 migration requires disk transfer between nodes. The Controller orchestrates this via gRPC streaming:
+
+```
+1. Source Node: Create internal snapshot (freeze disk state)
+2. Source Node: Stream disk via gRPC (TransferDisk RPC)
+3. Target Node: Receive disk via gRPC (ReceiveDisk RPC)
+4. Target Node: Define VM with received disk
+5. Controller: Live migrate VM memory state (libvirt live migration)
+6. Source Node: Clean up snapshot and disk
+```
+
+**Note**: The gRPC proto includes dedicated disk transfer RPCs:
+- `CreateDiskSnapshot` — freeze disk for consistent transfer
+- `TransferDisk` — server-streaming RPC to send disk chunks
+- `ReceiveDisk` — client-streaming RPC to receive disk chunks
+- `DeleteDiskSnapshot` — clean up temporary snapshot
+
+**Important**: A QCOW2 VM can only be migrated to another node with QCOW2 support. Cross-backend migration (Ceph ↔ QCOW2) is not allowed.
+
+#### HA Failover (QCOW2)
+
+Since VM disks are local to each node, HA failover for QCOW2 is more complex:
+
+1. The failed node's disks are **not accessible** from other nodes
+2. Failover is only possible if VMs were previously replicated/backed up to shared storage
+3. Recovery requires restoring from the latest backup on a surviving node
+4. This is why Ceph RBD is recommended for production HA setups
+
+#### Pool Statistics
+
+The QCOW2 backend reports storage capacity via `syscall.Statfs` on the base directory:
+
+```go
+var stat syscall.Statfs_t
+syscall.Statfs("/var/lib/virtuestack/vms", &stat)
+total := int64(stat.Blocks) * int64(stat.Bsize)
+free  := int64(stat.Bavail) * int64(stat.Bsize)
+```
 
 ---
 
@@ -1159,6 +1363,9 @@ CREATE TABLE nodes (
     location_id UUID REFERENCES locations(id),
     status VARCHAR(20) DEFAULT 'offline'
       CHECK (status IN ('online', 'degraded', 'offline', 'draining', 'failed')),
+    storage_backend VARCHAR(20) DEFAULT 'ceph'
+      CHECK (storage_backend IN ('ceph', 'qcow')),
+    storage_path TEXT,  -- Base path for QCOW2 storage (e.g., /var/lib/virtuestack/vms)
     total_vcpu INTEGER NOT NULL,
     total_memory_mb INTEGER NOT NULL,
     allocated_vcpu INTEGER DEFAULT 0,
@@ -1197,6 +1404,8 @@ CREATE TABLE plans (
     max_backups INTEGER DEFAULT 1,
     max_iso_count INTEGER DEFAULT 1,
     max_iso_gb INTEGER DEFAULT 5,
+    storage_backend VARCHAR(20) DEFAULT 'ceph'
+      CHECK (storage_backend IN ('ceph', 'qcow')),
     is_active BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -1221,6 +1430,9 @@ CREATE TABLE vms (
     bandwidth_limit_gb INTEGER DEFAULT 0,
     bandwidth_used_bytes BIGINT DEFAULT 0,
     bandwidth_reset_at TIMESTAMPTZ DEFAULT NOW(),
+    storage_backend VARCHAR(20) DEFAULT 'ceph'
+      CHECK (storage_backend IN ('ceph', 'qcow')),
+    disk_path TEXT,  -- File path for QCOW2 VM disks (e.g., /var/lib/virtuestack/vms/vs-{uuid}-disk0.qcow2)
     mac_address MACADDR NOT NULL UNIQUE,
     template_id UUID REFERENCES templates(id),
     libvirt_domain_name VARCHAR(100),
@@ -1728,13 +1940,15 @@ func FenceNode(ctx context.Context, node *models.Node) error {
 
 ### Split-Brain Prevention
 
-**Rule**: A VM's RBD disk must NEVER be mounted by two nodes simultaneously.
+**Rule**: A VM's disk must NEVER be mounted by two nodes simultaneously.
 
-Enforcement layers:
+Enforcement layers for **Ceph RBD**:
 1. **Ceph exclusive-lock** feature on all RBD images (primary defense)
 2. **IPMI fencing** ensures dead node cannot write to Ceph (secondary defense)
 3. **Ceph OSD blocklist**: `ceph osd blocklist add {failed_node_ip}` prevents the node's OSD client from accessing the cluster even if it comes back (tertiary defense)
 4. **Controller state**: only one `node_id` per VM record (application-level constraint)
+
+For **QCOW2** nodes: VM disks are local to each node. HA failover requires restoring from the latest backup on a surviving node, as the failed node's local disks are inaccessible. Ceph RBD is recommended for production HA setups.
 
 ---
 
@@ -1744,8 +1958,8 @@ Enforcement layers:
 
 | Aspect | Configuration |
 |--------|--------------|
-| **Schedule** | Monthly staggered (spread across the month to avoid Ceph I/O spikes) |
-| **Method** | RBD snapshot → `rbd export` (full) or `rbd export-diff` (incremental) |
+| **Schedule** | Monthly staggered (spread across the month to avoid storage I/O spikes) |
+| **Method** | Ceph: RBD snapshot → `rbd export` (full) or `rbd export-diff` (incremental); QCOW2: `qemu-img convert` to standalone image |
 | **Storage** | Mounted volume path OR offsite FTP (configurable per system) |
 | **Retention** | Configurable: e.g., keep last 3 monthly backups per VM |
 | **Consistency** | QEMU Guest Agent `fsfreeze` before snapshot (if agent available) |
@@ -2007,7 +2221,7 @@ All components use `slog` with JSON output:
 
 | Task | Component |
 |------|-----------|
-| Ceph RBD integration (clone, resize, snapshot) | Node Agent |
+| Storage backend integration (Ceph RBD + QCOW2: clone, resize, snapshot) | Node Agent |
 | Cloud-init ISO generation | Node Agent |
 | Template management (import, create, list) | Both |
 | VM provisioning async task (full flow) | Both |
@@ -2094,7 +2308,7 @@ Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
 | QG-04 Structured | Custom error types per category, operation journal for multi-step tasks |
 | QG-05 Validated | `go-playground/validator` (Go), Zod (TS), schema validation on all inputs |
 | QG-06 DRY | Shared `internal/shared/` package, React component library |
-| QG-07 Defensive | Null checks on all gRPC responses, QEMU guest agent timeouts, Ceph error handling |
+| QG-07 Defensive | Null checks on all gRPC responses, QEMU guest agent timeouts, storage error handling |
 | QG-08 Logged | `slog` JSON logging, correlation IDs on all requests, zero PII |
 | QG-09 Bounded | 10s HTTP timeout, 5s DB timeout, 30s gRPC unary, 60s gRPC stream, circuit breakers |
 | QG-10 Clean | `golangci-lint`, `eslint`, `phpcs` zero warnings |
@@ -2127,7 +2341,8 @@ Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
 |----------------|--------|-------------------|
 | PostgreSQL | All mutations fail | Return 503 for writes; cached reads for status if Redis added later |
 | NATS JetStream | Async tasks cannot be queued | Synchronous fallback for critical operations (VM start/stop); reject creates |
-| Ceph cluster | VM disk operations fail | Running VMs continue unaffected; new operations rejected with clear error |
+| Ceph cluster | VM disk operations fail (Ceph backend only) | Running VMs continue unaffected; new operations rejected with clear error. QCOW2 VMs on other nodes unaffected |
+| Local storage full | QCOW2 VM provisioning/resizing fails | Alert admin; running VMs continue unaffected |
 | Node Agent (single) | VMs on that node inaccessible | Mark node degraded; alert admin; don't assign new VMs |
 | All Node Agents | No VM operations possible | Controller serves cached status; all mutations return 503 |
 | PowerDNS MySQL | rDNS updates fail | Queue changes in PostgreSQL; retry on recovery |
@@ -2171,9 +2386,12 @@ Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
 |----------|----------|-------------|---------|
 | `CONTROLLER_GRPC_ADDR` | Yes | Controller gRPC address | `controller.internal:50051` |
 | `NODE_ID` | Yes | Unique node identifier | `(UUID)` |
-| `CEPH_POOL` | No | Default Ceph pool for VMs | `vs-vms` |
-| `CEPH_USER` | No | Ceph auth user | `virtuestack` |
-| `CEPH_CONF` | No | Ceph config path | `/etc/ceph/ceph.conf` |
+| `CEPH_POOL` | No | Default Ceph pool for VMs (Ceph backend only) | `vs-vms` |
+| `CEPH_USER` | No | Ceph auth user (Ceph backend only) | `virtuestack` |
+| `CEPH_CONF` | No | Ceph config path (Ceph backend only) | `/etc/ceph/ceph.conf` |
+| `STORAGE_BACKEND` | No | Storage backend type: `ceph` or `qcow` (default: `ceph`) | `ceph` |
+| `STORAGE_PATH` | No | Base path for QCOW2 VM storage (QCOW backend only) | `/var/lib/virtuestack/vms` |
+| `TEMPLATE_PATH` | No | Base path for QCOW2 template storage (QCOW backend only) | `/var/lib/virtuestack/templates` |
 | `TLS_CERT_FILE` | Yes | mTLS client certificate | `/etc/virtuestack/tls/node.crt` |
 | `TLS_KEY_FILE` | Yes | mTLS client key | `/etc/virtuestack/tls/node.key` |
 | `TLS_CA_FILE` | Yes | CA certificate | `/etc/virtuestack/tls/ca.crt` |
@@ -2286,7 +2504,8 @@ Per MASTER_CODING_STANDARD Section 6, default is 5 consecutive failures. VirtueS
 | SMTP | 5 failures | Default — queue and retry |
 | Telegram API | 5 failures | Default — fallback to email |
 | WHMCS webhook | 5 failures | Default — WHMCS can poll as backup |
-| Ceph cluster | 3 failures | Storage failures are critical — alert immediately |
+| Ceph cluster | 3 failures | Storage failures are critical — alert immediately (Ceph backend only) |
+| Local storage | 5 failures | Alert on capacity threshold (QCOW backend only) |
 
 ---
 

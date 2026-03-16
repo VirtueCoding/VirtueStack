@@ -20,7 +20,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     networks:
       - virtuestack-internal
     healthcheck:
@@ -43,7 +42,7 @@ services:
     image: nats:2.10-alpine
     container_name: virtuestack-nats
     restart: unless-stopped
-    command: ["nats-server", "-js", "-sd", "/data"]
+    command: ["nats-server", "-js", "-sd", "/data", "--auth", "${NATS_AUTH_TOKEN:-changeme}"]
     volumes:
       - nats_data:/data
     networks:
@@ -70,12 +69,12 @@ services:
       dockerfile: Dockerfile.controller
       args:
         GO_VERSION: ${GO_VERSION:-1.25}
-    image: virtuestack/controller:${CONTROLLER_TAG}
+    image: virtuestack/controller:${CONTROLLER_TAG:-v2.1.0}
     container_name: virtuestack-controller
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
-      NATS_URL: nats://nats:4222
+      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=prefer
+      NATS_URL: nats://${NATS_AUTH_TOKEN:-changeme}@nats:4222
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       LISTEN_ADDR: :8080
@@ -109,7 +108,7 @@ services:
       args:
         NODE_VERSION: ${NODE_VERSION:-20}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-    image: virtuestack/admin-webui:${ADMIN_WEBUI_TAG}
+    image: virtuestack/admin-webui:${ADMIN_WEBUI_TAG:-v2.1.0}
     container_name: virtuestack-admin-webui
     restart: unless-stopped
     depends_on:
@@ -139,7 +138,7 @@ services:
       args:
         NODE_VERSION: ${NODE_VERSION:-20}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-    image: virtuestack/customer-webui:${CUSTOMER_WEBUI_TAG}
+    image: virtuestack/customer-webui:${CUSTOMER_WEBUI_TAG:-v2.1.0}
     container_name: virtuestack-customer-webui
     restart: unless-stopped
     depends_on:

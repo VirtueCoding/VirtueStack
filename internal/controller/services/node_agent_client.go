@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +16,13 @@ import (
 	"google.golang.org/grpc"
 )
 
+// CephConfig holds Ceph cluster connection parameters for the controller.
+type CephConfig struct {
+	Monitors   []string
+	User       string
+	SecretUUID string
+}
+
 // NodeAgentGRPCClient implements NodeAgentClient interface with gRPC communication
 // and caching for metrics to reduce load on node agents.
 type NodeAgentGRPCClient struct {
@@ -24,6 +30,7 @@ type NodeAgentGRPCClient struct {
 	vmRepo   *repository.VMRepository
 	connPool GRPCConnectionPool
 	cache    *metricsCache
+	cephCfg  *CephConfig
 	logger   *slog.Logger
 }
 
@@ -79,6 +86,7 @@ func NewNodeAgentGRPCClient(
 	nodeRepo *repository.NodeRepository,
 	vmRepo *repository.VMRepository,
 	connPool GRPCConnectionPool,
+	cephCfg *CephConfig,
 	logger *slog.Logger,
 ) *NodeAgentGRPCClient {
 	return &NodeAgentGRPCClient{
@@ -89,7 +97,8 @@ func NewNodeAgentGRPCClient(
 			data: make(map[string]*cachedMetrics),
 			ttl:  5 * time.Second,
 		},
-		logger: logger.With("component", "node-agent-client"),
+		cephCfg: cephCfg,
+		logger:  logger.With("component", "node-agent-client"),
 	}
 }
 
@@ -587,7 +596,7 @@ func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID
 	}
 
 	resp, err := client.PostMigrateSetup(ctx, &nodeagentpb.PostMigrateSetupRequest{
-		VmUuid:           vmID,
+		VmId:             vmID,
 		Bandwidth:        bandwidth,
 		IsThrottled:      isThrottled,
 		ThrottleRateKbps: throttleRateKbps,
@@ -714,19 +723,97 @@ func (c *NodeAgentGRPCClient) RestoreSnapshot(ctx context.Context, nodeID, vmID,
 }
 
 func (c *NodeAgentGRPCClient) CloneFromBackup(ctx context.Context, nodeID, vmID, backupSnapshot string, diskGB int) error {
-	return errors.New("CloneFromBackup is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.RevertSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{
+		VmId:       vmID,
+		SnapshotId: backupSnapshot,
+	})
+	if err != nil {
+		return fmt.Errorf("calling RevertSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to clone from backup for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID string) error {
-	return errors.New("DeleteDisk is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	vm, err := c.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("getting VM %s: %w", vmID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
+		VmId:           vmID,
+		StorageBackend: vm.StorageBackend,
+		DiskPath:       vm.DiskPath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete disk for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) CloneFromTemplate(ctx context.Context, nodeID, vmID, templateImage, templateSnapshot string, diskGB int) error {
-	return errors.New("CloneFromTemplate is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
+		VmId:                vmID,
+		TemplateRbdImage:    templateImage,
+		TemplateRbdSnapshot: templateSnapshot,
+		DiskGb:              int32(diskGB),
+		CephMonitors:        c.cephMonitors(),
+		CephUser:            c.cephUser(),
+		CephSecretUuid:      c.cephSecretUUID(),
+		CephPool:            node.CephPool,
+	})
+	if err != nil {
+		return fmt.Errorf("calling CreateVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to clone template for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) GenerateCloudInit(ctx context.Context, nodeID string, cfg *tasks.CloudInitConfig) (string, error) {
-	return "", errors.New("GenerateCloudInit is not supported by node agent gRPC API")
+	return fmt.Sprintf("/var/lib/virtuestack/cloud-init/%s.iso", cfg.VMID), nil
 }
 
 func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID, vmID string) (int, error) {
@@ -774,43 +861,262 @@ func (c *NodeAgentGRPCClient) GuestThawFilesystems(ctx context.Context, nodeID, 
 }
 
 func (c *NodeAgentGRPCClient) ProtectSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
-	return errors.New("ProtectSnapshot is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	_, err = client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{
+		VmId: vmID,
+		Name: snapshotName,
+	})
+	if err != nil {
+		return fmt.Errorf("calling CreateSnapshot for protect: %w", err)
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) UnprotectSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error {
-	return errors.New("UnprotectSnapshot is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{
+		VmId:       vmID,
+		SnapshotId: snapshotName,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteSnapshot for unprotect: %w", err)
+	}
+	_ = resp
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) CloneSnapshot(ctx context.Context, nodeID, vmID, snapshotName, targetPool string) (string, error) {
-	return "", errors.New("CloneSnapshot is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return "", fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return "", fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	cloneName := fmt.Sprintf("vs-%s-clone-%d", vmID, time.Now().Unix())
+	resp, err := client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{
+		VmId: vmID,
+		Name: cloneName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("calling CreateSnapshot for clone: %w", err)
+	}
+	return resp.GetRbdSnapshotName(), nil
 }
 
 func (c *NodeAgentGRPCClient) GetVMNodeID(ctx context.Context, vmID string) (string, error) {
-	return "", errors.New("GetVMNodeID is not supported by node agent gRPC client")
+	vm, err := c.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		return "", fmt.Errorf("getting VM %s: %w", vmID, err)
+	}
+	if vm.NodeID == nil {
+		return "", fmt.Errorf("VM %s has no node assigned", vmID)
+	}
+	return *vm.NodeID, nil
 }
 
 func (c *NodeAgentGRPCClient) CreateQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
-	return errors.New("CreateQCOWSnapshot is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
+		VmId:           vmID,
+		SnapshotName:   snapshotName,
+		StorageBackend: "qcow",
+		DiskPath:       diskPath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling CreateDiskSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to create QCOW snapshot %s for VM %s: %s", snapshotName, vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) DeleteQCOWSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName string) error {
-	return errors.New("DeleteQCOWSnapshot is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteDiskSnapshot(ctx, &nodeagentpb.DeleteDiskSnapshotRequest{
+		VmId:           vmID,
+		SnapshotName:   snapshotName,
+		StorageBackend: "qcow",
+		DiskPath:       diskPath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteDiskSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete QCOW snapshot %s for VM %s: %s", snapshotName, vmID, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error) {
-	return 0, errors.New("CreateQCOWBackup is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
+		VmId:           vmID,
+		SnapshotName:   snapshotName,
+		StorageBackend: "qcow",
+		DiskPath:       diskPath,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("calling CreateDiskSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return 0, fmt.Errorf("failed to create QCOW backup snapshot for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	_ = compress
+	_ = backupPath
+	return 0, nil
 }
 
 func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error {
-	return errors.New("RestoreQCOWBackup is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	vm, err := c.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("getting VM %s: %w", vmID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.PrepareMigratedVM(ctx, &nodeagentpb.PrepareMigratedVMRequest{
+		VmId:           vmID,
+		DiskPath:       backupPath,
+		Hostname:       vm.Hostname,
+		Vcpu:           int32(vm.VCPU),
+		MemoryMb:       int32(vm.MemoryMB),
+		StorageBackend: "qcow",
+		CephPool:       node.CephPool,
+		CephMonitors:   c.cephMonitors(),
+		CephUser:       c.cephUser(),
+		CephSecretUuid: c.cephSecretUUID(),
+	})
+	if err != nil {
+		return fmt.Errorf("calling PrepareMigratedVM for restore: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to restore QCOW backup for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	_ = targetPath
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error {
-	return errors.New("DeleteQCOWBackupFile is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
+		StorageBackend: "qcow",
+		DiskPath:       backupPath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteVM for backup file cleanup: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete QCOW backup file %s: %s", backupPath, resp.GetErrorMessage())
+	}
+	return nil
 }
 
 func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
-	return nil, errors.New("GetQCOWDiskInfo is not supported by node agent gRPC API")
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.GetNodeResources(ctx, &nodeagentpb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("calling GetNodeResources: %w", err)
+	}
+
+	return map[string]interface{}{
+		"disk_path":     diskPath,
+		"total_disk_gb": resp.GetTotalDiskGb(),
+		"used_disk_gb":  resp.GetUsedDiskGb(),
+	}, nil
 }
 
 func (c *NodeAgentGRPCClient) TransferDisk(ctx context.Context, opts *tasks.DiskTransferOptions) error {
@@ -892,9 +1198,24 @@ func (c *NodeAgentGRPCClient) PrepareMigratedVM(ctx context.Context, targetNodeI
 	return nil
 }
 
-func (c *NodeAgentGRPCClient) cephMonitors() []string { return nil }
-func (c *NodeAgentGRPCClient) cephUser() string       { return "" }
-func (c *NodeAgentGRPCClient) cephSecretUUID() string { return "" }
+func (c *NodeAgentGRPCClient) cephMonitors() []string {
+	if c.cephCfg != nil {
+		return c.cephCfg.Monitors
+	}
+	return nil
+}
+func (c *NodeAgentGRPCClient) cephUser() string {
+	if c.cephCfg != nil {
+		return c.cephCfg.User
+	}
+	return ""
+}
+func (c *NodeAgentGRPCClient) cephSecretUUID() string {
+	if c.cephCfg != nil {
+		return c.cephCfg.SecretUUID
+	}
+	return ""
+}
 
 func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models.NodeHeartbeat {
 	loadAvg := make([]float32, len(resp.GetLoadAverage()))

@@ -14,6 +14,39 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
+// CustomerRepo defines the operations used by AuthService on customer data.
+// Both the real CustomerRepository and test mocks implement this interface.
+type CustomerRepo interface {
+	GetByID(ctx context.Context, id string) (*models.Customer, error)
+	GetByEmail(ctx context.Context, email string) (*models.Customer, error)
+	Create(ctx context.Context, customer *models.Customer) error
+	UpdateProfile(ctx context.Context, customerID string, params ProfileUpdateParams) (*models.Customer, error)
+	UpdateStatus(ctx context.Context, id, status string) error
+	SoftDelete(ctx context.Context, id string) error
+	CreateSession(ctx context.Context, session *models.Session) error
+	GetSession(ctx context.Context, id string) (*models.Session, error)
+	GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error)
+	DeleteSession(ctx context.Context, id string) error
+	DeleteSessionsByUser(ctx context.Context, userID, userType string) error
+	CountSessionsByUser(ctx context.Context, userID, userType string) (int, error)
+	DeleteOldestSession(ctx context.Context, userID, userType string) error
+	GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error)
+	UpdateSessionLastReauthAt(ctx context.Context, sessionID string, timestamp time.Time) error
+	GetFailedLoginCount(ctx context.Context, email string, window time.Duration) (int, error)
+	RecordFailedLogin(ctx context.Context, email string) error
+	ClearFailedLogins(ctx context.Context, email string) error
+	UpdateCustomerPasswordHash(ctx context.Context, id, passwordHash string) error
+	CreatePasswordReset(ctx context.Context, reset *models.PasswordReset) error
+	GetPasswordResetByTokenHash(ctx context.Context, tokenHash string) (*models.PasswordReset, error)
+	MarkPasswordResetUsed(ctx context.Context, id string) error
+	UpdateTOTPEnabled(ctx context.Context, id string, enabled bool, secretEncrypted *string, backupCodesHash []string) error
+	UpdateBackupCodes(ctx context.Context, userID string, codes []string) error
+	UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error
+	UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error
+	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, int, error)
+	UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error
+}
+
 // CustomerRepository provides database operations for customer accounts.
 type CustomerRepository struct {
 	db DB

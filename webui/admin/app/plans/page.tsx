@@ -69,7 +69,6 @@ export default function PlansPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
@@ -98,23 +97,10 @@ export default function PlansPage() {
     plan.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleEdit = async (plan: Plan) => {
-    setLoadingId(plan.id);
-    try {
-      const planDetails = await adminPlansApi.getPlan(plan.id);
-      toast({
-        title: "Edit Plan",
-        description: `Editing plan: ${planDetails.name}`,
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to fetch plan details",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingId(null);
-    }
+  const handleEdit = (plan: Plan) => {
+    setSelectedPlan(plan);
+    setDialogAction("edit");
+    setDialogOpen(true);
   };
 
   const openConfirmDialog = (plan: Plan, action: DialogAction) => {
@@ -124,37 +110,51 @@ export default function PlansPage() {
   };
 
   const handleConfirmAction = async () => {
-    if (!selectedPlan || !dialogAction) return;
+    if (!dialogAction) return;
 
     setDialogOpen(false);
-    setLoadingId(selectedPlan.id);
 
-    try {
-      if (dialogAction === "delete") {
+    if (dialogAction === "delete" && selectedPlan) {
+      try {
         await adminPlansApi.deletePlan(selectedPlan.id);
         toast({
           title: "Plan Deleted",
           description: `Plan "${selectedPlan.name}" has been permanently deleted.`,
         });
         setPlans((prev) => prev.filter((p) => p.id !== selectedPlan.id));
+      } catch (error) {
+        toast({
+          title: "Action Failed",
+          description: error instanceof Error ? error.message : `Failed to ${dialogAction} plan`,
+          variant: "destructive",
+        });
       }
-    } catch (error) {
+    } else if (dialogAction === "edit") {
       toast({
-        title: "Action Failed",
-        description: error instanceof Error ? error.message : `Failed to ${dialogAction} plan`,
-        variant: "destructive",
+        title: "Coming Soon",
+        description: "Plan editing form is not yet available.",
       });
-    } finally {
-      setLoadingId(null);
-      setSelectedPlan(null);
-      setDialogAction(null);
     }
+
+    setSelectedPlan(null);
+    setDialogAction(null);
   };
 
   const getDialogContent = () => {
-    if (!selectedPlan || !dialogAction) return null;
+    if (!dialogAction) return null;
 
-    if (dialogAction === "delete") {
+    if (dialogAction === "edit") {
+      return {
+        title: selectedPlan ? `Edit Plan: ${selectedPlan.name}` : "Create Plan",
+        description: selectedPlan
+          ? `Modify specifications for "${selectedPlan.name}". ${selectedPlan.vcpu} vCPU, ${formatMemory(selectedPlan.memory_mb)} RAM, ${selectedPlan.disk_gb} GB disk.`
+          : "Define specifications and pricing for the new plan.",
+        confirmText: selectedPlan ? "Save Changes" : "Create Plan",
+        variant: "default" as const,
+      };
+    }
+
+    if (dialogAction === "delete" && selectedPlan) {
       return {
         title: "Delete Plan",
         description: `Are you sure you want to permanently delete plan "${selectedPlan.name}"? This action cannot be undone.`,
@@ -197,7 +197,7 @@ export default function PlansPage() {
               Manage pricing tiers and VM specifications
             </p>
           </div>
-          <Button size="default">
+          <Button size="default" disabled>
             <Plus className="mr-2 h-4 w-4" />
             Create Plan
           </Button>
@@ -291,21 +291,15 @@ export default function PlansPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleEdit(plan)}
-                              disabled={loadingId === plan.id}
+                              disabled
                             >
-                              {loadingId === plan.id ? (
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                              ) : (
-                                <Edit className="mr-1 h-3 w-3" />
-                              )}
+                              <Edit className="mr-1 h-3 w-3" />
                               Edit
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => openConfirmDialog(plan, "delete")}
-                              disabled={loadingId === plan.id}
                               className="text-destructive hover:bg-destructive/10"
                             >
                               <Trash2 className="mr-1 h-3 w-3" />

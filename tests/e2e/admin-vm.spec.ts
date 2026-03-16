@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, request } from '@playwright/test';
 
 /**
  * Admin VM Management E2E Tests
@@ -10,6 +10,25 @@ import { test, expect, Page } from '@playwright/test';
  * - VM details viewing
  * - VM deletion
  */
+
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const createdVMIds: string[] = [];
+
+async function cleanupCreatedVMs(apiContext: any) {
+  if (!ADMIN_TOKEN || createdVMIds.length === 0) return;
+  for (const vmId of createdVMIds) {
+    try {
+      const resp = await apiContext.delete(`${BASE_URL}/api/v1/admin/vms/${vmId}`, {
+        headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      console.log(`Cleanup: DELETE /api/v1/admin/vms/${vmId} -> ${resp.status()}`);
+    } catch (e: any) {
+      console.log(`Cleanup failed for ${vmId}: ${e.message}`);
+    }
+  }
+  createdVMIds.length = 0;
+}
 
 // ============================================
 // Page Object Models
@@ -315,6 +334,10 @@ test.describe('Admin VM Creation', () => {
     await vmCreatePage.goto();
   });
 
+  test.afterAll(async ({ request: apiContext }) => {
+    await cleanupCreatedVMs(apiContext);
+  });
+
   test('should display VM creation form', async ({ page }) => {
     await expect(page.locator('input[name="hostname"]')).toBeVisible();
     await expect(page.locator('select[name="plan_id"], [data-testid="plan-select"]')).toBeVisible();
@@ -366,7 +389,9 @@ test.describe('Admin VM Creation', () => {
     await expect(options.first()).toBeVisible();
   });
 
-  test('should create VM successfully', async ({ page }) => {
+  test('should create VM successfully', async ({ page, request: apiContext }) => {
+    test.skip(!ADMIN_TOKEN, 'Requires ADMIN_TOKEN env var to clean up created VMs');
+
     const testHostname = `test-vm-${Date.now()}`;
     
     await vmCreatePage.selectCustomer('test-customer@example.com');
@@ -382,6 +407,13 @@ test.describe('Admin VM Creation', () => {
     
     // Verify hostname on detail page
     await expect(page.locator(`text="${testHostname}"`)).toBeVisible();
+
+    // Capture VM ID from URL for cleanup
+    const url = page.url();
+    const match = url.match(/\/admin\/vms\/([a-f0-9-]+)/);
+    if (match) {
+      createdVMIds.push(match[1]);
+    }
   });
 });
 

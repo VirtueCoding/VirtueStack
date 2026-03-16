@@ -1,21 +1,16 @@
 "use client";
 
 import {
-  LayoutDashboard,
-  Server,
-  FileText,
-  Network,
-  Users,
-  ShieldCheck,
   LogOut,
   Settings,
   ChevronLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
+import { adminNavItems } from "@/lib/navigation";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -28,15 +23,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/nodes", label: "Nodes", icon: Server },
-  { href: "/dashboard/plans", label: "Plans", icon: FileText },
-  { href: "/dashboard/ip-sets", label: "IP Sets", icon: Network },
-  { href: "/dashboard/customers", label: "Customers", icon: Users },
-  { href: "/dashboard/audit-logs", label: "Audit Logs", icon: ShieldCheck },
-];
-
 interface SidebarProps {
   collapsed?: boolean;
   onToggle?: () => void;
@@ -44,6 +30,13 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
+
+  const userEmail = user?.email || "Admin";
+  const initials = userEmail
+    .split("@")[0]
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div
@@ -73,7 +66,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       {/* Navigation */}
       <ScrollArea className="flex-1 py-4">
         <nav className="flex flex-col gap-1 px-2">
-          {navItems.map((item) => {
+          {adminNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (
@@ -108,13 +101,13 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               )}
             >
               <Avatar className="h-8 w-8">
-                <AvatarImage src="/avatars/admin.png" alt="Admin" />
-                <AvatarFallback>AD</AvatarFallback>
+                <AvatarImage src="/avatars/admin.png" alt={userEmail} />
+                <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
               {!collapsed && (
                 <div className="flex flex-col items-start text-xs">
-                  <span className="font-medium">Admin</span>
-                  <span className="text-muted-foreground">admin@virtuestack.com</span>
+                  <span className="font-medium">{userEmail}</span>
+                  <span className="text-muted-foreground">{user?.role || "Admin"}</span>
                 </div>
               )}
             </Button>
@@ -122,11 +115,13 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <Settings className="mr-2 h-4 w-4" />
-              Settings
+            <DropdownMenuItem asChild>
+              <Link href="/settings">
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => logout()}>
               <LogOut className="mr-2 h-4 w-4" />
               Log out
             </DropdownMenuItem>

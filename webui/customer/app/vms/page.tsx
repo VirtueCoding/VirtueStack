@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Play, Square, RotateCw, Plus, Server, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,34 +30,7 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
 import { vmApi, VM, ApiClientError } from "@/lib/api-client";
-
-function getStatusBadgeVariant(
-  status: VM["status"]
-): "success" | "secondary" | "destructive" | "warning" {
-  switch (status) {
-    case "running":
-      return "success";
-    case "stopped":
-      return "secondary";
-    case "error":
-      return "destructive";
-    case "provisioning":
-      return "warning";
-  }
-}
-
-function getStatusLabel(status: VM["status"]): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function formatMemory(mb: number): string {
-  if (mb >= 1024) {
-    return `${(mb / 1024).toFixed(1)} GB`;
-  }
-  return `${mb} MB`;
-}
-
-const ENABLE_VM_CREATION = false;
+import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 
 export default function VMsPage() {
   const [vms, setVms] = useState<VM[]>([]);
@@ -64,6 +38,9 @@ export default function VMsPage() {
   const [loadingVMs, setLoadingVMs] = useState<Record<string, boolean>>({});
   const [vmToStop, setVmToStop] = useState<string | null>(null);
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const searchFromUrl = searchParams.get("search") || "";
+  const [searchTerm, setSearchTerm] = useState(searchFromUrl);
 
   const fetchVMs = useCallback(async () => {
     try {
@@ -82,6 +59,15 @@ export default function VMsPage() {
 
   useEffect(() => {
     fetchVMs();
+  }, [fetchVMs]);
+
+  const ENABLE_VM_CREATION = false;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchVMs();
+    }, 30000);
+    return () => clearInterval(interval);
   }, [fetchVMs]);
 
   const setVMLoading = (id: string, loading: boolean) => {

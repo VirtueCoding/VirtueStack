@@ -94,6 +94,7 @@ func toDeliveryResponse(d *repository.WebhookDelivery) WebhookDeliveryResponse {
 // ListWebhooks handles GET /webhooks - lists all webhooks for the customer.
 func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
+	pagination := models.ParsePagination(c)
 
 	webhooks, err := h.webhookService.List(c.Request.Context(), customerID)
 	if err != nil {
@@ -113,7 +114,7 @@ func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(1, 20, len(responses)),
+		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, len(responses)),
 	})
 }
 

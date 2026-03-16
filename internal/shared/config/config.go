@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -423,6 +424,10 @@ func validateControllerConfig(cfg *ControllerConfig) error {
 	}
 	if len(cfg.EncryptionKey) < 32 {
 		return fmt.Errorf("ENCRYPTION_KEY must be at least 32 characters")
+	}
+
+	if cfg.JWTSecret == "dev-jwt-secret-min-32-characters-long" {
+		slog.Warn("using default insecure JWT_SECRET; set a unique JWT_SECRET for production")
 	}
 
 	if strings.EqualFold(cfg.Environment, "production") {

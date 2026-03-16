@@ -4,7 +4,7 @@
 > This file provides complete technical context for AI agents working on the VirtueStack codebase.  
 > For human-friendly overview, see [README.md](README.md).
 
-**Version:** 2.1  
+**Version:** 2.2  
 **Last Updated:** March 2026  
 **Purpose:** Machine-readable single source of truth for LLM agents working on VirtueStack
 
@@ -20,7 +20,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 |-----------|--------|------------|
 | Controller APIs | Complete | 100% |
 | Node Agent | Complete | 100% |
-| Database Schema | Complete | 100% (21 migrations) |
+| Database Schema | Complete | 100% (24 migrations) |
 | Authentication | Complete | 100% (JWT, 2FA/TOTP, API Keys) |
 | VM Lifecycle | Complete | 100% |
 | Storage (Ceph RBD + QCOW) | Complete | 100% |
@@ -80,11 +80,14 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (21 files)
+├── migrations/                             # Database migrations (24 files)
 │   ├── 000001_initial_schema.up.sql
 │   ├── 000019_add_storage_backend.up.sql
 │   ├── 000020_add_failover_requests.up.sql
-│   └── 000020_add_attached_iso.up.sql
+│   ├── 000021_add_attached_iso.up.sql
+│   ├── 000022_add_missing_rls_and_grants.up.sql
+│   ├── 000023_audit_log_default_partition.up.sql
+│   └── 000024_add_missing_indexes.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -199,6 +202,19 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 ALTER TABLE vms ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
     USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+-- Additional customer isolation policies
+ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_notification_preferences ON notification_preferences FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+ALTER TABLE notification_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_notification_events ON notification_events FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+ALTER TABLE password_resets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_password_resets ON password_resets FOR ALL TO app_customer
+    USING (user_id = current_setting('app.current_customer_id')::UUID);
 ```
 
 ### 4.3 Key Migrations
@@ -219,7 +235,10 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000018_add_failed_login_attempts | Security tracking |
 | 000019_add_storage_backend | QCOW storage backend support |
 | 000020_add_failover_requests | HA failover request persistence |
-| 000020_add_attached_iso | VM attached ISO tracking |
+| 000021_add_attached_iso | VM attached ISO tracking |
+| 000022_add_missing_rls_and_grants | RLS policies for notification_preferences, notification_events, password_resets + missing GRANTs |
+| 000023_audit_log_default_partition | Default partition for audit_logs + future partitions |
+| 000024_add_missing_indexes | Missing indexes on vms(plan_id,hostname), nodes(location_id), FK constraints, redundant index cleanup |
 
 ---
 
@@ -252,6 +271,7 @@ PUT    /nodes/:id
 DELETE /nodes/:id
 POST   /nodes/:id/drain
 POST   /nodes/:id/failover
+POST   /nodes/:id/undrain
 
 // VMs
 GET    /vms
@@ -477,17 +497,20 @@ PermSettingsManage, PermAuditView
 ```go
 type StorageBackend interface {
     CloneFromTemplate(ctx context.Context, templateName, vmUUID string, sizeGB int) error
+    CloneSnapshotToPool(ctx context.Context, pool, snapshotName, targetName string) error
     Resize(ctx context.Context, imageName string, newSizeGB int) error
     CreateSnapshot(ctx context.Context, imageName, snapshotName string) error
     DeleteSnapshot(ctx context.Context, imageName, snapshotName string) error
     ProtectSnapshot(ctx context.Context, imageName, snapshotName string) error
+    UnprotectSnapshot(ctx context.Context, imageName, snapshotName string) error
     ListSnapshots(ctx context.Context, imageName string) ([]string, error)
     GetImageSize(ctx context.Context, imageName string) (int64, error)
     ImageExists(ctx context.Context, imageName string) (bool, error)
     FlattenImage(ctx context.Context, imageName string) error
-    Delete(ctx context.Context, imageName string) error
-    IsConnected() bool
     GetPoolStats(ctx context.Context) (PoolStats, error)
+    Rollback(ctx context.Context, imageName, snapshotName string) error
+    Delete(ctx context.Context, imageName string) error
+    GetStorageType() StorageType
 }
 ```
 
@@ -521,10 +544,16 @@ ALTER TABLE plans ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
 ALTER TABLE nodes ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
 ALTER TABLE nodes ADD COLUMN storage_path TEXT;
 
--- Storage backend per VM (inherits from plan)
+-- Storage backend per VM (inherits from plan, immutable after creation)
 ALTER TABLE vms ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
 ALTER TABLE vms ADD COLUMN disk_path TEXT;  -- For QCOW file path
 ```
+
+### 7.5 Backend Selection Rules
+
+1. **VM storage backend is set from plan at creation and is immutable** — cannot be changed or migrated to a different backend
+2. **Nodes can host VMs with any backend** (ceph, qcow, or both) — node selection does not filter by storage_backend
+3. **Migration is only allowed between nodes supporting the VM's backend** — cross-backend migration (ceph ↔ qcow) is blocked
 
 ---
 
@@ -567,6 +596,12 @@ service NodeAgentService {
     rpc AbortMigration(VMIdentifier) returns (VMOperationResponse);
     rpc PostMigrateSetup(PostMigrateSetupRequest) returns (VMOperationResponse);
     rpc PrepareMigratedVM(PrepareMigratedVMRequest) returns (VMOperationResponse);
+
+    // Disk Transfer (for QCOW migration)
+    rpc CreateDiskSnapshot(CreateDiskSnapshotRequest) returns (CreateDiskSnapshotResponse);
+    rpc DeleteDiskSnapshot(DeleteDiskSnapshotRequest) returns (VMOperationResponse);
+    rpc TransferDisk(TransferDiskRequest) returns (stream DiskChunk);
+    rpc ReceiveDisk(stream DiskChunk) returns (ReceiveDiskResponse);
 
     // Console (bidirectional streaming)
     rpc StreamVNCConsole(stream VNCFrame) returns (stream VNCFrame);
@@ -702,6 +737,7 @@ Three-layer approach:
 | Plans | `app/plans/page.tsx` | Plan management |
 | IP Sets | `app/ip-sets/page.tsx` | IP pool management |
 | Audit Logs | `app/audit-logs/page.tsx` | Audit trail viewer |
+| Settings | `app/settings/page.tsx` | System settings management |
 
 ### 11.2 Customer Portal
 
@@ -748,6 +784,9 @@ virtuestack_TerminateAccount() // Delete VM
 virtuestack_ChangePackage()   // Resize VM
 virtuestack_ChangePassword()  // Reset password
 virtuestack_ClientArea()      // Embed Customer WebUI
+virtuestack_UsageUpdate()       // Usage metering (stub)
+virtuestack_SingleSignOn()      // WebUI SSO (stub)
+virtuestack_AdminServicesTabFieldsSave()  // Admin tab save (stub)
 ```
 
 ---
@@ -854,6 +893,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | TELEGRAM_BOT_TOKEN | No | Telegram bot token |
 | LOG_LEVEL | No | Logging level (debug/info/warn/error) |
 | LISTEN_ADDR | No | HTTP listen address (default :8080) |
+| NATS_AUTH_TOKEN | No | NATS server authentication token |
 
 ### Node Agent
 
@@ -863,6 +903,9 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | NODE_ID | Yes | Unique node identifier |
 | CEPH_POOL | No | Default Ceph pool |
 | CEPH_USER | No | Ceph auth user |
+| STORAGE_BACKEND | No | Storage backend: `ceph` or `qcow` (default: `ceph`) |
+| STORAGE_PATH | No | Base path for QCOW2 VM storage |
+| TEMPLATE_PATH | No | Base path for QCOW2 template storage |
 | TLS_CERT_FILE | Yes | mTLS client certificate |
 | TLS_KEY_FILE | Yes | mTLS client key |
 | TLS_CA_FILE | Yes | CA certificate |
@@ -871,44 +914,11 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 
 ## 16. WHAT'S LEFT TO IMPLEMENT
 
-### Recently Completed
+All planned features are complete. The platform is fully implemented.
 
-- IPMI fencing full integration (`internal/controller/services/ipmi_client.go`, `failover_service.go`, `failover_monitor.go`)
-- PowerDNS rDNS service (`internal/controller/services/rdns_service.go`) with MySQL direct access and SOA serial management
-- Prometheus metrics endpoint (`internal/controller/metrics/prometheus.go`, middleware, Node Agent metrics)
-- ISO upload backend (`internal/controller/api/customer/iso_upload.go`)
-- Notification routes (connected to services)
-- `vm.resize` async task handler (`internal/controller/tasks/vm_resize.go`)
-- `ensureValidToken` in frontend auth
-- nftables abuse prevention rules (`internal/nodeagent/network/abuse_prevention.go`)
-- pg_dump config backup script (`scripts/backup-config.sh`)
-- Grafana dashboard templates (`configs/grafana/virtuestack-overview.json`)
-- Prometheus alerting rules (`configs/prometheus/alerts.yml`)
-- Heartbeat miss detection background goroutine (`internal/controller/services/heartbeat_checker.go`)
-- Failover request persistence and admin API (`internal/controller/api/admin/failover.go`)
-- Node evacuation with actual VM migration (`internal/controller/services/node_agent_client.go`)
-- Undrain endpoint (`POST /nodes/:id/undrain`)
-- Admin rDNS API endpoints
-- Provisioning rDNS API endpoints
-- PowerDNS GetReverseDNS() and health check
-- rDNS unit tests (`internal/controller/services/rdns_service_test.go`)
-- Node Agent HTTP metrics server on `:9091`
-- Additional Node Agent metrics (disk IOPS, network packets/errors/drops, node-level)
-- Controller background metrics collector
-- Task worker and backup Prometheus instrumentation
-- Background bandwidth collection job
+### Future Enhancements (Low Priority)
 
-### Medium Priority (Enhancements)
-
-1. **Advanced Network Security**
-   - IPv6 BGP announcement coordination
-
-### Low Priority (Polish)
-
-2. **Documentation**
-   - Complete API documentation updates
-   - Installation guide refinements
-   - Troubleshooting guides
+1. IPv6 BGP announcement coordination
 
 ---
 
@@ -932,6 +942,12 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 2. Implement in `rbd.go` and `qcow.go`
 3. Update domain XML generation if needed (`internal/nodeagent/vm/domain_xml.go`)
 4. Add gRPC handler in `server.go`
+
+**Node Selection for VMs:**
+- Nodes can host VMs with any storage backend (ceph or qcow)
+- Node selection picks the least-loaded online node regardless of backend
+- The VM's storage_backend is immutable after creation
+- Migration is blocked if target node doesn't support the VM's backend
 
 **Adding a New API Endpoint:**
 1. Add handler in appropriate `api/{tier}/` directory
@@ -1009,7 +1025,7 @@ docker compose up -d
 | Service | Image | Ports | Dependencies |
 |---------|-------|-------|--------------|
 | postgres | postgres:16-alpine | Internal | - |
-| nats | nats:2.10-alpine | Internal | - |
+| nats | nats:2.10-alpine | Internal | - (supports --auth token) |
 | controller | virtuestack/controller | Internal | postgres, nats |
 | admin-webui | virtuestack/admin-webui | Internal | controller |
 | customer-webui | virtuestack/customer-webui | Internal | controller |

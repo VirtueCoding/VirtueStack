@@ -8,7 +8,10 @@
  * @author  VirtueStack Team
  *}
 
-{* Check console type *}
+{* Check console type - validate against whitelist *}
+{if !in_array($smarty.get.type|default:'vnc', ['vnc', 'serial'])}
+    {$smarty.get.type = 'vnc'}
+{/if}
 {assign var="console_type" value=$smarty.get.type|default:'vnc'}
 
 <!DOCTYPE html>
@@ -285,7 +288,7 @@
     </style>
     
     {* Font Awesome for icons *}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer">
 </head>
 <body>
     <div class="console-header">
@@ -477,7 +480,7 @@
         // Listen for messages from iframe
         window.addEventListener('message', function(event) {
             // Validate origin
-            if (!event.origin.endsWith('{$webui_url|parse_url:$smarty.const.PHP_URL_HOST|default:""}')) {
+            if (event.origin !== 'https://{$webui_url|parse_url:$smarty.const.PHP_URL_HOST|default:""}') {
                 return;
             }
             

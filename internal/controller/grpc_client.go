@@ -109,9 +109,18 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 }
 
 func (nc *NodeClient) ReleaseConnection(nodeID string, conn *grpc.ClientConn) {
-	// Parameters intentionally unused - stub for future connection pooling implementation
-	_ = nodeID
-	_ = conn
+	nc.mu.RLock()
+	held, exists := nc.conns[nodeID]
+	nc.mu.RUnlock()
+
+	if !exists {
+		nc.logger.Warn("released connection not found in pool", "node_id", nodeID)
+		return
+	}
+	if held != conn {
+		nc.logger.Warn("released connection does not match pooled connection", "node_id", nodeID)
+		return
+	}
 }
 
 // createConnection creates a new gRPC connection with mTLS.

@@ -169,17 +169,22 @@ test.describe('Admin Authentication', () => {
   });
 
   test('should logout successfully', async ({ page }) => {
-    // Setup: Login first (requires auth state)
-    // This would use storageState from authenticated setup
-    
-    await page.goto('/dashboard');
-    
+    test.skip(!process.env.ADMIN_TOTP_SECRET, 'Requires ADMIN_TOTP_SECRET for full login flow');
+
+    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
+    await loginPage.expect2FARequired();
+
+    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET!);
+    await loginPage.enter2FACode(validCode);
+
+    await expect(page).toHaveURL(/\/dashboard|\/admin/);
+
     // Click logout button
     await page.click('[data-testid="logout-button"], button:has-text("Logout")');
-    
+
     // Should redirect to login
     await expect(page).toHaveURL(/\/login/);
-    
+
     // Should not be able to access protected routes
     await page.goto('/dashboard');
     await expect(page).toHaveURL(/\/login/);
@@ -379,8 +384,14 @@ test.describe('Session Management', () => {
 // ============================================
 
 test.describe('Authentication Security', () => {
+  let loginPage: LoginPage;
+
+  test.beforeEach(async ({ page }) => {
+    loginPage = new LoginPage(page);
+  });
+
   test('should prevent SQL injection in login form', async ({ page }) => {
-    await page.goto('/login');
+    await loginPage.gotoAdmin();
     
     await page.fill('input[name="email"]', "admin@example.com' OR '1'='1");
     await page.fill('input[name="password"]', "' OR '1'='1");
@@ -407,37 +418,40 @@ test.describe('Authentication Security', () => {
   });
 
   test('should have CSRF protection', async ({ page }) => {
-    await page.goto('/login');
-    
+    await loginPage.gotoAdmin();
+
     // Check for CSRF token in form
-    const csrfToken = await page.locator('input[name="_csrf"], input[name="csrf_token"]').getAttribute('value');
-    
-    // CSRF token should exist (or be handled via cookies)
-    // This is a basic check
-    expect(csrfToken || await page.context().cookies()).toBeTruthy();
+    const csrfToken = await page.locator('input[name="_csrf"], input[name="csrf_token"], input[name="csrf"]').getAttribute('value');
+
+    // CSRF protection must be present: either a hidden form input or a csrf cookie
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find(c => c.name.toLowerCase().includes('csrf'));
+
+    if (csrfToken) {
+      expect(csrfToken).toBeTruthy();
+      expect(csrfToken.length).toBeGreaterThan(0);
+    } else {
+      expect(csrfCookie).toBeDefined();
+      expect(csrfCookie!.value.length).toBeGreaterThan(0);
+    }
   });
 
   test('should set secure cookie attributes', async ({ page, context }) => {
-    await page.goto('/login');
-    await page.fill('input[name="email"]', CUSTOMER_CREDENTIALS.email);
-    await page.fill('input[name="password"]', CUSTOMER_CREDENTIALS.password);
-    await page.click('button[type="submit"]');
-    
+    await loginPage.gotoAdmin();
+    await loginPage.login(CUSTOMER_CREDENTIALS.email, CUSTOMER_CREDENTIALS.password);
+
     await expect(page).toHaveURL(/\/dashboard|\/vms/);
-    
+
     const cookies = await context.cookies();
-    const sessionCookie = cookies.find(c => 
+    const sessionCookie = cookies.find(c =>
       c.name.includes('session') || c.name.includes('token') || c.name.includes('auth')
     );
-    
+
     if (sessionCookie) {
       expect(sessionCookie.httpOnly).toBe(true);
-      // Secure should be true in production
-      // expect(sessionCookie.secure).toBe(true);
+      expect(sessionCookie.secure).toBe(true);
       expect(sessionCookie.sameSite).toBeDefined();
     }
   });
 });
 
-// Helper for loginPage in security tests
-let loginPage: LoginPage;

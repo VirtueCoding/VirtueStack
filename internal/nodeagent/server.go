@@ -125,8 +125,7 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	// Determine listen address
 	listenAddr := DefaultListenAddr
 	if cfg.ControllerGRPCAddr != "" {
-		logger.Warn("ControllerGRPCAddr is configured but reverse connection to controller is not yet implemented",
-			"addr", cfg.ControllerGRPCAddr)
+		listenAddr = cfg.ControllerGRPCAddr
 	}
 
 	metricsAddr := cfg.MetricsAddr
@@ -331,6 +330,7 @@ func (s *Server) collectVMMetrics(ctx context.Context) {
 
 		metrics.VMCPUUsagePercent.WithLabelValues(vmID).Set(vmMetrics.CPUUsagePercent)
 		metrics.VMMemoryUsageBytes.WithLabelValues(vmID).Set(float64(vmMetrics.MemoryUsageBytes))
+		metrics.VMMemoryLimitBytes.WithLabelValues(vmID).Set(float64(vmMetrics.MemoryTotalBytes))
 		metrics.VMDiskReadBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskReadBytes))
 		metrics.VMDiskWriteBytesTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskWriteBytes))
 		metrics.VMDiskReadOpsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.DiskReadOps))
@@ -398,8 +398,10 @@ func (s *Server) closeStorage() {
 	}
 
 	// RBDManager has a Close method, QCOWManager doesn't need one
-	if closer, ok := s.storageBackend.(interface{ Close() }); ok {
-		closer.Close()
+	if closer, ok := s.storageBackend.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			s.logger.Error("error closing storage backend", "error", err)
+		}
 	}
 }
 

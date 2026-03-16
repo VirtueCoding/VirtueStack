@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, Monitor, Settings, Key, CreditCard } from "lucide-react";
+import { Menu, Monitor, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -17,9 +17,7 @@ import {
 
 const navItems = [
   { href: "/vms", label: "My VMs", icon: Monitor },
-  { href: "/vms/settings", label: "Settings", icon: Settings },
-  { href: "/vms/api-keys", label: "API Keys", icon: Key },
-  { href: "/vms/billing", label: "Billing", icon: CreditCard },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function MobileNav() {
@@ -40,7 +38,7 @@ export function MobileNav() {
         <nav className="mt-6 flex flex-col gap-2">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href || pathname?.startsWith(item.href);
+            const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
               <SheetClose asChild key={item.href}>
                 <Link

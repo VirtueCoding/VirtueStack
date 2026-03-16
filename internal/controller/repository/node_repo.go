@@ -29,6 +29,7 @@ func scanNode(row pgx.Row) (models.Node, error) {
 		&n.AllocatedVCPU, &n.AllocatedMemoryMB, &n.CephPool,
 		&n.IPMIAddress, &n.IPMIUsernameEncrypted, &n.IPMIPasswordEncrypted,
 		&n.LastHeartbeatAt, &n.ConsecutiveHeartbeatMisses, &n.CreatedAt,
+		&n.StorageBackend, &n.StoragePath, &n.CephMonitors, &n.CephUser,
 	)
 	return n, err
 }
@@ -38,7 +39,8 @@ const nodeSelectCols = `
 	location_id, status, total_vcpu, total_memory_mb,
 	allocated_vcpu, allocated_memory_mb, ceph_pool,
 	ipmi_address, ipmi_username_encrypted, ipmi_password_encrypted,
-	last_heartbeat_at, consecutive_heartbeat_misses, created_at`
+	last_heartbeat_at, consecutive_heartbeat_misses, created_at,
+	storage_backend, storage_path, ceph_monitors, ceph_user`
 
 // Create inserts a new node record into the database.
 func (r *NodeRepository) Create(ctx context.Context, node *models.Node) error {
@@ -46,14 +48,16 @@ func (r *NodeRepository) Create(ctx context.Context, node *models.Node) error {
 		INSERT INTO nodes (
 			hostname, grpc_address, management_ip, location_id, status,
 			total_vcpu, total_memory_mb, ceph_pool,
-			ipmi_address, ipmi_username_encrypted, ipmi_password_encrypted
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			ipmi_address, ipmi_username_encrypted, ipmi_password_encrypted,
+			storage_backend, storage_path
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + nodeSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		node.Hostname, node.GRPCAddress, node.ManagementIP, node.LocationID, node.Status,
 		node.TotalVCPU, node.TotalMemoryMB, node.CephPool,
 		node.IPMIAddress, node.IPMIUsernameEncrypted, node.IPMIPasswordEncrypted,
+		node.StorageBackend, node.StoragePath,
 	)
 	created, err := scanNode(row)
 	if err != nil {
@@ -201,38 +205,21 @@ func (r *NodeRepository) UpdateAllocatedResources(ctx context.Context, nodeID st
 }
 
 // GetLeastLoadedNode returns the online node in the given location with the most available capacity.
+// Nodes can host VMs with any storage backend (ceph or qcow), as long as the
+// necessary configuration is present on the node.
 // Returns ErrNotFound if no eligible node exists.
-func (r *NodeRepository) GetLeastLoadedNode(ctx context.Context, locationID, storageBackend string) (*models.Node, error) {
-	var node models.Node
-	var err error
-
-	if storageBackend != "" {
-		const q = `
-			SELECT ` + nodeSelectCols + `
-			FROM nodes
-			WHERE location_id = $1
-			  AND status = 'online'
-			  AND storage_backend = $2
-			ORDER BY (total_vcpu - allocated_vcpu) DESC,
-			         (total_memory_mb - allocated_memory_mb) DESC
-			LIMIT 1`
-		node, err = ScanRow(ctx, r.db, q, []any{locationID, storageBackend}, scanNode)
-		if err != nil {
-			return nil, fmt.Errorf("getting least loaded node in location %s with storage %s: %w", locationID, storageBackend, err)
-		}
-	} else {
-		const q = `
-			SELECT ` + nodeSelectCols + `
-			FROM nodes
-			WHERE location_id = $1
-			  AND status = 'online'
-			ORDER BY (total_vcpu - allocated_vcpu) DESC,
-			         (total_memory_mb - allocated_memory_mb) DESC
-			LIMIT 1`
-		node, err = ScanRow(ctx, r.db, q, []any{locationID}, scanNode)
-		if err != nil {
-			return nil, fmt.Errorf("getting least loaded node in location %s: %w", locationID, err)
-		}
+func (r *NodeRepository) GetLeastLoadedNode(ctx context.Context, locationID string) (*models.Node, error) {
+	const q = `
+		SELECT ` + nodeSelectCols + `
+		FROM nodes
+		WHERE location_id = $1
+		  AND status = 'online'
+		ORDER BY (total_vcpu - allocated_vcpu) DESC,
+		         (total_memory_mb - allocated_memory_mb) DESC
+		LIMIT 1`
+	node, err := ScanRow(ctx, r.db, q, []any{locationID}, scanNode)
+	if err != nil {
+		return nil, fmt.Errorf("getting least loaded node in location %s: %w", locationID, err)
 	}
 	return &node, nil
 }
@@ -257,8 +244,10 @@ func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
 			location_id = $2,
 			total_vcpu = $3,
 			total_memory_mb = $4,
-			ipmi_address = $5
-		WHERE id = $6
+			ipmi_address = $5,
+			storage_backend = $6,
+			storage_path = $7
+		WHERE id = $8
 		RETURNING ` + nodeSelectCols
 
 	row := r.db.QueryRow(ctx, q,
@@ -267,6 +256,8 @@ func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
 		node.TotalVCPU,
 		node.TotalMemoryMB,
 		node.IPMIAddress,
+		node.StorageBackend,
+		node.StoragePath,
 		node.ID,
 	)
 

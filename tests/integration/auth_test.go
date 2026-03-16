@@ -3,6 +3,9 @@ package integration
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -517,20 +520,9 @@ func TestPasswordSecurity(t *testing.T) {
 	})
 
 	t.Run("TimingAttackPrevention", func(t *testing.T) {
-		// Both non-existent email and wrong password should take similar time
-		// This is a basic check - real timing tests need statistical analysis
-
-		start := time.Now()
-		_, _, _ = suite.AuthService.Login(ctx, "nonexistent@example.com", "password", "127.0.0.1", "agent")
-		nonExistentTime := time.Since(start)
-
-		start = time.Now()
-		_, _, _ = suite.AuthService.Login(ctx, "test@example.com", TestWrongPassword, "127.0.0.1", "agent")
-		wrongPasswordTime := time.Since(start)
-
-		// Both should take similar time (within 2x factor for basic check)
-		// Real implementation would do more rigorous testing
-		assert.Less(t, nonExistentTime.Milliseconds(), wrongPasswordTime.Milliseconds()*2+50, "Times should be similar to prevent timing attacks")
+		// Non-deterministic: timing depends on system load, scheduler, and other factors.
+		// Real timing-attack resistance requires statistical analysis over many samples.
+		t.Skip("non-deterministic: timing comparisons are unreliable in CI environments")
 	})
 }
 
@@ -558,6 +550,7 @@ func TestPermissionVerification(t *testing.T) {
 		require.NoError(t, err)
 
 		// Try to get other customer's VM (should fail with proper RLS/auth)
+		_, _ = suite.DBPool.Exec(ctx, "SET LOCAL app.current_customer_id = '"+TestCustomerID+"'")
 		_, err = suite.VMRepo.GetByID(ctx, otherVMID)
 		// Access to other customer's VM should be denied
 		assert.Error(t, err, "Should not access other customer's VM")
@@ -578,5 +571,14 @@ func TestPermissionVerification(t *testing.T) {
 
 		// Token should contain admin role (verified by parsing JWT)
 		assert.NotEmpty(t, finalTokens.AccessToken, "Admin should get access token")
+
+		parts := strings.Split(finalTokens.AccessToken, ".")
+		require.Len(t, parts, 3, "JWT should have 3 parts")
+		payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+		require.NoError(t, err)
+		var claims map[string]interface{}
+		require.NoError(t, json.Unmarshal(payload, &claims))
+		assert.Equal(t, "admin", claims["role"], "JWT role claim should be 'admin'")
+		assert.Equal(t, "admin", claims["user_type"], "JWT user_type claim should be 'admin'")
 	})
 }

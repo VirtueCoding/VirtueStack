@@ -35,6 +35,9 @@ const CUSTOMER_TOKEN = __ENV.CUSTOMER_TOKEN || '';
 const ADMIN_TOKEN = __ENV.ADMIN_TOKEN || '';
 const TEST_VM_ID = __ENV.TEST_VM_ID || '00000000-0000-0000-0000-000000000001';
 
+// Track VMs created during the test for cleanup
+const createdVMIds = [];
+
 // Test configuration
 export const options = {
     // Test stages with ramp up/down
@@ -316,13 +319,12 @@ function createVMTest() {
         errorRate.add(!success);
         vmCreateTrend.add(response.timings.duration);
         
-        // If VM was created successfully, try to clean up
+        // If VM was created successfully, record ID for cleanup
         if (response.status === 201 || response.status === 202) {
             try {
                 const body = JSON.parse(response.body);
                 if (body.data && body.data.id) {
-                    // Note: In a real test, you might want to delete the VM
-                    // But for load testing, we'll leave it for now
+                    createdVMIds.push(body.data.id);
                     console.log(`Created VM: ${body.data.id}`);
                 }
             } catch {
@@ -354,6 +356,28 @@ export function setup() {
 export function teardown(data) {
     const duration = (Date.now() - data.startTime) / 1000;
     console.log(`Load test completed in ${duration.toFixed(2)} seconds`);
+
+    // Cleanup VMs created during the test
+    if (createdVMIds.length > 0 && ADMIN_TOKEN) {
+        console.log(`Cleaning up ${createdVMIds.length} VM(s) created during load test...`);
+        for (const vmId of createdVMIds) {
+            const deleteUrl = `${BASE_URL}/api/v1/admin/vms/${vmId}`;
+            const deleteResponse = http.del(deleteUrl, null, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${ADMIN_TOKEN}`,
+                },
+                tags: { operation: 'cleanup_vm' },
+            });
+            if (deleteResponse.status === 200 || deleteResponse.status === 202 || deleteResponse.status === 204) {
+                console.log(`Cleaned up VM: ${vmId}`);
+            } else {
+                console.warn(`Failed to clean up VM ${vmId}: status ${deleteResponse.status}`);
+            }
+        }
+    } else if (createdVMIds.length > 0 && !ADMIN_TOKEN) {
+        console.warn(`Skipping cleanup of ${createdVMIds.length} VM(s): ADMIN_TOKEN not set. Set ADMIN_TOKEN to enable automatic cleanup.`);
+    }
 }
 
 // Handle summary

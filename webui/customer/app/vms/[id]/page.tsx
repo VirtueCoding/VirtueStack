@@ -25,7 +25,7 @@ import {
   AlertCircle,
   CheckCircle2,
   XCircle,
-  Pencil,
+  BarChart3,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,35 +49,15 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { VNCConsole } from "@/components/novnc-console/vnc-console";
-import {
-  vmApi,
-  backupApi,
-  snapshotApi,
-  VM,
-  Backup,
-  Snapshot,
-  ApiClientError,
-} from "@/lib/api-client";
+import { ResourceCharts } from "@/components/charts/resource-charts";
+import { SerialConsole } from "@/components/serial-console/serial-console";
+import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot, ApiClientError } from "@/lib/api-client";
+import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 
 const FEATURE_FLAGS = {
-  enableResourceConfig: false,
-  enableNetworkConfig: false,
+  enableResourceConfig: true,
+  enableNetworkConfig: true,
 };
-
-function getStatusBadgeVariant(
-  status: VM["status"]
-): "success" | "secondary" | "destructive" | "warning" {
-  switch (status) {
-    case "running":
-      return "success";
-    case "stopped":
-      return "secondary";
-    case "error":
-      return "destructive";
-    case "provisioning":
-      return "warning";
-  }
-}
 
 function getBackupStatusBadgeVariant(
   status: Backup["status"]
@@ -96,17 +76,6 @@ function getBackupStatusBadgeVariant(
     default:
       return "default";
   }
-}
-
-function getStatusLabel(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function formatMemory(mb: number): string {
-  if (mb >= 1024) {
-    return `${(mb / 1024).toFixed(1)} GB`;
-  }
-  return `${mb} MB`;
 }
 
 function formatBytes(bytes: number): string {
@@ -128,6 +97,54 @@ function formatDate(dateString: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string }) {
+  const [token, setToken] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchToken() {
+      try {
+        const response = await vmApi.getSerialToken(vmId);
+        if (!cancelled) {
+          setToken(response.token);
+          setIsLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof ApiClientError
+            ? err.message
+            : "Failed to get serial console access token.";
+          setError(message);
+          setIsLoading(false);
+        }
+      }
+    }
+    fetchToken();
+    return () => { cancelled = true; };
+  }, [vmId]);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-dashed bg-muted/50">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
+        <AlertCircle className="h-8 w-8 text-destructive mb-2" />
+        <p className="text-sm text-destructive">{error}</p>
+      </div>
+    );
+  }
+
+  return <SerialConsole vmId={vmId} vmName={vmName} token={token || undefined} />;
 }
 
 export default function VMDetailPage() {
@@ -159,15 +176,10 @@ export default function VMDetailPage() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
   const [snapshotName, setSnapshotName] = useState("");
 
-  // Settings state
-  const [isEditingSettings, setIsEditingSettings] = useState(false);
-  const [vmName, setVmName] = useState("");
-  const [vmDescription, setVmDescription] = useState("");
-  const [isSettingsSaving, setIsSettingsSaving] = useState(false);
-
   // Console state
   const [consoleUrl, setConsoleUrl] = useState<string | null>(null);
   const [isConsoleLoading, setIsConsoleLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("console");
 
   const handleOpenConsole = async () => {
     setIsConsoleLoading(true);
@@ -193,7 +205,6 @@ export default function VMDetailPage() {
     try {
       const data = await vmApi.getVM(vmId);
       setVm(data);
-      setVmName(data.name);
     } catch (error) {
       toast({
         title: "Error",
@@ -240,8 +251,15 @@ export default function VMDetailPage() {
   }, [vmId, toast]);
 
   useEffect(() => {
+    if (!vmId) {
+      router.push('/vms');
+      return;
+    }
     fetchVM();
-  }, [fetchVM]);
+    fetchBackups();
+    fetchSnapshots();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vmId]);
 
   const handleBack = () => {
     router.push("/vms");
@@ -501,30 +519,7 @@ export default function VMDetailPage() {
     }
   };
 
-  // Settings handlers
-  const handleSaveSettings = async () => {
-    if (!vmId || !vm) return;
-    setIsSettingsSaving(true);
-    try {
-      toast({
-        title: "Settings Updated",
-        description: "VM settings have been updated successfully.",
-      });
-      setIsEditingSettings(false);
-      setVm({ ...vm, name: vmName });
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to update settings. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsSettingsSaving(false);
-    }
-  };
+
 
   if (isLoading) {
     return (
@@ -730,10 +725,18 @@ export default function VMDetailPage() {
       </Card>
 
       <Tabs defaultValue="console" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="console">
             <Monitor className="mr-2 h-4 w-4" />
-            Console
+            VNC
+          </TabsTrigger>
+          <TabsTrigger value="serial">
+            <Monitor className="mr-2 h-4 w-4" />
+            Serial
+          </TabsTrigger>
+          <TabsTrigger value="network">
+            <Network className="mr-2 h-4 w-4" />
+            Network
           </TabsTrigger>
           <TabsTrigger value="backups">
             <Archive className="mr-2 h-4 w-4" />
@@ -742,6 +745,10 @@ export default function VMDetailPage() {
           <TabsTrigger value="snapshots">
             <Camera className="mr-2 h-4 w-4" />
             Snapshots
+          </TabsTrigger>
+          <TabsTrigger value="metrics">
+            <BarChart3 className="mr-2 h-4 w-4" />
+            Metrics
           </TabsTrigger>
           <TabsTrigger value="settings">
             <Settings className="mr-2 h-4 w-4" />
@@ -802,6 +809,82 @@ export default function VMDetailPage() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="serial">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Serial Console</CardTitle>
+              <CardDescription>
+                Access the virtual machine serial console via terminal
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {vm?.status !== "running" ? (
+                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
+                  <div className="flex flex-col items-center gap-4 p-8 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <Monitor className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Serial Console Unavailable</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        VM must be running to access the serial console
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="gap-1">
+                      <div className="h-2 w-2 rounded-full bg-yellow-500" />
+                      VM {vm?.status || "Unknown"}
+                    </Badge>
+                  </div>
+                </div>
+              ) : (
+                <SerialConsoleWithToken vmId={vmId} vmName={vm.name} />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="network">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Network className="h-5 w-5" />
+                Network Information
+              </CardTitle>
+              <CardDescription>
+                IP addresses and network configuration for this VM
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {vm.ipv4 && (
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Network className="h-4 w-4" />
+                      <span>IPv4 Address</span>
+                    </div>
+                    <p className="mt-1 font-mono text-lg font-semibold">{vm.ipv4}</p>
+                  </div>
+                )}
+                {vm.ip_addresses && vm.ip_addresses.length > 0 ? (
+                  vm.ip_addresses.map((ip) => (
+                    <div key={ip.id} className="rounded-lg border p-4">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Network className="h-4 w-4" />
+                        <span>IPv{ip.ip_version} {ip.is_primary ? "(Primary)" : ""}</span>
+                      </div>
+                      <p className="mt-1 font-mono text-lg font-semibold">{ip.address}</p>
+                    </div>
+                  ))
+                ) : (
+                  !vm.ipv4 && (
+                    <p className="text-sm text-muted-foreground">No IP addresses assigned.</p>
+                  )
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1004,25 +1087,48 @@ export default function VMDetailPage() {
           </Card>
         </TabsContent>
 
+        {/* Metrics Tab */}
+        <TabsContent value="metrics">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                Resource Metrics
+              </CardTitle>
+              <CardDescription>
+                CPU, memory, network, and disk usage over time
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {vm?.status !== "running" ? (
+                <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
+                  <div className="flex flex-col items-center gap-4 p-8 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <BarChart3 className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Metrics Unavailable</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        VM must be running to view metrics
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <ResourceCharts vmId={vmId} />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Settings Tab */}
         <TabsContent value="settings">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-lg">VM Settings</CardTitle>
-                <CardDescription>
-                  Configure virtual machine parameters
-                </CardDescription>
-              </div>
-              {!isEditingSettings && (
-                <Button
-                  variant="outline"
-                  onClick={() => setIsEditingSettings(true)}
-                >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit
-                </Button>
-              )}
+            <CardHeader>
+              <CardTitle className="text-lg">VM Settings</CardTitle>
+              <CardDescription>
+                View virtual machine parameters
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Basic Settings */}
@@ -1031,66 +1137,14 @@ export default function VMDetailPage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="vm-name">VM Name</Label>
-                    {isEditingSettings ? (
-                      <Input
-                        id="vm-name"
-                        value={vmName}
-                        onChange={(e) => setVmName(e.target.value)}
-                        placeholder="Enter VM name"
-                      />
-                    ) : (
-                      <p className="text-sm">{vm.name}</p>
-                    )}
+                    <p className="text-sm">{vm.name}</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="vm-hostname">Hostname</Label>
                     <p className="text-sm text-muted-foreground">{vm.hostname}</p>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="vm-description">Description</Label>
-                  {isEditingSettings ? (
-                    <Input
-                      id="vm-description"
-                      value={vmDescription}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVmDescription(e.target.value)}
-                      placeholder="Enter VM description (optional)"
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      {vmDescription || "No description"}
-                    </p>
-                  )}
-                </div>
               </div>
-
-              {isEditingSettings && (
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setIsEditingSettings(false);
-                      setVmName(vm.name);
-                      setVmDescription("");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleSaveSettings}
-                    disabled={isSettingsSaving || !vmName.trim()}
-                  >
-                    {isSettingsSaving ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save Changes"
-                    )}
-                  </Button>
-                </div>
-              )}
 
               {/* Resource Configuration */}
               {FEATURE_FLAGS.enableResourceConfig && (
@@ -1232,6 +1286,7 @@ export default function VMDetailPage() {
                 value={backupName}
                 onChange={(e) => setBackupName(e.target.value)}
                 placeholder="Enter backup name"
+                maxLength={128}
               />
             </div>
           </div>
@@ -1338,6 +1393,7 @@ export default function VMDetailPage() {
                 value={snapshotName}
                 onChange={(e) => setSnapshotName(e.target.value)}
                 placeholder="Enter snapshot name"
+                maxLength={128}
               />
             </div>
           </div>

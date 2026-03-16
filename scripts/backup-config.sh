@@ -67,9 +67,7 @@ encrypt_file() {
     openssl enc -aes-256-gcm \
         -in "${input_file}" \
         -out "${output_file}" \
-        -K "${ENCRYPTION_KEY}" \
-        -pbkdf2 \
-        -iter 100000
+        -K "${ENCRYPTION_KEY}"
 
     if [[ ! -f "${output_file}" ]]; then
         echo "ERROR: Encryption failed" >&2

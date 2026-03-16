@@ -83,6 +83,7 @@ function getTypeBadge(type: IPSet["type"]) {
 }
 
 function getUsagePercentage(available: number, total: number) {
+  if (total === 0) return 0;
   return ((total - available) / total) * 100;
 }
 
@@ -103,6 +104,7 @@ export default function IPSetsPage() {
   const [ipSets, setIPSets] = useState<IPSet[]>([]);
   const [loading, setLoading] = useState(true);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     async function fetchIPSets() {
@@ -126,7 +128,6 @@ export default function IPSetsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const { toast } = useToast();
 
   const [formData, setFormData] = useState<CreateIPSetRequest>({
     name: "",
@@ -224,7 +225,7 @@ export default function IPSetsPage() {
     setIsCreating(true);
     
     try {
-      const response = await apiClient.post<{ data: IPSet }>("/admin/ip-sets", {
+      const response = await apiClient.post<IPSet>("/admin/ip-sets", {
         name: formData.name,
         network: formData.network,
         gateway: formData.gateway,
@@ -235,12 +236,12 @@ export default function IPSetsPage() {
       });
 
       const newIPSet: IPSet = {
-        id: response.data.id,
-        name: response.data.name,
+        id: response.id,
+        name: response.name,
         type: formData.ip_version === 4 ? "ipv4" : "ipv6",
-        location: response.data.location || "Unassigned",
-        total_ips: response.data.total_ips || 0,
-        available_ips: response.data.available_ips || 0,
+        location: response.location || "Unassigned",
+        total_ips: response.total_ips || 0,
+        available_ips: response.available_ips || 0,
         cidr: formData.network,
       };
 
@@ -283,6 +284,15 @@ export default function IPSetsPage() {
       toast({
         title: "No File Selected",
         description: "Please select a CSV or text file to import.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (importFile.size > 1 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Import file must be under 1MB.",
         variant: "destructive",
       });
       return;
@@ -591,10 +601,10 @@ export default function IPSetsPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="outline" size="sm">
+                              <Button variant="outline" size="sm" disabled>
                                 View
                               </Button>
-                              <Button variant="outline" size="sm">
+                              <Button variant="outline" size="sm" disabled>
                                 Edit
                               </Button>
                             </div>

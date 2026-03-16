@@ -357,6 +357,10 @@ final class ApiClient
     /**
      * Poll an async task until completion or failure.
      *
+     * WARNING: This method blocks the PHP process for up to ~3 minutes
+     * (TASK_MAX_POLLS * TASK_POLL_INTERVAL = 60 * 3s). Avoid calling this
+     * from web requests; use it only in CLI or async contexts.
+     *
      * @param string $taskId   Task UUID
      * @param int    $maxPolls Maximum number of polling attempts
      *
@@ -414,7 +418,7 @@ final class ApiClient
      * Perform power operation on a VM.
      *
      * @param string $vmId      VM UUID
-     * @param string $operation Operation: start, stop, or restart
+     * @param string $operation Operation: start, stop, restart, or force_stop
      *
      * @return array Response data
      *
@@ -425,8 +429,8 @@ final class ApiClient
         $this->validateUuid($vmId, 'VM ID');
 
         $operation = strtolower($operation);
-        if (!in_array($operation, ['start', 'stop', 'restart'], true)) {
-            throw new InvalidArgumentException('Operation must be start, stop, or restart');
+        if (!in_array($operation, ['start', 'stop', 'restart', 'force_stop'], true)) {
+            throw new InvalidArgumentException('Operation must be start, stop, restart, or force_stop');
         }
 
         $response = $this->request('POST', "/provisioning/vms/{$vmId}/power", [
@@ -443,7 +447,7 @@ final class ApiClient
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
             // Fallback to provisioning endpoint if admin endpoint fails
-            error_log('listTemplates: Admin endpoint failed, trying provisioning: ' . $e->getMessage());
+            $this->log('warning', 'listTemplates: Admin endpoint failed, trying provisioning: ' . $e->getMessage());
         }
 
         $response = $this->request('GET', '/provisioning/templates');
@@ -457,7 +461,7 @@ final class ApiClient
             return $this->normalizeListResponse($response['data'] ?? []);
         } catch (\Throwable $e) {
             // Fallback to admin endpoint if provisioning endpoint fails
-            error_log('listLocations: Provisioning endpoint failed, trying admin: ' . $e->getMessage());
+            $this->log('warning', 'listLocations: Provisioning endpoint failed, trying admin: ' . $e->getMessage());
         }
 
         $response = $this->request('GET', '/admin/locations');
@@ -502,11 +506,14 @@ final class ApiClient
         }
 
         $headers = [
-            'Content-Type: application/json',
             'Accept: application/json',
             'X-API-Key: ' . $this->apiKey,
             'User-Agent: ' . $this->userAgent,
         ];
+
+        if (!empty($data) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+            $headers[] = 'Content-Type: application/json';
+        }
 
         $options = [
             CURLOPT_URL            => $url,

@@ -28,30 +28,30 @@ import (
 
 // TestSuite holds all dependencies needed for integration tests.
 type TestSuite struct {
-	DBPool         *pgxpool.Pool
-	NATSConn       *natsclient.Conn
-	JetStream      natsclient.JetStreamContext
-	Logger         *slog.Logger
-	JWTSecret      string
-	EncryptionKey  string
+	DBPool        *pgxpool.Pool
+	NATSConn      *natsclient.Conn
+	JetStream     natsclient.JetStreamContext
+	Logger        *slog.Logger
+	JWTSecret     string
+	EncryptionKey string
 
 	// Repositories
-	CustomerRepo  *repository.CustomerRepository
-	VMRepo        *repository.VMRepository
-	NodeRepo      *repository.NodeRepository
-	PlanRepo      *repository.PlanRepository
-	TemplateRepo  *repository.TemplateRepository
-	BackupRepo    *repository.BackupRepository
-	WebhookRepo   *repository.WebhookRepository
-	IPRepo        *repository.IPRepository
-	AdminRepo     *repository.AdminRepository
-	TaskRepo      *repository.TaskRepository
-	AuditRepo     *repository.AuditRepository
+	CustomerRepo *repository.CustomerRepository
+	VMRepo       *repository.VMRepository
+	NodeRepo     *repository.NodeRepository
+	PlanRepo     *repository.PlanRepository
+	TemplateRepo *repository.TemplateRepository
+	BackupRepo   *repository.BackupRepository
+	WebhookRepo  *repository.WebhookRepository
+	IPRepo       *repository.IPRepository
+	AdminRepo    *repository.AdminRepository
+	TaskRepo     *repository.TaskRepository
+	AuditRepo    *repository.AuditRepository
 
 	// Services
-	AuthService   *services.AuthService
-	VMService     *services.VMService
-	BackupService *services.BackupService
+	AuthService    *services.AuthService
+	VMService      *services.VMService
+	BackupService  *services.BackupService
 	WebhookService *services.WebhookService
 
 	// Container references for cleanup
@@ -71,13 +71,13 @@ const (
 
 // Test credentials - can be overridden via environment variables
 var (
-	TestDBUser       = getEnvOrDefault("TEST_DB_USER", "test")
-	TestDBPassword   = getEnvOrDefault("TEST_DB_PASSWORD", "") // Will be generated if empty
-	TestCustomerPass = getEnvOrDefault("TEST_CUSTOMER_PASSWORD", "") // Will be generated if empty
-	TestAdminPass    = getEnvOrDefault("TEST_ADMIN_PASSWORD", "")   // Will be generated if empty
-	TestWebhookSecret = getEnvOrDefault("TEST_WEBHOOK_SECRET", "")   // Will be generated if empty
+	TestDBUser        = getEnvOrDefault("TEST_DB_USER", "test")
+	TestDBPassword    = getEnvOrDefault("TEST_DB_PASSWORD", "")                 // Will be generated if empty
+	TestCustomerPass  = getEnvOrDefault("TEST_CUSTOMER_PASSWORD", "")           // Will be generated if empty
+	TestAdminPass     = getEnvOrDefault("TEST_ADMIN_PASSWORD", "")              // Will be generated if empty
+	TestWebhookSecret = getEnvOrDefault("TEST_WEBHOOK_SECRET", "")              // Will be generated if empty
 	TestTOTPSecret    = getEnvOrDefault("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXP") // Keep default for test stability
-	TestVMPassword   = getEnvOrDefault("TEST_VM_PASSWORD", "")      // Will be generated if empty
+	TestVMPassword    = getEnvOrDefault("TEST_VM_PASSWORD", "")                 // Will be generated if empty
 	TestWrongPassword = getEnvOrDefault("TEST_WRONG_PASSWORD", "WrongPassword123!")
 )
 
@@ -311,49 +311,79 @@ func SetupTest(t *testing.T) {
 	ctx := context.Background()
 
 	// Clean existing test data
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM backups WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM ip_addresses WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM admins WHERE id = $1", TestAdminID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM plans WHERE id = $1", TestPlanID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM templates WHERE id = $1", TestTemplateID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM nodes WHERE id = $1", TestNodeID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM sessions WHERE user_id IN ($1, $2)", TestCustomerID, TestAdminID)
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM backups WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM ip_addresses WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM admins WHERE id = $1", TestAdminID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM plans WHERE id = $1", TestPlanID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM templates WHERE id = $1", TestTemplateID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM nodes WHERE id = $1", TestNodeID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM sessions WHERE user_id IN ($1, $2)", TestCustomerID, TestAdminID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 
 	// Create test plan
-	_, _ = suite.DBPool.Exec(ctx, `
+	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO plans (id, name, vcpu, memory_mb, disk_gb, bandwidth_gb, price_cents, is_active, created_at, updated_at)
 		VALUES ($1, 'Test Plan', 2, 4096, 50, 1000, 999, true, NOW(), NOW())
-	`, TestPlanID)
+	`, TestPlanID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 
 	// Create test template
-	_, _ = suite.DBPool.Exec(ctx, `
+	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO templates (id, name, os_type, os_version, size_gb, is_active, created_at, updated_at)
 		VALUES ($1, 'Ubuntu 22.04', 'linux', 'ubuntu-22.04', 10, true, NOW(), NOW())
-	`, TestTemplateID)
+	`, TestTemplateID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 
 	// Create test node
-	_, _ = suite.DBPool.Exec(ctx, `
+	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO nodes (id, hostname, ip_address, status, cpu_cores, memory_mb, disk_gb, created_at, updated_at)
 		VALUES ($1, 'test-node-1', '192.168.1.100', 'active', 16, 65536, 1000, NOW(), NOW())
-	`, TestNodeID)
+	`, TestNodeID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 
 	// Create test customer with hashed password
 	passwordHash, _ := argon2id.CreateHash(TestCustomerPass, services.Argon2idParams)
-	_, _ = suite.DBPool.Exec(ctx, `
+	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 		VALUES ($1, 'test@example.com', $2, 'Test Customer', 'active', NOW(), NOW())
-	`, TestCustomerID, passwordHash)
+	`, TestCustomerID, passwordHash); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 
 	// Create test admin with hashed password
 	adminPasswordHash, _ := argon2id.CreateHash(TestAdminPass, services.Argon2idParams)
 	encryptedTOTP, _ := crypto.Encrypt(TestTOTPSecret, suite.EncryptionKey)
-	_, _ = suite.DBPool.Exec(ctx, `
+	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO admins (id, email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)
 		VALUES ($1, 'admin@example.com', $2, 'Test Admin', 'admin', true, $3, NOW())
-	`, TestAdminID, adminPasswordHash, encryptedTOTP)
+	`, TestAdminID, adminPasswordHash, encryptedTOTP); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 }
 
 // TeardownTest cleans up after each test.
@@ -362,13 +392,27 @@ func TeardownTest(t *testing.T) {
 	ctx := context.Background()
 
 	// Clean all test data
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM backups WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM ip_addresses WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", TestCustomerID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM admins WHERE id = $1", TestAdminID)
-	_, _ = suite.DBPool.Exec(ctx, "DELETE FROM sessions WHERE user_id IN ($1, $2)", TestCustomerID, TestAdminID)
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM backups WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM ip_addresses WHERE vm_id IN (SELECT id FROM vms WHERE customer_id = $1)", TestCustomerID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", TestCustomerID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", TestCustomerID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM admins WHERE id = $1", TestAdminID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM sessions WHERE user_id IN ($1, $2)", TestCustomerID, TestAdminID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
 }
 
 // CreateTestVM creates a test VM and returns its ID.

@@ -91,13 +91,12 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 			PerPage: 1, // We just need the count
 		},
 	}
-	vms, totalVMs, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
+	_, totalVMs, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
 	if err != nil {
 		h.logger.Warn("failed to get VM count for customer",
 			"customer_id", customerID,
 			"error", err)
 	}
-	_ = vms // We don't need the actual VMs, just the count
 
 	// Count active VMs
 	activeFilter := models.VMListFilter{

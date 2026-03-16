@@ -3,6 +3,7 @@ package customer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,8 +22,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+var wsLogger = slog.Default()
+
 const (
 	maxConcurrentConnectionsPerIP = 5
+	maxIPTrackerEntries           = 100000
 	webSocketIdleTimeout          = 30 * time.Second
 	webSocketTotalTimeout         = 5 * time.Minute
 	webSocketBufferSize           = 32 * 1024
@@ -66,9 +70,14 @@ func loadAllowedOrigins() ([]string, error) {
 				continue
 			}
 
-			// Validate that origin is a valid URL
-			if _, err := url.Parse(origin); err != nil {
+			// Validate that origin is a valid URL with http/https scheme
+			parsed, err := url.Parse(origin)
+			if err != nil {
 				allowedOriginsErr = fmt.Errorf("invalid origin %q: %w", origin, err)
+				return
+			}
+			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+				allowedOriginsErr = fmt.Errorf("origin %q has unsupported scheme %q (must be http or https)", origin, parsed.Scheme)
 				return
 			}
 
@@ -482,8 +491,31 @@ func checkConnectionLimit(ip string) bool {
 	if wsConnectionCounts[ip] >= maxConcurrentConnectionsPerIP {
 		return false
 	}
+
+	if len(wsConnectionCounts) >= maxIPTrackerEntries {
+		if wsConnectionCounts[ip] == 0 {
+			wsLogger.Warn("WebSocket IP tracker at max capacity, rejecting new IP",
+				"max_entries", maxIPTrackerEntries)
+			return false
+		}
+	}
+
 	wsConnectionCounts[ip]++
+
+	go cleanupIPTracker()
+
 	return true
+}
+
+func cleanupIPTracker() {
+	wsConnectionMu.Lock()
+	defer wsConnectionMu.Unlock()
+
+	for ip, count := range wsConnectionCounts {
+		if count <= 0 {
+			delete(wsConnectionCounts, ip)
+		}
+	}
 }
 
 func releaseConnection(ip string) {

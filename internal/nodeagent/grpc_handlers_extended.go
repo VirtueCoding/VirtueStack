@@ -317,17 +317,17 @@ func (h *grpcHandler) AbortMigration(ctx context.Context, req *nodeagentpb.VMIde
 
 // PostMigrateSetup performs post-migration setup on the destination node.
 func (h *grpcHandler) PostMigrateSetup(ctx context.Context, req *nodeagentpb.PostMigrateSetupRequest) (*nodeagentpb.VMOperationResponse, error) {
-	if req.GetVmUuid() == "" {
-		return nil, status.Error(codes.InvalidArgument, "vm_uuid is required")
+	if req.GetVmId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	logger := h.server.logger.With("vm_id", req.GetVmUuid(), "operation", "post-migrate-setup")
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "post-migrate-setup")
 	logger.Info("performing post-migration setup")
 
 	// Re-apply bandwidth limits if configured
 	if req.GetBandwidth() != nil && req.GetBandwidth().GetAverageKbps() > 0 {
 		bwManager := h.server.newBandwidthManager()
-		domainName := vm.DomainNameFromID(req.GetVmUuid())
+		domainName := vm.DomainNameFromID(req.GetVmId())
 		rateKbps := int(req.GetBandwidth().GetAverageKbps())
 		if req.GetIsThrottled() && req.GetThrottleRateKbps() > 0 {
 			rateKbps = int(req.GetThrottleRateKbps())
@@ -338,13 +338,16 @@ func (h *grpcHandler) PostMigrateSetup(ctx context.Context, req *nodeagentpb.Pos
 	}
 
 	return &nodeagentpb.VMOperationResponse{
-		VmId:    req.GetVmUuid(),
+		VmId:    req.GetVmId(),
 		Success: true,
 	}, nil
 }
 
 // StreamVNCConsole establishes a bidirectional VNC console stream.
 func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_StreamVNCConsoleServer) error {
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
 	// Read first frame to get VM ID
 	firstFrame, err := stream.Recv()
 	if err != nil {
@@ -391,6 +394,11 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			n, err := conn.Read(buf)
 			if err != nil {
 				if err != io.EOF {
@@ -410,6 +418,11 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 	// Read from gRPC stream, write to VNC
 	go func() {
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			frame, err := stream.Recv()
 			if err != nil {
 				if err != io.EOF {
@@ -432,6 +445,9 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 
 // StreamSerialConsole establishes a bidirectional serial console stream.
 func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_StreamSerialConsoleServer) error {
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
 	firstFrame, err := stream.Recv()
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "receiving initial frame: %v", err)
@@ -469,6 +485,11 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 	go func() {
 		buf := make([]byte, 4096)
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			n, err := libvirtStream.Recv(buf)
 			if err != nil || n < 0 {
 				errCh <- nil
@@ -484,6 +505,11 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 	// Read from gRPC stream, write to serial console
 	go func() {
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			data, err := stream.Recv()
 			if err != nil {
 				errCh <- nil
@@ -500,7 +526,7 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 }
 
 // CreateSnapshot creates a point-in-time snapshot of a VM's disk.
-func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.SnapshotRequest) (*nodeagentpb.SnapshotResponse, error) {
+func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.SnapshotRequest) (*nodeagentpb.Snapshot, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
@@ -518,7 +544,7 @@ func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 	// Get snapshot size
 	size, _ := h.server.storageBackend.GetImageSize(ctx, diskName)
 
-	return &nodeagentpb.SnapshotResponse{
+	return &nodeagentpb.Snapshot{
 		SnapshotId:      uuid.New().String(),
 		VmId:            req.GetVmId(),
 		Name:            req.GetName(),
@@ -633,13 +659,17 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	fullCmd := req.GetCommand()
 	cmdBase := strings.Split(fullCmd, " ")[0]
 
-	// Validate command path is restricted to system binary directories
+	resolvedPath, err := filepath.EvalSymlinks(cmdBase)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, "command path could not be resolved: %v", err)
+	}
+
 	allowedPaths := []string{"/usr/bin/", "/bin/"}
 	validPath := false
 	for _, prefix := range allowedPaths {
-		if strings.HasPrefix(cmdBase, prefix) {
+		if strings.HasPrefix(resolvedPath, prefix) {
 			validPath = true
-			cmdBase = strings.TrimPrefix(cmdBase, prefix)
+			cmdBase = strings.TrimPrefix(resolvedPath, prefix)
 			break
 		}
 	}

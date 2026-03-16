@@ -130,7 +130,9 @@ func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) 
 		if restoreStatus == "" {
 			restoreStatus = models.VMStatusError
 		}
-		_ = deps.VMRepo.UpdateStatus(ctx, payload.VMID, restoreStatus)
+		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, restoreStatus); err != nil {
+			logger.Error("failed to restore VM status after migration failure", "operation", "UpdateStatus", "err", err)
+		}
 		return migrationErr
 	}
 

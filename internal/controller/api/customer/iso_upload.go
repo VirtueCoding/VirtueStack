@@ -135,6 +135,13 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 
+	sumPath := destPath + ".sha256"
+	if err := os.WriteFile(sumPath, []byte(checksum), 0640); err != nil {
+		h.logger.Warn("failed to write checksum sidecar",
+			"path", sumPath, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+	}
+
 	c.JSON(http.StatusCreated, models.Response{Data: ISOUploadResponse{
 		ID:       isoID,
 		FileName: sanitizeFileName(header.Filename),
@@ -226,6 +233,7 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		respondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
 		return
 	}
+	os.Remove(isoPath + ".sha256")
 
 	h.logger.Info("ISO deleted",
 		"iso_id", isoID,
@@ -383,12 +391,17 @@ func listISODirectory(dir, vmID string) ([]ISORecord, error) {
 		isoID := strings.TrimSuffix(entry.Name(), ".iso")
 
 		checksum := ""
-		if f, err := os.Open(filepath.Join(dir, entry.Name())); err == nil {
+		sumData, sumErr := os.ReadFile(filepath.Join(dir, isoID+".sha256"))
+		if sumErr == nil {
+			checksum = strings.TrimSpace(string(sumData))
+		} else {
 			h := sha256.New()
-			if _, err := io.Copy(h, f); err == nil {
-				checksum = hex.EncodeToString(h.Sum(nil))
+			if f, openErr := os.Open(filepath.Join(dir, entry.Name())); openErr == nil {
+				if _, copyErr := io.Copy(h, f); copyErr == nil {
+					checksum = hex.EncodeToString(h.Sum(nil))
+				}
+				f.Close()
 			}
-			f.Close()
 		}
 
 		records = append(records, ISORecord{

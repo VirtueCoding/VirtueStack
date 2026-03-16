@@ -149,7 +149,6 @@ func (s *Server) InitializeServices() error {
 	auditRepo := repository.NewAuditRepository(s.dbPool)
 	taskRepo := repository.NewTaskRepository(s.dbPool)
 	adminRepo := repository.NewAdminRepository(s.dbPool)
-	provisioningKeyRepo := repository.NewProvisioningKeyRepository(s.dbPool)
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
@@ -166,13 +165,14 @@ func (s *Server) InitializeServices() error {
 	var nodeAgentClient services.NodeAgentClient
 	var backupNodeAgentClient services.BackupNodeAgentClient
 	if s.nodeClient != nil {
-		nodeAgentGRPCClient := services.NewNodeAgentGRPCClient(nodeRepo, vmRepo, s.nodeClient, s.logger)
+		nodeAgentGRPCClient := services.NewNodeAgentGRPCClient(nodeRepo, vmRepo, s.nodeClient, &services.CephConfig{
+			Monitors:   s.config.CephMonitors,
+			User:       s.config.CephUser,
+			SecretUUID: s.config.CephSecretUUID,
+		}, s.logger)
 		nodeAgentClient = nodeAgentGRPCClient
 		backupNodeAgentClient = services.NewBackupNodeAgentAdapter(nodeAgentGRPCClient, vmRepo)
 	}
-
-	// Suppress unused variable warning for provisioningKeyRepo (used in route registration)
-	_ = provisioningKeyRepo
 
 	// Initialize services
 	s.authService = services.NewAuthService(
@@ -402,9 +402,6 @@ func (s *Server) setupRoutes() {
 	// Metrics endpoint
 	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// API v1 routes
-	_ = s.router.Group("/api/v1")
-
 	// Provisioning API (WHMCS) - requires API key authentication
 	// Note: Handlers are nil until InitializeServices is called
 	// Routes will be registered in RegisterAPIRoutes after services are initialized
@@ -592,26 +589,26 @@ func (s *Server) startMetricsCollector(ctx context.Context) {
 func (s *Server) collectControllerMetrics(ctx context.Context, vmRepo *repository.VMRepository, nodeRepo *repository.NodeRepository) {
 	vmStatuses := []string{models.VMStatusRunning, models.VMStatusStopped, models.VMStatusProvisioning, models.VMStatusSuspended, models.VMStatusMigrating, models.VMStatusError}
 	for _, status := range vmStatuses {
-		vms, _, err := vmRepo.List(ctx, models.VMListFilter{
+		_, total, err := vmRepo.List(ctx, models.VMListFilter{
 			Status:           util.StringPtr(status),
 			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
 		})
 		count := 0
 		if err == nil {
-			count = len(vms)
+			count = total
 		}
 		controllermetrics.VMsTotal.WithLabelValues(status).Set(float64(count))
 	}
 
 	nodeStatuses := []string{models.NodeStatusOnline, models.NodeStatusOffline, models.NodeStatusDraining, models.NodeStatusDegraded, models.NodeStatusFailed}
 	for _, status := range nodeStatuses {
-		nodes, _, err := nodeRepo.List(ctx, models.NodeListFilter{
+		_, total, err := nodeRepo.List(ctx, models.NodeListFilter{
 			Status:           &status,
 			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
 		})
 		count := 0
 		if err == nil {
-			count = len(nodes)
+			count = total
 		}
 		controllermetrics.NodesTotal.WithLabelValues(status).Set(float64(count))
 	}

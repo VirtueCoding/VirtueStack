@@ -17,6 +17,7 @@ declare(strict_types=1);
 // Load module dependencies
 require_once __DIR__ . '/lib/ApiClient.php';
 require_once __DIR__ . '/lib/VirtueStackHelper.php';
+require_once __DIR__ . '/lib/shared_functions.php';
 
 use VirtueStack\WHMCS\ApiClient;
 use VirtueStack\WHMCS\VirtueStackHelper;
@@ -35,8 +36,14 @@ use WHMCS\Database\Capsule;
  *
  * This provides a fallback for webhook-based notifications.
  */
-add_hook('DailyCronJob', 1, function () {
-    // Find all services with provisioning_status = 'pending'
+add_hook('Cron', 1, function () {
+    $now = time();
+    static $lastPollRun = 0;
+    if ($now - $lastPollRun < 300) {
+        return;
+    }
+    $lastPollRun = $now;
+
     $pendingServices = getPendingProvisioningServices();
     
     if (empty($pendingServices)) {
@@ -75,30 +82,24 @@ add_hook('AfterModuleCreate', 1, function (array $params) {
         return;
     }
 
-    // Store creation timestamp for timeout tracking
+    $startedAt = getServiceField($serviceId, 'provisioning_started_at');
+    if (!empty($startedAt)) {
+        $startTime = strtotime($startedAt);
+        if ($startTime !== false && (time() - $startTime) > 1800) {
+            updateServiceField($serviceId, 'provisioning_status', 'error');
+            updateServiceField($serviceId, 'provisioning_error', 'Provisioning timed out after 30 minutes');
+            logActivity("VirtueStack: VM provisioning timed out for service {$serviceId}");
+            sendAdminNotification(
+                'VirtueStack Provisioning Timeout',
+                "VM provisioning timed out (30 min) for service ID {$serviceId}."
+            );
+            return;
+        }
+    }
+
     updateServiceField($serviceId, 'provisioning_started_at', date('Y-m-d H:i:s'));
 
     logActivity("VirtueStack: VM creation initiated for service {$serviceId}, task {$taskId}");
-});
-
-// ============================================================================
-// WEBHOOK HANDLER
-// ============================================================================
-
-/**
- * Register webhook endpoint for Controller callbacks.
- *
- * The Controller will POST to this endpoint when async tasks complete.
- * Endpoint: /modules/servers/virtuestack/webhook.php
- */
-add_hook('ClientAreaPage', 1, function (array $vars) {
-    // Check if this is a webhook request
-    $webhookAction = isset($_GET['vs_webhook']) ? htmlspecialchars(trim($_GET['vs_webhook']), ENT_QUOTES, 'UTF-8') : '';
-    
-    if ($webhookAction === 'callback') {
-        handleProvisioningWebhook();
-        exit;
-    }
 });
 
 // ============================================================================
@@ -121,26 +122,6 @@ add_hook('ProductConfigurationPage', 1, function (array $vars) {
     $vars['virtuestackLocations'] = getVirtueStackLocations();
 
     return $vars;
-});
-
-/**
- * Hook: ShoppingCartCheckoutCompletePage - Post-order processing.
- *
- * Performs any necessary post-order processing for VirtueStack services.
- */
-add_hook('ShoppingCartCheckoutCompletePage', 1, function (array $vars) {
-    // Add JavaScript for order confirmation page
-    $output = <<<HTML
-<script type="text/javascript">
-// Track VirtueStack order completion
-document.addEventListener('DOMContentLoaded', function() {
-    // Check if any VirtueStack services were ordered
-    // VirtueStack: checkout page hook active
-});
-</script>
-HTML;
-
-    return $output;
 });
 
 // ============================================================================
@@ -194,6 +175,21 @@ add_hook('AdminServicesListTable', 1, function (array $vars) {
     // Add VM status column
     $vars['tablehead'][] = 'VPS Status';
     $vars['tablehead'][] = 'VM ID';
+
+    return $vars;
+});
+
+add_hook('AdminServicesListTableRow', 1, function (array $vars) {
+    if (!isset($vars['module']) || $vars['module'] !== 'virtuestack') {
+        return $vars;
+    }
+
+    $serviceId = (int) ($vars['id'] ?? 0);
+    $vmId = getServiceField($serviceId, 'vm_id');
+    $vmStatus = getServiceField($serviceId, 'vm_status') ?: getServiceField($serviceId, 'provisioning_status');
+
+    $vars['tablevalues'][] = formatProvisioningStatus($vmStatus ?: 'unknown');
+    $vars['tablevalues'][] = $vmId ?: 'N/A';
 
     return $vars;
 });
@@ -323,15 +319,24 @@ HTML;
  * Periodically syncs VM status from Controller to WHMCS.
  */
 add_hook('IntelligentSearchUpdate', 1, function (array $vars) {
-    // Run VM status sync (less frequently)
-    static $lastRun = 0;
-    $now = time();
-    
-    // Only run every 5 minutes
-    if ($now - $lastRun < 300) {
+    try {
+        $lastSync = Capsule::table('tblconfiguration')
+            ->where('setting', 'virtuestack_last_status_sync')
+            ->value('value');
+        $lastSyncTime = is_numeric($lastSync) ? (int) $lastSync : 0;
+        $now = time();
+
+        if ($now - $lastSyncTime < 300) {
+            return;
+        }
+
+        Capsule::table('tblconfiguration')->updateOrInsert(
+            ['setting' => 'virtuestack_last_status_sync'],
+            ['value' => (string) $now, 'created_at' => date('Y-m-d H:i:s'), 'updated_at' => date('Y-m-d H:i:s')]
+        );
+    } catch (\Exception $e) {
         return;
     }
-    $lastRun = $now;
 
     syncVMStatuses();
 });
@@ -350,39 +355,45 @@ function getPendingProvisioningServices(): array
     $services = [];
     
     try {
-        $query = "
-            SELECT 
-                s.id AS service_id,
-                s.userid AS client_id,
-                cfv_task.value AS task_id,
-                cfv_vm.value AS vm_id
-            FROM tblhosting s
-            INNER JOIN tblproducts p ON s.packageid = p.id
-            INNER JOIN tblservers srv ON s.server = srv.id
-            LEFT JOIN tblcustomfieldsvalues cfv_task ON cfv_task.relid = s.id
-            LEFT JOIN tblcustomfields cf_task ON cf_task.id = cfv_task.fieldid AND cf_task.fieldname = 'task_id'
-            LEFT JOIN tblcustomfieldsvalues cfv_vm ON cfv_vm.relid = s.id
-            LEFT JOIN tblcustomfields cf_vm ON cf_vm.id = cfv_vm.fieldid AND cf_vm.fieldname = 'vm_id'
-            LEFT JOIN tblcustomfieldsvalues cfv_status ON cfv_status.relid = s.id
-            LEFT JOIN tblcustomfields cf_status ON cf_status.id = cfv_status.fieldid AND cf_status.fieldname = 'provisioning_status'
-            WHERE p.servertype = 'virtuestack'
-            AND srv.disabled = 0
-            AND (cfv_status.value = 'pending' OR cfv_status.value IS NULL)
-            AND s.domainstatus = 'Active'
-        ";
+        $rows = Capsule::table('tblhosting')
+            ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
+            ->join('tblservers', 'tblhosting.server', '=', 'tblservers.id')
+            ->leftJoin('tblcustomfields', 'tblcustomfields.fieldname', '=', Capsule::raw("'task_id'"))
+            ->leftJoin('tblcustomfieldsvalues AS cfv_task', function ($join) {
+                $join->on('cfv_task.relid', '=', 'tblhosting.id')
+                     ->on('cfv_task.fieldid', '=', 'tblcustomfields.id');
+            })
+            ->leftJoin('tblcustomfields AS cf2', 'cf2.fieldname', '=', Capsule::raw("'vm_id'"))
+            ->leftJoin('tblcustomfieldsvalues AS cfv_vm', function ($join) {
+                $join->on('cfv_vm.relid', '=', 'tblhosting.id')
+                     ->on('cfv_vm.fieldid', '=', 'cf2.id');
+            })
+            ->leftJoin('tblcustomfields AS cf3', 'cf3.fieldname', '=', Capsule::raw("'provisioning_status'"))
+            ->leftJoin('tblcustomfieldsvalues AS cfv_status', function ($join) {
+                $join->on('cfv_status.relid', '=', 'tblhosting.id')
+                     ->on('cfv_status.fieldid', '=', 'cf3.id');
+            })
+            ->where('tblproducts.servertype', 'virtuestack')
+            ->where('tblservers.disabled', 0)
+            ->where('tblhosting.domainstatus', 'Active')
+            ->where(function ($query) {
+                $query->where('cfv_status.value', 'pending')
+                      ->orWhereNull('cfv_status.value');
+            })
+            ->select(
+                'tblhosting.id AS service_id',
+                'tblhosting.userid AS client_id',
+                'cfv_task.value AS task_id',
+                'cfv_vm.value AS vm_id'
+            )
+            ->get();
 
-        $result = full_query($query);
-        if (!$result) {
-            logActivity('VirtueStack: SQL query failed in getPendingProvisioningServices');
-            return [];
-        }
-        
-        while ($row = mysqli_fetch_assoc($result)) {
+        foreach ($rows as $row) {
             $services[] = [
-                'service_id' => (int) $row['service_id'],
-                'client_id' => (int) $row['client_id'],
-                'task_id' => $row['task_id'],
-                'vm_id' => $row['vm_id'],
+                'service_id' => (int) $row->service_id,
+                'client_id' => (int) $row->client_id,
+                'task_id' => $row->task_id,
+                'vm_id' => $row->vm_id,
             ];
         }
     } catch (\Exception $e) {
@@ -499,138 +510,6 @@ function handleProvisioningFailed(int $serviceId, array $task): void
 }
 
 /**
- * Handle incoming webhook from Controller.
- */
-function handleProvisioningWebhook(): void
-{
-    // Verify request method
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        http_response_code(405);
-        exit('Method not allowed');
-    }
-
-    // Limit request body size to prevent DoS attacks (max 1MB)
-    $maxBodySize = 1024 * 1024; // 1MB
-    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
-    if ($contentLength > $maxBodySize) {
-        http_response_code(413);
-        exit('Request body too large');
-    }
-
-    // Get request body
-    $body = file_get_contents('php://input', false, null, 0, $maxBodySize);
-    if ($body === false) {
-        http_response_code(400);
-        exit('Failed to read request body');
-    }
-
-    $data = json_decode($body, true);
-
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        http_response_code(400);
-        exit('Invalid JSON');
-    }
-
-    // Verify webhook signature
-    $signature = $_SERVER['HTTP_X_VIRTUESTACK_SIGNATURE'] ?? '';
-    if (!verifyWebhookSignature($body, $signature)) {
-        http_response_code(401);
-        exit('Invalid signature');
-    }
-
-    // Process webhook event with validation
-    $eventType = isset($data['event']) && is_string($data['event']) ? htmlspecialchars(trim($data['event']), ENT_QUOTES, 'UTF-8') : '';
-    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? htmlspecialchars(trim($data['task_id']), ENT_QUOTES, 'UTF-8') : '';
-    $whmcsServiceId = isset($data['whmcs_service_id']) && is_int($data['whmcs_service_id']) ? $data['whmcs_service_id'] : 0;
-    
-    if (empty($eventType) || empty($taskId)) {
-        http_response_code(400);
-        exit('Missing required fields: event, task_id');
-    }
-
-    logActivity("VirtueStack: Received webhook event '{$eventType}' for task {$taskId}");
-
-    switch ($eventType) {
-        case 'vm.created':
-            // Find service by task ID
-            $serviceId = findServiceByTaskId($taskId);
-            if ($serviceId > 0) {
-                $client = getApiClientForService($serviceId);
-                if ($client) {
-                    $task = $client->getTask($taskId);
-                    handleProvisioningComplete($serviceId, $task, $client);
-                }
-            }
-            break;
-
-        case 'vm.creation_failed':
-            $serviceId = findServiceByTaskId($taskId);
-            if ($serviceId > 0) {
-                handleProvisioningFailed($serviceId, $data);
-            }
-            break;
-
-        case 'vm.deleted':
-            if ($whmcsServiceId > 0) {
-                updateServiceField($whmcsServiceId, 'provisioning_status', 'terminated');
-                logActivity("VirtueStack: VM deleted for service {$whmcsServiceId}");
-            }
-            break;
-
-        case 'vm.started':
-            if ($whmcsServiceId > 0) {
-                updateServiceField($whmcsServiceId, 'vm_status', 'running');
-            }
-            break;
-
-        case 'vm.stopped':
-            if ($whmcsServiceId > 0) {
-                updateServiceField($whmcsServiceId, 'vm_status', 'stopped');
-            }
-            break;
-
-        case 'vm.reinstalled':
-            if ($whmcsServiceId > 0) {
-                updateServiceField($whmcsServiceId, 'provisioning_status', 'active');
-                updateServiceField($whmcsServiceId, 'vm_status', 'running');
-                logActivity("VirtueStack: VM reinstalled for service {$whmcsServiceId}");
-            }
-            break;
-
-        case 'vm.migrated':
-            if ($whmcsServiceId > 0) {
-                $newNodeId = $data['node_id'] ?? '';
-                updateServiceField($whmcsServiceId, 'node_id', $newNodeId);
-                logActivity("VirtueStack: VM migrated for service {$whmcsServiceId} to node {$newNodeId}");
-            }
-            break;
-
-        case 'backup.completed':
-            if ($whmcsServiceId > 0) {
-                logActivity("VirtueStack: Backup completed for service {$whmcsServiceId}");
-            }
-            break;
-
-        case 'backup.failed':
-            if ($whmcsServiceId > 0) {
-                $errorMsg = $data['message'] ?? 'Unknown error';
-                logActivity("VirtueStack: Backup FAILED for service {$whmcsServiceId}: {$errorMsg}");
-                sendAdminNotification(
-                    'VirtueStack Backup Failure',
-                    "Backup failed for service ID {$whmcsServiceId}.\n\nError: {$errorMsg}"
-                );
-            }
-            break;
-
-        default:
-            logActivity("VirtueStack: Unhandled webhook event: {$eventType}");
-    }
-
-    http_response_code(200);
-    exit('OK');
-}
-
-/**
  * Get API client for a specific service.
  *
  * @param int $serviceId WHMCS service ID
@@ -673,30 +552,6 @@ function getApiClientForService(int $serviceId): ?ApiClient
 }
 
 /**
- * Find service ID by task ID.
- *
- * @param string $taskId Task UUID
- *
- * @return int Service ID or 0 if not found
- */
-function findServiceByTaskId(string $taskId): int
-{
-    try {
-        $fieldId = getCustomFieldId('task_id');
-        if ($fieldId <= 0) {
-            return 0;
-        }
-
-        return (int) Capsule::table('tblcustomfieldsvalues')
-            ->where('fieldid', $fieldId)
-            ->where('value', $taskId)
-            ->value('relid') ?? 0;
-    } catch (\Exception $e) {
-        return 0;
-    }
-}
-
-/**
  * Get service custom field value.
  *
  * @param int    $serviceId Service ID
@@ -718,149 +573,6 @@ function getServiceField(int $serviceId, string $fieldName): string
             ->value('value');
 
         return $value !== null ? (string) $value : '';
-    } catch (\Exception $e) {
-        return '';
-    }
-}
-
-/**
- * Update service custom field value.
- *
- * @param int    $serviceId Service ID
- * @param string $fieldName Field name
- * @param string $value     New value
- */
-function updateServiceField(int $serviceId, string $fieldName, string $value): void
-{
-    try {
-        $fieldId = getCustomFieldId($fieldName);
-
-        if ($fieldId <= 0) {
-            $fieldId = createCustomField($fieldName);
-        }
-
-        if ($fieldId <= 0) {
-            return;
-        }
-
-        $exists = Capsule::table('tblcustomfieldsvalues')
-            ->where('relid', $serviceId)
-            ->where('fieldid', $fieldId)
-            ->exists();
-
-        if ($exists) {
-            Capsule::table('tblcustomfieldsvalues')
-                ->where('relid', $serviceId)
-                ->where('fieldid', $fieldId)
-                ->update(['value' => $value]);
-        } else {
-            Capsule::table('tblcustomfieldsvalues')->insert([
-                'fieldid' => $fieldId,
-                'relid' => $serviceId,
-                'value' => $value,
-            ]);
-        }
-    } catch (\Exception $e) {
-        logActivity("VirtueStack: Failed to update service field {$fieldName}: " . $e->getMessage());
-    }
-}
-
-/**
- * Get custom field ID by name.
- *
- * @param string $fieldName Field name
- *
- * @return int Field ID
- */
-function getCustomFieldId(string $fieldName): int
-{
-    try {
-        return (int) Capsule::table('tblcustomfields')
-            ->where('fieldname', $fieldName)
-            ->where('type', 'product')
-            ->value('id') ?? 0;
-    } catch (\Exception $e) {
-        return 0;
-    }
-}
-
-/**
- * Create custom field for VM data.
- *
- * @param string $fieldName Field name
- *
- * @return int Field ID
- */
-function createCustomField(string $fieldName): int
-{
-    try {
-        return (int) Capsule::table('tblcustomfields')->insertGetId([
-            'type' => 'product',
-            'relid' => 0,
-            'fieldname' => $fieldName,
-            'fieldtype' => 'text',
-            'adminonly' => 'on',
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
-        ]);
-    } catch (\Exception $e) {
-        logActivity('VirtueStack: Failed to create custom field: ' . $e->getMessage());
-        return 0;
-    }
-}
-
-/**
- * Update service dedicated IP.
- *
- * @param int    $serviceId Service ID
- * @param string $ipAddress IP address
- */
-function updateServiceDedicatedIp(int $serviceId, string $ipAddress): void
-{
-    try {
-        Capsule::table('tblhosting')
-            ->where('id', $serviceId)
-            ->update(['dedicatedip' => $ipAddress]);
-    } catch (\Exception $e) {
-        logActivity("VirtueStack: Failed to update dedicated IP for service {$serviceId}: " . $e->getMessage());
-    }
-}
-
-/**
- * Verify webhook signature.
- *
- * @param string $body      Request body
- * @param string $signature Provided signature
- *
- * @return bool True if valid
- */
-function verifyWebhookSignature(string $body, string $signature): bool
-{
-    if (empty($signature)) {
-        return false;
-    }
-
-    // Get webhook secret from configuration
-    $webhookSecret = getWebhookSecret();
-    
-    $expectedSignature = hash_hmac('sha256', $body, $webhookSecret);
-    
-    return hash_equals($expectedSignature, $signature);
-}
-
-/**
- * Get webhook secret from configuration.
- *
- * @return string
- */
-function getWebhookSecret(): string
-{
-    try {
-        $value = Capsule::table('tblconfiguration')
-            ->where('setting', 'VirtueStackWebhookSecret')
-            ->value('value');
-
-        return $value ? decrypt($value) : '';
     } catch (\Exception $e) {
         return '';
     }
@@ -937,7 +649,7 @@ function formatProvisioningStatus(string $status): string
         'terminated' => '<span class="virtuestack-badge">Terminated</span>',
     ];
 
-    return $badges[$status] ?? '<span class="virtuestack-badge">' . ucfirst($status) . '</span>';
+    return $badges[$status] ?? '<span class="virtuestack-badge">' . htmlspecialchars(ucfirst($status), ENT_QUOTES, 'UTF-8') . '</span>';
 }
 
 /**
@@ -947,6 +659,12 @@ function formatProvisioningStatus(string $status): string
  */
 function getVirtueStackTemplates(): array
 {
+    static $cache = ['data' => null, 'expires' => 0];
+
+    if ($cache['data'] !== null && time() < $cache['expires']) {
+        return $cache['data'];
+    }
+
     $templates = [];
     
     $services = getActiveVirtueStackServices();
@@ -989,6 +707,9 @@ function getVirtueStackTemplates(): array
         }
     }
 
+    $cache['data'] = $templates;
+    $cache['expires'] = time() + 300;
+
     return $templates;
 }
 
@@ -999,6 +720,12 @@ function getVirtueStackTemplates(): array
  */
 function getVirtueStackLocations(): array
 {
+    static $cache = ['data' => null, 'expires' => 0];
+
+    if ($cache['data'] !== null && time() < $cache['expires']) {
+        return $cache['data'];
+    }
+
     $locations = [];
 
     $services = getActiveVirtueStackServices();
@@ -1048,6 +775,9 @@ function getVirtueStackLocations(): array
         }
     }
 
+    $cache['data'] = $locations;
+    $cache['expires'] = time() + 300;
+
     return $locations;
 }
 
@@ -1092,7 +822,10 @@ function sendProvisioningEmail(int $serviceId, array $vmData): void
  */
 function sendAdminNotification(string $subject, string $message): void
 {
-    if (function_exists('logAdminNotification')) {
-        logAdminNotification($subject, $message);
+    if (function_exists('sendMessage')) {
+        $adminUserId = 1;
+        sendMessage($subject, $adminUserId, ['message' => $message]);
     }
+
+    logActivity("VirtueStack Admin Notification: {$subject}");
 }

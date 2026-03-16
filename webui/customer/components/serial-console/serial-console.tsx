@@ -17,16 +17,16 @@ import {
 import "@xterm/xterm/css/xterm.css";
 
 interface SerialConsoleProps {
-  vmId?: string;
-  vmName?: string;
+  vmId: string;
+  vmName: string;
   token?: string;
 }
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
 export function SerialConsole({
-  vmId = "vm-001",
-  vmName = "web-server-prod",
+  vmId,
+  vmName,
   token,
 }: SerialConsoleProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -36,6 +36,7 @@ export function SerialConsole({
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [error, setError] = useState<string>("");
   const [reconnectKey, setReconnectKey] = useState(0);
+  const [isConnected, setIsConnected] = useState(false);
 
   // Build WebSocket URL
   const getWsUrl = useCallback(() => {
@@ -47,6 +48,7 @@ export function SerialConsole({
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    if (!isConnected) return;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -151,22 +153,34 @@ export function SerialConsole({
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      if (rebootTimeoutRef.current) {
+        clearTimeout(rebootTimeoutRef.current);
+      }
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
       term.dispose();
     };
-  }, [vmId, vmName, token, getWsUrl, reconnectKey]);
+  }, [vmId, vmName, token, getWsUrl, reconnectKey, isConnected]);
+
+  const handleConnect = () => {
+    setIsConnected(true);
+  };
 
   const handleDisconnect = () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.close();
     }
+    setIsConnected(false);
     setStatus("disconnected");
   };
 
   const handleReconnect = () => {
-    setReconnectKey((prev) => prev + 1);
+    if (!isConnected) {
+      setIsConnected(true);
+    } else {
+      setReconnectKey((prev) => prev + 1);
+    }
   };
 
   const handleClear = () => {
@@ -178,16 +192,27 @@ export function SerialConsole({
     }
   };
 
-  const handleReboot = () => {
+  const [isRebooting, setIsRebooting] = useState(false);
+  const rebootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleReboot = async () => {
     if (terminal.current) {
       terminal.current.writeln("");
       terminal.current.writeln("\x1b[1;33m[ INFO ] System reboot initiated...\x1b[0m");
       terminal.current.writeln("");
     }
+    setIsRebooting(true);
+    try {
+      const { vmApi } = await import("@/lib/api-client");
+      await vmApi.restartVM(vmId);
+    } catch {
+      terminal.current?.writeln("\x1b[1;31m[ ERROR ] Failed to send reboot command via API\x1b[0m");
+    }
     handleDisconnect();
-    setTimeout(() => {
+    rebootTimeoutRef.current = setTimeout(() => {
+      setIsRebooting(false);
       handleReconnect();
-    }, 500);
+    }, 3000);
   };
 
   const getStatusBadge = () => {
@@ -238,7 +263,7 @@ export function SerialConsole({
             <Button
               variant="outline"
               size="icon"
-              onClick={status === "connected" ? handleDisconnect : handleReconnect}
+              onClick={status === "connected" ? handleDisconnect : handleConnect}
               title={status === "connected" ? "Disconnect" : "Connect"}
               className="h-8 w-8"
             >
@@ -252,7 +277,7 @@ export function SerialConsole({
               variant="outline"
               size="icon"
               onClick={handleReboot}
-              title="Reconnect"
+              title="Reboot VM"
               className="h-8 w-8"
             >
               <Power className="h-4 w-4" />
@@ -284,16 +309,16 @@ export function SerialConsole({
             </div>
           </div>
         )}
-        {status === "disconnected" && !error && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+        {status === "disconnected" && !error && !isConnected && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
             <Button
-              onClick={handleReconnect}
+              onClick={handleConnect}
               variant="outline"
               size="sm"
               className="gap-2"
             >
               <Wifi className="h-4 w-4" />
-              Reconnect
+              Connect
             </Button>
           </div>
         )}

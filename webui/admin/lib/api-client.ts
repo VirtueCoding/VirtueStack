@@ -1,15 +1,5 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
-export interface ApiError {
-  code: string;
-  message: string;
-  correlation_id?: string;
-}
-
-export interface ApiResponse<T> {
-  data: T;
-}
-
 export interface AuthTokens {
   token_type: string;
   expires_in: number;
@@ -55,7 +45,7 @@ async function fetchCsrfToken(): Promise<void> {
   }
 }
 
-function buildHeaders(includeAuth = true, includeCsrf = false): HeadersInit {
+function buildHeaders(includeCsrf = false): HeadersInit {
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     "Accept": "application/json",
@@ -93,7 +83,6 @@ async function parseError(response: Response): Promise<ApiClientError> {
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
-  includeAuth = true
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
@@ -104,7 +93,7 @@ export async function apiRequest<T>(
     ...options,
     credentials: "include",
     headers: {
-      ...buildHeaders(includeAuth, isStateChanging),
+      ...buildHeaders(isStateChanging),
       ...options.headers,
     },
   };
@@ -117,7 +106,7 @@ export async function apiRequest<T>(
   }
 
   if (response.status === 204) {
-    return undefined as T;
+    return undefined as unknown as T;
   }
 
   const data = await response.json();
@@ -125,36 +114,33 @@ export async function apiRequest<T>(
 }
 
 export const apiClient = {
-  get<T>(endpoint: string, includeAuth = true): Promise<T> {
-    return apiRequest<T>(endpoint, { method: "GET" }, includeAuth);
+  get<T>(endpoint: string): Promise<T> {
+    return apiRequest<T>(endpoint, { method: "GET" });
   },
 
-  post<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  post<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "POST", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  put<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  put<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "PUT", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  patch<T>(endpoint: string, body: unknown, includeAuth = true): Promise<T> {
+  patch<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
       { method: "PATCH", body: JSON.stringify(body) },
-      includeAuth
     );
   },
 
-  delete<T>(endpoint: string, includeAuth = true): Promise<T> {
-    return apiRequest<T>(endpoint, { method: "DELETE" }, includeAuth);
+  delete<T>(endpoint: string): Promise<T> {
+    return apiRequest<T>(endpoint, { method: "DELETE" });
   },
 };
 
@@ -185,20 +171,20 @@ let tokenValidUntil = 0;
 export const adminAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
     await fetchCsrfToken();
-    return apiClient.post<AuthTokens>("/admin/auth/login", credentials, false);
+    return apiClient.post<AuthTokens>("/admin/auth/login", credentials);
   },
 
   async verify2FA(request: Verify2FARequest): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/admin/auth/verify-2fa", request, false);
+    return apiClient.post<AuthTokens>("/admin/auth/verify-2fa", request);
   },
 
   async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/admin/auth/refresh", {}, false);
+    return apiClient.post<AuthTokens>("/admin/auth/refresh", {});
   },
 
   async logout(): Promise<void> {
     try {
-      await apiClient.post("/admin/auth/logout", {}, true);
+      await apiClient.post("/admin/auth/logout", {});
     } catch {
     }
     tokenValidUntil = 0;
@@ -233,7 +219,6 @@ export const adminAuthApi = {
   },
 };
 
-export type { AuthTokens as AuthTokensType };
 
 export interface Node {
   id: string;
@@ -255,6 +240,18 @@ export const adminNodesApi = {
 
   async getNode(id: string): Promise<Node> {
     return apiClient.get<Node>(`/admin/nodes/${id}`);
+  },
+
+  async createNode(data: { hostname: string; grpc_address: string; management_ip: string; location?: string }): Promise<Node> {
+    return apiClient.post<Node>("/admin/nodes", data);
+  },
+
+  async updateNode(id: string, data: Partial<{ hostname: string; grpc_address: string; management_ip: string; status: string }>): Promise<Node> {
+    return apiClient.put<Node>(`/admin/nodes/${id}`, data);
+  },
+
+  async deleteNode(id: string): Promise<void> {
+    return apiClient.delete<void>(`/admin/nodes/${id}`);
   },
 
   async drainNode(id: string): Promise<void> {
@@ -359,8 +356,8 @@ export interface AuditLog {
 }
 
 export const adminAuditLogsApi = {
-  async getAuditLogs(): Promise<AuditLog[]> {
-    return apiClient.get<AuditLog[]>('/admin/audit-logs');
+  async getAuditLogs(page = 1, perPage = 20): Promise<{ logs: AuditLog[]; total: number }> {
+    return apiClient.get<{ logs: AuditLog[]; total: number }>(`/admin/audit-logs?page=${page}&per_page=${perPage}`);
   },
 };
 
@@ -376,5 +373,78 @@ export interface VM {
 export const adminVMsApi = {
   async getVMs(): Promise<VM[]> {
     return apiClient.get<VM[]>('/admin/vms');
-  }
+  },
+
+  async getVM(id: string): Promise<VM> {
+    return apiClient.get<VM>(`/admin/vms/${id}`);
+  },
+
+  async createVM(data: { customer_id: string; plan_id: string; hostname: string; node_id?: string }): Promise<VM> {
+    return apiClient.post<VM>("/admin/vms", data);
+  },
+
+  async updateVM(id: string, data: Partial<{ hostname: string; status: string }>): Promise<VM> {
+    return apiClient.put<VM>(`/admin/vms/${id}`, data);
+  },
+
+  async deleteVM(id: string): Promise<void> {
+    return apiClient.delete<void>(`/admin/vms/${id}`);
+  },
+
+  async migrateVM(id: string, data: { target_node_id: string }): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(`/admin/vms/${id}/migrate`, data);
+  },
+};
+
+export interface SystemSetting {
+  key: string;
+  value: string;
+  description?: string;
+}
+
+export const adminSettingsApi = {
+  async getSettings(): Promise<SystemSetting[]> {
+    return apiClient.get<SystemSetting[]>("/admin/settings");
+  },
+
+  async getSetting(key: string): Promise<string> {
+    const result = await apiClient.get<{ key: string; value: string }>(`/admin/settings/${key}`);
+    return result.value;
+  },
+
+  async putSetting(key: string, value: string): Promise<SystemSetting> {
+    return apiClient.put<SystemSetting>(`/admin/settings/${key}`, { value });
+  },
+};
+
+export interface Template {
+  id: string;
+  name: string;
+  os_family: string;
+  rbd_image?: string;
+  rbd_snapshot?: string;
+  status: string;
+  created_at: string;
+}
+
+export const adminTemplatesApi = {
+  async getTemplates(): Promise<Template[]> {
+    return apiClient.get<Template[]>("/admin/templates");
+  },
+
+  async createTemplate(data: { name: string; os_family: string; rbd_image?: string }): Promise<Template> {
+    return apiClient.post<Template>("/admin/templates", data);
+  },
+
+  async updateTemplate(id: string, data: Partial<{ name: string; os_family: string }>): Promise<Template> {
+    return apiClient.put<Template>(`/admin/templates/${id}`, data);
+  },
+
+  async deleteTemplate(id: string): Promise<void> {
+    return apiClient.delete<void>(`/admin/templates/${id}`);
+  },
+
+  async importTemplate(id: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, {});
+  },
 };

@@ -99,7 +99,10 @@ func (m *FailoverMonitor) Start(ctx context.Context) {
 // checkNodes queries all nodes and triggers failover for those that have exceeded
 // the heartbeat miss threshold.
 func (m *FailoverMonitor) checkNodes(ctx context.Context) error {
-	// Generate correlation ID for this check cycle
+	if m.nodeRepo == nil {
+		return nil
+	}
+
 	correlationID := uuid.New().String()
 
 	m.logger.Debug("checking nodes for failover conditions",
@@ -133,6 +136,17 @@ func (m *FailoverMonitor) checkNodes(ctx context.Context) error {
 	return nil
 }
 
+// filterNodesNeedingFailover filters a list of nodes to those that exceed the heartbeat miss threshold.
+func filterNodesNeedingFailover(nodes []models.Node, threshold int) []models.Node {
+	var needsFailover []models.Node
+	for _, node := range nodes {
+		if node.ConsecutiveHeartbeatMisses >= threshold {
+			needsFailover = append(needsFailover, node)
+		}
+	}
+	return needsFailover
+}
+
 // getNodesNeedingFailover returns all nodes that have exceeded the heartbeat miss threshold
 // and are still in active status.
 func (m *FailoverMonitor) getNodesNeedingFailover(ctx context.Context) ([]models.Node, error) {
@@ -151,15 +165,7 @@ func (m *FailoverMonitor) getNodesNeedingFailover(ctx context.Context) ([]models
 
 	// Combine and filter
 	allNodes := append(activeNodes, degradedNodes...)
-	var needsFailover []models.Node
-
-	for _, node := range allNodes {
-		if node.ConsecutiveHeartbeatMisses >= m.config.Threshold {
-			needsFailover = append(needsFailover, node)
-		}
-	}
-
-	return needsFailover, nil
+	return filterNodesNeedingFailover(allNodes, m.config.Threshold), nil
 }
 
 // processNodeFailover handles the failover process for a single node.

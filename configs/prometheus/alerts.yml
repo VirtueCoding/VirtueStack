@@ -44,7 +44,7 @@ groups:
           summary: "VM {{ $labels.vm_id }} CPU usage is {{ $value }}%"
 
       - alert: VMHighMemoryUsage
-        expr: vs_vm_memory_usage_bytes / vs_vm_memory_usage_bytes > 0.9
+        expr: vs_vm_memory_usage_bytes / vs_vm_memory_limit_bytes > 0.9
         for: 5m
         labels:
           severity: warning

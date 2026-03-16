@@ -102,20 +102,23 @@ func TestBackupRestore(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update backup to completed
-		_, _ = suite.DBPool.Exec(ctx, `
+		if _, err := suite.DBPool.Exec(ctx, `
 			UPDATE backups SET status = $1, storage_path = $2, size_bytes = $3 WHERE id = $4
-		`, models.BackupStatusCompleted, "/backups/"+backupID+".img", int64(1024*1024*100), backupID)
+		`, models.BackupStatusCompleted, "/backups/"+backupID+".img", int64(1024*1024*100), backupID); err != nil {
+			t.Logf("setup warning: %v", err)
+		}
 
 		// Initiate restore
 		err = suite.BackupService.RestoreBackup(ctx, backupID)
-		// Note: This might fail in test without actual storage backend
-		// The test verifies the flow, not the actual restore
-
-		// Verify backup status changed to restoring (if it succeeded)
-		if err == nil {
-			backup, _ := suite.BackupRepo.GetBackupByID(ctx, backupID)
-			assert.Contains(t, []string{models.BackupStatusRestoring, models.BackupStatusCompleted}, backup.Status)
+		// Note: This may fail without actual storage backend
+		if err != nil {
+			assert.NotEmpty(t, backupID, "backup ID should be present even if restore fails")
+			return
 		}
+
+		backup, err := suite.BackupRepo.GetBackupByID(ctx, backupID)
+		require.NoError(t, err)
+		assert.Contains(t, []string{models.BackupStatusRestoring, models.BackupStatusCompleted}, backup.Status)
 	})
 
 	t.Run("RestoreNonExistentBackup", func(t *testing.T) {
@@ -140,7 +143,9 @@ func TestBackupRestore(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update backup to completed
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, backupID)
+		if _, err := suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, backupID); err != nil {
+			t.Logf("setup warning: %v", err)
+		}
 
 		// Restore to different VM (should fail if not allowed, or succeed if cross-restore is allowed)
 		err = suite.BackupService.RestoreBackup(ctx, backupID)
@@ -471,11 +476,20 @@ func TestSnapshotOperations(t *testing.T) {
 		snapshot, err := suite.BackupService.CreateSnapshot(ctx, vmID, "restore-test")
 		require.NoError(t, err)
 
+		// Verify snapshot was created before attempting restore
+		assert.NotEmpty(t, snapshot.ID, "snapshot ID should be generated")
+
 		// Restore from snapshot
 		err = suite.BackupService.RestoreSnapshot(ctx, snapshot.ID)
-		// Note: This might fail without actual storage backend
-		// The test verifies the flow
-		_ = err // Accept error for now
+		// Note: This may fail without actual storage backend
+		if err != nil {
+			t.Logf("snapshot restore returned error (expected without storage backend): %v", err)
+			return
+		}
+
+		// If restore succeeded, verify snapshot still exists
+		_, err = suite.BackupRepo.GetSnapshotByID(ctx, snapshot.ID)
+		assert.NoError(t, err, "snapshot should still exist after restore")
 	})
 }
 
@@ -588,11 +602,13 @@ func TestBackupConcurrency(t *testing.T) {
 		require.NoError(t, err)
 
 		// Set backup to restoring
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID)
+		require.NoError(t, suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID).Err())
 
 		// Try to create another backup (behavior depends on business logic)
 		_, err = suite.BackupService.CreateBackup(ctx, vmID, "full")
 		// May succeed or fail depending on implementation
-		_ = err
+		if err != nil {
+			t.Logf("backup while restoring returned error (expected without storage backend): %v", err)
+		}
 	})
 }

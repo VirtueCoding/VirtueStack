@@ -143,14 +143,16 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 		return nil, fmt.Errorf("target node capacity check failed: %w", err)
 	}
 
-	// 8. Determine storage backends and migration strategy
-	sourceStorageBackend := s.getNodeStorageBackend(sourceNode, vm)
-	targetStorageBackend := s.getNodeStorageBackend(targetNode, vm)
-	migrationStrategy := s.determineMigrationStrategy(sourceStorageBackend, targetStorageBackend, req.Live)
+	// 8. Determine VM's storage backend (immutable, set at creation time)
+	vmStorageBackend := s.getNodeStorageBackend(vm)
 
-	// 9. Validate storage backend compatibility
-	if err := s.validateStorageCompatibility(sourceStorageBackend, targetStorageBackend, migrationStrategy); err != nil {
-		return nil, fmt.Errorf("storage compatibility check failed: %w", err)
+	// 9. Determine migration strategy based on VM's storage backend
+	migrationStrategy := s.determineMigrationStrategy(vmStorageBackend, req.Live)
+
+	// 10. Validate storage backend compatibility
+	// A VM's storage backend is immutable — it cannot be migrated to a different backend
+	if err := s.validateStorageBackend(vmStorageBackend); err != nil {
+		return nil, fmt.Errorf("storage backend validation failed: %w", err)
 	}
 
 	// 10. Get storage paths for disk copy operations
@@ -159,8 +161,7 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 
 	s.logger.Info("migration strategy determined",
 		"vm_id", vm.ID,
-		"source_storage", sourceStorageBackend,
-		"target_storage", targetStorageBackend,
+		"storage_backend", vmStorageBackend,
 		"strategy", migrationStrategy,
 		"source_disk", sourceDiskPath,
 		"target_disk", targetDiskPath)
@@ -172,27 +173,26 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 
 	// 12. Publish migration task with storage-aware payload
 	taskPayload := map[string]any{
-		"vm_id":                  vm.ID,
-		"source_node_id":         sourceNodeID,
-		"target_node_id":         targetNode.ID,
-		"hostname":               vm.Hostname,
-		"vcpu":                   vm.VCPU,
-		"memory_mb":              vm.MemoryMB,
-		"disk_gb":                vm.DiskGB,
-		"mac_address":            vm.MACAddress,
-		"live":                   req.Live,
-		"source_ceph_pool":       sourceNode.CephPool,
-		"target_ceph_pool":       targetNode.CephPool,
-		"initiated_by":           adminID,
-		"pre_migration_state":    vm.Status,
-		"source_storage_backend": sourceStorageBackend,
-		"target_storage_backend": targetStorageBackend,
-		"source_storage_path":    sourceNode.StoragePath,
-		"target_storage_path":    targetNode.StoragePath,
-		"migration_strategy":     string(migrationStrategy),
-		"source_disk_path":       sourceDiskPath,
-		"target_disk_path":       targetDiskPath,
-		"disk_size_gb":           vm.DiskGB,
+		"vm_id":               vm.ID,
+		"source_node_id":      sourceNodeID,
+		"target_node_id":      targetNode.ID,
+		"hostname":            vm.Hostname,
+		"vcpu":                vm.VCPU,
+		"memory_mb":           vm.MemoryMB,
+		"disk_gb":             vm.DiskGB,
+		"mac_address":         vm.MACAddress,
+		"live":                req.Live,
+		"source_ceph_pool":    sourceNode.CephPool,
+		"target_ceph_pool":    targetNode.CephPool,
+		"initiated_by":        adminID,
+		"pre_migration_state": vm.Status,
+		"storage_backend":     vmStorageBackend,
+		"source_storage_path": sourceNode.StoragePath,
+		"target_storage_path": targetNode.StoragePath,
+		"migration_strategy":  string(migrationStrategy),
+		"source_disk_path":    sourceDiskPath,
+		"target_disk_path":    targetDiskPath,
+		"disk_size_gb":        vm.DiskGB,
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
@@ -218,56 +218,35 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 	}, nil
 }
 
-// getNodeStorageBackend returns the storage backend for a node, with VM override if set.
-func (s *MigrationService) getNodeStorageBackend(node *models.Node, vm *models.VM) string {
-	// VM storage backend takes precedence
+// getNodeStorageBackend returns the storage backend for a VM.
+// The VM's storage_backend is immutable once set at creation time.
+func (s *MigrationService) getNodeStorageBackend(vm *models.VM) string {
 	if vm.StorageBackend != "" {
 		return vm.StorageBackend
 	}
-	// Node storage backend
-	if node.StorageBackend != "" {
-		return node.StorageBackend
-	}
-	// Default to ceph for backward compatibility
 	return models.StorageBackendCeph
 }
 
-// determineMigrationStrategy determines the migration strategy based on storage backends.
-func (s *MigrationService) determineMigrationStrategy(sourceBackend, targetBackend string, live bool) tasks.MigrationStrategy {
-	// Same storage backend
-	if sourceBackend == targetBackend {
-		if sourceBackend == models.StorageBackendCeph {
-			// Ceph to Ceph: shared storage, can do live migration
-			return tasks.MigrationStrategyLiveSharedStorage
-		}
-		// QCOW to QCOW: need disk copy
-		if live {
-			// Live QCOW migration requires disk copy + delta sync
-			return tasks.MigrationStrategyDiskCopy
-		}
-		// Cold QCOW migration
-		return tasks.MigrationStrategyDiskCopy
+// determineMigrationStrategy determines the migration strategy based on the VM's storage backend.
+func (s *MigrationService) determineMigrationStrategy(storageBackend string, live bool) tasks.MigrationStrategy {
+	if storageBackend == models.StorageBackendCeph {
+		// Ceph: shared storage, can do live migration
+		return tasks.MigrationStrategyLiveSharedStorage
 	}
 
-	// Mixed storage backends: require cold migration with format conversion
-	return tasks.MigrationStrategyCold
+	// QCOW: need disk copy between nodes
+	return tasks.MigrationStrategyDiskCopy
 }
 
-// validateStorageCompatibility validates that the migration is possible between storage backends.
-func (s *MigrationService) validateStorageCompatibility(sourceBackend, targetBackend string, strategy tasks.MigrationStrategy) error {
-	// Mixed storage migrations require cold migration
-	if sourceBackend != targetBackend && strategy == tasks.MigrationStrategyLiveSharedStorage {
-		return fmt.Errorf("mixed storage backends (%s -> %s) require cold migration", sourceBackend, targetBackend)
+// validateStorageBackend validates that the VM's storage backend is supported for migration.
+// The VM's storage backend is immutable — cross-backend migration is not allowed.
+func (s *MigrationService) validateStorageBackend(storageBackend string) error {
+	switch storageBackend {
+	case models.StorageBackendCeph, models.StorageBackendQcow:
+		return nil
+	default:
+		return fmt.Errorf("unknown storage backend %q: VM must be migrated from a node with the same backend", storageBackend)
 	}
-
-	// QCOW migrations require disk copy support
-	if sourceBackend == models.StorageBackendQcow || targetBackend == models.StorageBackendQcow {
-		if strategy != tasks.MigrationStrategyDiskCopy && strategy != tasks.MigrationStrategyCold {
-			return fmt.Errorf("QCOW storage requires disk copy migration")
-		}
-	}
-
-	return nil
 }
 
 // getVMDiskPath returns the disk path for a VM on its current node.
@@ -276,16 +255,14 @@ func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) strin
 		return vm.DiskPath
 	}
 
-	storageBackend := s.getNodeStorageBackend(node, vm)
+	storageBackend := s.getNodeStorageBackend(vm)
 	if storageBackend == models.StorageBackendQcow {
-		// Default QCOW disk path
 		if node.StoragePath != "" {
 			return fmt.Sprintf("%s/%s-disk0.qcow2", node.StoragePath, vm.ID)
 		}
 		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 	}
 
-	// Ceph uses RBD image name
 	if vm.RBDImage != "" {
 		return vm.RBDImage
 	}
@@ -294,16 +271,15 @@ func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) strin
 
 // getVMDiskPathForTarget returns the disk path for a VM on the target node.
 func (s *MigrationService) getVMDiskPathForTarget(vm *models.VM, targetNode *models.Node) string {
-	targetBackend := s.getNodeStorageBackend(targetNode, vm)
+	storageBackend := s.getNodeStorageBackend(vm)
 
-	if targetBackend == models.StorageBackendQcow {
+	if storageBackend == models.StorageBackendQcow {
 		if targetNode.StoragePath != "" {
 			return fmt.Sprintf("%s/%s-disk0.qcow2", targetNode.StoragePath, vm.ID)
 		}
 		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 	}
 
-	// Ceph uses the same RBD image name
 	if vm.RBDImage != "" {
 		return vm.RBDImage
 	}

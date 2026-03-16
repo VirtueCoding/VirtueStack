@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -258,20 +259,7 @@ func GenerateEncryptionKey() (string, error) {
 // ConstantTimeCompare performs a constant-time comparison of two strings.
 // This prevents timing attacks when comparing secrets.
 func ConstantTimeCompare(a, b string) bool {
-	return subtleConstantTimeCompare([]byte(a), []byte(b))
-}
-
-// subtleConstantTimeCompare performs a constant-time byte comparison.
-func subtleConstantTimeCompare(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Simple XOR-based comparison that avoids timing differences
-	result := byte(0)
-	for i := 0; i < len(a); i++ {
-		result |= a[i] ^ b[i]
-	}
-	return result == 0
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func GenerateHMACSignature(secret string, payload []byte) string {

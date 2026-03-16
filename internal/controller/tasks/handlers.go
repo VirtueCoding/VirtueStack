@@ -434,7 +434,9 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	if err != nil {
 		logger.Error("failed to generate cloud-init", "error", err)
 		// Cleanup of cloned disk is best-effort; primary error is cloud-init failure
-		_ = deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID)
+		if err := deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID); err != nil {
+			logger.Error("failed to cleanup cloned disk", "operation", "DeleteDisk", "err", err)
+		}
 		return fmt.Errorf("generating cloud-init for VM %s: %w", payload.VMID, err)
 	}
 
@@ -471,8 +473,12 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	if err != nil {
 		logger.Error("failed to create VM via node agent", "error", err)
 		// Cleanup
-		_ = deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID)
-		_ = deps.IPAMService.ReleaseIPsByVM(ctx, payload.VMID)
+		if err := deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID); err != nil {
+			logger.Error("failed to cleanup disk on VM creation failure", "operation", "DeleteDisk", "err", err)
+		}
+		if err := deps.IPAMService.ReleaseIPsByVM(ctx, payload.VMID); err != nil {
+			logger.Error("failed to release IPs on VM creation failure", "operation", "ReleaseIPsByVM", "err", err)
+		}
 		return fmt.Errorf("creating VM %s via node agent: %w", payload.VMID, err)
 	}
 
@@ -807,10 +813,6 @@ var hashPasswordParams = &argon2id.Params{
 // hashPassword creates a secure password hash using Argon2id.
 // Returns an empty string if the password is empty or fails validation.
 func hashPassword(password string) (string, error) {
-	if password == "" {
-		return "", nil
-	}
-
 	if err := validatePasswordStrength(password); err != nil {
 		return "", err
 	}

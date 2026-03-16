@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	taskmetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,7 +38,8 @@ type Worker struct {
 	logger   *slog.Logger
 	mu       sync.RWMutex
 	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	eg       *errgroup.Group
+	egCtx    context.Context
 }
 
 // NewWorker creates a new task worker.
@@ -97,7 +100,7 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	sub, err := w.js.QueueSubscribe(
 		StreamSubject,
 		ConsumerName,
-		w.handleMessage(ctx),
+		w.handleMessage(),
 		nats.Durable(ConsumerName),
 		nats.DeliverAll(),
 		nats.ManualAck(),
@@ -106,15 +109,15 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 		return fmt.Errorf("subscribing to tasks: %w", err)
 	}
 
+	eg, egCtx := errgroup.WithContext(ctx)
+	w.eg = eg
+	w.egCtx = egCtx
+
 	w.logger.Info("task worker started",
 		"stream", StreamName,
 		"consumer", ConsumerName,
+		"workers", numWorkers,
 	)
-
-	// NATS QueueSubscribe handles concurrency via its deliver policy and
-	// consumer AckWait/MaxDeliver settings; no additional goroutine pool needed.
-	// The numWorkers parameter is accepted for future use if a bounded pool is introduced.
-	_ = numWorkers
 
 	go func() {
 		<-ctx.Done()
@@ -130,75 +133,83 @@ func (w *Worker) Stop() {
 	if w.cancel != nil {
 		w.cancel()
 	}
-	w.wg.Wait()
+	if w.eg != nil {
+		_ = w.eg.Wait()
+	}
 	w.logger.Info("task worker stopped")
 }
 
 // handleMessage returns a message handler for NATS messages.
-func (w *Worker) handleMessage(ctx context.Context) func(msg *nats.Msg) {
+func (w *Worker) handleMessage() func(msg *nats.Msg) {
 	return func(msg *nats.Msg) {
-		w.wg.Add(1)
-		defer w.wg.Done()
-
-		var task models.Task
-		if err := json.Unmarshal(msg.Data, &task); err != nil {
-			w.logger.Error("failed to unmarshal task",
-				"error", err,
-				"subject", msg.Subject,
-			)
-			msg.Ack()
-			return
-		}
-
-		logger := w.logger.With(
-			"task_id", task.ID,
-			"task_type", task.Type,
-		)
-
-		logger.Info("processing task")
-
-		taskStart := time.Now()
-
-		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusRunning, nil, ""); err != nil {
-			logger.Error("failed to update task status to running", "error", err)
-			msg.Nak()
-			return
-		}
-
-		w.mu.RLock()
-		handler, ok := w.handlers[task.Type]
-		w.mu.RUnlock()
-
-		if !ok {
-			errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
-			logger.Error(errMsg)
-			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, errMsg)
-			taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
-			taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-			msg.Ack()
-			return
-		}
-
-		err := handler(ctx, &task)
-		if err != nil {
-			logger.Error("task handler failed", "error", err)
-			w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, err.Error())
-			taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
-			taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-			msg.Nak()
-			return
-		}
-
-		if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
-			logger.Error("failed to update task status to completed", "error", err)
-		}
-
-		taskmetrics.TasksTotal.WithLabelValues(task.Type, "completed").Inc()
-		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-
-		logger.Info("task completed successfully")
-		msg.Ack()
+		w.eg.Go(func() error {
+			return w.processMessage(msg)
+		})
 	}
+}
+
+func (w *Worker) processMessage(msg *nats.Msg) error {
+	var task models.Task
+	if err := json.Unmarshal(msg.Data, &task); err != nil {
+		w.logger.Error("failed to unmarshal task",
+			"error", err,
+			"subject", msg.Subject,
+		)
+		msg.Ack()
+		return nil
+	}
+
+	logger := w.logger.With(
+		"task_id", task.ID,
+		"task_type", task.Type,
+	)
+
+	logger.Info("processing task")
+
+	taskStart := time.Now()
+
+	ctx := context.Background()
+
+	if err := w.updateTaskStatus(ctx, &task, models.TaskStatusRunning, nil, ""); err != nil {
+		logger.Error("failed to update task status to running", "error", err)
+		msg.Nak()
+		return err
+	}
+
+	w.mu.RLock()
+	handler, ok := w.handlers[task.Type]
+	w.mu.RUnlock()
+
+	if !ok {
+		errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
+		logger.Error(errMsg)
+		w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, errMsg)
+		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
+		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
+		msg.Ack()
+		return nil
+	}
+
+	err := handler(ctx, &task)
+	if err != nil {
+		logger.Error("task handler failed", "error", err)
+		w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, err.Error())
+		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
+		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
+		msg.Nak()
+		return err
+	}
+
+	if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
+		logger.Error("failed to update task status to completed", "error", err)
+	}
+
+	taskmetrics.TasksTotal.WithLabelValues(task.Type, "completed").Inc()
+	taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
+
+	logger.Info("task completed successfully")
+	msg.Ack()
+	return nil
 }
 
 // PublishTask publishes a new task to the stream.

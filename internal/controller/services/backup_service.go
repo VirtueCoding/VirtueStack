@@ -347,7 +347,8 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		s.logger.Warn("nodeAgent not configured, skipping backup restore",
 			"backup_id", backupID,
 			"vm_id", backup.VMID)
-		return nil
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
+		return fmt.Errorf("node agent not configured, cannot restore backup %s", backupID)
 	}
 
 	nodeID := *vm.NodeID

@@ -51,7 +51,7 @@ import {
   EyeOff,
   Download,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth-context";
+import { RequireAuth } from "@/lib/require-auth";
 
 const profileSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -110,7 +110,6 @@ const AVAILABLE_PERMISSIONS = [
 ];
 
 export default function SettingsPage() {
-  const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -147,15 +146,7 @@ export default function SettingsPage() {
 
   const { data: twoFactorStatus, isLoading: twoFactorLoading } = useQuery({
     queryKey: ["2fa-status"],
-    queryFn: async () => {
-      try {
-        await settingsApi.getBackupCodes();
-        return { enabled: true };
-      } catch (error) {
-        console.error("Failed to get 2FA status:", error);
-        return { enabled: false };
-      }
-    },
+    queryFn: () => settingsApi.get2FAStatus(),
   });
 
   const { data: backupCodesData, refetch: refetchBackupCodes } = useQuery({
@@ -491,14 +482,22 @@ export default function SettingsPage() {
     },
   });
 
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-    toast({
-      title: "Copied",
-      description: "Copied to clipboard",
-    });
+  const handleCopy = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+      toast({
+        title: "Copied",
+        description: "Copied to clipboard",
+      });
+    } catch {
+      toast({
+        title: "Copy failed",
+        description: "Unable to copy to clipboard",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleProfileSubmit = (data: ProfileFormData) => {
@@ -617,15 +616,16 @@ export default function SettingsPage() {
   const twoFactorEnabled = twoFactorStatus?.enabled || false;
 
   return (
-    <div className="container mx-auto py-8 px-4 md:px-6 lg:px-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
-        <p className="text-muted-foreground mt-2">
-          Manage your account settings, security, and integrations
-        </p>
-      </div>
+    <RequireAuth>
+      <div className="container mx-auto py-8 px-4 md:px-6 lg:px-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
+          <p className="text-muted-foreground mt-2">
+            Manage your account settings, security, and integrations
+          </p>
+        </div>
 
-      <Tabs defaultValue="profile" className="space-y-6">
+        <Tabs defaultValue="profile" className="space-y-6">
         <TabsList className="grid w-full max-w-md grid-cols-2 lg:max-w-lg">
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" />
@@ -1347,8 +1347,8 @@ export default function SettingsPage() {
           </DialogHeader>
           <div className="py-4">
             <div className="grid grid-cols-2 gap-2 rounded-lg border bg-muted p-4">
-              {(backupCodes.length > 0 ? backupCodes : backupCodesData?.backup_codes || []).map((code, index) => (
-                <code key={index} className="text-center font-mono text-sm py-1">
+              {(backupCodes.length > 0 ? backupCodes : backupCodesData?.backup_codes || []).map((code) => (
+                <code key={code} className="text-center font-mono text-sm py-1">
                   {code}
                 </code>
               ))}
@@ -1368,6 +1368,7 @@ export default function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </RequireAuth>
   );
 }

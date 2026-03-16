@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, LayoutDashboard, Server, FileText, Network, Users, ShieldCheck } from "lucide-react";
+import { Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -14,16 +14,7 @@ import {
   SheetTrigger,
   SheetClose,
 } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
-
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/nodes", label: "Nodes", icon: Server },
-  { href: "/dashboard/plans", label: "Plans", icon: FileText },
-  { href: "/dashboard/ip-sets", label: "IP Sets", icon: Network },
-  { href: "/dashboard/customers", label: "Customers", icon: Users },
-  { href: "/dashboard/audit-logs", label: "Audit Logs", icon: ShieldCheck },
-];
+import { adminNavItems } from "@/lib/navigation";
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -41,7 +32,7 @@ export function MobileNav() {
           <SheetTitle className="text-left">VirtueStack Admin</SheetTitle>
         </SheetHeader>
         <nav className="mt-6 flex flex-col gap-2">
-          {navItems.map((item) => {
+          {adminNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (

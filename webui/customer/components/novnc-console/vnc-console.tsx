@@ -31,12 +31,6 @@ import {
 
 let RFB: typeof import("@novnc/novnc/lib/rfb").default | null = null
 
-if (typeof window !== "undefined") {
-  import("@novnc/novnc/lib/rfb").then((module) => {
-    RFB = module.default
-  })
-}
-
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
 interface VNCConsoleProps {
@@ -82,26 +76,13 @@ export function VNCConsole({
       return
     }
 
-    if (!RFB) {
-      // Wait for RFB to load
-      await new Promise<void>((resolve) => {
-        const checkRFB = setInterval(() => {
-          if (RFB) {
-            clearInterval(checkRFB)
-            resolve()
-          }
-        }, 100)
-        setTimeout(() => {
-          clearInterval(checkRFB)
-          resolve()
-        }, 5000)
-      })
+    if (rfbRef.current) {
+      return
     }
 
     if (!RFB) {
-      setErrorMessage("VNC library failed to load")
-      setStatus("error")
-      return
+      const mod = await import("@novnc/novnc/lib/rfb")
+      RFB = mod.default
     }
 
     if (!screenRef.current) {
@@ -418,9 +399,6 @@ export function VNCConsole({
               <p className="text-muted-foreground text-sm">
                 Establishing VNC connection...
               </p>
-              <p className="text-muted-foreground/70 text-xs mt-1">
-                {getWsUrl()}
-              </p>
             </div>
           )}
 
@@ -436,13 +414,9 @@ export function VNCConsole({
             </div>
           )}
 
-          {/* noVNC Screen - Only visible when connected but rendered always */}
           <div
             ref={screenRef}
-            className={cn(
-              "w-full h-full",
-              status !== "connected" && "hidden"
-            )}
+            className="w-full h-full"
             style={{
               display: status === "connected" ? "flex" : "none",
             }}

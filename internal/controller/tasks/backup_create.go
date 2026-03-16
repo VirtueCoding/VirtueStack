@@ -166,7 +166,9 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 	sizeBytes, err := deps.NodeClient.CreateQCOWBackup(ctx, nodeID, payload.VMID, diskPath, snapshotName, backupFilePath, false)
 	if err != nil {
 		logger.Error("failed to create QCOW backup file", "error", err)
-		_ = deps.NodeClient.DeleteQCOWSnapshot(ctx, nodeID, payload.VMID, diskPath, snapshotName)
+		if delErr := deps.NodeClient.DeleteQCOWSnapshot(ctx, nodeID, payload.VMID, diskPath, snapshotName); delErr != nil {
+			logger.Error("failed to cleanup QCOW snapshot after backup failure", "operation", "DeleteQCOWSnapshot", "err", delErr)
+		}
 		return fmt.Errorf("creating QCOW backup file for VM %s: %w", payload.VMID, err)
 	}
 
@@ -198,8 +200,12 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 
 	if err := deps.BackupRepo.CreateBackup(ctx, backup); err != nil {
 		logger.Error("failed to create backup record", "error", err)
-		_ = deps.NodeClient.DeleteQCOWBackupFile(ctx, nodeID, backupFilePath)
-		_ = deps.NodeClient.DeleteQCOWSnapshot(ctx, nodeID, payload.VMID, diskPath, snapshotName)
+		if delErr := deps.NodeClient.DeleteQCOWBackupFile(ctx, nodeID, backupFilePath); delErr != nil {
+			logger.Error("failed to cleanup backup file after record failure", "operation", "DeleteQCOWBackupFile", "err", delErr)
+		}
+		if delErr := deps.NodeClient.DeleteQCOWSnapshot(ctx, nodeID, payload.VMID, diskPath, snapshotName); delErr != nil {
+			logger.Error("failed to cleanup QCOW snapshot after record failure", "operation", "DeleteQCOWSnapshot", "err", delErr)
+		}
 		return fmt.Errorf("creating backup record: %w", err)
 	}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,58 +16,95 @@ import {
 import {
   Activity,
   Download,
-  Filter,
-  Calendar,
   Search,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { adminAuditLogsApi, type AuditLog } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 
+const PAGE_SIZE = 20;
+
 export default function AuditLogsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  useEffect(() => {
-    async function loadLogs() {
-      try {
-        const data = await adminAuditLogsApi.getAuditLogs();
-        setLogs(data || []);
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to load audit logs.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const loadLogs = useCallback(async (currentPage: number) => {
+    setLoading(true);
+    try {
+      const data = await adminAuditLogsApi.getAuditLogs(currentPage, PAGE_SIZE);
+      setLogs(data.logs || []);
+      setTotal(data.total || 0);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to load audit logs.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
-    loadLogs();
   }, [toast]);
 
-  const filteredLogs = logs.filter(
-    (log) =>
-      log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.resource_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (log.resource_id && log.resource_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (log.actor_id && log.actor_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      log.actor_type.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    loadLogs(page);
+  }, [page, loadLogs]);
 
-  function getActionBadgeVariant(action: string) {
+  const filteredLogs = searchTerm.trim()
+    ? logs.filter(
+        (log) =>
+          log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          log.resource_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (log.resource_id && log.resource_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          (log.actor_id && log.actor_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          log.actor_type.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : logs;
+
+  function getActionBadgeVariant(action: string): "success" | "destructive" | "warning" | "secondary" {
     if (action.includes("create") || action.includes("start")) return "success";
     if (action.includes("delete") || action.includes("stop")) return "destructive";
     if (action.includes("update") || action.includes("modify")) return "warning";
     return "secondary";
   }
 
+  const handleExportCSV = () => {
+    if (filteredLogs.length === 0) {
+      toast({ title: "No Data", description: "No logs to export.", variant: "destructive" });
+      return;
+    }
+    const headers = ["Timestamp", "Actor Type", "Actor ID", "Action", "Resource Type", "Resource ID", "Success", "IP Address"];
+    const rows = filteredLogs.map((log) => [
+      log.timestamp,
+      log.actor_type,
+      log.actor_id || "",
+      log.action,
+      log.resource_type,
+      log.resource_id || "",
+      log.success ? "true" : "false",
+      log.actor_ip || "",
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-logs-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "Export Complete", description: `Exported ${filteredLogs.length} log entries.` });
+  };
+
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
-        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Audit Logs</h1>
@@ -76,7 +113,7 @@ export default function AuditLogsPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExportCSV}>
               <Download className="mr-2 h-4 w-4" />
               Export CSV
             </Button>
@@ -90,27 +127,19 @@ export default function AuditLogsPage() {
               System Activity
             </CardTitle>
             <CardDescription>
-              Detailed record of all administrative and customer actions
+              Detailed record of all administrative and customer actions ({total} total entries)
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-1 items-center gap-2">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search logs..."
-                    className="pl-8"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <Button variant="outline" size="icon" title="Advanced Filters">
-                  <Filter className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="icon" title="Date Range">
-                  <Calendar className="h-4 w-4" />
-                </Button>
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search logs..."
+                  className="pl-8"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
             </div>
 
@@ -158,7 +187,7 @@ export default function AuditLogsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getActionBadgeVariant(log.action) as "default" | "secondary" | "destructive" | "outline"} className="capitalize">
+                          <Badge variant={getActionBadgeVariant(log.action)} className="capitalize">
                             {log.action.replace(/\./g, " ")}
                           </Badge>
                         </TableCell>
@@ -187,6 +216,32 @@ export default function AuditLogsPage() {
                   )}
                 </TableBody>
               </Table>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1 || loading}
+                >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || loading}
+                >
+                  Next
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

@@ -94,18 +94,24 @@
                 </div>
                 <div class="col-md-4 text-right">
                     <div class="btn-group" role="group">
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" 
-                           class="btn btn-success btn-sm" title="Start VM">
-                            <i class="fas fa-play"></i> Start
-                        </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" 
-                           class="btn btn-warning btn-sm" title="Stop VM">
-                            <i class="fas fa-stop"></i> Stop
-                        </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" 
-                           class="btn btn-info btn-sm" title="Restart VM">
-                            <i class="fas fa-redo"></i> Restart
-                        </a>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" style="display:inline;">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-success btn-sm" title="Start VM">
+                                <i class="fas fa-play"></i> Start
+                            </button>
+                        </form>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" style="display:inline;" onsubmit="return confirm('Are you sure you want to stop this VM?');">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-warning btn-sm" title="Stop VM">
+                                <i class="fas fa-stop"></i> Stop
+                            </button>
+                        </form>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" style="display:inline;" onsubmit="return confirm('Are you sure you want to restart this VM?');">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-info btn-sm" title="Restart VM">
+                                <i class="fas fa-redo"></i> Restart
+                            </button>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -284,28 +290,36 @@
                     <h4>Console Access</h4>
                     <p>Access your VPS directly through the web-based console.</p>
                     <p>
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=openConsole&type=vnc" 
-                           class="btn btn-primary">
-                            <i class="fas fa-desktop"></i> Open VNC Console
-                        </a>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=openConsole&type=vnc" style="display:inline;">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-desktop"></i> Open VNC Console
+                            </button>
+                        </form>
                     </p>
                 </div>
                 <div class="col-md-6">
                     <h4>Power Control</h4>
                     <p>Control the power state of your virtual server.</p>
                     <div class="btn-group">
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" 
-                           class="btn btn-success">
-                            <i class="fas fa-play"></i> Start
-                        </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" 
-                           class="btn btn-warning">
-                            <i class="fas fa-stop"></i> Stop
-                        </a>
-                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" 
-                           class="btn btn-info">
-                            <i class="fas fa-redo"></i> Restart
-                        </a>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=startVM" style="display:inline;">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-success">
+                                <i class="fas fa-play"></i> Start
+                            </button>
+                        </form>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=stopVM" style="display:inline;" onsubmit="return confirm('Are you sure you want to stop this VM?');">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="fas fa-stop"></i> Stop
+                            </button>
+                        </form>
+                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=restartVM" style="display:inline;" onsubmit="return confirm('Are you sure you want to restart this VM?');">
+                            <input type="hidden" name="token" value="{$token}">
+                            <button type="submit" class="btn btn-info">
+                                <i class="fas fa-redo"></i> Restart
+                            </button>
+                        </form>
                     </div>
                 </div>
             </div>

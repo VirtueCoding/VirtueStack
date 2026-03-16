@@ -1,6 +1,6 @@
 "use client";
 
-import { Monitor, Settings, Key, CreditCard, LogOut, ChevronLeft } from "lucide-react";
+import { Monitor, Settings, LogOut, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -20,9 +20,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const navItems = [
   { href: "/vms", label: "My VMs", icon: Monitor },
-  { href: "/vms/settings", label: "Settings", icon: Settings },
-  { href: "/vms/api-keys", label: "API Keys", icon: Key },
-  { href: "/vms/billing", label: "Billing", icon: CreditCard },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 interface SidebarProps {
@@ -32,7 +30,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   return (
     <div
@@ -64,7 +62,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         <nav className="flex flex-col gap-1 px-2">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href || pathname?.startsWith(item.href);
+            const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
               <Link
                 key={item.href}
@@ -111,11 +109,13 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <Settings className="mr-2 h-4 w-4" />
-              Account Settings
+            <DropdownMenuItem asChild>
+              <a href="/settings">
+                <Settings className="mr-2 h-4 w-4" />
+                Account Settings
+              </a>
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => logout()}>
               <LogOut className="mr-2 h-4 w-4" />
               Log out
             </DropdownMenuItem>

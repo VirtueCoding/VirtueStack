@@ -161,7 +161,7 @@ const NetworkChart: React.FC<{ data: ChartDataPoint[] }> = ({ data }) => (
       { key: "network_rx_mbps", color: colors.networkRx, name: "Receive" },
       { key: "network_tx_mbps", color: colors.networkTx, name: "Transmit" },
     ]}
-    yAxisUnit=" Mbps"
+    yAxisUnit=" MB"
     yAxisDomain={[0, "auto"]}
     yAxisTicks={[0, 20, 40, 60, 80, 100]}
   />
@@ -176,7 +176,7 @@ const DiskChart: React.FC<{ data: ChartDataPoint[] }> = ({ data }) => (
       { key: "disk_read_mbps", color: colors.diskRead, name: "Read" },
       { key: "disk_write_mbps", color: colors.diskWrite, name: "Write" },
     ]}
-    yAxisUnit=" Mbps"
+    yAxisUnit=" MB"
     yAxisDomain={[0, "auto"]}
     yAxisTicks={[0, 10, 20, 30, 40, 50]}
   />

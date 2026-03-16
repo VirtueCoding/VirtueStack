@@ -69,9 +69,9 @@ func TestWebhookRegistration(t *testing.T) {
 		newURL := "https://example.com/updated"
 		active := true
 		_, err = suite.WebhookService.Update(ctx, webhookID, TestCustomerID, services.UpdateWebhookRequest{
-			URL:      &newURL,
-			Events:   newEvents,
-			Active:   &active,
+			URL:    &newURL,
+			Events: newEvents,
+			Active: &active,
 		})
 
 		require.NoError(t, err, "Updating webhook should succeed")
@@ -134,7 +134,8 @@ func TestWebhookDelivery(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update webhook URL to test server
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		require.NoError(t, err)
 
 		// Trigger webhook delivery
 		payload := map[string]interface{}{
@@ -171,7 +172,8 @@ func TestWebhookDelivery(t *testing.T) {
 		// Register webhook
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		require.NoError(t, err)
 
 		// Attempt delivery
 		_ = map[string]interface{}{"event": models.WebhookEventVMCreated}
@@ -191,13 +193,13 @@ func TestWebhookDelivery(t *testing.T) {
 		// Register webhook
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", server.URL, webhookID)
+		require.NoError(t, err)
 
 		// Attempt delivery (with context timeout)
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 		defer cancel()
 
-		_ = map[string]interface{}{"event": models.WebhookEventVMCreated}
 		err = suite.WebhookService.Deliver(ctx, models.WebhookEventVMCreated, nil)
 		// Should timeout or fail
 		assert.Error(t, err, "Delivery should timeout")
@@ -207,14 +209,14 @@ func TestWebhookDelivery(t *testing.T) {
 		// Register webhook pointing to non-existent endpoint
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", "https://non-existent-endpoint.example.com/webhook", webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET url = $1 WHERE id = $2", "https://non-existent-endpoint.example.com/webhook", webhookID)
+		require.NoError(t, err)
 
 		// Attempt delivery
-		_ = map[string]interface{}{"event": models.WebhookEventVMCreated}
 		err = suite.WebhookService.Deliver(ctx, models.WebhookEventVMCreated, nil)
 
-		// Should fail gracefully
-_ = err
+		// Should fail gracefully (network error or similar)
+		assert.Error(t, err, "Delivery to non-existent endpoint should fail")
 	})
 }
 
@@ -380,7 +382,8 @@ func TestWebhookEventFiltering(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update events
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET events = ARRAY['vm.created'] WHERE id = $1", webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET events = ARRAY['vm.created'] WHERE id = $1", webhookID)
+		require.NoError(t, err)
 
 		// Get webhooks for event
 		webhooks, err := suite.WebhookService.GetWebhooksForEvent(ctx, TestCustomerID, models.WebhookEventVMCreated)
@@ -401,7 +404,8 @@ func TestWebhookEventFiltering(t *testing.T) {
 		// Create webhook that only listens for vm.created
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
-		_, _ = suite.DBPool.Exec(ctx, "UPDATE webhooks SET events = ARRAY['vm.created'] WHERE id = $1", webhookID)
+		_, err = suite.DBPool.Exec(ctx, "UPDATE webhooks SET events = ARRAY['vm.created'] WHERE id = $1", webhookID)
+		require.NoError(t, err)
 
 		// Get webhooks for different event
 		webhooks, err := suite.WebhookService.GetWebhooksForEvent(ctx, TestCustomerID, models.WebhookEventVMDeleted)
@@ -422,9 +426,10 @@ func TestWebhookEventFiltering(t *testing.T) {
 		// Create webhook for multiple events
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
-		_, _ = suite.DBPool.Exec(ctx, `
+		_, err = suite.DBPool.Exec(ctx, `
 			UPDATE webhooks SET events = ARRAY['vm.created', 'vm.deleted', 'vm.started'] WHERE id = $1
 		`, webhookID)
+		require.NoError(t, err)
 
 		// Test each event type
 		for _, event := range []string{models.WebhookEventVMCreated, models.WebhookEventVMDeleted, models.WebhookEventVMStarted} {
@@ -460,10 +465,11 @@ func TestWebhookDeliveryHistory(t *testing.T) {
 
 		// Create some delivery records
 		for i := 0; i < 5; i++ {
-			_, _ = suite.DBPool.Exec(ctx, `
+			_, err := suite.DBPool.Exec(ctx, `
 				INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, created_at)
 				VALUES ($1, $2, $3, $4, 1, $5, NOW() - INTERVAL '1 day' * $6)
 			`, "delivery-"+string(rune('a'+i)), webhookID, models.WebhookEventVMCreated, "{}", i%2 == 0, i)
+			require.NoError(t, err)
 		}
 
 		// List delivery history
@@ -479,10 +485,11 @@ func TestWebhookDeliveryHistory(t *testing.T) {
 
 		// Create deliveries with known success/failure
 		for i := 0; i < 10; i++ {
-			_, _ = suite.DBPool.Exec(ctx, `
+			_, err := suite.DBPool.Exec(ctx, `
 				INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, created_at)
 				VALUES ($1, $2, $3, $4, 1, $5, NOW())
 			`, "stats-delivery-"+string(rune('0'+i)), webhookID, models.WebhookEventVMCreated, "{}", i < 7) // 7 success, 3 failure
+			require.NoError(t, err)
 		}
 
 		// Get statistics
@@ -506,10 +513,11 @@ func TestWebhookSecurity(t *testing.T) {
 	t.Run("CustomerCannotAccessOtherWebhooks", func(t *testing.T) {
 		// Create another customer
 		otherCustomerID := "00000000-0000-0000-0000-000000000099"
-		_, _ = suite.DBPool.Exec(ctx, `
+		_, err = suite.DBPool.Exec(ctx, `
 			INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 			VALUES ($1, 'other2@example.com', 'hash', 'Other Customer', 'active', NOW(), NOW())
 		`, otherCustomerID)
+		require.NoError(t, err)
 
 		// Create webhook for other customer
 		webhookID, err := CreateTestWebhook(ctx, otherCustomerID)
@@ -521,8 +529,10 @@ func TestWebhookSecurity(t *testing.T) {
 		assert.True(t, sharederrors.Is(err, sharederrors.ErrNotFound), "Should return ErrNotFound")
 
 		// Cleanup
-		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", otherCustomerID)
-		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", otherCustomerID)
+		_, err = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", otherCustomerID)
+		require.NoError(t, err)
+		_, err = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", otherCustomerID)
+		require.NoError(t, err)
 	})
 
 	t.Run("SecretHashing", func(t *testing.T) {
@@ -550,9 +560,7 @@ func TestWebhookSecurity(t *testing.T) {
 		}
 
 		_, err := suite.WebhookService.Register(ctx, webhook)
-		// Should reject HTTP URLs (depends on implementation)
-		// If not rejected, at least log a warning
-		_ = err // Accept either behavior for now
+		assert.Error(t, err, "Registration should reject HTTP URLs")
 	})
 }
 

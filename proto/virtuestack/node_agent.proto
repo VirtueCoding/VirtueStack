@@ -157,7 +157,7 @@ service NodeAgentService {
 
   // CreateSnapshot creates a point-in-time snapshot of a VM's disk.
   // The VM can be running or stopped during snapshot creation.
-  rpc CreateSnapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc CreateSnapshot(SnapshotRequest) returns (Snapshot);
 
   // DeleteSnapshot removes a previously created disk snapshot.
   rpc DeleteSnapshot(SnapshotIdentifier) returns (VMOperationResponse);
@@ -418,7 +418,7 @@ message BandwidthLimits {
 // PostMigrateSetupRequest contains parameters for post-migration setup.
 message PostMigrateSetupRequest {
   // UUID of the virtual machine
-  string vm_uuid = 1;
+  string vm_id = 1;
   // Customer identifier for billing/accounting
   string customer_id = 2;
   // Bandwidth limits to apply to the VM
@@ -517,22 +517,6 @@ message SnapshotRequest {
   string vm_id = 1;
   // Human-readable name for the snapshot
   string name = 2;
-}
-
-// SnapshotResponse is returned after a snapshot creation attempt.
-message SnapshotResponse {
-  // UUID of the created snapshot
-  string snapshot_id = 1;
-  // UUID of the virtual machine
-  string vm_id = 2;
-  // Human-readable name of the snapshot
-  string name = 3;
-  // Internal RBD snapshot name
-  string rbd_snapshot_name = 4;
-  // Size of the snapshot in bytes
-  int64 size_bytes = 5;
-  // Timestamp when the snapshot was created
-  google.protobuf.Timestamp created_at = 6;
 }
 
 // SnapshotIdentifier uniquely identifies a VM snapshot.

@@ -120,29 +120,6 @@ func TestFailoverMonitorContextCancellation(t *testing.T) {
 	}
 }
 
-func TestFailoverMonitorMetricsAfterFailover(t *testing.T) {
-	logger := failoverTestLogger()
-	config := DefaultFailoverMonitorConfig()
-
-	monitor := NewFailoverMonitor(nil, nil, logger, config)
-
-	startTime := time.Now()
-	monitor.failoverCount = 1
-	monitor.lastFailoverAt = &startTime
-	monitor.recoveryTimeMs = 1500
-
-	metrics := monitor.Metrics()
-	if metrics.FailoverCount != 1 {
-		t.Errorf("expected failover count 1, got %d", metrics.FailoverCount)
-	}
-	if metrics.LastFailoverAt == nil {
-		t.Error("expected last failover time to be set")
-	}
-	if metrics.RecoveryTimeMs != 1500 {
-		t.Errorf("expected recovery time 1500ms, got %d", metrics.RecoveryTimeMs)
-	}
-}
-
 func TestProcessNodeFailoverRecordsMetrics(t *testing.T) {
 	logger := failoverTestLogger()
 	config := DefaultFailoverMonitorConfig()
@@ -190,28 +167,25 @@ func TestFailoverMonitorConfigCustomValues(t *testing.T) {
 }
 
 func TestGetNodesNeedingFailoverFiltering(t *testing.T) {
-	config := FailoverMonitorConfig{
-		CheckInterval: 30 * time.Second,
-		Threshold:     3,
-		Enabled:       true,
-	}
+	threshold := 3
 
 	nodes := []models.Node{
 		{ID: "1", Status: models.NodeStatusOnline, ConsecutiveHeartbeatMisses: 2},
 		{ID: "2", Status: models.NodeStatusOnline, ConsecutiveHeartbeatMisses: 3},
 		{ID: "3", Status: models.NodeStatusOnline, ConsecutiveHeartbeatMisses: 4},
-		{ID: "4", Status: models.NodeStatusFailed, ConsecutiveHeartbeatMisses: 5},
+		{ID: "4", Status: models.NodeStatusDegraded, ConsecutiveHeartbeatMisses: 5},
+		{ID: "5", Status: models.NodeStatusDegraded, ConsecutiveHeartbeatMisses: 2},
 	}
 
-	var needsFailover []models.Node
-	for _, node := range nodes {
-		if (node.Status == models.NodeStatusOnline || node.Status == models.NodeStatusDegraded) &&
-			node.ConsecutiveHeartbeatMisses >= config.Threshold {
-			needsFailover = append(needsFailover, node)
+	needsFailover := filterNodesNeedingFailover(nodes, threshold)
+
+	if len(needsFailover) != 3 {
+		t.Errorf("expected 3 nodes needing failover, got %d", len(needsFailover))
+	}
+
+	for _, n := range needsFailover {
+		if n.ConsecutiveHeartbeatMisses < threshold {
+			t.Errorf("node %s with %d misses should not be in failover list", n.ID, n.ConsecutiveHeartbeatMisses)
 		}
-	}
-
-	if len(needsFailover) != 2 {
-		t.Errorf("expected 2 nodes needing failover, got %d", len(needsFailover))
 	}
 }

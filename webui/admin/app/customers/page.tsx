@@ -147,7 +147,7 @@ export default function CustomersPage() {
               Manage client accounts and subscriptions
             </p>
           </div>
-          <Button>
+          <Button disabled>
             <Plus className="mr-2 h-4 w-4" />
             Add Customer
           </Button>
@@ -237,6 +237,7 @@ export default function CustomersPage() {
                               title="View Profile"
                             >
                               <Eye className="h-4 w-4" />
+                              <span className="sr-only">View Profile</span>
                             </Button>
                             
                             {customer.status === "active" ? (
@@ -252,6 +253,7 @@ export default function CustomersPage() {
                                 ) : (
                                   <Ban className="h-4 w-4 text-warning" />
                                 )}
+                                <span className="sr-only">Suspend Account</span>
                               </Button>
                             ) : (
                               <Button
@@ -266,6 +268,7 @@ export default function CustomersPage() {
                                 ) : (
                                   <CheckCircle className="h-4 w-4 text-success" />
                                 )}
+                                <span className="sr-only">Unsuspend Account</span>
                               </Button>
                             )}
 
@@ -281,6 +284,7 @@ export default function CustomersPage() {
                               ) : (
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               )}
+                              <span className="sr-only">Delete Account</span>
                             </Button>
                           </div>
                         </TableCell>

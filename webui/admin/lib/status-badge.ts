@@ -1,8 +1,6 @@
-/**
- * Maps entity status strings to Badge component variant names.
- * Shared across admin pages (nodes, customers, etc.)
- */
-export function getStatusBadgeVariant(status: string): string {
+export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning";
+
+export function getStatusBadgeVariant(status: string): BadgeVariant {
   switch (status) {
     case "online":
     case "active":

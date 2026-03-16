@@ -32,6 +32,7 @@ use VirtueStack\WHMCS\VirtueStackHelper;
 // Load module dependencies
 require_once __DIR__ . '/lib/ApiClient.php';
 require_once __DIR__ . '/lib/VirtueStackHelper.php';
+require_once __DIR__ . '/lib/shared_functions.php';
 
 /**
  * Module metadata.
@@ -88,6 +89,12 @@ function virtuestack_ConfigOptions(): array
             'Description' => 'Prefix for auto-generated hostnames (default: vps)',
             'Default'     => 'vps',
         ],
+        'JWT Secret' => [
+            'Type'        => 'password',
+            'Size'        => 64,
+            'Description' => 'HMAC secret for signing SSO JWT tokens. Must be at least 32 characters. Required for Customer WebUI integration.',
+            'Required'    => false,
+        ],
     ];
 }
 
@@ -106,7 +113,10 @@ function virtuestack_CreateAccount(array $params): string
     $serviceId = (int) ($params['serviceid'] ?? 0);
     $clientId = (int) ($params['userid'] ?? 0);
 
-    VirtueStackHelper::log('CreateAccount', json_encode($params), 'Starting provisioning');
+    VirtueStackHelper::log('CreateAccount', 'Starting provisioning', json_encode([
+        'serviceid' => $serviceId,
+        'userid' => $clientId,
+    ]));
 
     try {
         // Get API client
@@ -742,7 +752,7 @@ function virtuestack_getWebuiUrl(array $params): string
  */
 function virtuestack_getProvisioningStatusUrl(string $taskId): string
 {
-    return "modules/servers/virtuestack/task_status.php?task_id={$taskId}";
+    return "clientarea.php?action=productdetails&id={$taskId}";
 }
 
 /**
@@ -857,8 +867,8 @@ function virtuestack_createCustomField(string $fieldName): int
         'showorder'     => '',
         'showinvoice'   => '',
         'sortorder'     => 0,
-        'created_at'    => 'NOW()',
-        'updated_at'    => 'NOW()',
+        'created_at'    => date('Y-m-d H:i:s'),
+        'updated_at'    => date('Y-m-d H:i:s'),
     ]);
 }
 
@@ -945,4 +955,19 @@ function virtuestack_powerOperation(array $params, string $operation): string
         VirtueStackHelper::log("powerOperation ({$operation})", 'Failed', $e->getMessage());
         return 'Failed to ' . $operation . ' VM: ' . $e->getMessage();
     }
+}
+
+function virtuestack_UsageUpdate(array $params): array
+{
+    return [];
+}
+
+function virtuestack_SingleSignOn(array $params): string
+{
+    return '';
+}
+
+function virtuestack_AdminServicesTabFieldsSave(array $params): string
+{
+    return '';
 }

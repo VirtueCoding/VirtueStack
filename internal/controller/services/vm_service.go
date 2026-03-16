@@ -119,10 +119,10 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 
 	var node *models.Node
 	if locationID != "" {
-		node, err = s.nodeRepo.GetLeastLoadedNode(ctx, locationID, plan.StorageBackend)
+		node, err = s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
 		if err != nil {
 			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return nil, "", fmt.Errorf("no available nodes in location %s with storage backend %s", locationID, plan.StorageBackend)
+				return nil, "", fmt.Errorf("no available nodes in location %s", locationID)
 			}
 			return nil, "", fmt.Errorf("finding node: %w", err)
 		}
@@ -131,21 +131,15 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		if err != nil {
 			return nil, "", fmt.Errorf("listing nodes: %w", err)
 		}
-		var filteredNodes []models.Node
-		for _, n := range nodes {
-			if n.StorageBackend == plan.StorageBackend {
-				filteredNodes = append(filteredNodes, n)
-			}
+		if len(nodes) == 0 {
+			return nil, "", fmt.Errorf("no available nodes")
 		}
-		if len(filteredNodes) == 0 {
-			return nil, "", fmt.Errorf("no available nodes with storage backend %s", plan.StorageBackend)
-		}
-		node = &filteredNodes[0]
-		for i := range filteredNodes {
-			availableMemory := filteredNodes[i].TotalMemoryMB - filteredNodes[i].AllocatedMemoryMB
+		node = &nodes[0]
+		for i := range nodes {
+			availableMemory := nodes[i].TotalMemoryMB - nodes[i].AllocatedMemoryMB
 			bestMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
 			if availableMemory > bestMemory {
-				node = &filteredNodes[i]
+				node = &nodes[i]
 			}
 		}
 	}
@@ -230,9 +224,13 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMCreate, taskPayload)
 	if err != nil {
 		// Attempt to clean up
-		_ = s.vmRepo.SoftDelete(ctx, vm.ID)
+		if err := s.vmRepo.SoftDelete(ctx, vm.ID); err != nil {
+			s.logger.Error("failed to soft delete VM after task publish failure", "operation", "SoftDelete", "err", err)
+		}
 		if ipv4Address != nil && s.ipamService != nil {
-			_ = s.ipamService.ReleaseIPsByVM(ctx, vm.ID)
+			if err := s.ipamService.ReleaseIPsByVM(ctx, vm.ID); err != nil {
+				s.logger.Error("failed to release IPs after task publish failure", "operation", "ReleaseIPsByVM", "err", err)
+			}
 		}
 		return nil, "", fmt.Errorf("publishing create task: %w", err)
 	}

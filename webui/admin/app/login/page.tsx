@@ -1,12 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
+import { z } from "zod";
 import { Loader2, Shield } from "lucide-react";
 
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -33,7 +31,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type TotpFormData = z.infer<typeof totpSchema>;
 
 export default function LoginPage() {
-  const { login, verify2FA, requires2FA, tempToken, isLoading, error, clearError } = useAuth();
+  const { login, verify2FA, requires2FA, tempToken, isLoading, error, clearError, reset2FA } = useAuth();
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -114,7 +112,7 @@ export default function LoginPage() {
                 type="button"
                 variant="ghost"
                 className="text-sm text-muted-foreground"
-                onClick={() => window.location.reload()}
+                onClick={() => reset2FA()}
               >
                 Back to login
               </Button>
@@ -159,15 +157,6 @@ export default function LoginPage() {
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isLoading ? "Signing in..." : "Sign In"}
               </Button>
-              <Link href="/forgot-password" passHref className="w-full">
-                <Button
-                  type="button"
-                  variant="link"
-                  className="w-full text-sm text-muted-foreground"
-                >
-                  Forgot password?
-                </Button>
-              </Link>
             </CardFooter>
           </form>
         )}

@@ -58,7 +58,7 @@ var Argon2idParams = &argon2id.Params{
 // AuthService provides authentication business logic for VirtueStack.
 // It handles login flows, 2FA verification, token refresh, and session management.
 type AuthService struct {
-	customerRepo  *repository.CustomerRepository
+	customerRepo  repository.CustomerRepo
 	adminRepo     *repository.AdminRepository
 	auditRepo     *repository.AuditRepository
 	authConfig    middleware.AuthConfig
@@ -68,7 +68,7 @@ type AuthService struct {
 
 // NewAuthService creates a new AuthService with the given dependencies.
 func NewAuthService(
-	customerRepo *repository.CustomerRepository,
+	customerRepo repository.CustomerRepo,
 	adminRepo *repository.AdminRepository,
 	auditRepo *repository.AuditRepository,
 	jwtSecret string,

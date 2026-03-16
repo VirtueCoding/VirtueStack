@@ -96,14 +96,18 @@ func main() {
 
 	// Register task handlers
 	handlerDeps := &tasks.HandlerDeps{
-		VMRepo:         repository.NewVMRepository(dbPool),
-		NodeRepo:       repository.NewNodeRepository(dbPool),
-		IPRepo:         repository.NewIPRepository(dbPool),
-		BackupRepo:     repository.NewBackupRepository(dbPool),
-		TaskRepo:       repository.NewTaskRepository(dbPool),
-		TemplateRepo:   repository.NewTemplateRepository(dbPool),
-		IPAMService:    server.GetIPAMService(),
-		NodeClient:     services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), repository.NewVMRepository(dbPool), nodeClient, logger),
+		VMRepo:       repository.NewVMRepository(dbPool),
+		NodeRepo:     repository.NewNodeRepository(dbPool),
+		IPRepo:       repository.NewIPRepository(dbPool),
+		BackupRepo:   repository.NewBackupRepository(dbPool),
+		TaskRepo:     repository.NewTaskRepository(dbPool),
+		TemplateRepo: repository.NewTemplateRepository(dbPool),
+		IPAMService:  server.GetIPAMService(),
+		NodeClient: services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), repository.NewVMRepository(dbPool), nodeClient, &services.CephConfig{
+			Monitors:   cfg.CephMonitors,
+			User:       cfg.CephUser,
+			SecretUUID: cfg.CephSecretUUID,
+		}, logger),
 		DNSNameservers: cfg.DNSNameservers,
 		CephUser:       cfg.CephUser,
 		CephSecretUUID: cfg.CephSecretUUID,

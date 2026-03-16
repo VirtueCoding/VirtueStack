@@ -75,7 +75,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Feature | Status |
 |---------|--------|
-| Prometheus Metrics | ✅ Controller (10) and Node Agent (7) metric endpoints |
+| Prometheus Metrics | ✅ Controller (10) and Node Agent (20) metric endpoints |
 | Grafana Dashboards | ✅ Pre-built dashboard templates |
 | Alerting Rules | ✅ Prometheus alerting configuration |
 | Background Collector | ✅ Periodic resource and health data collection |
@@ -84,7 +84,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Portal | Technology | Pages |
 |--------|------------|-------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, IP Sets, Audit Logs |
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, IP Sets, Audit Logs, Settings |
 | Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics), Settings (profile, 2FA, API keys) |
 
 ### API System
@@ -293,7 +293,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 |-----------|--------|
 | Controller APIs | 100% |
 | Node Agent | 100% |
-| Database Schema (21 migrations) | 100% |
+| Database Schema (24 migrations) | 100% |
 | Authentication (JWT, 2FA, API Keys) | 100% |
 | VM Lifecycle | 100% |
 | Storage (Ceph RBD + QCOW) | 100% |
