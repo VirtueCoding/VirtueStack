@@ -81,6 +81,19 @@ func (s *PlanService) Create(ctx context.Context, req *models.PlanCreateRequest)
 		PriceHourly:      req.PriceHourly,
 		IsActive:         req.IsActive,
 		SortOrder:        req.SortOrder,
+		SnapshotLimit:    req.SnapshotLimit,
+		BackupLimit:      req.BackupLimit,
+		ISOUploadLimit:   req.ISOUploadLimit,
+	}
+
+	if req.SnapshotLimit <= 0 {
+		plan.SnapshotLimit = 2
+	}
+	if req.BackupLimit <= 0 {
+		plan.BackupLimit = 2
+	}
+	if req.ISOUploadLimit <= 0 {
+		plan.ISOUploadLimit = 2
 	}
 
 	if req.StorageBackend != "" {

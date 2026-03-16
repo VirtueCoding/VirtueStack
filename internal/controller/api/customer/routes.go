@@ -25,9 +25,7 @@ import (
 //
 //	VMs:
 //	  GET    /vms             - List customer's VMs
-//	  POST   /vms             - Create new VM (async)
 //	  GET    /vms/:id         - Get VM details
-//	  DELETE /vms/:id         - Delete VM (async)
 //
 //	Power Control:
 //	  POST   /vms/:id/start       - Start VM
@@ -122,9 +120,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 		vms := protected.Group("/vms")
 		{
 			vms.GET("", handler.ListVMs)
-			vms.POST("", handler.CreateVM)
 			vms.GET("/:id", handler.GetVM)
-			vms.DELETE("/:id", handler.DeleteVM)
 
 			// Power control
 			vms.POST("/:id/start", handler.StartVM)

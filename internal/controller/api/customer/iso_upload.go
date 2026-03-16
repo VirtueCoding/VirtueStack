@@ -3,6 +3,7 @@ package customer
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,7 +20,6 @@ import (
 
 const (
 	maxISOSizeBytes int64 = 10 * 1024 * 1024 * 1024
-	maxISOCount           = 5
 )
 
 type ISORecord struct {
@@ -93,9 +93,23 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 	}
 
 	existing, _ := os.ReadDir(isoDir)
-	if len(existing) >= maxISOCount {
+
+	isoCount := 0
+	for _, entry := range existing {
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".iso") {
+			isoCount++
+		}
+	}
+
+	planLimit := defaultISOLimit
+	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
+	if planErr == nil && plan.ISOUploadLimit > 0 {
+		planLimit = plan.ISOUploadLimit
+	}
+
+	if isoCount >= planLimit {
 		respondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
-			"Maximum ISO limit reached (5 per VM). Delete existing ISOs first.")
+			fmt.Sprintf("ISO upload limit reached for this VM (%d/%d). Delete existing ISOs first.", isoCount, planLimit))
 		return
 	}
 

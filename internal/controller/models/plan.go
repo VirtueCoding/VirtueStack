@@ -32,6 +32,9 @@ type Plan struct {
 	StorageBackend string    `json:"storage_backend" db:"storage_backend"`
 	IsActive       bool      `json:"is_active" db:"is_active"`
 	SortOrder      int       `json:"sort_order" db:"sort_order"`
+	SnapshotLimit  int       `json:"snapshot_limit" db:"snapshot_limit"`
+	BackupLimit    int       `json:"backup_limit" db:"backup_limit"`
+	ISOUploadLimit int       `json:"iso_upload_limit" db:"iso_upload_limit"`
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
@@ -51,6 +54,9 @@ type PlanCreateRequest struct {
 	StorageBackend   string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow"`
 	IsActive         bool   `json:"is_active"`
 	SortOrder        int    `json:"sort_order" validate:"min=0"`
+	SnapshotLimit    int    `json:"snapshot_limit" validate:"min=0"`
+	BackupLimit      int    `json:"backup_limit" validate:"min=0"`
+	ISOUploadLimit   int    `json:"iso_upload_limit" validate:"min=0"`
 }
 
 // PlanUpdateRequest holds the fields that can be updated on an existing plan.
@@ -69,4 +75,7 @@ type PlanUpdateRequest struct {
 	StorageBackend   *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow"`
 	IsActive         *bool   `json:"is_active,omitempty"`
 	SortOrder        *int    `json:"sort_order,omitempty" validate:"omitempty,min=0"`
+	SnapshotLimit    *int    `json:"snapshot_limit,omitempty" validate:"omitempty,min=0"`
+	BackupLimit      *int    `json:"backup_limit,omitempty" validate:"omitempty,min=0"`
+	ISOUploadLimit   *int    `json:"iso_upload_limit,omitempty" validate:"omitempty,min=0"`
 }

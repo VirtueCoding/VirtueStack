@@ -155,6 +155,15 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	if req.StorageBackend != nil {
 		plan.StorageBackend = *req.StorageBackend
 	}
+	if req.SnapshotLimit != nil {
+		plan.SnapshotLimit = *req.SnapshotLimit
+	}
+	if req.BackupLimit != nil {
+		plan.BackupLimit = *req.BackupLimit
+	}
+	if req.ISOUploadLimit != nil {
+		plan.ISOUploadLimit = *req.ISOUploadLimit
+	}
 
 	err = h.planService.Update(c.Request.Context(), plan)
 	if err != nil {

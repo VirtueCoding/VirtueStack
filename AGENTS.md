@@ -8,6 +8,10 @@
 **Last Updated:** March 2026  
 **Purpose:** Machine-readable single source of truth for LLM agents working on VirtueStack
 
+> **Companion document:** [`CODING_STANDARD.md`](CODING_STANDARD.md) defines the rules all generated code must follow — prohibitions, error handling patterns, security requirements, testing rules, and quality gates. This document describes *what exists in the project* (architecture, APIs, data models, config).  
+>  
+> **Boundary:** If it describes *what exists in the project*, it goes here. If it prescribes *how to write code*, it goes in `CODING_STANDARD.md`.
+
 ---
 
 ## 1. PROJECT OVERVIEW
@@ -20,7 +24,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 |-----------|--------|------------|
 | Controller APIs | Complete | 100% |
 | Node Agent | Complete | 100% |
-| Database Schema | Complete | 100% (24 migrations) |
+| Database Schema | Complete | 100% (25 migrations) |
 | Authentication | Complete | 100% (JWT, 2FA/TOTP, API Keys) |
 | VM Lifecycle | Complete | 100% |
 | Storage (Ceph RBD + QCOW) | Complete | 100% |
@@ -80,14 +84,15 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (24 files)
+├── migrations/                             # Database migrations (25 files)
 │   ├── 000001_initial_schema.up.sql
 │   ├── 000019_add_storage_backend.up.sql
 │   ├── 000020_add_failover_requests.up.sql
 │   ├── 000021_add_attached_iso.up.sql
 │   ├── 000022_add_missing_rls_and_grants.up.sql
 │   ├── 000023_audit_log_default_partition.up.sql
-│   └── 000024_add_missing_indexes.up.sql
+│   ├── 000024_add_missing_indexes.up.sql
+│   └── 000025_add_plan_limits.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -167,6 +172,8 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 
 ## 4. DATABASE SCHEMA
 
+> **Database rules** (indexing, migrations, connection pooling, zero-downtime migrations) are defined in [`CODING_STANDARD.md §7`](CODING_STANDARD.md#7-database).
+
 ### 4.1 Core Tables (22 tables)
 
 | Table | Purpose | Key Fields |
@@ -175,7 +182,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 | `admins` | Admin users | id, email, password_hash, totp_secret_encrypted, role |
 | `nodes` | Compute nodes | id, hostname, grpc_address, management_ip, status, storage_backend |
 | `locations` | Data center locations | id, name, region, country |
-| `plans` | VPS plan templates | id, name, vcpu, memory_mb, disk_gb, port_speed_mbps, storage_backend |
+| `plans` | VPS plan templates | id, name, vcpu, memory_mb, disk_gb, port_speed_mbps, storage_backend, snapshot_limit, backup_limit, iso_upload_limit |
 | `vms` | Virtual machines | id, customer_id, node_id, plan_id, hostname, status, storage_backend, disk_path |
 | `ip_sets` | IP address pools | id, name, location_id, network, gateway |
 | `ip_addresses` | IP allocations | id, ip_set_id, address, vm_id, customer_id, rdns_hostname |
@@ -239,10 +246,13 @@ CREATE POLICY customer_password_resets ON password_resets FOR ALL TO app_custome
 | 000022_add_missing_rls_and_grants | RLS policies for notification_preferences, notification_events, password_resets + missing GRANTs |
 | 000023_audit_log_default_partition | Default partition for audit_logs + future partitions |
 | 000024_add_missing_indexes | Missing indexes on vms(plan_id,hostname), nodes(location_id), FK constraints, redundant index cleanup |
+| 000025_add_plan_limits | Plan-level limits for snapshots (DEFAULT 2), backups (DEFAULT 2), ISO uploads (DEFAULT 2) |
 
 ---
 
 ## 5. API ARCHITECTURE
+
+> **API design rules** (versioning, rate limiting, HTTP status codes) are defined in [`CODING_STANDARD.md §15`](CODING_STANDARD.md#15-api-design).
 
 ### 5.1 Three-Tier API System
 
@@ -328,6 +338,10 @@ DELETE /backup-schedules/:id
 
 **File:** `internal/controller/api/customer/routes.go`
 
+> **Security:** VM creation and deletion are restricted to Admin and Provisioning APIs only.
+> Customers cannot create or delete VMs through the Customer API to prevent abuse
+> (e.g., a customer buying one VPS then creating additional VMs for free).
+
 ```go
 // Auth
 POST /auth/login
@@ -340,11 +354,9 @@ PUT  /password
 GET  /profile
 PUT  /profile
 
-// VMs
+// VMs (read-only — create/delete via Admin and Provisioning APIs only)
 GET    /vms
-POST   /vms
 GET    /vms/:id
-DELETE /vms/:id
 POST   /vms/:id/start
 POST   /vms/:id/stop
 POST   /vms/:id/restart
@@ -429,6 +441,8 @@ GET /tasks/:id
 ---
 
 ## 6. AUTHENTICATION SYSTEM
+
+> **Security and auth rules** (cryptography standards, session hardening, secrets management, zero-trust) are defined in [`CODING_STANDARD.md §4`](CODING_STANDARD.md#4-security).
 
 ### 6.1 Authentication Methods
 
@@ -549,11 +563,50 @@ ALTER TABLE vms ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'ceph';
 ALTER TABLE vms ADD COLUMN disk_path TEXT;  -- For QCOW file path
 ```
 
+**File:** `migrations/000025_add_plan_limits.up.sql`
+
+```sql
+-- Plan-level resource limits enforced on customer API
+ALTER TABLE plans ADD COLUMN snapshot_limit INT NOT NULL DEFAULT 2;
+ALTER TABLE plans ADD COLUMN backup_limit INT NOT NULL DEFAULT 2;
+ALTER TABLE plans ADD COLUMN iso_upload_limit INT NOT NULL DEFAULT 2;
+```
+
 ### 7.5 Backend Selection Rules
 
 1. **VM storage backend is set from plan at creation and is immutable** — cannot be changed or migrated to a different backend
 2. **Nodes can host VMs with any backend** (ceph, qcow, or both) — node selection does not filter by storage_backend
 3. **Migration is only allowed between nodes supporting the VM's backend** — cross-backend migration (ceph ↔ qcow) is blocked
+
+### 7.6 Plan Resource Limits
+
+**Files:** `internal/controller/api/customer/snapshots.go`, `backups.go`, `iso_upload.go`
+
+Plans enforce per-VM resource limits on the Customer API. These limits are checked before creating snapshots, backups, or uploading ISOs:
+
+| Limit | DB Column | Default | Enforced In |
+|-------|-----------|---------|-------------|
+| Snapshots per VM | `plans.snapshot_limit` | 2 | `customer/snapshots.go` `CreateSnapshot` |
+| Backups per VM | `plans.backup_limit` | 2 | `customer/backups.go` `CreateBackup` |
+| ISO uploads per VM | `plans.iso_upload_limit` | 2 | `customer/iso_upload.go` `UploadISO` |
+
+Limit enforcement flow:
+1. Get VM (ownership already verified)
+2. Look up VM's plan via `planRepo.GetByID(vm.PlanID)`
+3. Count existing resources via `backupRepo.CountSnapshotsByVM()` / `CountBackupsByVM()` / filesystem `.iso` count
+4. Compare count against plan limit; return `409 Conflict` if exceeded
+
+Admin API and Provisioning API are **not** subject to plan limits.
+
+### 7.7 Customer API Isolation
+
+All `/customer/` endpoints enforce strict customer-only access:
+
+- **VMs:** All operations pass `customerID` + `isAdmin=false` to the service layer. Accessing another customer's VM returns `404 Not Found`.
+- **Snapshots:** `verifySnapshotOwnership()` confirms the VM belongs to the customer.
+- **Backups:** `verifyBackupOwnership()` confirms the VM belongs to the customer.
+- **ISOs:** `GetVM()` with ownership check before any ISO operation.
+- **RLS:** PostgreSQL Row Level Security policies enforce `customer_id` isolation at the database level as a defense-in-depth measure.
 
 ---
 
@@ -654,6 +707,8 @@ Key features:
 
 ## 9. ASYNC TASK SYSTEM
 
+> **Task coding rules** (error handling, resilience, multi-step operations) are defined in [`CODING_STANDARD.md §3`](CODING_STANDARD.md#3-error-handling).
+
 ### 9.1 Architecture
 
 ```
@@ -734,7 +789,7 @@ Three-layer approach:
 | VMs | `app/vms/page.tsx` | Full VM CRUD |
 | Nodes | `app/nodes/page.tsx` | Node management, drain, failover |
 | Customers | `app/customers/page.tsx` | Customer management |
-| Plans | `app/plans/page.tsx` | Plan management |
+| Plans | `app/plans/page.tsx` | Plan management with resource limit editing (snapshot, backup, ISO) |
 | IP Sets | `app/ip-sets/page.tsx` | IP pool management |
 | Audit Logs | `app/audit-logs/page.tsx` | Audit trail viewer |
 | Settings | `app/settings/page.tsx` | System settings management |
@@ -792,6 +847,8 @@ virtuestack_AdminServicesTabFieldsSave()  // Admin tab save (stub)
 ---
 
 ## 13. IMPLEMENTATION PATTERNS
+
+> **Coding rules for these patterns** (error wrapping, validation, naming, structure) are defined in [`CODING_STANDARD.md`](CODING_STANDARD.md) — see §2 (Structural Rules), §3 (Error Handling), §5 (Input Validation).
 
 ### 13.1 Error Handling
 
@@ -994,6 +1051,15 @@ All planned features are complete. The platform is fully implemented.
 
 ## 18. BUILD & DEPLOYMENT
 
+### Testing Methodology
+
+VirtueStack uses a hybrid testing approach:
+
+- **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `make docker-build && make docker-up`. This replicates the production runtime (multi-stage build, non-root user, network isolation, service wiring).
+- **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent connects to the host's libvirt daemon and is not containerized during testing. It requires KVM/libvirt, mTLS certificates, and direct hardware access.
+
+For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. Unit tests (`make test`) may run outside Docker since they test logic in isolation.
+
 ### Build Commands
 
 ```bash
@@ -1030,6 +1096,8 @@ docker compose up -d
 | admin-webui | virtuestack/admin-webui | Internal | controller |
 | customer-webui | virtuestack/customer-webui | Internal | controller |
 | nginx | nginx:1.25-alpine | 80, 443 | all |
+
+> **Note:** The Node Agent is not a Docker service in this stack. Build it with `make build-node-agent` and run directly on each hypervisor node.
 
 ---
 

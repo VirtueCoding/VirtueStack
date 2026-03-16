@@ -299,6 +299,9 @@ export interface Plan {
   bandwidth_mbps: number;
   price_monthly: number;
   status: "active" | "inactive";
+  snapshot_limit: number;
+  backup_limit: number;
+  iso_upload_limit: number;
 }
 
 export interface CreatePlanRequest {
@@ -308,6 +311,9 @@ export interface CreatePlanRequest {
   disk_gb: number;
   bandwidth_mbps: number;
   price_monthly: number;
+  snapshot_limit?: number;
+  backup_limit?: number;
+  iso_upload_limit?: number;
 }
 
 export interface UpdatePlanRequest {
@@ -318,6 +324,9 @@ export interface UpdatePlanRequest {
   bandwidth_mbps?: number;
   price_monthly?: number;
   status?: "active" | "inactive";
+  snapshot_limit?: number;
+  backup_limit?: number;
+  iso_upload_limit?: number;
 }
 
 export const adminPlansApi = {

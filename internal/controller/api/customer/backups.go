@@ -2,6 +2,7 @@ package customer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -95,6 +96,19 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 			return
 		}
 		respondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Failed to verify VM")
+		return
+	}
+
+	planLimit := defaultBackupLimit
+	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
+	if planErr == nil && plan.BackupLimit > 0 {
+		planLimit = plan.BackupLimit
+	}
+
+	backupCount, countErr := h.backupRepo.CountBackupsByVM(c.Request.Context(), vm.ID)
+	if countErr == nil && backupCount >= planLimit {
+		respondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
+			fmt.Sprintf("Backup limit reached for this VM (%d/%d). Delete existing backups first.", backupCount, planLimit))
 		return
 	}
 

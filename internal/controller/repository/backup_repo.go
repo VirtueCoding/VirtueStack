@@ -198,6 +198,16 @@ func (r *BackupRepository) ListBackupsByVM(ctx context.Context, vmID string) ([]
 	return backups, nil
 }
 
+// CountBackupsByVM returns the number of backups for a specific VM.
+func (r *BackupRepository) CountBackupsByVM(ctx context.Context, vmID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM backups WHERE vm_id = $1`
+	count, err := CountRows(ctx, r.db, q, vmID)
+	if err != nil {
+		return 0, fmt.Errorf("counting backups for VM %s: %w", vmID, err)
+	}
+	return count, nil
+}
+
 // UpdateBackupStatus updates the status field of a backup.
 func (r *BackupRepository) UpdateBackupStatus(ctx context.Context, id, status string) error {
 	const q = `UPDATE backups SET status = $1 WHERE id = $2`
@@ -383,6 +393,16 @@ func (r *BackupRepository) ListSnapshotsByVM(ctx context.Context, vmID string) (
 		return nil, fmt.Errorf("listing snapshots for VM %s: %w", vmID, err)
 	}
 	return snapshots, nil
+}
+
+// CountSnapshotsByVM returns the number of snapshots for a specific VM.
+func (r *BackupRepository) CountSnapshotsByVM(ctx context.Context, vmID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM snapshots WHERE vm_id = $1`
+	count, err := CountRows(ctx, r.db, q, vmID)
+	if err != nil {
+		return 0, fmt.Errorf("counting snapshots for VM %s: %w", vmID, err)
+	}
+	return count, nil
 }
 
 func (r *BackupRepository) UpdateSnapshot(ctx context.Context, snapshot *models.Snapshot) error {

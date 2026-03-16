@@ -3,6 +3,10 @@
 **Scope:** Every file, function, endpoint, module. No exceptions.
 **Violation of any rule = rejected code.**
 
+> **Companion document:** [`AGENTS.md`](AGENTS.md) provides the project-specific implementation reference — file locations, API specs, data models, config values, and architecture. This document defines the rules all generated code must follow.
+>
+> **Boundary:** If it describes *what exists in the project*, it goes in `AGENTS.md`. If it prescribes *how to write code*, it goes here.
+
 ---
 
 ## 1. ABSOLUTE PROHIBITIONS
@@ -75,11 +79,9 @@
 ## 3. ERROR HANDLING
 
 ### Required Error Types
-Define and use typed errors for each category:
-- `ValidationError` (400), `AuthenticationError` (401), `ForbiddenError` (403)
-- `NotFoundError` (404), `ConflictError` (409), `RateLimitError` (429), `InternalError` (500)
+Define and use typed errors for each category. See [`AGENTS.md §13.1`](AGENTS.md#131-error-handling) for the canonical error types used in this project.
 
-Go: Use sentinel errors + custom types implementing `error`:
+Go pattern (sentinel errors + custom types implementing `error`):
 ```go
 var ErrNotFound = errors.New("resource not found")
 
@@ -93,17 +95,7 @@ func (e *ValidationError) Error() string {
 ```
 
 ### Error Response Format
-All API error responses use this structure:
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Email format is invalid",
-    "details": [{"field": "email", "issue": "Must be a valid email address"}],
-    "correlationId": "req_abc123"
-  }
-}
-```
+All API error responses follow the project's standard structure defined in [`AGENTS.md §13.2`](AGENTS.md#132-api-response-format). Use the same shape for every error response.
 
 ### Resilience
 - Timeouts on ALL external calls: 10s HTTP, 5s DB OLTP, 30s DB reporting, 5s gRPC unary, 60s gRPC stream.
@@ -130,7 +122,7 @@ States: `pending -> step_N_complete -> completed | failed | rolled_back`.
 - Record-level ownership enforced: `resource.customer_id == jwt.customer_id`.
 - RBAC or ABAC with role hierarchy.
 - CORS: strict origin allowlist, no wildcards in production.
-- JWTs: 15min access, 7d customer refresh, 4h admin refresh. Rotation on use.
+- JWTs: short-lived access tokens with rotation on use. See [`AGENTS.md §6.2`](AGENTS.md#62-jwt-token-configuration) for token lifetimes.
 - Rate limit all endpoints. Log and alert all access control failures.
 - PostgreSQL RLS for multi-tenant data isolation.
 
@@ -152,7 +144,7 @@ States: `pending -> step_N_complete -> completed | failed | rolled_back`.
 - Store refresh tokens server-side (database), never in `localStorage`.
 - Session cookies: `HttpOnly`, `Secure`, `SameSite=Strict`.
 - CSRF: double-submit cookie pattern for cookie-based auth APIs.
-- Password storage: Argon2id only for new code. bcrypt legacy only with migration plan.
+- Password storage: Argon2id only for new code. See [`AGENTS.md §6.3`](AGENTS.md#63-password-hashing) for the implementation. bcrypt legacy only with migration plan.
 - Account lockout after 5-10 failed attempts with progressive delay.
 - Minimum 12-character passwords, checked against breached lists.
 
@@ -317,6 +309,8 @@ Rules:
 ---
 
 ## 10. TESTING
+
+> **Runtime testing methodology (Docker vs local) is defined in `AGENTS.md` section 18.** This section covers test code rules only.
 
 ### Coverage
 - 80%+ line coverage on business logic.

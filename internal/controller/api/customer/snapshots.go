@@ -3,6 +3,7 @@ package customer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -12,6 +13,12 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+)
+
+const (
+	defaultSnapshotLimit = 2
+	defaultBackupLimit   = 2
+	defaultISOLimit      = 2
 )
 
 // CreateSnapshotRequest represents the request body for creating a snapshot.
@@ -98,6 +105,19 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 			return
 		}
 		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Failed to verify VM")
+		return
+	}
+
+	planLimit := defaultSnapshotLimit
+	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
+	if planErr == nil && plan.SnapshotLimit > 0 {
+		planLimit = plan.SnapshotLimit
+	}
+
+	snapshotCount, countErr := h.backupRepo.CountSnapshotsByVM(c.Request.Context(), vm.ID)
+	if countErr == nil && snapshotCount >= planLimit {
+		respondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
+			fmt.Sprintf("Snapshot limit reached for this VM (%d/%d). Delete existing snapshots first.", snapshotCount, planLimit))
 		return
 	}
 

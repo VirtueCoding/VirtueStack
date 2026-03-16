@@ -184,6 +184,15 @@ docker compose down
 
 ## Development
 
+### Testing Methodology
+
+VirtueStack uses a hybrid testing approach:
+
+- **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `docker compose up -d`. This replicates the production runtime environment.
+- **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent requires direct access to the host's KVM/libvirt daemon and is not containerized during testing.
+
+For integration testing, start the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node.
+
 ### Backend
 
 ```bash
@@ -193,11 +202,24 @@ make deps
 # Run database migrations
 make migrate-up
 
-# Run tests
+# Run tests (unit tests)
 make test
 
-# Build
-make build
+# Build Node Agent (runs directly on host, not in Docker)
+make build-node-agent
+```
+
+### Docker Stack
+
+```bash
+# Build and start Controller, PostgreSQL, NATS, UIs, Nginx
+make docker-build && make docker-up
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
 ```
 
 ### Frontend

@@ -26,6 +26,7 @@ type CustomerHandler struct {
 	auditRepo       *repository.AuditRepository
 	bandwidthRepo   *repository.BandwidthRepository
 	ipRepo          *repository.IPRepository
+	planRepo        *repository.PlanRepository
 	rdnsService     *services.RDNSService
 	nodeAgent       nodeAgentConnPool
 	authConfig      middleware.AuthConfig
@@ -55,6 +56,7 @@ func NewCustomerHandler(
 	auditRepo *repository.AuditRepository,
 	bandwidthRepo *repository.BandwidthRepository,
 	ipRepo *repository.IPRepository,
+	planRepo *repository.PlanRepository,
 	rdnsService *services.RDNSService,
 	nodeAgent nodeAgentConnPool,
 	jwtSecret string,
@@ -80,6 +82,7 @@ func NewCustomerHandler(
 		auditRepo:       auditRepo,
 		bandwidthRepo:   bandwidthRepo,
 		ipRepo:          ipRepo,
+		planRepo:        planRepo,
 		rdnsService:     rdnsService,
 		nodeAgent:       nodeAgent,
 		authConfig:      middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},

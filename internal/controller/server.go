@@ -312,6 +312,7 @@ func (s *Server) InitializeServices() error {
 		auditRepo,
 		bandwidthRepo,
 		ipRepo,
+		planRepo,
 		s.rdnsService,
 		s.nodeClient,
 		s.config.JWTSecret,

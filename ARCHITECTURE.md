@@ -682,10 +682,10 @@ Each plan defines resource limits enforced at VM creation and resize:
 | `bandwidth_overage_speed_mbps` | integer | 5 (throttle speed when cap exceeded) |
 | `max_ipv4` | integer | 1, 2, 4, 8 |
 | `max_ipv6_prefix` | string | "/64" (one /64 block per VM) |
-| `max_snapshots` | integer | 3, 5, 10 |
-| `max_backups` | integer | 1, 3, 5 |
+| `max_snapshots` | integer | 3, 5, 10 → now `snapshot_limit` (DEFAULT 2, enforced on Customer API) |
+| `max_backups` | integer | 1, 3, 5 → now `backup_limit` (DEFAULT 2, enforced on Customer API) |
 | `max_iso_gb` | integer | 0, 5, 10, 20 (max ISO storage per customer) |
-| `max_iso_count` | integer | 0, 1, 3, 5 |
+| `max_iso_count` | integer | 0, 1, 3, 5 → now `iso_upload_limit` (DEFAULT 2, enforced on Customer API) |
 
 ### Audit Logging
 
@@ -729,7 +729,7 @@ Both Admin and Customer WebUIs are Next.js 16 applications served as Docker cont
 | **Dashboard** | Node overview (CPU/RAM/disk usage), VM count, active alerts |
 | **Node Management** | List nodes, view health, drain node, trigger failover |
 | **VM Management** | Full CRUD, resize, migrate, console, all VMs visible |
-| **Plan Management** | Create/edit VM plans with resource constraints |
+| **Plan Management** | Create/edit VM plans with resource constraints and per-VM limits (snapshots, backups, ISO uploads) |
 | **Template Management** | Upload base images, create templates, manage template catalog |
 | **IP Set Management** | Create IP pools per location/VLAN, assign IPs, manage subnets |
 | **Customer Management** | View customers, their VMs, usage, suspend/unsuspend |
@@ -1408,6 +1408,9 @@ CREATE TABLE plans (
       CHECK (storage_backend IN ('ceph', 'qcow')),
     is_active BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
+    snapshot_limit INTEGER NOT NULL DEFAULT 2,
+    backup_limit INTEGER NOT NULL DEFAULT 2,
+    iso_upload_limit INTEGER NOT NULL DEFAULT 2,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -1681,6 +1684,13 @@ CREATE TABLE sessions (
 | GET | `/api/v1/provisioning/vms/{id}` | Get VM status + IPs |
 
 ### Customer API
+
+> **Security:** VM creation and deletion are restricted to Admin and Provisioning APIs only.
+> Customers cannot create or delete VMs through the Customer API to prevent abuse
+> (e.g., a customer buying one VPS then creating additional VMs for free).
+> All endpoints enforce tenant isolation — customers can only access their own resources.
+> Plan-level limits (snapshot_limit, backup_limit, iso_upload_limit) are enforced
+> on create operations, returning `409 Conflict` when exceeded.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
