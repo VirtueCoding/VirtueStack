@@ -1,8 +1,7 @@
 # VirtueStack Architecture
 
-**Version:** 2.0 — March 2026  
-**Status:** Implementation Complete — ~90%  
-**Companion:** `CODING_STANDARD.md` — all code MUST pass the 16 Quality Gates defined there.  
+**Version:** 2.2 — March 2026  
+**Companion:** `CODING_STANDARD.md` — all code MUST pass the 19 Quality Gates defined there.  
 **Applies to:** Every component, API, schema, and module described below.
 
 > **SINGLE SOURCE OF TRUTH:** This document defines the VirtueStack system architecture.  
@@ -272,13 +271,21 @@ service NodeAgentService {
   rpc StartVM(VMIdentifier) returns (VMOperationResponse);
   rpc StopVM(StopVMRequest) returns (VMOperationResponse);
   rpc ForceStopVM(VMIdentifier) returns (VMOperationResponse);
-  rpc DeleteVM(VMIdentifier) returns (VMOperationResponse);
+  rpc DeleteVM(DeleteVMRequest) returns (VMOperationResponse);
   rpc ReinstallVM(ReinstallVMRequest) returns (CreateVMResponse);
   rpc ResizeVM(ResizeVMRequest) returns (VMOperationResponse);
 
   // Migration
   rpc MigrateVM(MigrateVMRequest) returns (MigrateVMResponse);
   rpc AbortMigration(VMIdentifier) returns (VMOperationResponse);
+  rpc PostMigrateSetup(PostMigrateSetupRequest) returns (VMOperationResponse);
+
+  // Disk Transfer (for QCOW migration)
+  rpc CreateDiskSnapshot(CreateDiskSnapshotRequest) returns (CreateDiskSnapshotResponse);
+  rpc DeleteDiskSnapshot(DeleteDiskSnapshotRequest) returns (VMOperationResponse);
+  rpc TransferDisk(TransferDiskRequest) returns (stream DiskChunk);
+  rpc ReceiveDisk(stream DiskChunk) returns (ReceiveDiskResponse);
+  rpc PrepareMigratedVM(PrepareMigratedVMRequest) returns (VMOperationResponse);
 
   // Console (bidirectional streaming)
   rpc StreamVNCConsole(stream VNCFrame) returns (stream VNCFrame);
@@ -290,7 +297,7 @@ service NodeAgentService {
   rpc GetNodeResources(Empty) returns (NodeResourcesResponse);
 
   // Snapshots
-  rpc CreateSnapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc CreateSnapshot(SnapshotRequest) returns (Snapshot);
   rpc DeleteSnapshot(SnapshotIdentifier) returns (VMOperationResponse);
   rpc RevertSnapshot(SnapshotIdentifier) returns (VMOperationResponse);
   rpc ListSnapshots(VMIdentifier) returns (SnapshotListResponse);
@@ -1389,6 +1396,8 @@ CREATE TABLE locations (
 );
 
 -- VM Plans (product templates)
+-- Note: max_snapshots, max_backups, max_iso_count, max_iso_gb are deprecated legacy columns.
+-- Use snapshot_limit, backup_limit, iso_upload_limit instead (migration 000025).
 CREATE TABLE plans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
@@ -1400,10 +1409,11 @@ CREATE TABLE plans (
     bandwidth_overage_speed_mbps INTEGER DEFAULT 5,
     max_ipv4 INTEGER DEFAULT 1,
     max_ipv6_slash64 INTEGER DEFAULT 1,
-    max_snapshots INTEGER DEFAULT 3,
-    max_backups INTEGER DEFAULT 1,
-    max_iso_count INTEGER DEFAULT 1,
-    max_iso_gb INTEGER DEFAULT 5,
+    -- DEPRECATED: Use snapshot_limit, backup_limit, iso_upload_limit instead
+    max_snapshots INTEGER DEFAULT 3,       -- DEPRECATED
+    max_backups INTEGER DEFAULT 1,         -- DEPRECATED
+    max_iso_count INTEGER DEFAULT 1,       -- DEPRECATED
+    max_iso_gb INTEGER DEFAULT 5,          -- DEPRECATED
     storage_backend VARCHAR(20) DEFAULT 'ceph'
       CHECK (storage_backend IN ('ceph', 'qcow')),
     is_active BOOLEAN DEFAULT TRUE,
@@ -2256,10 +2266,7 @@ All components use `slog` with JSON output:
 | Rate limiting middleware | Controller |
 | RBAC permission enforcement | Controller |
 
-### Phase 4: Advanced Features (Weeks 12-15) ⚠️ Partial
-
-> Note: Live migration, backup system, TOTP 2FA, reinstall workflow, and QEMU Guest Agent are complete.  
-> HA failover (70%) and rDNS management (60%) are partially complete.
+### Phase 4: Advanced Features (Weeks 12-15)
 
 | Task | Component |
 |------|-----------|
@@ -2308,7 +2315,7 @@ All components use `slog` with JSON output:
 
 ## 20. QUALITY GATES MAPPING
 
-Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
+Every component maps to the 19 Quality Gates from `CODING_STANDARD.md`:
 
 | QG | How Applied in VirtueStack |
 |----|---------------------------|
@@ -2328,6 +2335,9 @@ Every component maps to the 16 Quality Gates from `CODING_STANDARD.md`:
 | QG-14 Tested | Unit + integration + E2E, `go test -race`, Playwright for WebUI, 80%+ coverage |
 | QG-15 Dependency-Safe | All Go/npm/PHP packages verified, pinned versions, `govulncheck`/`npm audit` |
 | QG-16 Performant | Pagination on all list endpoints, connection pooling, indexed queries, no N+1 |
+| QG-17 Provenance-Verified | SBOM generated on release, cosign signatures, SLSA Level 2+ attestation |
+| QG-18 Observable | Prometheus metrics (Controller + Node Agent), distributed tracing, health probes |
+| QG-19 Deployment-Safe | Non-root containers (Controller, WebUIs — Node Agent runs as host binary with elevated privileges), minimal Alpine images, graceful shutdown (30s) |
 
 ### Performance Targets
 
@@ -2522,5 +2532,5 @@ Per MASTER_CODING_STANDARD Section 6, default is 5 consecutive failures. VirtueS
 **END OF KICKSTART PLAN**
 
 *This document is the single source of truth for VirtueStack system architecture.*
-*All implementation MUST follow `CODING_STANDARD.md` Quality Gates QG-01 through QG-16.*
-*Revision: 2.0 | Created: March 2026*
+*All implementation MUST follow `CODING_STANDARD.md` Quality Gates QG-01 through QG-19.*
+*Revision: 2.2 | Created: March 2026*

@@ -98,7 +98,7 @@ func (e *ValidationError) Error() string {
 All API error responses follow the project's standard structure defined in [`AGENTS.md §13.2`](AGENTS.md#132-api-response-format). Use the same shape for every error response.
 
 ### Resilience
-- Timeouts on ALL external calls: 10s HTTP, 5s DB OLTP, 30s DB reporting, 5s gRPC unary, 60s gRPC stream.
+- Timeouts on ALL external calls: 10s HTTP, 5s DB OLTP, 30s DB reporting, 30s gRPC unary, 60s gRPC stream.
 - Retry with exponential backoff for transient failures. Max 3 retries.
 - Circuit breaker: open after 5 consecutive failures, half-open after 30s cooldown, close after 2 successes.
 - Graceful degradation: non-critical service failure degrades feature, never crashes system.
@@ -145,7 +145,7 @@ States: `pending -> step_N_complete -> completed | failed | rolled_back`.
 - Session cookies: `HttpOnly`, `Secure`, `SameSite=Strict`.
 - CSRF: double-submit cookie pattern for cookie-based auth APIs.
 - Password storage: Argon2id only for new code. See [`AGENTS.md §6.3`](AGENTS.md#63-password-hashing) for the implementation. bcrypt legacy only with migration plan.
-- Account lockout after 5-10 failed attempts with progressive delay.
+- Account lockout after 5 failed attempts with progressive delay.
 - Minimum 12-character passwords, checked against breached lists.
 
 ### Admin Session Hardening
@@ -310,7 +310,7 @@ Rules:
 
 ## 10. TESTING
 
-> **Runtime testing methodology (Docker vs local) is defined in `AGENTS.md` section 18.** This section covers test code rules only.
+> **Runtime testing methodology (Docker vs local) is defined in `AGENTS.md` section 18 (Build & Deployment).** This section covers test code rules only.
 
 ### Coverage
 - 80%+ line coverage on business logic.
@@ -385,7 +385,7 @@ Before adding ANY AI-suggested package:
 
 - `wss://` only in production. No `ws://`.
 - Validate Origin header against allowlist on upgrade.
-- Authenticate on connection via query param or first message, never in URL path.
+- Authenticate via query param or first message, never in URL path segments.
 - Per-IP connection limits: 10 concurrent.
 - Idle timeout: 5 minutes.
 - Schema-validate every incoming message.
@@ -585,7 +585,35 @@ Reject any code matching these patterns:
 
 ---
 
-## 18. QUICK REFERENCE
+## 18. QUALITY GATES (QG-01 through QG-19)
+
+All code MUST pass these 19 quality gates. Compliance status is tracked in `AGENTS.md` Section 14.
+
+| QG | Name | Requirement |
+|----|------|-------------|
+| QG-01 | Readable | Max 40-line functions, 3-level nesting, clear naming |
+| QG-02 | Secure | OWASP 2025 compliance, no hardcoded secrets, mTLS, input validation |
+| QG-03 | Typed | No `any`/`interface{}` without type assertion, strict mode enabled |
+| QG-04 | Structured | Custom error types, operation journals for multi-step tasks |
+| QG-05 | Validated | All external input validated with schema libraries |
+| QG-06 | DRY | No duplicate code, shared utilities extracted |
+| QG-07 | Defensive | Null checks, bounds checks, graceful degradation |
+| QG-08 | Logged | Structured logging with correlation IDs, no PII |
+| QG-09 | Bounded | Timeouts on all external calls, bounded concurrency |
+| QG-10 | Clean | Zero linter warnings, formatted code |
+| QG-11 | Documented | Doc comments on exports, API specs maintained |
+| QG-12 | Configurable | All config via env vars or config files |
+| QG-13 | Compatible | API versioning, backward-compatible migrations |
+| QG-14 | Tested | 80%+ coverage on business logic, 100% on security paths |
+| QG-15 | Dependency-Safe | Pinned versions, verified packages, lock files committed |
+| QG-16 | Performant | No N+1 queries, indexed columns, pagination, connection pooling |
+| QG-17 | Provenance-Verified | SBOM generated, artifacts signed (Sigstore/cosign), SLSA Level 2+ |
+| QG-18 | Observable | RED metrics per endpoint, distributed tracing, health probes |
+| QG-19 | Deployment-Safe | Non-root containers, minimal images, graceful shutdown, rolling updates |
+
+---
+
+## 19. QUICK REFERENCE
 
 ### Default Timeouts
 | Resource | Timeout |
@@ -593,7 +621,7 @@ Reject any code matching these patterns:
 | HTTP client | 10s |
 | DB query OLTP | 5s |
 | DB query reporting | 30s |
-| gRPC unary | 5s |
+| gRPC unary | 30s |
 | gRPC streaming | 60s |
 | Background job step | 5min |
 | Graceful shutdown | 30s |
@@ -609,7 +637,7 @@ Reject any code matching these patterns:
 
 ---
 
-## 19. DELIVERY GATE
+## 20. DELIVERY GATE
 
 Before committing, every item must be true:
 

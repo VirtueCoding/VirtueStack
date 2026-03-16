@@ -18,28 +18,6 @@
 
 VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting providers. Architecture: Go backend (Controller + Node Agent), TypeScript/React frontend (Next.js), PostgreSQL database, NATS JetStream message queue.
 
-### 1.1 Completion Status
-
-| Component | Status | Completion |
-|-----------|--------|------------|
-| Controller APIs | Complete | 100% |
-| Node Agent | Complete | 100% |
-| Database Schema | Complete | 100% (25 migrations) |
-| Authentication | Complete | 100% (JWT, 2FA/TOTP, API Keys) |
-| VM Lifecycle | Complete | 100% |
-| Storage (Ceph RBD + QCOW) | Complete | 100% |
-| Migration | Complete | 100% |
-| Backup System | Complete | 100% |
-| WebSocket Console | Complete | 100% |
-| Web UIs | Complete | 100% |
-| WHMCS Module | Complete | 100% |
-| Networking | Complete | 100% |
-| HA Failover | Complete | 100% (IPMI fencing, STONITH, Ceph blocklist, VM redistribution, heartbeat miss detection, failover request persistence, undrain endpoint) |
-| PowerDNS rDNS | Complete | 100% (MySQL direct access, SOA serial management, IPv4+IPv6 PTR, admin/provisioning/customer APIs, GetReverseDNS, unit tests) |
-| Monitoring | Complete | 100% (Prometheus metrics for Controller (10 active) and Node Agent (20), HTTP metrics endpoint, background collectors, bandwidth collection, Grafana dashboards, alerting rules) |
-
-**Overall: 100% Complete**
-
 ---
 
 ## 2. REPOSITORY STRUCTURE
@@ -932,6 +910,9 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | QG-14 Tested | ✅ | Integration + E2E tests |
 | QG-15 Dependency-Safe | ✅ | Pinned versions |
 | QG-16 Performant | ✅ | Pagination, connection pooling |
+| QG-17 Provenance-Verified | ✅ | SBOM, cosign signatures, SLSA Level 2+ |
+| QG-18 Observable | ✅ | Prometheus metrics, distributed tracing, health probes |
+| QG-19 Deployment-Safe | ✅ | Non-root containers (Controller, WebUIs), minimal images, graceful shutdown (Node Agent runs as host binary with elevated privileges) |
 
 ---
 
