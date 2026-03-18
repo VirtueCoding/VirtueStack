@@ -87,38 +87,92 @@ func NewAuthService(
 	}
 }
 
-// Login authenticates a customer and returns tokens or a 2FA challenge.
-// If the customer has 2FA enabled, returns temp_token with requires_2fa=true.
-// Otherwise, returns access_token and refresh_token directly.
-func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
+// checkLoginLockout returns ErrAccountLocked when the email has exceeded the
+// failed-login threshold within LockoutWindow.
+func (s *AuthService) checkLoginLockout(ctx context.Context, email string) error {
 	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, email, LockoutWindow)
 	if err != nil {
-		return nil, "", fmt.Errorf("checking login attempts: %w", err)
+		return fmt.Errorf("checking login attempts: %w", err)
 	}
-
 	if failedCount >= MaxFailedLoginAttempts {
 		s.logger.Warn("login attempt on locked account", "email", util.MaskEmail(email), "attempts", failedCount)
-		return nil, "", sharederrors.ErrAccountLocked
+		return sharederrors.ErrAccountLocked
 	}
+	return nil
+}
 
+// verifyLoginCredentials fetches the customer by email and verifies the password.
+// On wrong password it records the failure and returns ErrUnauthorized.
+func (s *AuthService) verifyLoginCredentials(ctx context.Context, email, password string) (*models.Customer, error) {
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			s.logger.Warn("login attempt for non-existent email", "email", util.MaskEmail(email))
-			return nil, "", sharederrors.ErrUnauthorized
+			return nil, sharederrors.ErrUnauthorized
 		}
-		return nil, "", fmt.Errorf("getting customer by email: %w", err)
+		return nil, fmt.Errorf("getting customer by email: %w", err)
 	}
 
 	match, err := s.verifyPassword(password, customer.PasswordHash)
 	if err != nil {
-		return nil, "", fmt.Errorf("verifying password: %w", err)
+		return nil, fmt.Errorf("verifying password: %w", err)
 	}
 	if !match {
 		s.logger.Warn("invalid password attempt", "customer_id", customer.ID, "email", util.MaskEmail(email))
 		// Audit logging error intentionally ignored - login failure already returned to user
 		_ = s.customerRepo.RecordFailedLogin(ctx, email)
-		return nil, "", sharederrors.ErrUnauthorized
+		return nil, sharederrors.ErrUnauthorized
+	}
+	return customer, nil
+}
+
+// build2FAChallenge generates a short-lived temp token for the 2FA verification step.
+func (s *AuthService) build2FAChallenge(userID, userType string) (*models.AuthTokens, error) {
+	tempToken, err := middleware.GenerateTempToken(s.authConfig, userID, userType)
+	if err != nil {
+		return nil, fmt.Errorf("generating temp token: %w", err)
+	}
+	return &models.AuthTokens{TokenType: "Bearer", Requires2FA: true, TempToken: tempToken}, nil
+}
+
+// createLoginSession mints access + refresh tokens and persists the session row.
+// Returns the AuthTokens response and the plain-text refresh token.
+func (s *AuthService) createLoginSession(ctx context.Context, userID, userType, role, ipAddress, userAgent string, refreshDuration time.Duration) (*models.AuthTokens, string, error) {
+	accessToken, err := middleware.GenerateAccessToken(s.authConfig, userID, userType, role, AccessTokenDuration)
+	if err != nil {
+		return nil, "", fmt.Errorf("generating access token: %w", err)
+	}
+	refreshToken, err := middleware.GenerateRefreshToken()
+	if err != nil {
+		return nil, "", fmt.Errorf("generating refresh token: %w", err)
+	}
+	session := &models.Session{
+		ID: uuid.New().String(), UserID: userID, UserType: userType,
+		RefreshTokenHash: crypto.HashSHA256(refreshToken),
+		IPAddress:        &ipAddress, UserAgent: &userAgent,
+		ExpiresAt: time.Now().Add(refreshDuration),
+	}
+	if err := s.customerRepo.CreateSession(ctx, session); err != nil {
+		return nil, "", fmt.Errorf("creating session: %w", err)
+	}
+	return &models.AuthTokens{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   int(AccessTokenDuration.Seconds()),
+	}, refreshToken, nil
+}
+
+// Login authenticates a customer and returns tokens or a 2FA challenge.
+// If the customer has 2FA enabled, returns temp_token with requires_2fa=true.
+// Otherwise, returns access_token and refresh_token directly.
+func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
+	if err := s.checkLoginLockout(ctx, email); err != nil {
+		return nil, "", err
+	}
+
+	customer, err := s.verifyLoginCredentials(ctx, email, password)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// Audit logging error intentionally ignored - not critical for login success
@@ -129,153 +183,102 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 	}
 
 	if customer.TOTPEnabled && customer.TOTPSecretEncrypted != nil {
-		tempToken, err := middleware.GenerateTempToken(s.authConfig, customer.ID, "customer")
+		tokens, err := s.build2FAChallenge(customer.ID, "customer")
 		if err != nil {
-			return nil, "", fmt.Errorf("generating temp token: %w", err)
+			return nil, "", err
 		}
-
 		s.logger.Info("login requires 2FA", "customer_id", customer.ID)
-
-		return &models.AuthTokens{
-			TokenType:   "Bearer",
-			Requires2FA: true,
-			TempToken:   tempToken,
-		}, "", nil
+		return tokens, "", nil
 	}
 
-	accessToken, err := middleware.GenerateAccessToken(s.authConfig, customer.ID, "customer", "", AccessTokenDuration)
+	tokens, refreshToken, err := s.createLoginSession(ctx, customer.ID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
 	if err != nil {
-		return nil, "", fmt.Errorf("generating access token: %w", err)
+		return nil, "", err
 	}
-
-	refreshToken, err := middleware.GenerateRefreshToken()
-	if err != nil {
-		return nil, "", fmt.Errorf("generating refresh token: %w", err)
-	}
-
-	refreshTokenHash := crypto.HashSHA256(refreshToken)
-	session := &models.Session{
-		ID:               uuid.New().String(),
-		UserID:           customer.ID,
-		UserType:         "customer",
-		RefreshTokenHash: refreshTokenHash,
-		IPAddress:        &ipAddress,
-		UserAgent:        &userAgent,
-		ExpiresAt:        time.Now().Add(CustomerRefreshTokenDuration),
-	}
-
-	if err := s.customerRepo.CreateSession(ctx, session); err != nil {
-		return nil, "", fmt.Errorf("creating session: %w", err)
-	}
-
-	s.logger.Info("customer logged in", "customer_id", customer.ID, "session_id", session.ID)
-
-	return &models.AuthTokens{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(AccessTokenDuration.Seconds()),
-	}, refreshToken, nil
+	s.logger.Info("customer logged in", "customer_id", customer.ID)
+	return tokens, refreshToken, nil
 }
 
-// Verify2FA verifies a TOTP code and completes the 2FA login flow.
-// The tempToken is the token returned from Login when 2FA is required.
-func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
-	// Validate the temp token
-	claims, err := middleware.ValidateTempToken(s.authConfig, tempToken)
+// validateTOTPCode decrypts the stored TOTP secret and validates the code.
+// Returns true when the code is cryptographically valid.
+func (s *AuthService) validateTOTPCode(encryptedSecret, totpCode string) (bool, error) {
+	totpSecret, err := crypto.Decrypt(encryptedSecret, s.encryptionKey)
 	if err != nil {
-		return nil, "", fmt.Errorf("invalid temp token: %w", err)
+		return false, fmt.Errorf("decrypting TOTP secret: %w", err)
 	}
-
-	if claims.UserType != "customer" {
-		return nil, "", fmt.Errorf("temp token is not for customer")
-	}
-
-	// Get the customer
-	customer, err := s.customerRepo.GetByID(ctx, claims.UserID)
-	if err != nil {
-		return nil, "", fmt.Errorf("getting customer: %w", err)
-	}
-
-	// Verify TOTP code
-	if !customer.TOTPEnabled || customer.TOTPSecretEncrypted == nil {
-		return nil, "", fmt.Errorf("2FA not enabled for this customer")
-	}
-
-	// Decrypt TOTP secret
-	totpSecret, err := crypto.Decrypt(*customer.TOTPSecretEncrypted, s.encryptionKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("decrypting TOTP secret: %w", err)
-	}
-
-	// Verify the TOTP code
 	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
 		Skew:      1, // Allow 1 step tolerance (±30 seconds)
 		Digits:    otp.DigitsSix,
 		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("validating TOTP: %w", err)
+		return false, fmt.Errorf("validating TOTP: %w", err)
+	}
+	return valid, nil
+}
+
+// consumeBackupCode checks whether totpCode matches any stored backup code hash.
+// On match it removes the code from the slice and calls updateFn to persist the
+// change. Returns true if a backup code was consumed.
+func (s *AuthService) consumeBackupCode(ctx context.Context, userID, totpCode string, backupCodesHash []string, updateFn func(context.Context, string, []string) error) (bool, error) {
+	if len(backupCodesHash) == 0 {
+		return false, nil
+	}
+	providedHash := crypto.HashSHA256(totpCode)
+	for i, codeHash := range backupCodesHash {
+		if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) != 1 {
+			continue
+		}
+		remaining := append(backupCodesHash[:i:i], backupCodesHash[i+1:]...)
+		if err := updateFn(ctx, userID, remaining); err != nil {
+			s.logger.Warn("failed to update backup codes after use", "user_id", userID, "error", err)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// Verify2FA verifies a TOTP code and completes the 2FA login flow.
+// The tempToken is the token returned from Login when 2FA is required.
+func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
+	claims, err := middleware.ValidateTempToken(s.authConfig, tempToken)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid temp token: %w", err)
+	}
+	if claims.UserType != "customer" {
+		return nil, "", fmt.Errorf("temp token is not for customer")
+	}
+
+	customer, err := s.customerRepo.GetByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, "", fmt.Errorf("getting customer: %w", err)
+	}
+	if !customer.TOTPEnabled || customer.TOTPSecretEncrypted == nil {
+		return nil, "", fmt.Errorf("2FA not enabled for this customer")
+	}
+
+	valid, err := s.validateTOTPCode(*customer.TOTPSecretEncrypted, totpCode)
+	if err != nil {
+		return nil, "", err
 	}
 	if !valid {
-		// Check backup codes
-		if customer.TOTPBackupCodesHash != nil && len(customer.TOTPBackupCodesHash) > 0 {
-			// Hash the provided TOTP code and compare with stored hashes
-			providedHash := crypto.HashSHA256(totpCode)
-			for i, codeHash := range customer.TOTPBackupCodesHash {
-				if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) == 1 {
-					// Remove used backup code
-					codes := customer.TOTPBackupCodesHash
-					codes = append(codes[:i], codes[i+1:]...)
-					customer.TOTPBackupCodesHash = codes
-					if err := s.customerRepo.UpdateBackupCodes(ctx, customer.ID, customer.TOTPBackupCodesHash); err != nil {
-						s.logger.Warn("failed to update backup codes after use", "customer_id", customer.ID, "error", err)
-					}
-					valid = true
-					s.logger.Info("backup code used for authentication", "customer_id", customer.ID)
-					break
-				}
-			}
+		valid, err = s.consumeBackupCode(ctx, customer.ID, totpCode, customer.TOTPBackupCodesHash, s.customerRepo.UpdateBackupCodes)
+		if err != nil {
+			return nil, "", err
 		}
 		if !valid {
 			s.logger.Warn("invalid TOTP code and no matching backup code", "customer_id", customer.ID)
 			return nil, "", sharederrors.ErrUnauthorized
 		}
+		s.logger.Info("backup code used for authentication", "customer_id", customer.ID)
 	}
 
-	// Generate access and refresh tokens
-	accessToken, err := middleware.GenerateAccessToken(s.authConfig, customer.ID, "customer", "", AccessTokenDuration)
+	tokens, refreshToken, err := s.createLoginSession(ctx, customer.ID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
 	if err != nil {
-		return nil, "", fmt.Errorf("generating access token: %w", err)
+		return nil, "", err
 	}
-
-	refreshToken, err := middleware.GenerateRefreshToken()
-	if err != nil {
-		return nil, "", fmt.Errorf("generating refresh token: %w", err)
-	}
-
-	// Create session
-	refreshTokenHash := crypto.HashSHA256(refreshToken)
-	session := &models.Session{
-		ID:               uuid.New().String(),
-		UserID:           customer.ID,
-		UserType:         "customer",
-		RefreshTokenHash: refreshTokenHash,
-		IPAddress:        &ipAddress,
-		UserAgent:        &userAgent,
-		ExpiresAt:        time.Now().Add(CustomerRefreshTokenDuration),
-	}
-
-	if err := s.customerRepo.CreateSession(ctx, session); err != nil {
-		return nil, "", fmt.Errorf("creating session: %w", err)
-	}
-
-	s.logger.Info("customer 2FA verified", "customer_id", customer.ID, "session_id", session.ID)
-
-	return &models.AuthTokens{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(AccessTokenDuration.Seconds()),
-	}, refreshToken, nil
+	s.logger.Info("customer 2FA verified", "customer_id", customer.ID)
+	return tokens, refreshToken, nil
 }
 
 // RefreshToken validates a refresh token and returns new tokens.
@@ -595,114 +598,59 @@ func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*
 	}, nil
 }
 
+// enforceAdminSessionLimit evicts the oldest admin session when MaxAdminSessions
+// is already reached. Failures are logged and do not block login.
+func (s *AuthService) enforceAdminSessionLimit(ctx context.Context, adminID string) {
+	count, err := s.customerRepo.CountSessionsByUser(ctx, adminID, "admin")
+	if err != nil {
+		s.logger.Warn("failed to count admin sessions", "admin_id", adminID, "error", err)
+		return
+	}
+	if count >= MaxAdminSessions {
+		if err := s.customerRepo.DeleteOldestSession(ctx, adminID, "admin"); err != nil {
+			s.logger.Warn("failed to delete oldest admin session", "admin_id", adminID, "error", err)
+		}
+	}
+}
+
 // AdminVerify2FA verifies a TOTP code and completes the admin 2FA login flow.
 func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
-	// Validate the temp token
 	claims, err := middleware.ValidateTempToken(s.authConfig, tempToken)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid temp token: %w", err)
 	}
-
 	if claims.UserType != "admin" {
 		return nil, "", fmt.Errorf("temp token is not for admin")
 	}
-
-	// Get the admin
 	admin, err := s.adminRepo.GetByID(ctx, claims.UserID)
 	if err != nil {
 		return nil, "", fmt.Errorf("getting admin: %w", err)
 	}
-
-	// Verify TOTP code
 	if !admin.TOTPEnabled {
 		return nil, "", fmt.Errorf("2FA not enabled for this admin")
 	}
-
-	// Decrypt TOTP secret
-	totpSecret, err := crypto.Decrypt(admin.TOTPSecretEncrypted, s.encryptionKey)
+	valid, err := s.validateTOTPCode(admin.TOTPSecretEncrypted, totpCode)
 	if err != nil {
-		return nil, "", fmt.Errorf("decrypting TOTP secret: %w", err)
-	}
-
-	// Verify the TOTP code
-	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
-		Skew:      1, // Allow 1 step tolerance (±30 seconds)
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("validating TOTP: %w", err)
+		return nil, "", err
 	}
 	if !valid {
-		// Check backup codes
-		if admin.TOTPBackupCodesHash != nil && len(admin.TOTPBackupCodesHash) > 0 {
-			// Hash the provided TOTP code and compare with stored hashes
-			providedHash := crypto.HashSHA256(totpCode)
-			for i, codeHash := range admin.TOTPBackupCodesHash {
-				if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) == 1 {
-					// Remove used backup code
-					codes := admin.TOTPBackupCodesHash
-					codes = append(codes[:i], codes[i+1:]...)
-					admin.TOTPBackupCodesHash = codes
-					if err := s.adminRepo.UpdateBackupCodes(ctx, admin.ID, admin.TOTPBackupCodesHash); err != nil {
-						s.logger.Warn("failed to update backup codes after use", "admin_id", admin.ID, "error", err)
-					}
-					valid = true
-					s.logger.Info("backup code used for authentication", "admin_id", admin.ID)
-					break
-				}
-			}
+		valid, err = s.consumeBackupCode(ctx, admin.ID, totpCode, admin.TOTPBackupCodesHash, s.adminRepo.UpdateBackupCodes)
+		if err != nil {
+			return nil, "", err
 		}
 		if !valid {
 			s.logger.Warn("invalid admin TOTP code and no matching backup code", "admin_id", admin.ID)
 			return nil, "", sharederrors.ErrUnauthorized
 		}
+		s.logger.Info("backup code used for authentication", "admin_id", admin.ID)
 	}
-
-	// Check session limit for admin
-	activeSessions, err := s.customerRepo.CountSessionsByUser(ctx, admin.ID, "admin")
+	s.enforceAdminSessionLimit(ctx, admin.ID)
+	tokens, refreshToken, err := s.createLoginSession(ctx, admin.ID, "admin", admin.Role, ipAddress, userAgent, AdminRefreshTokenDuration)
 	if err != nil {
-		s.logger.Warn("failed to count admin sessions", "admin_id", admin.ID, "error", err)
-	} else if activeSessions >= MaxAdminSessions {
-		if err := s.customerRepo.DeleteOldestSession(ctx, admin.ID, "admin"); err != nil {
-			s.logger.Warn("failed to delete oldest admin session", "admin_id", admin.ID, "error", err)
-		}
+		return nil, "", err
 	}
-
-	// Generate access and refresh tokens
-	accessToken, err := middleware.GenerateAccessToken(s.authConfig, admin.ID, "admin", admin.Role, AccessTokenDuration)
-	if err != nil {
-		return nil, "", fmt.Errorf("generating access token: %w", err)
-	}
-
-	refreshToken, err := middleware.GenerateRefreshToken()
-	if err != nil {
-		return nil, "", fmt.Errorf("generating refresh token: %w", err)
-	}
-
-	// Create session
-	refreshTokenHash := crypto.HashSHA256(refreshToken)
-	session := &models.Session{
-		ID:               uuid.New().String(),
-		UserID:           admin.ID,
-		UserType:         "admin",
-		RefreshTokenHash: refreshTokenHash,
-		IPAddress:        &ipAddress,
-		UserAgent:        &userAgent,
-		ExpiresAt:        time.Now().Add(AdminRefreshTokenDuration),
-	}
-
-	if err := s.customerRepo.CreateSession(ctx, session); err != nil {
-		return nil, "", fmt.Errorf("creating session: %w", err)
-	}
-
-	s.logger.Info("admin 2FA verified", "admin_id", admin.ID, "session_id", session.ID)
-
-	return &models.AuthTokens{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(AccessTokenDuration.Seconds()),
-	}, refreshToken, nil
+	s.logger.Info("admin 2FA verified", "admin_id", admin.ID)
+	return tokens, refreshToken, nil
 }
 
 // hashPassword hashes a password using Argon2id.

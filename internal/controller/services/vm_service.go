@@ -85,168 +85,182 @@ func NewVMService(cfg VMServiceConfig) *VMService {
 	}
 }
 
-// CreateVM creates a new virtual machine.
-// This is an async operation that publishes a vm.create task.
-// Returns the created VM record and task ID for polling.
-func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, customerID string) (*models.VM, string, error) {
-	// 1. Validate plan exists and is active
+// vmCreateDeps bundles the resolved plan, template, and node for VM creation.
+type vmCreateDeps struct {
+	plan     *models.Plan
+	template *models.Template
+	node     *models.Node
+}
+
+// validateCreateVMRequest checks that the requested plan is active, the template
+// exists, and the plan's disk meets the template's minimum requirement.
+func (s *VMService) validateCreateVMRequest(ctx context.Context, req *models.VMCreateRequest) (*models.Plan, *models.Template, error) {
 	plan, err := s.planRepo.GetByID(ctx, req.PlanID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, "", fmt.Errorf("plan not found: %s", req.PlanID)
+			return nil, nil, fmt.Errorf("plan not found: %s", req.PlanID)
 		}
-		return nil, "", fmt.Errorf("getting plan: %w", err)
+		return nil, nil, fmt.Errorf("getting plan: %w", err)
 	}
 	if !plan.IsActive {
-		return nil, "", fmt.Errorf("plan %s is not active", req.PlanID)
+		return nil, nil, fmt.Errorf("plan %s is not active", req.PlanID)
 	}
 
-	// 2. Validate template exists
 	template, err := s.templateRepo.GetByID(ctx, req.TemplateID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, "", fmt.Errorf("template not found: %s", req.TemplateID)
+			return nil, nil, fmt.Errorf("template not found: %s", req.TemplateID)
 		}
-		return nil, "", fmt.Errorf("getting template: %w", err)
+		return nil, nil, fmt.Errorf("getting template: %w", err)
 	}
 
-	// 3. Check template disk requirements
 	if plan.DiskGB < template.MinDiskGB {
-		return nil, "", fmt.Errorf("plan disk size (%d GB) is less than template minimum (%d GB)",
+		return nil, nil, fmt.Errorf("plan disk size (%d GB) is less than template minimum (%d GB)",
 			plan.DiskGB, template.MinDiskGB)
 	}
+	return plan, template, nil
+}
 
-	// 4. Find least loaded node (using default location if not specified)
+// selectNodeForVM picks the least-loaded online node for the given location.
+// If locationID is empty it scans all online nodes and picks the one with the
+// most available memory.
+func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*models.Node, error) {
+	if locationID != "" {
+		node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
+		if err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNotFound) {
+				return nil, fmt.Errorf("no available nodes in location %s", locationID)
+			}
+			return nil, fmt.Errorf("finding node: %w", err)
+		}
+		return node, nil
+	}
+
+	nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: util.StringPtr(models.NodeStatusOnline)})
+	if err != nil {
+		return nil, fmt.Errorf("listing nodes: %w", err)
+	}
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("no available nodes")
+	}
+	best := &nodes[0]
+	for i := range nodes {
+		if nodes[i].TotalMemoryMB-nodes[i].AllocatedMemoryMB > best.TotalMemoryMB-best.AllocatedMemoryMB {
+			best = &nodes[i]
+		}
+	}
+	return best, nil
+}
+
+// persistVMRecord creates the VM row in the database, then best-effort allocates
+// an IPv4 address. It returns the created VM and any allocated IP (may be nil).
+func (s *VMService) persistVMRecord(ctx context.Context, req *models.VMCreateRequest, deps vmCreateDeps, customerID string) (*models.VM, *models.IPAddress, error) {
+	macAddress, err := crypto.GenerateMACAddress()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating MAC address: %w", err)
+	}
+	encryptedPassword, err := crypto.Encrypt(req.Password, s.encryptionKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encrypting password: %w", err)
+	}
+	vmID := uuid.New().String()
+	libvirtDomainName := generateLibvirtDomainName(req.Hostname, vmID)
+
 	locationID := ""
 	if req.LocationID != nil {
 		locationID = *req.LocationID
 	}
 
-	var node *models.Node
-	if locationID != "" {
-		node, err = s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
-		if err != nil {
-			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return nil, "", fmt.Errorf("no available nodes in location %s", locationID)
-			}
-			return nil, "", fmt.Errorf("finding node: %w", err)
-		}
-	} else {
-		nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: util.StringPtr(models.NodeStatusOnline)})
-		if err != nil {
-			return nil, "", fmt.Errorf("listing nodes: %w", err)
-		}
-		if len(nodes) == 0 {
-			return nil, "", fmt.Errorf("no available nodes")
-		}
-		node = &nodes[0]
-		for i := range nodes {
-			availableMemory := nodes[i].TotalMemoryMB - nodes[i].AllocatedMemoryMB
-			bestMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
-			if availableMemory > bestMemory {
-				node = &nodes[i]
-			}
-		}
-	}
-
-	// 5. Generate MAC address
-	macAddress, err := crypto.GenerateMACAddress()
-	if err != nil {
-		return nil, "", fmt.Errorf("generating MAC address: %w", err)
-	}
-
-	// 6. Encrypt root password
-	encryptedPassword, err := crypto.Encrypt(req.Password, s.encryptionKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("encrypting password: %w", err)
-	}
-
-	// 7. Generate VM ID and libvirt domain name
-	vmID := uuid.New().String()
-	libvirtDomainName := generateLibvirtDomainName(req.Hostname, vmID)
-
-	// 8. Create VM record in database
 	vm := &models.VM{
-		ID:                    vmID,
-		CustomerID:            customerID,
-		NodeID:                &node.ID,
-		PlanID:                plan.ID,
-		Hostname:              req.Hostname,
-		Status:                models.VMStatusProvisioning,
-		VCPU:                  plan.VCPU,
-		MemoryMB:              plan.MemoryMB,
-		DiskGB:                plan.DiskGB,
-		PortSpeedMbps:         plan.PortSpeedMbps,
-		BandwidthLimitGB:      plan.BandwidthLimitGB,
-		BandwidthUsedBytes:    0,
-		BandwidthResetAt:      time.Now().UTC(),
-		MACAddress:            macAddress,
-		TemplateID:            &template.ID,
-		LibvirtDomainName:     &libvirtDomainName,
-		RootPasswordEncrypted: &encryptedPassword,
-		WHMCSServiceID:        req.WHMCSServiceID,
-		StorageBackend:        plan.StorageBackend,
+		ID: vmID, CustomerID: customerID, NodeID: &deps.node.ID,
+		PlanID: deps.plan.ID, Hostname: req.Hostname, Status: models.VMStatusProvisioning,
+		VCPU: deps.plan.VCPU, MemoryMB: deps.plan.MemoryMB, DiskGB: deps.plan.DiskGB,
+		PortSpeedMbps: deps.plan.PortSpeedMbps, BandwidthLimitGB: deps.plan.BandwidthLimitGB,
+		BandwidthUsedBytes: 0, BandwidthResetAt: time.Now().UTC(),
+		MACAddress: macAddress, TemplateID: &deps.template.ID,
+		LibvirtDomainName: &libvirtDomainName, RootPasswordEncrypted: &encryptedPassword,
+		WHMCSServiceID: req.WHMCSServiceID, StorageBackend: deps.plan.StorageBackend,
 	}
-
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
-		return nil, "", fmt.Errorf("creating VM record: %w", err)
+		return nil, nil, fmt.Errorf("creating VM record: %w", err)
 	}
 
-	// 9. Allocate IP addresses (if IPAM service is available)
 	var ipv4Address *models.IPAddress
 	if s.ipamService != nil && locationID != "" {
 		ipv4Address, err = s.ipamService.AllocateIPv4(ctx, locationID, vm.ID, customerID)
 		if err != nil {
+			// Non-fatal: task worker can assign IP later.
 			s.logger.Warn("failed to allocate IPv4", "vm_id", vm.ID, "error", err)
-			// Continue without IP - the task worker can handle this
 		}
 	}
+	return vm, ipv4Address, nil
+}
 
-	// 10. Publish vm.create task
+// publishVMCreateTask builds the task payload and publishes the vm.create task.
+// On failure it attempts a best-effort cleanup of the VM record and any allocated IP.
+func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreateRequest, vm *models.VM, deps vmCreateDeps, ipv4Address *models.IPAddress) (string, error) {
 	taskPayload := map[string]any{
-		"vm_id":                 vm.ID,
-		"node_id":               node.ID,
-		"hostname":              vm.Hostname,
-		"vcpu":                  vm.VCPU,
-		"memory_mb":             vm.MemoryMB,
-		"disk_gb":               vm.DiskGB,
-		"template_id":           template.ID,
-		"template_rbd_image":    template.RBDImage,
-		"template_rbd_snapshot": template.RBDSnapshot,
-		"mac_address":           vm.MACAddress,
-		"port_speed_mbps":       vm.PortSpeedMbps,
-		"bandwidth_limit_gb":    vm.BandwidthLimitGB,
-		"ssh_keys":              req.SSHKeys,
-		"ceph_pool":             node.CephPool,
-		"storage_backend":       plan.StorageBackend,
-		"storage_path":          node.StoragePath,
+		"vm_id": vm.ID, "node_id": deps.node.ID, "hostname": vm.Hostname,
+		"vcpu": vm.VCPU, "memory_mb": vm.MemoryMB, "disk_gb": vm.DiskGB,
+		"template_id": deps.template.ID, "template_rbd_image": deps.template.RBDImage,
+		"template_rbd_snapshot": deps.template.RBDSnapshot,
+		"mac_address": vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
+		"bandwidth_limit_gb": vm.BandwidthLimitGB, "ssh_keys": req.SSHKeys,
+		"ceph_pool": deps.node.CephPool, "storage_backend": deps.plan.StorageBackend,
+		"storage_path": deps.node.StoragePath,
 	}
-
 	if ipv4Address != nil {
 		taskPayload["ipv4_address"] = ipv4Address.Address
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMCreate, taskPayload)
 	if err != nil {
-		// Attempt to clean up
-		if err := s.vmRepo.SoftDelete(ctx, vm.ID); err != nil {
-			s.logger.Error("failed to soft delete VM after task publish failure", "operation", "SoftDelete", "err", err)
+		if delErr := s.vmRepo.SoftDelete(ctx, vm.ID); delErr != nil {
+			s.logger.Error("failed to soft delete VM after task publish failure", "operation", "SoftDelete", "err", delErr)
 		}
 		if ipv4Address != nil && s.ipamService != nil {
-			if err := s.ipamService.ReleaseIPsByVM(ctx, vm.ID); err != nil {
-				s.logger.Error("failed to release IPs after task publish failure", "operation", "ReleaseIPsByVM", "err", err)
+			if relErr := s.ipamService.ReleaseIPsByVM(ctx, vm.ID); relErr != nil {
+				s.logger.Error("failed to release IPs after task publish failure", "operation", "ReleaseIPsByVM", "err", relErr)
 			}
 		}
-		return nil, "", fmt.Errorf("publishing create task: %w", err)
+		return "", fmt.Errorf("publishing create task: %w", err)
+	}
+	return taskID, nil
+}
+
+// CreateVM creates a new virtual machine.
+// This is an async operation that publishes a vm.create task.
+// Returns the created VM record and task ID for polling.
+func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, customerID string) (*models.VM, string, error) {
+	plan, template, err := s.validateCreateVMRequest(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+
+	locationID := ""
+	if req.LocationID != nil {
+		locationID = *req.LocationID
+	}
+
+	node, err := s.selectNodeForVM(ctx, locationID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	deps := vmCreateDeps{plan: plan, template: template, node: node}
+	vm, ipv4Address, err := s.persistVMRecord(ctx, req, deps, customerID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	taskID, err := s.publishVMCreateTask(ctx, req, vm, deps, ipv4Address)
+	if err != nil {
+		return nil, "", err
 	}
 
 	s.logger.Info("VM creation initiated",
-		"vm_id", vm.ID,
-		"task_id", taskID,
-		"customer_id", customerID,
-		"node_id", node.ID,
-		"hostname", vm.Hostname)
-
+		"vm_id", vm.ID, "task_id", taskID,
+		"customer_id", customerID, "node_id", node.ID, "hostname", vm.Hostname)
 	return vm, taskID, nil
 }
 

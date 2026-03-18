@@ -110,17 +110,17 @@
 
 - [x] **`internal/controller/services/backup_service.go:137-159`** | QG-01 | `NewBackupService` accepts 7 parameters. **Fix:** Use options struct.
 
-- [ ] **`internal/controller/services/vm_service.go:83-243`** | QG-01 | `CreateVM` is ~160 lines (limit is 40). **Fix:** Decompose into `validateCreateVMRequest`, `selectNodeForVM`, `allocateVMResources`, `persistVMRecord`, `publishVMCreateTask`.
+- [x] **`internal/controller/services/vm_service.go:83-243`** | QG-01 | `CreateVM` is ~160 lines (limit is 40). **Fix:** Decompose into `validateCreateVMRequest`, `selectNodeForVM`, `allocateVMResources`, `persistVMRecord`, `publishVMCreateTask`.
 
 - [ ] **`internal/controller/services/migration_service.go` (MigrateVM)`** | QG-01 | `MigrateVM` is ~145 lines. **Fix:** Extract pre-flight validation, target selection, migration dispatch.
 
-- [ ] **`internal/controller/services/auth_service.go` (AdminVerify2FA)`** | QG-01 | `AdminVerify2FA` is ~107 lines. **Fix:** Extract shared 2FA verification logic with `Verify2FA`.
+- [x] **`internal/controller/services/auth_service.go` (AdminVerify2FA)`** | QG-01 | `AdminVerify2FA` is ~107 lines. **Fix:** Extract shared 2FA verification logic with `Verify2FA`.
 
-- [ ] **`internal/controller/services/auth_service.go:181-277`** | QG-01 | `Verify2FA` is ~97 lines. **Fix:** Extract token validation, TOTP verification, session creation into shared helpers.
+- [x] **`internal/controller/services/auth_service.go:181-277`** | QG-01 | `Verify2FA` is ~97 lines. **Fix:** Extract token validation, TOTP verification, session creation into shared helpers.
 
 - [ ] **`internal/controller/services/failover_service.go` (ApproveFailover)`** | QG-01 | `ApproveFailover` is ~120 lines. **Fix:** Split into `executeStonith`, `blocklistCeph`, `releaseRBDLocks`, `migrateFailoverVMs`.
 
-- [ ] **`internal/controller/services/auth_service.go:92-177`** | QG-01 | `Login` is ~85 lines. **Fix:** Extract lockout checking, credential verification, 2FA challenge, session creation.
+- [x] **`internal/controller/services/auth_service.go:92-177`** | QG-01 | `Login` is ~85 lines. **Fix:** Extract lockout checking, credential verification, 2FA challenge, session creation.
 
 - [x] **`internal/controller/services/auth_service.go:99,106,117,541` and `customer_service.go:98,160,188,213,281`** | QG-08 | PII (email addresses) logged in plain text. Standard requires masking: `u***@e***.com`. **Fix:** Create `maskEmail` utility; use in all log statements.
 
