@@ -8,10 +8,16 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
+	"net/mail"
 	"net/smtp"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // EmailConfig holds configuration for the email provider.
@@ -274,19 +280,37 @@ func (p *EmailProvider) loadTemplates() error {
 	return nil
 }
 
+// smtpDialTimeout is the timeout applied when establishing an SMTP/TLS connection.
+// A nonresponsive server would otherwise block the caller indefinitely.
+const smtpDialTimeout = 10 * time.Second
+
 // Send sends an email notification.
+// The context controls cancellation; if it is already done when Send is called,
+// the function returns immediately. The context deadline (if any) is also
+// propagated to the underlying network connection so hung SMTP servers cannot
+// block indefinitely.
 func (p *EmailProvider) Send(ctx context.Context, payload *EmailPayload) error {
 	if !p.config.Enabled {
 		p.logger.Debug("email provider disabled, skipping send")
 		return nil
 	}
 
+	// Check context before performing any I/O.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sending email: %w", err)
+	}
+
 	if payload.To == "" {
 		return fmt.Errorf("recipient email address is required")
 	}
 
+	// Validate recipient address to prevent header injection and malformed addresses.
+	if _, err := mail.ParseAddress(payload.To); err != nil {
+		return fmt.Errorf("invalid recipient address %q: %w", payload.To, err)
+	}
+
 	p.logger.Info("sending email",
-		"to", payload.To,
+		"to", util.MaskEmail(payload.To),
 		"subject", payload.Subject,
 		"template", payload.Template)
 
@@ -304,13 +328,13 @@ func (p *EmailProvider) Send(ctx context.Context, payload *EmailPayload) error {
 
 	msg := p.buildMessage(from, payload.To, payload.Subject, body)
 
-	// Send email
-	if err := p.sendEmail(payload.To, msg); err != nil {
+	// Send email, threading the context so the dial honours cancellation.
+	if err := p.sendEmail(ctx, payload.To, msg); err != nil {
 		return fmt.Errorf("sending email: %w", err)
 	}
 
 	p.logger.Info("email sent successfully",
-		"to", payload.To,
+		"to", util.MaskEmail(payload.To),
 		"subject", payload.Subject)
 
 	return nil
@@ -360,11 +384,20 @@ func (p *EmailProvider) renderTemplate(payload *EmailPayload) (string, error) {
 	return buf.String(), nil
 }
 
+// sanitizeHeader removes CR and LF characters from a header value to prevent
+// SMTP header injection attacks. An attacker-controlled subject containing
+// "\r\n" could otherwise inject arbitrary headers into the outgoing message.
+func sanitizeHeader(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
 // buildMessage builds the raw email message.
 func (p *EmailProvider) buildMessage(from, to, subject, body string) string {
-	msg := fmt.Sprintf("From: %s\r\n", from)
-	msg += fmt.Sprintf("To: %s\r\n", to)
-	msg += fmt.Sprintf("Subject: %s\r\n", subject)
+	msg := fmt.Sprintf("From: %s\r\n", sanitizeHeader(from))
+	msg += fmt.Sprintf("To: %s\r\n", sanitizeHeader(to))
+	msg += fmt.Sprintf("Subject: %s\r\n", sanitizeHeader(subject))
 	msg += "MIME-version: 1.0;\r\n"
 	msg += "Content-Type: text/html; charset=\"UTF-8\";\r\n"
 	msg += "\r\n"
@@ -374,7 +407,10 @@ func (p *EmailProvider) buildMessage(from, to, subject, body string) string {
 }
 
 // sendEmail sends the email via SMTP.
-func (p *EmailProvider) sendEmail(to, msg string) error {
+// ctx is threaded into the underlying dial so that cancellation and deadlines
+// are honoured; a nonresponsive server will not block past the context deadline
+// or smtpDialTimeout, whichever is shorter.
+func (p *EmailProvider) sendEmail(ctx context.Context, to, msg string) error {
 	addr := fmt.Sprintf("%s:%d", p.config.Host, p.config.Port)
 
 	var auth smtp.Auth
@@ -384,23 +420,71 @@ func (p *EmailProvider) sendEmail(to, msg string) error {
 
 	// For TLS connections (port 587), we need to handle STARTTLS
 	if p.config.UseTLS && p.config.Port == 587 {
-		return p.sendWithSTARTTLS(addr, auth, to, msg)
+		return p.sendWithSTARTTLS(ctx, addr, auth, to, msg)
 	}
 
 	// For SSL connections (port 465) or non-TLS
 	if p.config.Port == 465 {
-		return p.sendWithTLS(addr, auth, to, msg)
+		return p.sendWithTLS(ctx, addr, auth, to, msg)
 	}
 
-	// Standard SMTP (port 25)
-	return smtp.SendMail(addr, auth, p.config.From, []string{to}, []byte(msg))
+	// Standard SMTP (port 25): dial with timeout so a nonresponsive server does
+	// not block the caller indefinitely.
+	dialCtx, cancel := context.WithTimeout(ctx, smtpDialTimeout)
+	defer cancel()
+
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("connecting to SMTP server: %w", err)
+	}
+
+	client, err := smtp.NewClient(conn, p.config.Host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("creating SMTP client: %w", err)
+	}
+	defer client.Close()
+
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("authenticating: %w", err)
+		}
+	}
+	if err := client.Mail(p.config.From); err != nil {
+		return fmt.Errorf("setting sender: %w", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("setting recipient: %w", err)
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("preparing data: %w", err)
+	}
+	defer w.Close()
+	if _, err := w.Write([]byte(msg)); err != nil {
+		return fmt.Errorf("writing message: %w", err)
+	}
+	return client.Quit()
 }
 
 // sendWithSTARTTLS sends email using STARTTLS.
-func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, to, msg string) error {
-	conn, err := smtp.Dial(addr)
+// ctx is used to apply a dial timeout so that a nonresponsive server does not
+// block the caller indefinitely.
+func (p *EmailProvider) sendWithSTARTTLS(ctx context.Context, addr string, auth smtp.Auth, to, msg string) error {
+	// Dial with a bounded timeout; smtp.Dial has no timeout of its own and would
+	// block forever if the server is unresponsive.
+	dialCtx, cancel := context.WithTimeout(ctx, smtpDialTimeout)
+	defer cancel()
+
+	netConn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("connecting to SMTP server: %w", err)
+	}
+
+	conn, err := smtp.NewClient(netConn, p.config.Host)
+	if err != nil {
+		netConn.Close()
+		return fmt.Errorf("creating SMTP client: %w", err)
 	}
 	defer conn.Close()
 
@@ -450,15 +534,28 @@ func (p *EmailProvider) sendWithSTARTTLS(addr string, auth smtp.Auth, to, msg st
 }
 
 // sendWithTLS sends email using implicit TLS (port 465).
-func (p *EmailProvider) sendWithTLS(addr string, auth smtp.Auth, to, msg string) error {
+// ctx is used to apply a dial timeout so that a nonresponsive server does not
+// block the caller indefinitely.
+func (p *EmailProvider) sendWithTLS(ctx context.Context, addr string, auth smtp.Auth, to, msg string) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,
 		ServerName:         p.config.Host,
 	}
 
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	// Dial with a bounded timeout; tls.Dial has no timeout of its own and would
+	// block forever if the server is unresponsive.
+	dialCtx, cancel := context.WithTimeout(ctx, smtpDialTimeout)
+	defer cancel()
+
+	netConn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("connecting to SMTP server with TLS: %w", err)
+	}
+
+	conn := tls.Client(netConn, tlsConfig)
+	if err := conn.HandshakeContext(dialCtx); err != nil {
+		netConn.Close()
+		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
 	defer conn.Close()
 
@@ -518,7 +615,12 @@ func parsePort(s string) int {
 	if s == "" {
 		return 587
 	}
-	var port int
-	fmt.Sscanf(s, "%d", &port)
+	// strconv.Atoi is preferred over fmt.Sscanf because it returns an error when
+	// the entire string cannot be parsed as an integer, whereas Sscanf silently
+	// ignores trailing non-numeric characters and does not report partial matches.
+	port, err := strconv.Atoi(s)
+	if err != nil || port <= 0 || port > 65535 {
+		return 587
+	}
 	return port
 }
