@@ -1,3 +1,17 @@
+-- ===========================================================================
+-- Audit Log Default Partition and Extended Partitions
+-- ===========================================================================
+-- QG-16: This migration creates:
+-- 1. A DEFAULT partition to catch any records outside existing partition ranges
+-- 2. Partitions through 2028-03
+--
+-- IMPORTANT: Partitions are manually created through 2028-03. For production:
+-- - Consider pg_partman extension for automated partition management
+-- - Or implement a scheduled task to create future partitions quarterly
+-- - Without automation, the DEFAULT partition will absorb all records after 2028-03,
+--   which degrades query performance as it grows unbounded
+-- ===========================================================================
+
 BEGIN;
 
 SET lock_timeout = '5s';

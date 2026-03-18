@@ -156,3 +156,107 @@ jobs:
 
       - name: NPM Audit (Customer)
         run: cd webui/customer && npm audit --audit-level=high
+
+  # ===========================================================================
+  # QG-17: SBOM Generation, Artifact Signing, and SLSA Provenance
+  # ===========================================================================
+  # This job runs on main branch pushes (not PRs) to generate:
+  # - Software Bill of Materials (SBOM) in SPDX format
+  # - Signed artifacts using Sigstore/cosign
+  # - SLSA Level 3 provenance attestation
+  # ===========================================================================
+  release-artifacts:
+    name: Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write   # Required for OIDC token for Sigstore
+      contents: read
+      packages: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@3454352a67e1c3f5255b1d3ce0b7b5095b8b28b4 # v3.8.2
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@f3253ca2e4e40c5e3207e1b9b6a8e6d6d2d8c4e5 # v0.17.9
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a1a7b263c95dccbf502a6e0 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Controller image
+        id: build-controller
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.controller
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/controller:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/controller:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Controller image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/controller@${{ steps.build-controller.outputs.digest }}
+
+      - name: Generate Controller SBOM
+        run: |
+          syft ghcr.io/${{ github.repository_owner }}/controller@${{ steps.build-controller.outputs.digest }} \
+            -o spdx-json > controller-sbom.spdx.json
+
+      - name: Upload Controller SBOM
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: controller-sbom
+          path: controller-sbom.spdx.json
+          retention-days: 90
+
+      - name: Build and push Admin WebUI image
+        id: build-admin
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.admin-webui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/admin-webui:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/admin-webui:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Admin WebUI image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/admin-webui@${{ steps.build-admin.outputs.digest }}
+
+      - name: Build and push Customer WebUI image
+        id: build-customer
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.customer-webui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/customer-webui:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/customer-webui:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Customer WebUI image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/customer-webui@${{ steps.build-customer.outputs.digest }}
+
+      - name: Generate attestation for Controller
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/controller
+          subject-digest: ${{ steps.build-controller.outputs.digest }}
+          push-to-registry: true

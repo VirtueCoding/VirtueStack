@@ -3,13 +3,17 @@
 # =============================================================================
 # Build stage: Compiles the Next.js application
 # Runtime stage: Nginx for static file serving
+#
+# QG-15 Production Recommendation:
+# - Pin base images to SHA digest for reproducible builds
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
 ARG NODE_VERSION=22.14.0
-FROM node:${NODE_VERSION}-alpine3.21 AS builder # TODO: Pin to digest for production builds
+# Production: Pin to digest, e.g., FROM node:22.14.0-alpine3.21@sha256:...
+FROM node:${NODE_VERSION}-alpine3.21 AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -50,7 +54,8 @@ RUN cp -r public ./.next/standalone/ && \
 # -----------------------------------------------------------------------------
 # Development Stage
 # -----------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine3.21 AS development # TODO: Pin to digest for production builds
+# Production: Pin to digest
+FROM node:${NODE_VERSION}-alpine3.21 AS development
 
 # Install development dependencies
 RUN apk add --no-cache \
@@ -85,7 +90,8 @@ CMD ["npm", "run", "dev"]
 # -----------------------------------------------------------------------------
 # Runtime Stage (Nginx for static serving)
 # -----------------------------------------------------------------------------
-FROM nginx:1.25.5-alpine3.19 AS runtime # TODO: Pin to digest for production builds
+# Production: Pin to digest
+FROM nginx:1.25.5-alpine3.19 AS runtime
 
 # Install additional tools
 RUN apk add --no-cache \
@@ -128,7 +134,8 @@ CMD ["nginx", "-g", "daemon off;"]
 # -----------------------------------------------------------------------------
 # Alternative Runtime Stage (Next.js Standalone)
 # -----------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine3.21 AS standalone # TODO: Pin to digest for production builds
+# Production: Pin to digest
+FROM node:${NODE_VERSION}-alpine3.21 AS standalone
 
 # Install runtime dependencies
 RUN apk add --no-cache \

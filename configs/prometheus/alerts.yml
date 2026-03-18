@@ -82,3 +82,43 @@ groups:
           severity: critical
         annotations:
           summary: "Node {{ $labels.node_id }} heartbeat is stale ({{ $value }}s ago)"
+
+      # ============================================================================
+      # Additional Required Alerts (QG-18)
+      # ============================================================================
+
+      - alert: HealthCheckFailure
+        expr: increase(vs_health_check_failures_total[5m]) > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check failing for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has failing health checks. Check service logs and status."
+
+      - alert: CircuitBreakerOpen
+        expr: vs_circuit_breaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.service }}"
+          description: "Circuit breaker has been open for {{ $labels.service }} for more than 1 minute. Check downstream service health."
+
+      - alert: HighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 80% on {{ $labels.instance }}"
+          description: "Disk {{ $labels.mountpoint }} is at {{ $value }}% capacity. Consider cleanup or expansion."
+
+      - alert: CertificateExpirySoon
+        expr: (ssl_cert_not_after_timestamp_seconds - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificate for {{ $labels.domain }} expires in less than 14 days"
+          description: "TLS certificate for {{ $labels.domain }} will expire in {{ $value }} days. Renew immediately."

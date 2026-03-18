@@ -2,18 +2,51 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Security Note (QG-02, QG-18):
+# Metrics endpoints expose sensitive runtime information (error rates, resource usage, internals).
+# For production deployments, enable TLS by:
+# 1. Generating TLS certificates for Prometheus and scrape targets
+# 2. Uncommenting the tls_config sections below
+# 3. Setting up mTLS between Prometheus and targets for mutual authentication
+#
+# For single-host Docker deployments on isolated networks, HTTP may be acceptable
+# if the Docker bridge network is not exposed externally.
+
 scrape_configs:
   - job_name: 'virtuestack-controller'
     static_configs:
       - targets: ['controller:8080']
     metrics_path: '/metrics'
     scrape_interval: 15s
+    # Enable TLS for production (requires certificates):
+    # scheme: https
+    # tls_config:
+    #   ca_file: /etc/prometheus/certs/ca.crt
+    #   cert_file: /etc/prometheus/certs/prometheus.crt
+    #   key_file: /etc/prometheus/certs/prometheus.key
+    #   server_name: controller
 
   - job_name: 'virtuestack-node-agents'
+    # QG-18: Use file-based service discovery for dynamic node agent scaling.
+    # Create /etc/prometheus/node-agents.json with targets array:
+    # [{"labels": {"node_id": "node-1"}, "targets": ["node-agent-1:9091"]}]
+    # For DNS-based discovery in Kubernetes, use dns_sd_configs instead.
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/node-agents.json'
+        refresh_interval: 30s
+    # Fallback to static config if file doesn't exist (development mode)
     static_configs:
       - targets: ['node-agent-1:9091']
     metrics_path: '/metrics'
     scrape_interval: 15s
+    # Enable TLS for production (requires certificates):
+    # scheme: https
+    # tls_config:
+    #   ca_file: /etc/prometheus/certs/ca.crt
+    #   cert_file: /etc/prometheus/certs/prometheus.crt
+    #   key_file: /etc/prometheus/certs/prometheus.key
+    #   server_name: node-agent-1
 
 rule_files:
   - 'alerts.yml'

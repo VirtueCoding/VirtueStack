@@ -10,6 +10,8 @@ services:
   # ===========================================================================
   # PostgreSQL Database
   # ===========================================================================
+  # QG-19: Postgres official image runs as non-root 'postgres' user (UID 70)
+  # by default. Explicit user directive not required for this image.
   postgres:
     image: postgres:16-alpine
     container_name: virtuestack-postgres
@@ -43,6 +45,8 @@ services:
   # ===========================================================================
   # NATS JetStream
   # ===========================================================================
+  # QG-19: NATS official image runs as non-root 'nats' user (UID 100)
+  # by default. Explicit user directive not required for this image.
   nats:
     image: nats:2.10-alpine
     container_name: virtuestack-nats

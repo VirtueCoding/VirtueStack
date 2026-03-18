@@ -1,3 +1,10 @@
+-- ===========================================================================
+-- NOTE: This migration creates indexes on customer_webhooks and webhook_deliveries
+-- tables. Migration 010 (000010_webhooks.up.sql) drops these tables CASCADE and
+-- recreates them with a new schema. These indexes are therefore superseded by
+-- migration 010's indexes on the new webhooks table.
+-- ===========================================================================
+
 BEGIN;
 
 SET lock_timeout = '5s';

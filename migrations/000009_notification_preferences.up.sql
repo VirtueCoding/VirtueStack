@@ -28,6 +28,10 @@ CREATE INDEX IF NOT EXISTS idx_notification_preferences_customer_id ON notificat
 -- ============================================================================
 
 -- Logs notification events for auditing and history
+-- NOTE: customer_id uses ON DELETE SET NULL intentionally. When a customer is
+-- deleted, we retain notification events for audit/history purposes with a NULL
+-- customer_id. This preserves the audit trail while removing the customer reference.
+-- These orphaned records are accessible to admin users only, not via RLS customer queries.
 CREATE TABLE IF NOT EXISTS notification_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,

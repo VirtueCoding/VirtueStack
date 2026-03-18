@@ -465,6 +465,48 @@
         "tooltip": { "mode": "multi", "sort": "desc" },
         "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
       }
+    },
+    {
+      "id": 14,
+      "title": "API Error Rate (4xx/5xx)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(vs_api_requests_total{status=~\"4..\"}[5m]))",
+          "legendFormat": "{{status}} (4xx)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (status) (rate(vs_api_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "{{status}} (5xx)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "lineWidth": 2, "stacking": { "mode": "normal", "group": "A" } },
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "4.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": "5.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      }
     }
   ],
   "refresh": "10s",
