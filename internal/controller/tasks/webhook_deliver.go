@@ -16,6 +16,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // Task type constant for webhook delivery.
@@ -381,32 +382,8 @@ func DefaultHTTPClient() *http.Client {
 	}
 }
 
-// isPrivateIPDeliver checks if an IP address is in a private/reserved range
-// to prevent SSRF attacks during webhook delivery.
+// isPrivateIPDeliver delegates to the shared util.IsPrivateIP function.
+// All private/reserved range logic is maintained in one place.
 func isPrivateIPDeliver(ip net.IP) bool {
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"169.254.0.0/16", // link-local / cloud metadata
-		"100.64.0.0/10",  // CGNAT
-		"::1/128",
-		"fc00::/7",  // IPv6 private
-		"fe80::/10", // IPv6 link-local
-	}
-	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	// Also block the metadata IP explicitly
-	metadataIPs := []string{"169.254.169.254", "fd00:ec2::254"}
-	for _, mip := range metadataIPs {
-		if ip.Equal(net.ParseIP(mip)) {
-			return true
-		}
-	}
-	return false
+	return util.IsPrivateIP(ip)
 }

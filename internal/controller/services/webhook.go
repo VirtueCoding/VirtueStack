@@ -21,7 +21,9 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // WebhookService provides business logic for managing webhook endpoints and deliveries.
@@ -45,12 +47,10 @@ func NewWebhookService(
 		taskPublisher: taskPublisher,
 		logger:        logger.With("component", "webhook-service"),
 		encryptionKey: encryptionKey,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return fmt.Errorf("webhook delivery does not follow redirects")
-			},
-		},
+		// Use the SSRF-safe HTTP client so that outbound requests from the
+		// service (e.g. the verification ping in Register) are subject to the
+		// same IP-range enforcement as async task deliveries.
+		httpClient: tasks.DefaultHTTPClient(),
 	}
 }
 
@@ -438,7 +438,12 @@ func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 		return fmt.Errorf("%w: missing host", ErrInvalidURL)
 	}
 
-	// Resolve hostname to prevent SSRF
+	// Defense-in-depth: resolve the hostname at registration time and reject
+	// any URL that currently maps to a private/reserved IP. This provides a
+	// fast-fail user-visible error. The primary SSRF enforcement is at TCP
+	// connect time via the SSRF-safe transport in tasks.DefaultHTTPClient(),
+	// which eliminates the DNS-rebinding TOCTOU window that this pre-flight
+	// check cannot close on its own.
 	addrs, err := net.LookupHost(parsed.Hostname())
 	if err != nil {
 		return fmt.Errorf("cannot resolve webhook URL hostname: %w", err)
@@ -448,42 +453,12 @@ func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 		if ip == nil {
 			continue
 		}
-		if isPrivateIP(ip) {
+		if util.IsPrivateIP(ip) {
 			return fmt.Errorf("webhook URL resolves to private/internal IP address")
 		}
 	}
 
 	return nil
-}
-
-// isPrivateIP checks if an IP address is in a private/reserved range
-// to prevent SSRF attacks.
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"169.254.0.0/16", // link-local / cloud metadata
-		"100.64.0.0/10",  // CGNAT
-		"::1/128",
-		"fc00::/7",  // IPv6 private
-		"fe80::/10", // IPv6 link-local
-	}
-	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	// Also block the metadata IP explicitly
-	metadataIPs := []string{"169.254.169.254", "fd00:ec2::254"}
-	for _, mip := range metadataIPs {
-		if ip.Equal(net.ParseIP(mip)) {
-			return true
-		}
-	}
-	return false
 }
 
 // encryptSecret encrypts the webhook secret for storage using AES-256-GCM.
