@@ -22,14 +22,15 @@ import (
 
 // EmailConfig holds configuration for the email provider.
 type EmailConfig struct {
-	Enabled  bool
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
-	UseTLS   bool
-	FromName string
+	Enabled    bool
+	Host       string
+	Port       int
+	Username   string
+	Password   string
+	From       string
+	UseTLS     bool
+	FromName   string
+	RequireTLS bool // When true, enforce STARTTLS for non-465 ports (QG-02)
 }
 
 // EmailPayload contains data for an email notification.
@@ -85,6 +86,12 @@ func NewEmailProvider(config EmailConfig, logger *slog.Logger) (*EmailProvider, 
 	// Enable TLS by default for port 587
 	if config.Port == 587 {
 		config.UseTLS = true
+	}
+
+	// Warn operators who have credentials configured but haven't opted into RequireTLS
+	// on port 25, where PlainAuth would send credentials without encryption.
+	if config.Username != "" && !config.RequireTLS && config.Port == 25 {
+		logger.Warn("SMTP credentials configured without RequireTLS; credentials may be sent in plaintext on port 25 — set SMTP_REQUIRE_TLS=true to enforce STARTTLS")
 	}
 
 	provider := &EmailProvider{
@@ -416,6 +423,13 @@ func (p *EmailProvider) sendEmail(ctx context.Context, to, msg string) error {
 	var auth smtp.Auth
 	if p.config.Username != "" && p.config.Password != "" {
 		auth = smtp.PlainAuth("", p.config.Username, p.config.Password, p.config.Host)
+	}
+
+	// When RequireTLS is set, force STARTTLS for any non-implicit-TLS port (not 465).
+	// sendWithSTARTTLS returns an error if the server does not advertise STARTTLS,
+	// which prevents PlainAuth credentials from being sent in cleartext.
+	if p.config.RequireTLS && p.config.Port != 465 {
+		return p.sendWithSTARTTLS(ctx, addr, auth, to, msg)
 	}
 
 	// For TLS connections (port 587), we need to handle STARTTLS

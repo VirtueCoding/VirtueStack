@@ -156,7 +156,7 @@
 
 - [x] **`internal/controller/services/migration_service.go:153-154`** | QG-11 | Duplicate "step 10" numbering in comments (copy-paste error). **Fix:** Correct step numbering.
 
-- [ ] **`internal/controller/services/notification_service.go`** | QG-02 | `smtp.PlainAuth` may transmit credentials in plain text if SMTP server doesn't enforce STARTTLS. **Fix:** Use explicit TLS or add config option to require TLS.
+- [x] **`internal/controller/services/notification_service.go`** | QG-02 | `smtp.PlainAuth` may transmit credentials in plain text if SMTP server doesn't enforce STARTTLS. **Fix:** Use explicit TLS or add config option to require TLS.
 
 ### LOW
 

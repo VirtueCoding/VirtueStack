@@ -65,11 +65,13 @@ type NATSConfig struct {
 
 // SMTPConfig holds SMTP email configuration.
 type SMTPConfig struct {
-	Host     string `yaml:"host" env:"SMTP_HOST"`
-	Port     int    `yaml:"port" env:"SMTP_PORT"`
-	User     string `yaml:"user" env:"SMTP_USER"`
-	Password string `yaml:"password" env:"SMTP_PASSWORD"`
-	From     string `yaml:"from" env:"SMTP_FROM"`
+	Host       string `yaml:"host" env:"SMTP_HOST"`
+	Port       int    `yaml:"port" env:"SMTP_PORT"`
+	User       string `yaml:"user" env:"SMTP_USER"`
+	Password   string `yaml:"password" env:"SMTP_PASSWORD"`
+	From       string `yaml:"from" env:"SMTP_FROM"`
+	Enabled    bool   `yaml:"enabled" env:"SMTP_ENABLED"`
+	RequireTLS bool   `yaml:"require_tls" env:"SMTP_REQUIRE_TLS"` // When true, enforce STARTTLS for non-465 ports
 }
 
 // TelegramConfig holds Telegram notification configuration.
@@ -364,6 +366,12 @@ func applyEnvOverridesSMTP(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("SMTP_FROM"); v != "" {
 		cfg.SMTP.From = v
+	}
+	if v := os.Getenv("SMTP_ENABLED"); v != "" {
+		cfg.SMTP.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("SMTP_REQUIRE_TLS"); v != "" {
+		cfg.SMTP.RequireTLS = strings.EqualFold(v, "true") || v == "1"
 	}
 }
 
