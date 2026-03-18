@@ -9,4 +9,11 @@ export default [
       "no-console": "warn",
     },
   },
+  {
+    // Allow wildcard imports in shadcn/ui components (React 17+ JSX transform convention)
+    files: ["components/ui/**/*.tsx"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
 ];

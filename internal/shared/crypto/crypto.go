@@ -272,6 +272,9 @@ func ConstantTimeCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// GenerateHMACSignature generates an HMAC-SHA256 signature for the given payload.
+// This is used for webhook signature verification and other integrity checks.
+// The secret should be a securely generated random string.
 func GenerateHMACSignature(secret string, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)

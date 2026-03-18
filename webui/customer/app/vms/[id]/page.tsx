@@ -52,7 +52,7 @@ import { VNCConsole } from "@/components/novnc-console/vnc-console";
 import { ResourceCharts } from "@/components/charts/resource-charts";
 import { SerialConsole } from "@/components/serial-console/serial-console";
 import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot, ApiClientError } from "@/lib/api-client";
-import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
+import { getStatusBadgeVariant, getStatusLabel, formatMemory, formatBytes } from "@/lib/vm-utils";
 
 const FEATURE_FLAGS = {
   enableResourceConfig: true,
@@ -76,18 +76,6 @@ function getBackupStatusBadgeVariant(
     default:
       return "default";
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = bytes;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
-  return `${size.toFixed(2)} ${units[unitIndex]}`;
 }
 
 function formatDate(dateString: string): string {
@@ -260,7 +248,7 @@ export default function VMDetailPage() {
     fetchVM();
     fetchBackups();
     fetchSnapshots();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only depend on vmId; fetch functions are stable references
   }, [vmId]);
 
   const handleBack = () => {

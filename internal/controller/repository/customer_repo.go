@@ -253,6 +253,60 @@ type ProfileUpdateParams struct {
 	Phone *string
 }
 
+// validateProfileName validates and normalizes a name field for profile updates.
+// Returns the trimmed name or an error if validation fails.
+func validateProfileName(name *string) (string, error) {
+	if name == nil {
+		return "", nil
+	}
+	trimmed := strings.TrimSpace(*name)
+	if trimmed == "" {
+		return "", sharederrors.NewValidationError("name", "name cannot be empty")
+	}
+	if len(trimmed) > 100 {
+		return "", sharederrors.NewValidationError("name", "name cannot exceed 100 characters")
+	}
+	return trimmed, nil
+}
+
+// validateProfileEmail validates and normalizes an email field for profile updates.
+// Returns the trimmed email or an error if validation fails.
+func validateProfileEmail(email *string) (string, error) {
+	if email == nil {
+		return "", nil
+	}
+	trimmed := strings.TrimSpace(*email)
+	if trimmed == "" {
+		return "", sharederrors.NewValidationError("email", "email cannot be empty")
+	}
+	if len(trimmed) > 254 {
+		return "", sharederrors.NewValidationError("email", "email cannot exceed 254 characters")
+	}
+	if !emailRegex.MatchString(trimmed) {
+		return "", sharederrors.NewValidationError("email", "invalid email format")
+	}
+	return trimmed, nil
+}
+
+// validateProfilePhone validates and normalizes a phone field for profile updates.
+// Returns a pointer to the trimmed phone (or nil if empty) or an error if validation fails.
+func validateProfilePhone(phone *string) (*string, error) {
+	if phone == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*phone)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if len(trimmed) > 20 {
+		return nil, sharederrors.NewValidationError("phone", "phone cannot exceed 20 characters")
+	}
+	if !phoneRegex.MatchString(trimmed) {
+		return nil, sharederrors.NewValidationError("phone", "invalid phone format")
+	}
+	return &trimmed, nil
+}
+
 func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID string, params ProfileUpdateParams) (*models.Customer, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -268,43 +322,27 @@ func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID strin
 	}
 
 	if params.Name != nil {
-		name := strings.TrimSpace(*params.Name)
-		if name == "" {
-			return nil, sharederrors.NewValidationError("name", "name cannot be empty")
-		}
-		if len(name) > 100 {
-			return nil, sharederrors.NewValidationError("name", "name cannot exceed 100 characters")
+		name, err := validateProfileName(params.Name)
+		if err != nil {
+			return nil, err
 		}
 		existing.Name = name
 	}
 
 	if params.Email != nil {
-		email := strings.TrimSpace(*params.Email)
-		if email == "" {
-			return nil, sharederrors.NewValidationError("email", "email cannot be empty")
-		}
-		if len(email) > 254 {
-			return nil, sharederrors.NewValidationError("email", "email cannot exceed 254 characters")
-		}
-		if !emailRegex.MatchString(email) {
-			return nil, sharederrors.NewValidationError("email", "invalid email format")
+		email, err := validateProfileEmail(params.Email)
+		if err != nil {
+			return nil, err
 		}
 		existing.Email = email
 	}
 
 	if params.Phone != nil {
-		phone := strings.TrimSpace(*params.Phone)
-		if phone != "" {
-			if len(phone) > 20 {
-				return nil, sharederrors.NewValidationError("phone", "phone cannot exceed 20 characters")
-			}
-			if !phoneRegex.MatchString(phone) {
-				return nil, sharederrors.NewValidationError("phone", "invalid phone format")
-			}
-			existing.Phone = &phone
-		} else {
-			existing.Phone = nil
+		phone, err := validateProfilePhone(params.Phone)
+		if err != nil {
+			return nil, err
 		}
+		existing.Phone = phone
 	}
 
 	if err := txRepo.Update(ctx, existing); err != nil {

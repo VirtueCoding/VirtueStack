@@ -171,12 +171,16 @@ func NewAPIValidationError(code string, message string, details []ValidationDeta
 
 // Is re-exports stdlib errors.Is for convenience.
 // It checks if err wraps target using errors.Is semantics.
+// Kept for convenience: callers can use sharederrors.Is without importing stdlib errors,
+// which reduces import boilerplate in service files that already import sharederrors.
 func Is(err, target error) bool {
 	return stderrors.Is(err, target)
 }
 
 // As re-exports stdlib errors.As for convenience.
 // It attempts to cast err to target using errors.As semantics.
+// The target parameter is any because stdlib errors.As accepts any for flexibility.
+// Kept for convenience: callers can use sharederrors.As without importing stdlib errors.
 func As(err error, target any) bool {
 	return stderrors.As(err, target)
 }

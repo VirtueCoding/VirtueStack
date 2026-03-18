@@ -5,6 +5,30 @@ import (
 	"time"
 )
 
+// Clock provides the current time. It is injected to enable deterministic testing.
+// Production code uses DefaultClock which delegates to time.Now().
+type Clock interface {
+	Now() time.Time
+}
+
+// defaultClock is the production implementation of Clock.
+type defaultClock struct{}
+
+func (defaultClock) Now() time.Time { return time.Now().UTC() }
+
+// DefaultClock is the Clock implementation used in production.
+var DefaultClock Clock = defaultClock{}
+
+// clock is the package-level clock instance. It can be replaced in tests.
+var clock Clock = DefaultClock
+
+// SetClock replaces the package clock for testing purposes.
+// This must be called before any Task methods are invoked.
+func SetClock(c Clock) { clock = c }
+
+// ResetClock restores the default clock.
+func ResetClock() { clock = DefaultClock }
+
 type TaskStatus string
 
 const (
@@ -51,14 +75,14 @@ func (t *Task) IsTerminal() bool {
 
 func (t *Task) SetRunning() {
 	t.Status = TaskStatusRunning
-	now := time.Now().UTC()
+	now := clock.Now()
 	t.StartedAt = &now
 }
 
 func (t *Task) SetCompleted(result json.RawMessage) {
 	t.Status = TaskStatusCompleted
 	t.Progress = 100
-	now := time.Now().UTC()
+	now := clock.Now()
 	t.CompletedAt = &now
 	if result != nil {
 		t.Result = result
@@ -68,7 +92,7 @@ func (t *Task) SetCompleted(result json.RawMessage) {
 func (t *Task) SetFailed(errMsg string) {
 	t.Status = TaskStatusFailed
 	t.ErrorMessage = errMsg
-	now := time.Now().UTC()
+	now := clock.Now()
 	t.CompletedAt = &now
 }
 
@@ -88,7 +112,7 @@ func NewTask(id, taskType string, payload json.RawMessage) *Task {
 		Status:    TaskStatusPending,
 		Payload:   payload,
 		Progress:  0,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: clock.Now(),
 	}
 }
 

@@ -37,7 +37,45 @@ func (m *mockCustomerDB) Exec(ctx context.Context, sql string, arguments ...any)
 }
 
 func (m *mockCustomerDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	// Return self as transaction for simple mock behavior
+	return &mockTx{mockCustomerDB: m}, nil
+}
+
+// mockTx implements pgx.Tx for testing.
+type mockTx struct {
+	*mockCustomerDB
+}
+
+func (m *mockTx) Commit(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockTx) Rollback(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
+	return nil
+}
+
+func (m *mockTx) LargeObjects() pgx.LargeObjects {
+	return pgx.LargeObjects{}
+}
+
+func (m *mockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
 	return nil, nil
+}
+
+func (m *mockTx) Conn() *pgx.Conn {
+	return nil
+}
+
+func (m *mockTx) Begin(ctx context.Context) (pgx.Tx, error) {
+	return m, nil
 }
 
 // mockCustomerRow implements pgx.Row for testing QueryRow results.
@@ -50,9 +88,59 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 	if m.err != nil {
 		return m.err
 	}
-	// Copy customer data to dest
-	c := dest[0].(*models.Customer)
-	*c = m.customer
+	// Handle both single *models.Customer and multiple column pointers
+	if len(dest) == 1 {
+		if c, ok := dest[0].(*models.Customer); ok {
+			*c = m.customer
+			return nil
+		}
+	}
+	// Handle scanCustomer case with multiple column pointers
+	if len(dest) >= 13 {
+		if id, ok := dest[0].(*string); ok {
+			*id = m.customer.ID
+		}
+		if email, ok := dest[1].(*string); ok {
+			*email = m.customer.Email
+		}
+		if pw, ok := dest[2].(*string); ok {
+			*pw = m.customer.PasswordHash
+		}
+		if name, ok := dest[3].(*string); ok {
+			*name = m.customer.Name
+		}
+		if phone, ok := dest[4].(*string); ok {
+			*phone = ""
+			if m.customer.Phone != nil {
+				*phone = *m.customer.Phone
+			}
+		}
+		if whmcs, ok := dest[5].(**int); ok {
+			*whmcs = m.customer.WHMCSClientID
+		}
+		if totpSecret, ok := dest[6].(**string); ok {
+			*totpSecret = m.customer.TOTPSecretEncrypted
+		}
+		if totpEnabled, ok := dest[7].(*bool); ok {
+			*totpEnabled = m.customer.TOTPEnabled
+		}
+		if totpBackup, ok := dest[8].(*[]string); ok {
+			*totpBackup = nil
+		}
+		if totpShown, ok := dest[9].(*bool); ok {
+			*totpShown = m.customer.TOTPBackupCodesShown
+		}
+		if status, ok := dest[10].(*string); ok {
+			*status = m.customer.Status
+		}
+		if createdAt, ok := dest[11].(*time.Time); ok {
+			*createdAt = m.customer.CreatedAt
+		}
+		if updatedAt, ok := dest[12].(*time.Time); ok {
+			*updatedAt = m.customer.UpdatedAt
+		}
+		return nil
+	}
 	return nil
 }
 
