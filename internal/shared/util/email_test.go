@@ -45,6 +45,12 @@ func TestMaskEmail(t *testing.T) {
 			input: "alice@gmail.com",
 			want:  "a***@g***.com",
 		},
+		{
+			// local="user", rest="", len(rest)==0 → return "***"
+			name:  "empty domain after @",
+			input: "user@",
+			want:  "***",
+		},
 	}
 
 	for _, tc := range cases {

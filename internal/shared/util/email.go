@@ -17,6 +17,9 @@ func MaskEmail(email string) string {
 
 	dot := strings.LastIndex(rest, ".")
 	if dot <= 0 {
+		if len(rest) == 0 {
+			return "***"
+		}
 		return string(local[0]) + "***@" + string(rest[0]) + "***"
 	}
 

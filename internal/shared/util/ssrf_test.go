@@ -28,6 +28,8 @@ func TestIsPrivateIP(t *testing.T) {
 		{"link-local 169.254.1.1", "169.254.1.1", true},
 
 		// Cloud metadata IPs
+		// 169.254.169.254 and fd00:ec2::254 are matched by CIDR ranges (169.254.0.0/16 and fc00::/7)
+		// AND by the explicit metadataIPs guard — either mechanism alone would block them.
 		{"AWS metadata 169.254.169.254", "169.254.169.254", true},
 		{"AWS IPv6 metadata fd00:ec2::254", "fd00:ec2::254", true},
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -88,10 +89,10 @@ func TestSecret_StructMarshalJSON(t *testing.T) {
 
 	// Ensure the actual secret values do not appear in JSON output.
 	jsonStr := string(data)
-	if contains(jsonStr, "real-token-value") {
+	if strings.Contains(jsonStr, "real-token-value") {
 		t.Errorf("JSON output contains secret token value: %s", jsonStr)
 	}
-	if contains(jsonStr, "real-api-key") {
+	if strings.Contains(jsonStr, "real-api-key") {
 		t.Errorf("JSON output contains secret api_key value: %s", jsonStr)
 	}
 
@@ -111,14 +112,3 @@ func TestSecret_StructMarshalJSON(t *testing.T) {
 	}
 }
 
-// contains is a helper to check substring presence without importing strings.
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && func() bool {
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	}()
-}
