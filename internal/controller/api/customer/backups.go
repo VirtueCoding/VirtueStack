@@ -270,7 +270,14 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 }
 
 // verifyBackupOwnership verifies that a VM belongs to the customer.
+// Deprecated: Use verifyVMOwnership instead.
 func (h *CustomerHandler) verifyBackupOwnership(ctx context.Context, vmID, customerID string) bool {
+	return h.verifyVMOwnership(ctx, vmID, customerID)
+}
+
+// verifyVMOwnership verifies that a VM belongs to the customer.
+// It returns true if the VM exists and belongs to the customer, false otherwise.
+func (h *CustomerHandler) verifyVMOwnership(ctx context.Context, vmID, customerID string) bool {
 	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
 	return err == nil
 }

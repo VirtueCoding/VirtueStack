@@ -31,16 +31,24 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { vmApi, VM, ApiClientError } from "@/lib/api-client";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
+import { useVMAction } from "@/lib/hooks/useVMAction";
+
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() === "true";
+}
+
+const ENABLE_VM_CREATION = parseBooleanEnv(process.env.NEXT_PUBLIC_ENABLE_VM_CREATION, false);
 
 export default function VMsPage() {
   const [vms, setVms] = useState<VM[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadingVMs, setLoadingVMs] = useState<Record<string, boolean>>({});
   const [vmToStop, setVmToStop] = useState<string | null>(null);
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const searchFromUrl = searchParams.get("search") || "";
   const [searchTerm, setSearchTerm] = useState(searchFromUrl);
+  const { executeAction, isVMLoading, loadingVMId } = useVMAction();
 
   const fetchVMs = useCallback(async () => {
     try {
@@ -61,8 +69,6 @@ export default function VMsPage() {
     fetchVMs();
   }, [fetchVMs]);
 
-  const ENABLE_VM_CREATION = false;
-
   useEffect(() => {
     const interval = setInterval(() => {
       fetchVMs();
@@ -70,78 +76,29 @@ export default function VMsPage() {
     return () => clearInterval(interval);
   }, [fetchVMs]);
 
-  const setVMLoading = (id: string, loading: boolean) => {
-    setLoadingVMs((prev) => ({ ...prev, [id]: loading }));
+  const handleStart = (id: string) => {
+    executeAction({
+      action: "start",
+      vmId: id,
+      onSuccess: fetchVMs,
+    });
   };
 
-  const handleStart = async (id: string) => {
-    setVMLoading(id, true);
-    try {
-      await vmApi.startVM(id);
-      toast({
-        title: "VM Started",
-        description: "Virtual machine started successfully.",
-      });
-      await fetchVMs();
-    } catch (error) {
-      const message = error instanceof ApiClientError 
-        ? error.message 
-        : "Failed to start VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setVMLoading(id, false);
-    }
-  };
-
-  const handleStop = async (id: string) => {
+  const handleStop = (id: string) => {
     setVmToStop(null);
-    setVMLoading(id, true);
-    try {
-      await vmApi.stopVM(id);
-      toast({
-        title: "VM Stopped",
-        description: "Virtual machine stopped successfully.",
-      });
-      await fetchVMs();
-    } catch (error) {
-      const message = error instanceof ApiClientError 
-        ? error.message 
-        : "Failed to stop VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setVMLoading(id, false);
-    }
+    executeAction({
+      action: "stop",
+      vmId: id,
+      onSuccess: fetchVMs,
+    });
   };
 
-  const handleRestart = async (id: string) => {
-    setVMLoading(id, true);
-    try {
-      await vmApi.restartVM(id);
-      toast({
-        title: "VM Restarted",
-        description: "Virtual machine restarted successfully.",
-      });
-      await fetchVMs();
-    } catch (error) {
-      const message = error instanceof ApiClientError 
-        ? error.message 
-        : "Failed to restart VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setVMLoading(id, false);
-    }
+  const handleRestart = (id: string) => {
+    executeAction({
+      action: "restart",
+      vmId: id,
+      onSuccess: fetchVMs,
+    });
   };
 
   const handleCreateVM = () => {
@@ -257,10 +214,10 @@ export default function VMsPage() {
                           variant="outline"
                           size="icon"
                           onClick={() => handleStart(vm.id)}
-                          disabled={loadingVMs[vm.id]}
+                          disabled={isVMLoading(vm.id)}
                           title="Start VM"
                         >
-                          {loadingVMs[vm.id] ? (
+                          {isVMLoading(vm.id) ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <Play className="h-4 w-4" />
@@ -273,10 +230,10 @@ export default function VMsPage() {
                             variant="outline"
                             size="icon"
                             onClick={() => confirmStop(vm.id)}
-                            disabled={loadingVMs[vm.id]}
+                            disabled={isVMLoading(vm.id)}
                             title="Stop VM"
                           >
-                            {loadingVMs[vm.id] ? (
+                            {isVMLoading(vm.id) ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <Square className="h-4 w-4" />
@@ -286,10 +243,10 @@ export default function VMsPage() {
                             variant="outline"
                             size="icon"
                             onClick={() => handleRestart(vm.id)}
-                            disabled={loadingVMs[vm.id]}
+                            disabled={isVMLoading(vm.id)}
                             title="Restart VM"
                           >
-                            {loadingVMs[vm.id] ? (
+                            {isVMLoading(vm.id) ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <RotateCw className="h-4 w-4" />
@@ -302,10 +259,10 @@ export default function VMsPage() {
                           variant="outline"
                           size="icon"
                           onClick={() => handleRestart(vm.id)}
-                          disabled={loadingVMs[vm.id]}
+                          disabled={isVMLoading(vm.id)}
                           title="Restart VM"
                         >
-                          {loadingVMs[vm.id] ? (
+                          {isVMLoading(vm.id) ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <RotateCw className="h-4 w-4" />
@@ -339,12 +296,12 @@ export default function VMsPage() {
             <Button variant="outline" onClick={() => setVmToStop(null)}>
               Cancel
             </Button>
-            <Button 
-              variant="default" 
+            <Button
+              variant="default"
               onClick={() => vmToStop && handleStop(vmToStop)}
-              disabled={vmToStop ? loadingVMs[vmToStop] : false}
+              disabled={vmToStop ? isVMLoading(vmToStop) : false}
             >
-              {vmToStop && loadingVMs[vmToStop] ? (
+              {vmToStop && isVMLoading(vmToStop) ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Stopping...

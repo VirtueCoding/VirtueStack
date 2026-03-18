@@ -458,7 +458,7 @@ func (s *NodeService) logAudit(ctx context.Context, action, resourceID string, d
 	}
 }
 
-func (s *NodeService) GetFailoverStats(nodeID string) map[string]interface{} {
+func (s *NodeService) GetFailoverStats(nodeID string) CircuitBreakerStats {
 	return s.circuitBreaker.GetFailoverStats(nodeID)
 }
 

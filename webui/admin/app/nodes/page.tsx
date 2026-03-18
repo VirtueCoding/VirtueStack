@@ -137,7 +137,6 @@ export default function NodesPage() {
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
-        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Nodes</h1>

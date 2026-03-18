@@ -11,12 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// UpdateProfileRequest represents the request body for updating a customer profile.
+// All fields are optional; only provided fields will be updated.
 type UpdateProfileRequest struct {
 	Name  *string `json:"name" validate:"omitempty,max=100"`
 	Email *string `json:"email" validate:"omitempty,email,max=254"`
 	Phone *string `json:"phone" validate:"omitempty,max=20"`
 }
 
+// ProfileResponse represents the response data for profile endpoints.
 type ProfileResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
@@ -25,6 +28,8 @@ type ProfileResponse struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
+// UpdateProfile handles PUT /profile - updates the authenticated customer's profile.
+// Supports partial updates; only provided fields are modified.
 func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -91,6 +96,7 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// GetProfile handles GET /profile - retrieves the authenticated customer's profile.
 func (h *CustomerHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -119,6 +125,7 @@ func (h *CustomerHandler) GetProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// sanitizeRequest trims whitespace from all provided fields in the update request.
 func sanitizeRequest(req *UpdateProfileRequest) {
 	if req.Name != nil {
 		trimmed := strings.TrimSpace(*req.Name)

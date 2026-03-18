@@ -227,37 +227,49 @@ func (cb *CircuitBreaker) ResetAll() {
 	cb.entries = make(map[string]*CircuitBreakerEntry)
 }
 
+// CircuitBreakerStats holds statistics about a circuit breaker instance.
+type CircuitBreakerStats struct {
+	State            string    `json:"state"`
+	FailureCount     int       `json:"failure_count"`
+	SuccessCount     int       `json:"success_count"`
+	RetryCount       int       `json:"retry_count"`
+	LastAttemptAt    time.Time `json:"last_attempt_at"`
+	LastFailureAt    time.Time `json:"last_failure_at,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
+	CooldownRemaining string   `json:"cooldown_remaining,omitempty"`
+}
+
 // GetStats returns statistics about the circuit breaker for the given key.
-func (cb *CircuitBreaker) GetStats(key string) map[string]interface{} {
+func (cb *CircuitBreaker) GetStats(key string) CircuitBreakerStats {
 	entry := cb.getEntry(key)
 
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 
-	result := map[string]interface{}{
-		"state":           string(entry.State),
-		"failure_count":   entry.FailureCount,
-		"success_count":   entry.SuccessCount,
-		"retry_count":     entry.RetryCount,
-		"last_attempt_at": entry.LastAttemptAt,
+	stats := CircuitBreakerStats{
+		State:          string(entry.State),
+		FailureCount:   entry.FailureCount,
+		SuccessCount:   entry.SuccessCount,
+		RetryCount:     entry.RetryCount,
+		LastAttemptAt:  entry.LastAttemptAt,
 	}
 
 	if !entry.LastFailureAt.IsZero() {
-		result["last_failure_at"] = entry.LastFailureAt
+		stats.LastFailureAt = entry.LastFailureAt
 	}
 
 	if entry.LastError != nil {
-		result["last_error"] = entry.LastError.Error()
+		stats.LastError = entry.LastError.Error()
 	}
 
 	if entry.State == CircuitBreakerOpen {
 		timeSinceFailure := time.Since(entry.LastFailureAt)
 		if timeSinceFailure < cb.config.CooldownPeriod {
-			result["cooldown_remaining"] = (cb.config.CooldownPeriod - timeSinceFailure).String()
+			stats.CooldownRemaining = (cb.config.CooldownPeriod - timeSinceFailure).String()
 		}
 	}
 
-	return result
+	return stats
 }
 
 // IsInCooldown checks if the circuit breaker is in cooldown for the given key.
@@ -331,7 +343,7 @@ func (fb *FailoverCircuitBreaker) RecordFailoverFailure(nodeID string, err error
 }
 
 // GetFailoverStats returns statistics about failover attempts for a node.
-func (fb *FailoverCircuitBreaker) GetFailoverStats(nodeID string) map[string]interface{} {
+func (fb *FailoverCircuitBreaker) GetFailoverStats(nodeID string) CircuitBreakerStats {
 	return fb.GetStats(nodeID)
 }
 

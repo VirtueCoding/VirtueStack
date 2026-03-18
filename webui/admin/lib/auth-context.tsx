@@ -38,24 +38,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_STATE_KEY = "admin_auth_state";
 
-interface StoredAuthState {
-  user: AdminUser;
-  isAuthenticated: boolean;
-}
-
-function loadStoredState(): StoredAuthState | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(AUTH_STATE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.user && parsed.isAuthenticated) return parsed;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<AuthState>({
@@ -95,21 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initAuth = useCallback(async () => {
     if (typeof window === "undefined") return;
 
-    const stored = loadStoredState();
-
     try {
-      // Validate the stored session against the server on every page load.
-      // This prevents XSS-injected sessionStorage data from granting access.
-      //
-      // We use POST /admin/auth/refresh as a lightweight session probe: it
-      // validates the HttpOnly refresh-token cookie server-side and reissues
-      // fresh access+refresh cookies.  A 401 means no valid session exists.
-      //
-      // TODO: Add a dedicated GET /admin/auth/me endpoint that returns the
-      // current user's identity (id, email, role) so we can always use the
-      // server as the authoritative source for the user object rather than
-      // trusting sessionStorage-cached data post-validation.
-      const serverUser = await adminAuthApi.me(stored?.user ?? null);
+      // Fetch the current user's identity from the server using the lightweight
+      // GET /admin/auth/me endpoint. This validates the session and returns
+      // authoritative user data (id, email, role) without heavy queries.
+      // A 401/403 response means no valid session exists.
+      const serverUser = await adminAuthApi.me();
       if (!serverUser) {
         sessionStorage.removeItem(AUTH_STATE_KEY);
         setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });

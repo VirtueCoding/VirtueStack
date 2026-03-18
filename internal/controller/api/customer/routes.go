@@ -12,205 +12,156 @@ import (
 // Authentication: JWT Bearer token (validated via middleware.JWTAuth)
 //
 // All endpoints enforce customer isolation - users can only access their own resources.
-//
-// Endpoints:
-//
-// Authentication:
-//
-//	  POST /auth/login        - Email/password login (returns tokens or 2FA challenge)
-//	  POST /auth/verify-2fa   - TOTP verification for 2FA-enabled accounts
-//	  POST /auth/refresh      - Refresh access token using refresh token
-//	  POST /auth/logout       - Logout current session
-//	  PUT   /password         - Change password (requires auth, rate limited)
-//
-//	VMs:
-//	  GET    /vms             - List customer's VMs
-//	  GET    /vms/:id         - Get VM details
-//
-//	Power Control:
-//	  POST   /vms/:id/start       - Start VM
-//	  POST   /vms/:id/stop        - Graceful stop VM
-//	  POST   /vms/:id/restart     - Restart VM
-//	  POST   /vms/:id/force-stop  - Force power off
-//
-//	Console:
-//	  POST   /vms/:id/console-token - Get NoVNC token (1hr expiry)
-//	  POST   /vms/:id/serial-token  - Get serial console token
-//
-//	Monitoring:
-//	  GET    /vms/:id/metrics    - Real-time CPU/memory/disk stats
-//	  GET    /vms/:id/bandwidth  - Bandwidth usage (current period)
-//	  GET    /vms/:id/network    - Network traffic history
-//
-//	Backups:
-//	  GET    /backups            - List customer's backups
-//	  POST   /backups            - Create backup (async)
-//	  GET    /backups/:id        - Get backup details
-//	  DELETE /backups/:id        - Delete backup
-//	  POST   /backups/:id/restore - Restore backup (async)
-//
-//	Snapshots:
-//	  GET    /snapshots          - List customer's snapshots
-//	  POST   /snapshots          - Create snapshot
-//	  DELETE /snapshots/:id      - Delete snapshot
-//	  POST   /snapshots/:id/restore - Restore snapshot (async)
-//
-//	API Keys:
-//	  GET    /api-keys           - List API keys
-//	  POST   /api-keys           - Create API key
-//	  POST   /api-keys/:id/rotate - Rotate API key (generate new key value)
-//	  DELETE /api-keys/:id       - Revoke API key
-//
-//	Webhooks:
-//	  GET    /webhooks           - List webhooks
-//	  POST   /webhooks           - Create webhook
-//	  PUT    /webhooks/:id       - Update webhook
-//	  DELETE /webhooks/:id       - Delete webhook
-//	  GET    /webhooks/:id/deliveries - List delivery attempts
-//
-//	Templates:
-//	  GET    /templates          - List available OS templates
-//
-//	Notifications:
-//	  GET    /notifications/preferences   - Get notification preferences
-//	  PUT    /notifications/preferences   - Update notification preferences
-//	  GET    /notifications/events        - List notification events
-//	  GET    /notifications/events/types  - Get available event types
-//
-//	ISO Management:
-//	  POST   /vms/:id/iso/upload            - Upload ISO file (multipart)
-//	  GET    /vms/:id/iso                   - List uploaded ISOs
-//	  DELETE /vms/:id/iso/:isoId            - Delete an ISO
-//	  POST   /vms/:id/iso/:isoId/attach     - Attach ISO to VM
-//	  POST   /vms/:id/iso/:isoId/detach     - Detach ISO from VM
-//
-//	2FA (Two-Factor Authentication):
-//	  POST   /2fa/initiate  - Generate TOTP secret and QR URL
-//	  POST   /2fa/enable    - Verify TOTP code and enable 2FA
-//	  POST   /2fa/disable   - Disable 2FA (requires password)
-//	  GET    /2fa/status    - Get 2FA status
-//	  GET    /2fa/backup-codes          - Get backup codes (only once)
-//	  POST   /2fa/backup-codes/regenerate - Regenerate new backup codes
 func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, notifyHandler *NotificationsHandler) {
-	// Create the customer API group
 	customer := router.Group("/customer")
 
-	// Auth endpoints - no authentication required for login/verify-2fa/refresh
+	registerAuthRoutes(customer, handler)
+
+	protected := customer.Group("")
+	protected.Use(middleware.JWTAuth(handler.authConfig))
+	protected.Use(middleware.RequireUserType("customer"))
+	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+
+	registerVMRoutes(protected, handler)
+	registerBackupRoutes(protected, handler)
+	registerSnapshotRoutes(protected, handler)
+	registerAPIKeyRoutes(protected, handler)
+	registerWebhookRoutes(protected, handler)
+	register2FARoutes(protected, handler)
+
+	protected.GET("/templates", handler.ListTemplates)
+	protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
+	protected.GET("/ws/serial/:vmId", handler.HandleSerialWebSocket)
+
+	if notifyHandler != nil {
+		RegisterNotificationRoutes(protected, notifyHandler)
+	}
+}
+
+// registerAuthRoutes registers authentication endpoints (no JWT required).
+func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 	auth := customer.Group("/auth")
 	{
 		auth.POST("/login", handler.Login)
 		auth.POST("/verify-2fa", handler.Verify2FA)
 		auth.POST("/refresh", handler.RefreshToken)
 	}
+}
 
-	// All other endpoints require JWT authentication
-	protected := customer.Group("")
-	protected.Use(middleware.JWTAuth(handler.authConfig))
-	protected.Use(middleware.RequireUserType("customer"))
-	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+// registerVMRoutes registers VM-related endpoints.
+func registerVMRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	protected.POST("/auth/logout", handler.Logout)
+	protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
+	protected.GET("/profile", handler.GetProfile)
+	protected.PUT("/profile", handler.UpdateProfile)
+
+	vms := protected.Group("/vms")
 	{
-		protected.POST("/auth/logout", handler.Logout)
+		vms.GET("", handler.ListVMs)
+		vms.GET("/:id", handler.GetVM)
 
-		protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
+		registerPowerRoutes(vms, handler)
+		registerConsoleRoutes(vms, handler)
+		registerMonitoringRoutes(vms, handler)
+		registerRDNSRoutes(vms, handler)
+		registerISORoutes(vms, handler)
+	}
+}
 
-		protected.GET("/profile", handler.GetProfile)
-		protected.PUT("/profile", handler.UpdateProfile)
+// registerPowerRoutes registers VM power control endpoints.
+func registerPowerRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	vms.POST("/:id/start", handler.StartVM)
+	vms.POST("/:id/stop", handler.StopVM)
+	vms.POST("/:id/restart", handler.RestartVM)
+	vms.POST("/:id/force-stop", handler.ForceStopVM)
+}
 
-		// VM operations
-		vms := protected.Group("/vms")
-		{
-			vms.GET("", handler.ListVMs)
-			vms.GET("/:id", handler.GetVM)
+// registerConsoleRoutes registers console token endpoints.
+func registerConsoleRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	vms.POST("/:id/console-token", handler.GetConsoleToken)
+	vms.POST("/:id/serial-token", handler.GetSerialToken)
+}
 
-			// Power control
-			vms.POST("/:id/start", handler.StartVM)
-			vms.POST("/:id/stop", handler.StopVM)
-			vms.POST("/:id/restart", handler.RestartVM)
-			vms.POST("/:id/force-stop", handler.ForceStopVM)
+// registerMonitoringRoutes registers VM monitoring endpoints.
+func registerMonitoringRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	vms.GET("/:id/metrics", handler.GetMetrics)
+	vms.GET("/:id/bandwidth", handler.GetBandwidth)
+	vms.GET("/:id/network", handler.GetNetworkHistory)
+}
 
-			// Console access
-			vms.POST("/:id/console-token", handler.GetConsoleToken)
-			vms.POST("/:id/serial-token", handler.GetSerialToken)
+// registerRDNSRoutes registers rDNS management endpoints.
+func registerRDNSRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	vms.GET("/:id/ips", handler.ListVMIPs)
+	vms.GET("/:id/ips/:ipId/rdns", handler.GetRDNS)
+	vms.PUT("/:id/ips/:ipId/rdns", middleware.RDNSUpdateRateLimit(), handler.UpdateRDNS)
+	vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteRDNS)
+}
 
-			// Monitoring
-			vms.GET("/:id/metrics", handler.GetMetrics)
-			vms.GET("/:id/bandwidth", handler.GetBandwidth)
-			vms.GET("/:id/network", handler.GetNetworkHistory)
+// registerISORoutes registers ISO management endpoints.
+func registerISORoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	vms.POST("/:id/iso/upload", handler.UploadISO)
+	vms.GET("/:id/iso", handler.ListISOs)
+	vms.DELETE("/:id/iso/:isoId", handler.DeleteISO)
+	vms.POST("/:id/iso/:isoId/attach", handler.AttachISO)
+	vms.POST("/:id/iso/:isoId/detach", handler.DetachISO)
+}
 
-			// rDNS management (customer can only manage their own IPs)
-			vms.GET("/:id/ips", handler.ListVMIPs)
-			vms.GET("/:id/ips/:ipId/rdns", handler.GetRDNS)
-			vms.PUT("/:id/ips/:ipId/rdns", middleware.RDNSUpdateRateLimit(), handler.UpdateRDNS)
-			vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteRDNS)
+// registerBackupRoutes registers backup management endpoints.
+func registerBackupRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	backups := protected.Group("/backups")
+	{
+		backups.GET("", handler.ListBackups)
+		backups.POST("", handler.CreateBackup)
+		backups.GET("/:id", handler.GetBackup)
+		backups.DELETE("/:id", handler.DeleteBackup)
+		backups.POST("/:id/restore", handler.RestoreBackup)
+	}
+}
 
-			// ISO management
-			vms.POST("/:id/iso/upload", handler.UploadISO)
-			vms.GET("/:id/iso", handler.ListISOs)
-			vms.DELETE("/:id/iso/:isoId", handler.DeleteISO)
-			vms.POST("/:id/iso/:isoId/attach", handler.AttachISO)
-			vms.POST("/:id/iso/:isoId/detach", handler.DetachISO)
-		}
+// registerSnapshotRoutes registers snapshot management endpoints.
+func registerSnapshotRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	snapshots := protected.Group("/snapshots")
+	{
+		snapshots.GET("", handler.ListSnapshots)
+		snapshots.POST("", handler.CreateSnapshot)
+		snapshots.DELETE("/:id", handler.DeleteSnapshot)
+		snapshots.POST("/:id/restore", handler.RestoreSnapshot)
+	}
+}
 
-		// Backups
-		backups := protected.Group("/backups")
-		{
-			backups.GET("", handler.ListBackups)
-			backups.POST("", handler.CreateBackup)
-			backups.GET("/:id", handler.GetBackup)
-			backups.DELETE("/:id", handler.DeleteBackup)
-			backups.POST("/:id/restore", handler.RestoreBackup)
-		}
+// registerAPIKeyRoutes registers API key management endpoints.
+func registerAPIKeyRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	apiKeys := protected.Group("/api-keys")
+	{
+		apiKeys.GET("", handler.ListAPIKeys)
+		apiKeys.POST("", handler.CreateAPIKey)
+		apiKeys.POST("/:id/rotate", handler.RotateAPIKey)
+		apiKeys.DELETE("/:id", handler.DeleteAPIKey)
+	}
+}
 
-		// Snapshots
-		snapshots := protected.Group("/snapshots")
-		{
-			snapshots.GET("", handler.ListSnapshots)
-			snapshots.POST("", handler.CreateSnapshot)
-			snapshots.DELETE("/:id", handler.DeleteSnapshot)
-			snapshots.POST("/:id/restore", handler.RestoreSnapshot)
-		}
+// registerWebhookRoutes registers webhook management endpoints.
+func registerWebhookRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	webhooks := protected.Group("/webhooks")
+	{
+		webhooks.GET("", handler.ListWebhooks)
+		webhooks.POST("", handler.CreateWebhook)
+		webhooks.GET("/:id", handler.GetWebhook)
+		webhooks.PUT("/:id", handler.UpdateWebhook)
+		webhooks.DELETE("/:id", handler.DeleteWebhook)
+		webhooks.GET("/:id/deliveries", handler.ListWebhookDeliveries)
+	}
+}
 
-		// API Keys
-		apiKeys := protected.Group("/api-keys")
-		{
-			apiKeys.GET("", handler.ListAPIKeys)
-			apiKeys.POST("", handler.CreateAPIKey)
-			apiKeys.POST("/:id/rotate", handler.RotateAPIKey)
-			apiKeys.DELETE("/:id", handler.DeleteAPIKey)
-		}
-
-		// Webhooks
-		webhooks := protected.Group("/webhooks")
-		{
-			webhooks.GET("", handler.ListWebhooks)
-			webhooks.POST("", handler.CreateWebhook)
-			webhooks.GET("/:id", handler.GetWebhook)
-			webhooks.PUT("/:id", handler.UpdateWebhook)
-			webhooks.DELETE("/:id", handler.DeleteWebhook)
-			webhooks.GET("/:id/deliveries", handler.ListWebhookDeliveries)
-		}
-
-		// Templates
-		protected.GET("/templates", handler.ListTemplates)
-
-		// 2FA (Two-Factor Authentication)
-		twofa := protected.Group("/2fa")
-		{
-			twofa.POST("/initiate", handler.Initiate2FA)
-			twofa.POST("/enable", handler.Enable2FA)
-			twofa.POST("/disable", handler.Disable2FA)
-			twofa.GET("/status", handler.Get2FAStatus)
-			twofa.GET("/backup-codes", handler.GetBackupCodes)
-			twofa.POST("/backup-codes/regenerate", handler.RegenerateBackupCodes)
-		}
-
-		// WebSocket console endpoints
-		protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
-		protected.GET("/ws/serial/:vmId", handler.HandleSerialWebSocket)
-
-		// Notifications
-		if notifyHandler != nil {
-			RegisterNotificationRoutes(protected, notifyHandler)
-		}
+// register2FARoutes registers two-factor authentication endpoints.
+func register2FARoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	twofa := protected.Group("/2fa")
+	{
+		twofa.POST("/initiate", handler.Initiate2FA)
+		twofa.POST("/enable", handler.Enable2FA)
+		twofa.POST("/disable", handler.Disable2FA)
+		twofa.GET("/status", handler.Get2FAStatus)
+		twofa.GET("/backup-codes", handler.GetBackupCodes)
+		twofa.POST("/backup-codes/regenerate", handler.RegenerateBackupCodes)
 	}
 }

@@ -28,15 +28,27 @@ type BackupConfig struct {
 	BackupPath string
 }
 
+// BackupHandlerContext holds common context for backup handler functions.
+// It groups related parameters to comply with QG-01 (max 4 parameters).
+type BackupHandlerContext struct {
+	Task            *models.Task
+	VM              *models.VM
+	NodeID          string
+	Payload         BackupCreatePayload
+	FreezeSuccessful bool
+	FrozenCount     int
+	Logger          *slog.Logger
+}
+
 // completeBackupTask marks a backup task as 100% complete, persists the result JSON,
 // and emits a structured log. Both QCOW and Ceph paths share this final sequence.
-func completeBackupTask(ctx context.Context, task *models.Task, deps *HandlerDeps, backup *models.Backup, result map[string]any, logger *slog.Logger) {
+func completeBackupTask(ctx context.Context, task *models.Task, deps *HandlerDeps, backup *models.Backup, result BackupCreateResult, logger *slog.Logger) {
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "Backup created successfully"); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// json.Marshal error is intentionally suppressed: the map contains only
-	// primitive types (string, int, bool) whose marshaling cannot fail.
+	// json.Marshal error is intentionally suppressed: the struct contains only
+	// primitive types (string, int) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -44,7 +56,7 @@ func completeBackupTask(ctx context.Context, task *models.Task, deps *HandlerDep
 
 	logger.Info("backup.create task completed successfully",
 		"backup_id", backup.ID,
-		"storage_backend", result["storage_backend"])
+		"storage_backend", result.StorageBackend)
 }
 
 // DefaultBackupConfig returns the default backup configuration.
@@ -153,13 +165,31 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 		}
 	}()
 
-	if storageBackend == storageBackendQCOW {
-		return handleQCOWBackupCreate(ctx, task, deps, vm, nodeID, payload, freezeSuccessful, frozenCount, logger)
+	backupCtx := &BackupHandlerContext{
+		Task:             task,
+		VM:               vm,
+		NodeID:           nodeID,
+		Payload:          payload,
+		FreezeSuccessful: freezeSuccessful,
+		FrozenCount:      frozenCount,
+		Logger:           logger,
 	}
-	return handleCephBackupCreate(ctx, task, deps, vm, nodeID, payload, freezeSuccessful, frozenCount, logger)
+
+	if storageBackend == storageBackendQCOW {
+		return handleQCOWBackupCreate(ctx, deps, backupCtx)
+	}
+	return handleCephBackupCreate(ctx, deps, backupCtx)
 }
 
-func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDeps, vm *models.VM, nodeID string, payload BackupCreatePayload, freezeSuccessful bool, frozenCount int, logger *slog.Logger) error {
+func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *BackupHandlerContext) error {
+	task := backupCtx.Task
+	vm := backupCtx.VM
+	nodeID := backupCtx.NodeID
+	payload := backupCtx.Payload
+	freezeSuccessful := backupCtx.FreezeSuccessful
+	frozenCount := backupCtx.FrozenCount
+	logger := backupCtx.Logger
+
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Creating QCOW snapshot..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
@@ -233,22 +263,29 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		return fmt.Errorf("creating backup record: %w", err)
 	}
 
-	result := map[string]any{
-		"backup_id":          backup.ID,
-		"vm_id":              payload.VMID,
-		"snapshot_name":      snapshotName,
-		"file_path":          backupFilePath,
-		"size_bytes":         sizeBytes,
-		"consistency":        backupConsistency,
-		"frozen_filesystems": frozenCount,
-		"storage_backend":    storageBackendQCOW,
+	result := BackupCreateResult{
+		BackupID:          backup.ID,
+		VMID:              payload.VMID,
+		SnapshotName:      snapshotName,
+		Filepath:          backupFilePath,
+		SizeBytes:         sizeBytes,
+		Consistency:       backupConsistency,
+		FrozenFilesystems: frozenCount,
+		StorageBackend:    storageBackendQCOW,
 	}
 	completeBackupTask(ctx, task, deps, backup, result, logger)
 
 	return nil
 }
 
-func handleCephBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDeps, vm *models.VM, nodeID string, payload BackupCreatePayload, freezeSuccessful bool, frozenCount int, logger *slog.Logger) error {
+func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *BackupHandlerContext) error {
+	task := backupCtx.Task
+	nodeID := backupCtx.NodeID
+	payload := backupCtx.Payload
+	freezeSuccessful := backupCtx.FreezeSuccessful
+	frozenCount := backupCtx.FrozenCount
+	logger := backupCtx.Logger
+
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Creating disk snapshot..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
@@ -326,15 +363,15 @@ func handleCephBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		return fmt.Errorf("creating backup record: %w", err)
 	}
 
-	result := map[string]any{
-		"backup_id":          backup.ID,
-		"vm_id":              payload.VMID,
-		"snapshot_name":      snapshotResp.RBDSnapshotName,
-		"storage_path":       storagePath,
-		"size_bytes":         snapshotResp.SizeBytes,
-		"consistency":        backupConsistency,
-		"frozen_filesystems": frozenCount,
-		"storage_backend":    storageBackendCeph,
+	result := BackupCreateResult{
+		BackupID:          backup.ID,
+		VMID:              payload.VMID,
+		SnapshotName:      snapshotResp.RBDSnapshotName,
+		StoragePath:       storagePath,
+		SizeBytes:         snapshotResp.SizeBytes,
+		Consistency:       backupConsistency,
+		FrozenFilesystems: frozenCount,
+		StorageBackend:    storageBackendCeph,
 	}
 	completeBackupTask(ctx, task, deps, backup, result, logger)
 

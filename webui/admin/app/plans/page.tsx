@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -14,33 +13,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Server,
-  Plus,
-  Search,
-  Edit,
-  Trash2,
-  Cpu,
-  MemoryStick,
-  HardDrive,
-  Network,
-  DollarSign,
-  Loader2,
-  Camera,
-  Archive,
-  Disc,
-} from "lucide-react";
-import { adminPlansApi, type Plan, type UpdatePlanRequest } from "@/lib/api-client";
+import { Server, Plus, Search, Loader2 } from "lucide-react";
+import { adminPlansApi, type Plan } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
+import { PlanEditDialog, EditPlanFormData } from "@/components/plans/PlanEditDialog";
+import { PlanList } from "@/components/plans/PlanList";
+
+type DialogAction = "edit" | "delete" | null;
 
 function getStatusBadge(status: Plan["status"]) {
   const labels = {
@@ -66,8 +46,6 @@ function formatMemory(mb: number) {
   return `${mb} MB`;
 }
 
-type DialogAction = "edit" | "delete" | null;
-
 export default function PlansPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -78,8 +56,6 @@ export default function PlansPage() {
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
-
-  const [editForm, setEditForm] = useState<UpdatePlanRequest>({});
 
   useEffect(() => {
     async function loadPlans() {
@@ -106,11 +82,6 @@ export default function PlansPage() {
 
   const handleEdit = (plan: Plan) => {
     setSelectedPlan(plan);
-    setEditForm({
-      snapshot_limit: plan.snapshot_limit,
-      backup_limit: plan.backup_limit,
-      iso_upload_limit: plan.iso_upload_limit,
-    });
     setDialogAction("edit");
     setDialogOpen(true);
   };
@@ -121,46 +92,42 @@ export default function PlansPage() {
     setDialogOpen(true);
   };
 
-  const handleConfirmAction = async () => {
-    if (!dialogAction) return;
-
-    if (dialogAction === "edit" && selectedPlan) {
-      setSaving(true);
-      try {
-        const updated = await adminPlansApi.updatePlan(selectedPlan.id, editForm);
-        toast({
-          title: "Plan Updated",
-          description: `Plan "${selectedPlan.name}" limits updated successfully.`,
-        });
-        setPlans((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
-        setDialogOpen(false);
-      } catch (err) {
-        toast({
-          title: "Update Failed",
-          description: err instanceof Error ? err.message : "Failed to update plan",
-          variant: "destructive",
-        });
-      } finally {
-        setSaving(false);
-      }
-    } else if (dialogAction === "delete" && selectedPlan) {
-      setDialogOpen(false);
-      try {
-        await adminPlansApi.deletePlan(selectedPlan.id);
-        toast({
-          title: "Plan Deleted",
-          description: `Plan "${selectedPlan.name}" has been permanently deleted.`,
-        });
-        setPlans((prev) => prev.filter((p) => p.id !== selectedPlan.id));
-      } catch (error) {
-        toast({
-          title: "Action Failed",
-          description: error instanceof Error ? error.message : "Failed to delete plan",
-          variant: "destructive",
-        });
-      }
+  const handleSaveEdit = async (data: EditPlanFormData) => {
+    if (!selectedPlan) return;
+    setSaving(true);
+    try {
+      const updated = await adminPlansApi.updatePlan(selectedPlan.id, {
+        snapshot_limit: data.snapshot_limit,
+        backup_limit: data.backup_limit,
+        iso_upload_limit: data.iso_upload_limit,
+      });
+      toast({
+        title: "Plan Updated",
+        description: `Plan "${selectedPlan.name}" limits updated successfully.`,
+      });
+      setPlans((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+    } finally {
+      setSaving(false);
     }
+  };
 
+  const handleDeletePlan = async () => {
+    if (!selectedPlan) return;
+    try {
+      await adminPlansApi.deletePlan(selectedPlan.id);
+      toast({
+        title: "Plan Deleted",
+        description: `Plan "${selectedPlan.name}" has been permanently deleted.`,
+      });
+      setPlans((prev) => prev.filter((p) => p.id !== selectedPlan.id));
+      setDialogOpen(false);
+    } catch (error) {
+      toast({
+        title: "Action Failed",
+        description: error instanceof Error ? error.message : "Failed to delete plan",
+        variant: "destructive",
+      });
+    }
     setSelectedPlan(null);
     setDialogAction(null);
   };
@@ -225,112 +192,14 @@ export default function PlansPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>vCPU</TableHead>
-                    <TableHead>Memory</TableHead>
-                    <TableHead>Disk</TableHead>
-                    <TableHead>Bandwidth</TableHead>
-                    <TableHead>Price/Month</TableHead>
-                    <TableHead className="text-center">Snapshots</TableHead>
-                    <TableHead className="text-center">Backups</TableHead>
-                    <TableHead className="text-center">ISOs</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredPlans.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={11} className="h-24 text-center">
-                        No plans found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredPlans.map((plan) => (
-                      <TableRow key={plan.id}>
-                        <TableCell>
-                          <div className="font-medium">{plan.name}</div>
-                        </TableCell>
-                        <TableCell>{getStatusBadge(plan.status)}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Cpu className="h-4 w-4 text-muted-foreground" />
-                            <span>{plan.vcpu}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <MemoryStick className="h-4 w-4 text-muted-foreground" />
-                            <span>{formatMemory(plan.memory_mb)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <HardDrive className="h-4 w-4 text-muted-foreground" />
-                            <span>{plan.disk_gb} GB</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Network className="h-4 w-4 text-muted-foreground" />
-                            <span>{plan.bandwidth_mbps} Mbps</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 font-semibold text-foreground">
-                            <DollarSign className="h-4 w-4 text-muted-foreground" />
-                            <span>{formatPrice(plan.price_monthly)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <Camera className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>{plan.snapshot_limit ?? 2}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <Archive className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>{plan.backup_limit ?? 2}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <Disc className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>{plan.iso_upload_limit ?? 2}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleEdit(plan)}
-                            >
-                              <Edit className="mr-1 h-3 w-3" />
-                              Edit
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openConfirmDialog(plan, "delete")}
-                              className="text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="mr-1 h-3 w-3" />
-                              Delete
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            <PlanList
+              plans={filteredPlans}
+              onEdit={handleEdit}
+              onDelete={(plan) => openConfirmDialog(plan, "delete")}
+              getStatusBadge={getStatusBadge}
+              formatMemory={formatMemory}
+              formatPrice={formatPrice}
+            />
           </CardContent>
         </Card>
 
@@ -379,104 +248,32 @@ export default function PlansPage() {
         </div>
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className={dialogAction === "edit" ? "sm:max-w-lg" : ""}>
+      <PlanEditDialog
+        open={dialogOpen && dialogAction === "edit"}
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) { setSelectedPlan(null); setDialogAction(null); }}}
+        plan={selectedPlan}
+        onSave={handleSaveEdit}
+        isSaving={saving}
+      />
+
+      {/* Delete Dialog */}
+      <Dialog open={dialogOpen && dialogAction === "delete"} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setSelectedPlan(null); setDialogAction(null); }}}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {dialogAction === "edit" && selectedPlan
-                ? `Edit Plan: ${selectedPlan.name}`
-                : dialogAction === "delete" && selectedPlan
-                  ? "Delete Plan"
-                  : ""}
-            </DialogTitle>
+            <DialogTitle>Delete Plan</DialogTitle>
             <DialogDescription>
-              {dialogAction === "edit" && selectedPlan
-                ? "Modify resource limits per VM for this plan."
-                : dialogAction === "delete" && selectedPlan
-                  ? `Are you sure you want to permanently delete plan "${selectedPlan.name}"? This action cannot be undone.`
-                  : ""}
+              Are you sure you want to permanently delete plan &quot;{selectedPlan?.name}&quot;? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
-
-          {dialogAction === "edit" && selectedPlan && (
-            <div className="grid gap-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="snapshot_limit" className="flex items-center gap-2">
-                  <Camera className="h-4 w-4 text-muted-foreground" />
-                  Snapshot Limit
-                </Label>
-                <Input
-                  id="snapshot_limit"
-                  type="number"
-                  min={0}
-                  value={editForm.snapshot_limit ?? selectedPlan.snapshot_limit ?? 2}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      snapshot_limit: parseInt(e.target.value) || 0,
-                    }))
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum snapshots per VM (0 = unlimited)
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="backup_limit" className="flex items-center gap-2">
-                  <Archive className="h-4 w-4 text-muted-foreground" />
-                  Backup Limit
-                </Label>
-                <Input
-                  id="backup_limit"
-                  type="number"
-                  min={0}
-                  value={editForm.backup_limit ?? selectedPlan.backup_limit ?? 2}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      backup_limit: parseInt(e.target.value) || 0,
-                    }))
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum backups per VM (0 = unlimited)
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="iso_upload_limit" className="flex items-center gap-2">
-                  <Disc className="h-4 w-4 text-muted-foreground" />
-                  ISO Upload Limit
-                </Label>
-                <Input
-                  id="iso_upload_limit"
-                  type="number"
-                  min={0}
-                  value={editForm.iso_upload_limit ?? selectedPlan.iso_upload_limit ?? 2}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      iso_upload_limit: parseInt(e.target.value) || 0,
-                    }))
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum ISO uploads per VM (0 = unlimited)
-                </p>
-              </div>
-            </div>
-          )}
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
             <Button
-              variant={dialogAction === "delete" ? "destructive" : "default"}
-              onClick={handleConfirmAction}
-              disabled={saving}
+              variant="destructive"
+              onClick={handleDeletePlan}
             >
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {dialogAction === "delete" ? "Delete" : "Save Changes"}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

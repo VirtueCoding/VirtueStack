@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"embed"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -19,6 +20,20 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
+
+//go:embed templates/*.html
+var templateFS embed.FS
+
+// templateNames is the list of email content templates to load.
+var templateNames = []string{
+	"vm-created",
+	"vm-deleted",
+	"vm-suspended",
+	"backup-failed",
+	"node-offline",
+	"bandwidth-exceeded",
+	"default",
+}
 
 // EmailConfig holds configuration for the email provider.
 type EmailConfig struct {
@@ -115,173 +130,29 @@ func NewEmailProvider(config EmailConfig, logger *slog.Logger) (*EmailProvider, 
 	return provider, nil
 }
 
-// loadTemplates loads email templates from the templates directory.
+// loadTemplates loads email templates from embedded files.
 func (p *EmailProvider) loadTemplates() error {
 	p.templateMu.Lock()
 	defer p.templateMu.Unlock()
 
-	// Define base template with common layout
-	baseTemplate := `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Subject}}</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 0;">
-        <tr>
-            <td align="center">
-                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    <!-- Header -->
-                    <tr>
-                        <td style="padding: 32px 40px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); border-radius: 8px 8px 0 0;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">VirtueStack</h1>
-                        </td>
-                    </tr>
-                    <!-- Content -->
-                    <tr>
-                        <td style="padding: 40px;">
-                            {{template "content" .}}
-                        </td>
-                    </tr>
-                    <!-- Footer -->
-                    <tr>
-                        <td style="padding: 24px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
-                            <p style="margin: 0; color: #6b7280; font-size: 14px;">
-                                © {{.Year}} VirtueStack. All rights reserved.
-                            </p>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>`
-
-	// Define template content for each event type
-	templateContents := map[string]string{
-		"vm-created": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">🎉 Your VM is Ready!</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your virtual machine has been successfully created and is now ready for use.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #f3f4f6; border-radius: 4px;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">VM Hostname</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">You can access your VM through the <a href="#" style="color: #4f46e5;">customer portal</a>.</p>
-{{end}}`,
-
-		"vm-deleted": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">🗑️ VM Deleted</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your virtual machine has been successfully deleted as requested.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #fef2f2; border-radius: 4px; border-left: 4px solid #ef4444;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">Deleted VM</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">All associated data has been permanently removed. If this was unexpected, please contact support immediately.</p>
-{{end}}`,
-
-		"vm-suspended": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">⏸️ VM Suspended</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your virtual machine has been suspended.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #fffbeb; border-radius: 4px; border-left: 4px solid #f59e0b;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">Suspended VM</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
-            {{if .Data.reason}}<p style="margin: 8px 0 0 0; color: #92400e; font-size: 14px;"><strong>Reason:</strong> {{.Data.reason}}</p>{{end}}
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">Please contact support to resolve this issue.</p>
-{{end}}`,
-
-		"backup-failed": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">⚠️ Backup Failed</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">A backup operation for your virtual machine has failed.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #fef2f2; border-radius: 4px; border-left: 4px solid #ef4444;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">VM</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
-            {{if .Data.error}}<p style="margin: 8px 0 0 0; color: #dc2626; font-size: 14px;"><strong>Error:</strong> {{.Data.error}}</p>{{end}}
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">Our team has been notified and will investigate. You may retry the backup from the control panel.</p>
-{{end}}`,
-
-		"node-offline": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">🔴 Node Offline Alert</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">A hypervisor node has gone offline. This may affect VM availability.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #fef2f2; border-radius: 4px; border-left: 4px solid #ef4444;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">Node</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.node_name}}</p>
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">Our infrastructure team has been notified and is working to restore service.</p>
-{{end}}`,
-
-		"bandwidth-exceeded": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">📊 Bandwidth Limit Exceeded</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your VM has exceeded its monthly bandwidth allocation.</p>
-<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
-    <tr>
-        <td style="padding: 12px 16px; background-color: #fffbeb; border-radius: 4px; border-left: 4px solid #f59e0b;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">VM</p>
-            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
-            <p style="margin: 8px 0 0 0; color: #374151; font-size: 14px;"><strong>Used:</strong> {{.Data.used_gb}} GB / <strong>Limit:</strong> {{.Data.limit_gb}} GB</p>
-        </td>
-    </tr>
-</table>
-<p style="margin: 0; color: #374151; font-size: 16px;">Your network speed may be throttled until the next billing cycle. Consider upgrading your plan for more bandwidth.</p>
-{{end}}`,
-
-		"default": `
-{{define "content"}}
-<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">Notification</h2>
-<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
-<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">You have a new notification from VirtueStack.</p>
-{{end}}`,
+	baseContent, err := templateFS.ReadFile("templates/base.html")
+	if err != nil {
+		return fmt.Errorf("reading base template: %w", err)
 	}
 
-	// Parse base template
-	tmpl, err := template.New("base").Parse(baseTemplate)
+	tmpl, err := template.New("base").Parse(string(baseContent))
 	if err != nil {
 		return fmt.Errorf("parsing base template: %w", err)
 	}
 
-	// Add content templates
-	for name, content := range templateContents {
-		_, err := tmpl.New(name).Parse(content)
+	for _, name := range templateNames {
+		content, err := templateFS.ReadFile("templates/" + name + ".html")
 		if err != nil {
-			p.logger.Warn("failed to parse template",
-				"template", name,
-				"error", err)
+			p.logger.Warn("failed to read template file", "template", name, "error", err)
+			continue
+		}
+		if _, err := tmpl.New(name).Parse(string(content)); err != nil {
+			p.logger.Warn("failed to parse template", "template", name, "error", err)
 		}
 	}
 

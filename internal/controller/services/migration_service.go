@@ -72,150 +72,158 @@ type MigrateVMResult struct {
 // publishes a migration task, and updates the VM status.
 // This is an async operation - use the returned task ID to poll for status.
 func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest, adminID string) (*MigrateVMResult, error) {
-	// 1. Retrieve and validate the VM
-	vm, err := s.vmRepo.GetByID(ctx, req.VMID)
+	// 1. Validate VM state for migration
+	vm, sourceNodeID, err := s.validateVMState(ctx, req.VMID, req.Live)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("VM not found: %s", req.VMID)
-		}
-		return nil, fmt.Errorf("getting VM: %w", err)
+		return nil, err
 	}
 
-	// 2. Check if VM is deleted
-	if vm.IsDeleted() {
-		return nil, fmt.Errorf("VM has been deleted")
-	}
-
-	// 3. Verify VM has a node assigned
-	if vm.NodeID == nil {
-		return nil, fmt.Errorf("VM has no source node assigned")
-	}
-	sourceNodeID := *vm.NodeID
-
-	// 4. Verify VM is in a state that allows migration
-	// For live migration, VM must be running
-	// For non-live migration, VM must be running or stopped
-	switch vm.Status {
-	case models.VMStatusRunning:
-		// Running VMs can be migrated (live or paused)
-	case models.VMStatusStopped:
-		// Stopped VMs can be migrated (offline migration)
-		if req.Live {
-			return nil, fmt.Errorf("cannot perform live migration on a stopped VM")
-		}
-	case models.VMStatusMigrating:
-		return nil, fmt.Errorf("VM is already migrating")
-	case models.VMStatusProvisioning, models.VMStatusReinstalling:
-		return nil, fmt.Errorf("cannot migrate VM in status %s", vm.Status)
-	case models.VMStatusSuspended:
-		// Suspended VMs can be migrated as offline migration
-		if req.Live {
-			return nil, fmt.Errorf("cannot perform live migration on a suspended VM")
-		}
-	default:
-		return nil, fmt.Errorf("VM status %s does not support migration", vm.Status)
-	}
-
-	// 5. Get the source node for validation
+	// 2. Get the source node for validation
 	sourceNode, err := s.nodeRepo.GetByID(ctx, sourceNodeID)
 	if err != nil {
 		return nil, fmt.Errorf("getting source node: %w", err)
 	}
 
-	// 6. Determine target node
+	// 3. Determine target node
+	targetNode, err := s.resolveTargetNode(ctx, req, sourceNodeID, vm)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Prepare and execute migration
+	return s.executeMigration(ctx, vm, sourceNode, targetNode, req.Live, adminID)
+}
+
+// validateVMState retrieves a VM and validates it's in a state suitable for migration.
+// Returns the VM, source node ID, and any validation error.
+func (s *MigrationService) validateVMState(ctx context.Context, vmID string, live bool) (*models.VM, string, error) {
+	vm, err := s.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, "", fmt.Errorf("VM not found: %s", vmID)
+		}
+		return nil, "", fmt.Errorf("getting VM: %w", err)
+	}
+
+	if vm.IsDeleted() {
+		return nil, "", fmt.Errorf("VM has been deleted")
+	}
+
+	if vm.NodeID == nil {
+		return nil, "", fmt.Errorf("VM has no source node assigned")
+	}
+
+	if err := s.validateVMStatusForMigration(vm.Status, live); err != nil {
+		return nil, "", err
+	}
+
+	return vm, *vm.NodeID, nil
+}
+
+// validateVMStatusForMigration checks if a VM status allows migration.
+func (s *MigrationService) validateVMStatusForMigration(status string, live bool) error {
+	switch status {
+	case models.VMStatusRunning:
+		return nil
+	case models.VMStatusStopped:
+		if live {
+			return fmt.Errorf("cannot perform live migration on a stopped VM")
+		}
+		return nil
+	case models.VMStatusMigrating:
+		return fmt.Errorf("VM is already migrating")
+	case models.VMStatusProvisioning, models.VMStatusReinstalling:
+		return fmt.Errorf("cannot migrate VM in status %s", status)
+	case models.VMStatusSuspended:
+		if live {
+			return fmt.Errorf("cannot perform live migration on a suspended VM")
+		}
+		return nil
+	default:
+		return fmt.Errorf("VM status %s does not support migration", status)
+	}
+}
+
+// resolveTargetNode determines the target node for migration.
+func (s *MigrationService) resolveTargetNode(ctx context.Context, req *MigrateVMRequest, sourceNodeID string, vm *models.VM) (*models.Node, error) {
 	var targetNode *models.Node
+	var err error
+
 	if req.TargetNodeID != nil {
-		// Validate explicit target node
 		targetNode, err = s.validateTargetNode(ctx, *req.TargetNodeID, sourceNodeID, vm)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// Find best available target node
 		targetNode, err = s.findBestTargetNode(ctx, sourceNodeID, vm)
 		if err != nil {
 			return nil, fmt.Errorf("finding target node: %w", err)
 		}
 	}
 
-	// 7. Check target node has sufficient resources
 	if err := s.checkNodeCapacity(targetNode, vm); err != nil {
 		return nil, fmt.Errorf("target node capacity check failed: %w", err)
 	}
 
-	// 8. Determine VM's storage backend (immutable, set at creation time)
+	return targetNode, nil
+}
+
+// executeMigration prepares and publishes the migration task.
+func (s *MigrationService) executeMigration(ctx context.Context, vm *models.VM, sourceNode, targetNode *models.Node, live bool, adminID string) (*MigrateVMResult, error) {
 	vmStorageBackend := s.getNodeStorageBackend(vm)
+	migrationStrategy := s.determineMigrationStrategy(vmStorageBackend, live)
 
-	// 9. Determine migration strategy based on VM's storage backend
-	migrationStrategy := s.determineMigrationStrategy(vmStorageBackend, req.Live)
-
-	// 10. Validate storage backend compatibility
-	// A VM's storage backend is immutable — it cannot be migrated to a different backend
 	if err := s.validateStorageBackend(vmStorageBackend); err != nil {
 		return nil, fmt.Errorf("storage backend validation failed: %w", err)
 	}
 
-	// 11. Get storage paths for disk copy operations
 	sourceDiskPath := s.getVMDiskPath(vm, sourceNode)
 	targetDiskPath := s.getVMDiskPathForTarget(vm, targetNode)
 
-	s.logger.Info("migration strategy determined",
-		"vm_id", vm.ID,
-		"storage_backend", vmStorageBackend,
-		"strategy", migrationStrategy,
-		"source_disk", sourceDiskPath,
-		"target_disk", targetDiskPath)
+	s.logger.Info("migration strategy determined", "vm_id", vm.ID, "storage_backend", vmStorageBackend, "strategy", migrationStrategy, "source_disk", sourceDiskPath, "target_disk", targetDiskPath)
 
-	// 12. Update VM status to migrating before publishing task
+	preMigrationStatus := vm.Status
 	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusMigrating); err != nil {
 		return nil, fmt.Errorf("updating VM status to migrating: %w", err)
 	}
 
-	// 13. Publish migration task with storage-aware payload
-	taskPayload := map[string]any{
+	taskPayload := s.buildMigrationPayload(vm, sourceNode, targetNode, vmStorageBackend, migrationStrategy, sourceDiskPath, targetDiskPath, live, adminID, preMigrationStatus)
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
+	if err != nil {
+		_ = s.vmRepo.UpdateStatus(ctx, vm.ID, preMigrationStatus)
+		return nil, fmt.Errorf("publishing migration task: %w", err)
+	}
+
+	s.logger.Info("VM migration initiated", "vm_id", vm.ID, "task_id", taskID, "source_node_id", *vm.NodeID, "target_node_id", targetNode.ID, "strategy", migrationStrategy, "admin_id", adminID)
+
+	return &MigrateVMResult{TaskID: taskID, SourceNodeID: *vm.NodeID, TargetNodeID: targetNode.ID}, nil
+}
+
+// buildMigrationPayload constructs the task payload for a migration operation.
+func (s *MigrationService) buildMigrationPayload(vm *models.VM, sourceNode, targetNode *models.Node, storageBackend string, strategy tasks.MigrationStrategy, sourceDiskPath, targetDiskPath string, live bool, adminID string, preMigrationStatus string) map[string]any {
+	return map[string]any{
 		"vm_id":               vm.ID,
-		"source_node_id":      sourceNodeID,
+		"source_node_id":      *vm.NodeID,
 		"target_node_id":      targetNode.ID,
 		"hostname":            vm.Hostname,
 		"vcpu":                vm.VCPU,
 		"memory_mb":           vm.MemoryMB,
 		"disk_gb":             vm.DiskGB,
 		"mac_address":         vm.MACAddress,
-		"live":                req.Live,
+		"live":                live,
 		"source_ceph_pool":    sourceNode.CephPool,
 		"target_ceph_pool":    targetNode.CephPool,
 		"initiated_by":        adminID,
-		"pre_migration_state": vm.Status,
-		"storage_backend":     vmStorageBackend,
+		"pre_migration_state": preMigrationStatus,
+		"storage_backend":     storageBackend,
 		"source_storage_path": sourceNode.StoragePath,
 		"target_storage_path": targetNode.StoragePath,
-		"migration_strategy":  string(migrationStrategy),
+		"migration_strategy":  string(strategy),
 		"source_disk_path":    sourceDiskPath,
 		"target_disk_path":    targetDiskPath,
 		"disk_size_gb":        vm.DiskGB,
 	}
-
-	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
-	if err != nil {
-		// Revert status on failure
-		_ = s.vmRepo.UpdateStatus(ctx, vm.ID, vm.Status)
-		return nil, fmt.Errorf("publishing migration task: %w", err)
-	}
-
-	s.logger.Info("VM migration initiated",
-		"vm_id", vm.ID,
-		"task_id", taskID,
-		"source_node_id", sourceNodeID,
-		"target_node_id", targetNode.ID,
-		"live", req.Live,
-		"strategy", migrationStrategy,
-		"admin_id", adminID)
-
-	return &MigrateVMResult{
-		TaskID:       taskID,
-		SourceNodeID: sourceNodeID,
-		TargetNodeID: targetNode.ID,
-	}, nil
 }
 
 // getNodeStorageBackend returns the storage backend for a VM.
@@ -314,84 +322,69 @@ func (s *MigrationService) validateTargetNode(ctx context.Context, targetNodeID,
 // It selects the node with the most available capacity that is online
 // and in the same location as the source node (if applicable).
 func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID string, vm *models.VM) (*models.Node, error) {
-	// Get source node to determine location
 	sourceNode, err := s.nodeRepo.GetByID(ctx, sourceNodeID)
 	if err != nil {
 		return nil, fmt.Errorf("getting source node: %w", err)
 	}
 
-	// Get all online nodes
-	filter := models.NodeListFilter{
+	nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{
 		Status: util.StringPtr(models.NodeStatusOnline),
-		PaginationParams: models.PaginationParams{
-			Page:    1,
-			PerPage: models.MaxPerPage,
-		},
-	}
-
-	nodes, _, err := s.nodeRepo.List(ctx, filter)
+		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing online nodes: %w", err)
 	}
 
-	// Filter out the source node and nodes without capacity
+	candidates := s.filterCandidateNodes(nodes, sourceNodeID, vm)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no suitable target nodes available with sufficient capacity (need %d vCPU, %d MB RAM)", vm.VCPU, vm.MemoryMB)
+	}
+
+	return s.selectBestCandidate(candidates, sourceNode), nil
+}
+
+// filterCandidateNodes filters nodes with sufficient capacity for the VM.
+func (s *MigrationService) filterCandidateNodes(nodes []models.Node, sourceNodeID string, vm *models.VM) []models.Node {
 	var candidates []models.Node
 	for i := range nodes {
 		node := &nodes[i]
-
-		// Skip source node
 		if node.ID == sourceNodeID {
 			continue
 		}
-
-		// Prefer nodes in the same location for reduced network latency
-		// But don't require it - cross-location migration is possible
-		// Check if node has sufficient capacity
 		availableVCPU := node.TotalVCPU - node.AllocatedVCPU
 		availableMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
-
 		if availableVCPU >= vm.VCPU && availableMemory >= vm.MemoryMB {
 			candidates = append(candidates, *node)
 		}
 	}
+	return candidates
+}
 
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no suitable target nodes available with sufficient capacity (need %d vCPU, %d MB RAM)",
-			vm.VCPU, vm.MemoryMB)
-	}
+// selectBestCandidate selects the best node from candidates based on scoring.
+func (s *MigrationService) selectBestCandidate(candidates []models.Node, sourceNode *models.Node) *models.Node {
+	var bestNode *models.Node
+	bestScore := -1
 
-	// Score candidates: prefer same location, then most available capacity
-	type scoredNode struct {
-		node  models.Node
-		score int
-	}
-
-	scored := make([]scoredNode, 0, len(candidates))
-	for _, node := range candidates {
-		score := 0
-
-		// Bonus for same location
-		if sourceNode.LocationID != nil && node.LocationID != nil && *sourceNode.LocationID == *node.LocationID {
-			score += 1000
-		}
-
-		// Score by available memory (normalized to 0-999 range)
-		availableMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
-		score += (availableMemory * 999) / node.TotalMemoryMB
-
-		// Prefer nodes with fewer VMs for better load distribution
-		scored = append(scored, scoredNode{node: node, score: score})
-	}
-
-	// Find best candidate
-	best := scored[0]
-	for i := 1; i < len(scored); i++ {
-		if scored[i].score > best.score {
-			best = scored[i]
+	for i := range candidates {
+		node := &candidates[i]
+		score := s.scoreNode(node, sourceNode)
+		if score > bestScore {
+			bestScore = score
+			bestNode = node
 		}
 	}
+	return bestNode
+}
 
-	return &best.node, nil
+// scoreNode calculates a score for a node based on capacity and location.
+func (s *MigrationService) scoreNode(node, sourceNode *models.Node) int {
+	score := 0
+	if sourceNode.LocationID != nil && node.LocationID != nil && *sourceNode.LocationID == *node.LocationID {
+		score += 1000
+	}
+	availableMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
+	score += (availableMemory * 999) / node.TotalMemoryMB
+	return score
 }
 
 // checkNodeCapacity verifies that a node has sufficient resources for a VM.

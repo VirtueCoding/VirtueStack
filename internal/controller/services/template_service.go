@@ -18,6 +18,10 @@ const (
 	StorageBackendCeph = "ceph"
 	// StorageBackendQcow indicates local QCOW2 file-based storage.
 	StorageBackendQcow = "qcow"
+	// DefaultMinDiskGB is the default minimum disk size in GB for templates.
+	DefaultMinDiskGB = 10
+	// MinDiskSizeOverheadFactor is the multiplier applied to the actual template size.
+	MinDiskSizeOverheadFactor = 1.2
 )
 
 // TemplateStorage abstracts storage operations for template images.
@@ -206,12 +210,12 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 		return nil, fmt.Errorf("importing template to storage: %w", err)
 	}
 
-	minDiskGB := 10
+	minDiskGB := DefaultMinDiskGB
 	sizeBytes, err := storage.GetTemplateSize(ctx, templateRef, snapshotRef)
 	if err == nil && sizeBytes > 0 {
-		minDiskGB = int(float64(sizeBytes) / (1024 * 1024 * 1024) * 1.2)
-		if minDiskGB < 10 {
-			minDiskGB = 10
+		minDiskGB = int(float64(sizeBytes) / (1024 * 1024 * 1024) * MinDiskSizeOverheadFactor)
+		if minDiskGB < DefaultMinDiskGB {
+			minDiskGB = DefaultMinDiskGB
 		}
 	}
 

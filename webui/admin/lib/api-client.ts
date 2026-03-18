@@ -1,12 +1,8 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 // AdminUser represents the identity of the currently authenticated admin.
-// The id and email fields are populated from sessionStorage (set at login time)
-// and trusted only after server-side session validation via me().
-//
-// TODO: When a dedicated GET /admin/auth/me endpoint is added to the backend,
-// update me() to fetch the user object from the server instead of relying on
-// the cached sessionStorage copy.
+// The fields are populated from the server via GET /admin/auth/me endpoint,
+// which is used for lightweight session validation.
 export interface AdminUser {
   id: string;
   email: string;
@@ -101,10 +97,47 @@ async function parseError(response: Response): Promise<ApiClientError> {
   return new ApiClientError(message, code, response.status, correlationId);
 }
 
+/**
+ * Options for API requests that expect a response body (default behavior).
+ */
+interface JsonRequestOptions extends RequestInit {
+  /** Set to true when expecting HTTP 204 No Content response */
+  expectNoContent?: false;
+}
+
+/**
+ * Options for API requests that expect no response body (HTTP 204 No Content).
+ */
+interface VoidRequestOptions extends RequestInit {
+  /** Must be true - indicates the endpoint returns HTTP 204 No Content */
+  expectNoContent: true;
+}
+
+/**
+ * Fetches an API endpoint that returns HTTP 204 No Content.
+ * Use this overload when the endpoint returns no response body.
+ */
+export async function apiRequest(
+  endpoint: string,
+  options: VoidRequestOptions,
+): Promise<void>;
+
+/**
+ * Fetches an API endpoint and returns the response body as type T.
+ * Use this overload for endpoints that return JSON data.
+ */
 export async function apiRequest<T>(
   endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+  options?: JsonRequestOptions,
+): Promise<T>;
+
+/**
+ * Internal implementation - do not call directly, use the typed overloads above.
+ */
+export async function apiRequest<T>(
+  endpoint: string,
+  options: (JsonRequestOptions | VoidRequestOptions) = {},
+): Promise<T | void> {
   const url = `${API_BASE_URL}${endpoint}`;
   const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
     (options.method || "GET").toUpperCase()
@@ -142,7 +175,9 @@ export async function apiRequest<T>(
     }
 
     if (response.status === 204) {
-      return undefined as unknown as T;
+      // HTTP 204 No Content - return void. This is type-safe when called with
+      // expectNoContent: true, as the overload resolves to Promise<void>.
+      return;
     }
 
     const data = await response.json();
@@ -164,6 +199,15 @@ export const apiClient = {
     );
   },
 
+  /** POST request expecting no response body (HTTP 204 No Content) */
+  postVoid(endpoint: string, body: unknown): Promise<void> {
+    return apiRequest(endpoint, {
+      method: "POST",
+      body: JSON.stringify(body),
+      expectNoContent: true,
+    });
+  },
+
   put<T>(endpoint: string, body: unknown): Promise<T> {
     return apiRequest<T>(
       endpoint,
@@ -180,6 +224,11 @@ export const apiClient = {
 
   delete<T>(endpoint: string): Promise<T> {
     return apiRequest<T>(endpoint, { method: "DELETE" });
+  },
+
+  /** DELETE request expecting no response body (HTTP 204 No Content) */
+  deleteVoid(endpoint: string): Promise<void> {
+    return apiRequest(endpoint, { method: "DELETE", expectNoContent: true });
   },
 };
 
@@ -223,7 +272,7 @@ export const adminAuthApi = {
 
   async logout(): Promise<void> {
     try {
-      await apiClient.post("/admin/auth/logout", {});
+      await apiClient.postVoid("/admin/auth/logout", {});
     } catch (err) {
       // Logout errors are non-fatal — session may already be invalid.
       // Log for debugging but don't propagate to prevent UI from hanging.
@@ -232,25 +281,17 @@ export const adminAuthApi = {
     tokenValidUntil = 0;
   },
 
-  // me() validates the current session against the server by calling the
-  // refresh endpoint.  If the refresh succeeds the session is live and new
-  // access/refresh cookies are issued.  Returns the user identity sourced
-  // from the cached sessionStorage value (passed as `cachedUser`) because
-  // the refresh endpoint returns token metadata only, not user identity.
+  // me() fetches the current authenticated admin user's identity from the server.
+  // This is a lightweight endpoint (GET /admin/auth/me) that returns only the
+  // essential user fields (id, email, role). Use this for session validation
+  // instead of heavy endpoints like getNodes().
   //
-  // Returns null when the session is invalid (401/403) or no cached user
-  // exists, so callers can clear local state and redirect to login.
-  //
-  // TODO: Replace with a dedicated GET /admin/auth/me endpoint that returns
-  // the authoritative user object from the server, eliminating the reliance
-  // on the sessionStorage-cached AdminUser for identity post-validation.
-  async me(cachedUser: AdminUser | null): Promise<AdminUser | null> {
+  // Returns null when the session is invalid (401/403), so callers can clear
+  // local state and redirect to login.
+  async me(): Promise<AdminUser | null> {
     try {
-      // Use the refresh endpoint as a session-validation probe.  A 200 means
-      // the HttpOnly refresh-token cookie is valid; a 401 means it is not.
-      await adminAuthApi.refreshToken();
-      // Session is confirmed live.  Return the cached identity if available.
-      return cachedUser ?? null;
+      const user = await apiClient.get<AdminUser>("/admin/auth/me");
+      return user;
     } catch (err) {
       if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
         return null;
@@ -321,15 +362,15 @@ export const adminNodesApi = {
   },
 
   async deleteNode(id: string): Promise<void> {
-    return apiClient.delete<void>(`/admin/nodes/${id}`);
+    return apiClient.deleteVoid(`/admin/nodes/${id}`);
   },
 
   async drainNode(id: string): Promise<void> {
-    return apiClient.post<void>(`/admin/nodes/${id}/drain`, {});
+    return apiClient.postVoid(`/admin/nodes/${id}/drain`, {});
   },
 
   async failoverNode(id: string): Promise<void> {
-    return apiClient.post<void>(`/admin/nodes/${id}/failover`, {});
+    return apiClient.postVoid(`/admin/nodes/${id}/failover`, {});
   },
 };
 
@@ -348,15 +389,15 @@ export const adminCustomersApi = {
   },
 
   async suspendCustomer(id: string): Promise<void> {
-    return apiClient.post<void>(`/admin/customers/${id}/suspend`, {});
+    return apiClient.postVoid(`/admin/customers/${id}/suspend`, {});
   },
 
   async unsuspendCustomer(id: string): Promise<void> {
-    return apiClient.post<void>(`/admin/customers/${id}/unsuspend`, {});
+    return apiClient.postVoid(`/admin/customers/${id}/unsuspend`, {});
   },
 
   async deleteCustomer(id: string): Promise<void> {
-    return apiClient.delete<void>(`/admin/customers/${id}`);
+    return apiClient.deleteVoid(`/admin/customers/${id}`);
   },
 };
 
@@ -409,7 +450,7 @@ export const adminPlansApi = {
   },
 
   async deletePlan(id: string): Promise<void> {
-    return apiClient.delete<void>(`/admin/plans/${id}`);
+    return apiClient.deleteVoid(`/admin/plans/${id}`);
   },
 
   async createPlan(plan: CreatePlanRequest): Promise<Plan> {
@@ -467,7 +508,7 @@ export const adminVMsApi = {
   },
 
   async deleteVM(id: string): Promise<void> {
-    return apiClient.delete<void>(`/admin/vms/${id}`);
+    return apiClient.deleteVoid(`/admin/vms/${id}`);
   },
 
   async migrateVM(id: string, data: { target_node_id: string }): Promise<{ message: string }> {
@@ -520,7 +561,7 @@ export const adminTemplatesApi = {
   },
 
   async deleteTemplate(id: string): Promise<void> {
-    return apiClient.delete<void>(`/admin/templates/${id}`);
+    return apiClient.deleteVoid(`/admin/templates/${id}`);
   },
 
   async importTemplate(id: string): Promise<{ message: string }> {

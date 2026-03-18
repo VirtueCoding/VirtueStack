@@ -262,7 +262,7 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 }
 
 // verifySnapshotOwnership verifies that a VM belongs to the customer.
+// This is an alias for verifyVMOwnership for semantic clarity in snapshot contexts.
 func (h *CustomerHandler) verifySnapshotOwnership(ctx context.Context, vmID, customerID string) bool {
-	_, err := h.vmService.GetVM(ctx, vmID, customerID, false)
-	return err == nil
+	return h.verifyVMOwnership(ctx, vmID, customerID)
 }

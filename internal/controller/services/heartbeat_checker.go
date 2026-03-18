@@ -114,7 +114,7 @@ func (hc *HeartbeatChecker) checkAllNodes(ctx context.Context) {
 			}
 
 			newStatus := node.Status
-			if misses >= 3 && newStatus == models.NodeStatusOnline {
+			if misses >= FailoverHeartbeatThreshold && newStatus == models.NodeStatusOnline {
 				newStatus = models.NodeStatusDegraded
 				if err := hc.nodeRepo.UpdateStatus(ctx, node.ID, newStatus); err != nil {
 					hc.logger.Warn("failed to set node to degraded", "node_id", node.ID, "error", err)

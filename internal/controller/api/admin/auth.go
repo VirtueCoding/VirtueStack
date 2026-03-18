@@ -168,3 +168,42 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 	middleware.ClearAuthCookies(c, adminRefreshCookiePath)
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
+
+// MeResponse contains the current admin user's identity.
+// This is a lightweight response suitable for session validation.
+type MeResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+// Me returns the current authenticated admin user's identity.
+// This is a lightweight endpoint used for session validation that returns
+// only the essential user fields (id, email, role) without any heavy queries.
+// The user is identified from the JWT claims set by the JWTAuth middleware.
+func (h *AdminHandler) Me(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated")
+		return
+	}
+
+	admin, err := h.authService.GetAdminByID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Warn("failed to get admin for /me endpoint",
+			"user_id", userID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+
+		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve user identity")
+		return
+	}
+
+	resp := MeResponse{
+		ID:    admin.ID,
+		Email: admin.Email,
+		Role:  admin.Role,
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: resp})
+}

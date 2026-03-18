@@ -614,6 +614,7 @@ export const isoApi = {
 
       xhr.open("POST", url);
       xhr.withCredentials = true;
+      xhr.timeout = 600000; // 10 minute timeout for large ISO uploads
 
       if (csrfToken) {
         xhr.setRequestHeader("X-CSRF-Token", csrfToken);
@@ -644,6 +645,10 @@ export const isoApi = {
 
       xhr.onerror = () => {
         reject(new ApiClientError("Network error during upload", "NETWORK_ERROR", 0));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new ApiClientError("Upload timed out after 10 minutes", "TIMEOUT_ERROR", 0));
       };
 
       if (signal) {

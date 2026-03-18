@@ -1,0 +1,14 @@
+{{define "content"}}
+<h2 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">🎉 Your VM is Ready!</h2>
+<p style="margin: 0 0 16px 0; color: #374151; font-size: 16px;">Hello {{.CustomerName}},</p>
+<p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">Your virtual machine has been successfully created and is now ready for use.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; margin-bottom: 24px;">
+    <tr>
+        <td style="padding: 12px 16px; background-color: #f3f4f6; border-radius: 4px;">
+            <p style="margin: 0; color: #6b7280; font-size: 14px;">VM Hostname</p>
+            <p style="margin: 4px 0 0 0; color: #111827; font-size: 16px; font-weight: 600;">{{.Data.hostname}}</p>
+        </td>
+    </tr>
+</table>
+<p style="margin: 0; color: #374151; font-size: 16px;">You can access your VM through the <a href="#" style="color: #4f46e5;">customer portal</a>.</p>
+{{end}}

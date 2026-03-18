@@ -62,15 +62,22 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (25 files)
+├── migrations/                             # Database migrations (32 files)
 │   ├── 000001_initial_schema.up.sql
 │   ├── 000019_add_storage_backend.up.sql
 │   ├── 000020_add_failover_requests.up.sql
 │   ├── 000021_add_attached_iso.up.sql
 │   ├── 000022_add_missing_rls_and_grants.up.sql
 │   ├── 000023_audit_log_default_partition.up.sql
-│   ├── 000024_add_missing_indexes.up.sql
-│   └── 000025_add_plan_limits.up.sql
+│   ├── 000024_add_missing_indexes_and_constraints.up.sql
+│   ├── 000025_add_plan_limits.up.sql
+│   ├── 000026_drop_old_plan_limit_columns.up.sql
+│   ├── 000027_fix_webhook_idempotency_and_plan_price_constraints.up.sql
+│   ├── 000028_add_customer_table_rls.up.sql
+│   ├── 000029_add_tasks_status_created_at_index.up.sql
+│   ├── 000030_bandwidth_view_grants.up.sql
+│   ├── 000031_concurrent_indexes.up.sql
+│   └── 000032_plans_slug_not_null.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -200,6 +207,31 @@ CREATE POLICY customer_notification_events ON notification_events FOR ALL TO app
 ALTER TABLE password_resets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_password_resets ON password_resets FOR ALL TO app_customer
     USING (user_id = current_setting('app.current_customer_id')::UUID);
+
+-- Additional customer isolation policies (migration 000028)
+ALTER TABLE customer_api_keys ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_api_keys_isolation ON customer_api_keys FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+ALTER TABLE ip_addresses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_ip_addresses ON ip_addresses FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+ALTER TABLE backups ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_backups ON backups FOR ALL TO app_customer
+    USING (vm_id IN (SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID));
+
+ALTER TABLE snapshots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_snapshots ON snapshots FOR ALL TO app_customer
+    USING (vm_id IN (SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID));
+
+ALTER TABLE backup_schedules ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_backup_schedules ON backup_schedules FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_sessions ON sessions FOR ALL TO app_customer
+    USING (user_id = current_setting('app.current_customer_id')::UUID AND user_type = 'customer');
 ```
 
 ### 4.3 Key Migrations
@@ -223,8 +255,15 @@ CREATE POLICY customer_password_resets ON password_resets FOR ALL TO app_custome
 | 000021_add_attached_iso | VM attached ISO tracking |
 | 000022_add_missing_rls_and_grants | RLS policies for notification_preferences, notification_events, password_resets + missing GRANTs |
 | 000023_audit_log_default_partition | Default partition for audit_logs + future partitions |
-| 000024_add_missing_indexes | Missing indexes on vms(plan_id,hostname), nodes(location_id), FK constraints, redundant index cleanup |
+| 000024_add_missing_indexes_and_constraints | Missing indexes on vms(plan_id,hostname), nodes(location_id), FK constraints, redundant index cleanup |
 | 000025_add_plan_limits | Plan-level limits for snapshots (DEFAULT 2), backups (DEFAULT 2), ISO uploads (DEFAULT 2) |
+| 000026_drop_old_plan_limit_columns | Drop superseded columns max_snapshots, max_backups, max_iso_count from plans |
+| 000027_fix_webhook_idempotency_and_plan_price_constraints | UNIQUE constraint on webhook_deliveries.idempotency_key; non-negative CHECK on plan pricing columns |
+| 000028_add_customer_table_rls | RLS on customer_api_keys, ip_addresses, backups, snapshots, backup_schedules, sessions |
+| 000029_add_tasks_status_created_at_index | Composite index on tasks(status, created_at DESC) for pending/running task queries |
+| 000030_bandwidth_view_grants | GRANT SELECT on v_bandwidth_current and v_bandwidth_throttled to app_user and app_customer |
+| 000031_concurrent_indexes | Rebuild early indexes (000003-000007) using CONCURRENTLY to avoid write-blocking on large tables |
+| 000032_plans_slug_not_null | Backfill NULL plan slugs and enforce NOT NULL on plans.slug |
 
 ---
 
@@ -928,6 +967,12 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | ENCRYPTION_KEY | Yes | AES-256 key for secret encryption |
 | PDNS_MYSQL_DSN | No | PowerDNS MySQL connection |
 | SMTP_HOST | No | SMTP server hostname |
+| SMTP_PORT | No | SMTP server port (default: 587) |
+| SMTP_USER | No | SMTP auth username |
+| SMTP_PASSWORD | No | SMTP auth password |
+| SMTP_FROM | No | Email sender address |
+| SMTP_ENABLED | No | Enable email notifications (`true`/`1`) |
+| SMTP_REQUIRE_TLS | No | Enforce STARTTLS for non-465 ports (`true`/`1`); recommended for port 587 |
 | TELEGRAM_BOT_TOKEN | No | Telegram bot token |
 | LOG_LEVEL | No | Logging level (debug/info/warn/error) |
 | LISTEN_ADDR | No | HTTP listen address (default :8080) |

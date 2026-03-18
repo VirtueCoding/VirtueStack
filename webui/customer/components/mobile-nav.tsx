@@ -1,10 +1,11 @@
 "use client";
 
-import { Menu, Monitor, Settings } from "lucide-react";
+import { Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { navItems } from "@/lib/nav-items";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -14,11 +15,6 @@ import {
   SheetTrigger,
   SheetClose,
 } from "@/components/ui/sheet";
-
-const navItems = [
-  { href: "/vms", label: "My VMs", icon: Monitor },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
 
 export function MobileNav() {
   const pathname = usePathname();

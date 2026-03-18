@@ -14,36 +14,36 @@ func TestHashPassword(t *testing.T) {
 	}{
 		{
 			name:     "valid strong password",
-			password: "MyStr0ng!Pass",
+			password: "MyStr0ng!Pass123",
 			wantErr:  false,
 		},
 		{
 			name:        "too short",
 			password:    "Short1!",
 			wantErr:     true,
-			errContains: "at least 8 characters",
+			errContains: "at least 12 characters",
 		},
 		{
 			name:        "missing uppercase",
-			password:    "lowercase1!",
+			password:    "lowercase1!abc",
 			wantErr:     true,
 			errContains: "uppercase",
 		},
 		{
 			name:        "missing lowercase",
-			password:    "UPPERCASE1!",
+			password:    "UPPERCASE1!ABC",
 			wantErr:     true,
 			errContains: "lowercase",
 		},
 		{
 			name:        "missing digit",
-			password:    "NoDigits!",
+			password:    "NoDigits!Abc",
 			wantErr:     true,
 			errContains: "digit",
 		},
 		{
 			name:        "missing special character",
-			password:    "NoSpecial1",
+			password:    "NoSpecial1Abc",
 			wantErr:     true,
 			errContains: "special character",
 		},
@@ -51,7 +51,7 @@ func TestHashPassword(t *testing.T) {
 			name:        "empty password",
 			password:    "",
 			wantErr:     true,
-			errContains: "at least 8 characters",
+			errContains: "at least 12 characters",
 		},
 	}
 
@@ -206,41 +206,41 @@ func TestValidatePasswordStrength(t *testing.T) {
 	}{
 		{
 			name:     "valid strong password",
-			password: "MyStr0ng!Pass",
+			password: "MyStr0ng!Pass123",
 			wantErr:  false,
 		},
 		{
 			name:     "valid with multiple special chars",
-			password: "C0mpl3x!@#",
+			password: "C0mpl3x!@#Abc",
 			wantErr:  false,
 		},
 		{
-			name:        "too short - 7 chars",
-			password:    "Short1!",
+			name:        "too short - 11 chars",
+			password:    "Short1!Abcd",
 			wantErr:     true,
-			errContains: "at least 8 characters",
+			errContains: "at least 12 characters",
 		},
 		{
 			name:        "no uppercase",
-			password:    "lowercase1!",
+			password:    "lowercase1!abc",
 			wantErr:     true,
 			errContains: "uppercase",
 		},
 		{
 			name:        "no lowercase",
-			password:    "UPPERCASE1!",
+			password:    "UPPERCASE1!ABC",
 			wantErr:     true,
 			errContains: "lowercase",
 		},
 		{
 			name:        "no digits",
-			password:    "NoDigits!@#",
+			password:    "NoDigits!AbcX",
 			wantErr:     true,
 			errContains: "digit",
 		},
 		{
 			name:        "no special chars",
-			password:    "NoSpecial123",
+			password:    "NoSpecialAbc1",
 			wantErr:     true,
 			errContains: "special character",
 		},
@@ -248,7 +248,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 			name:        "empty password",
 			password:    "",
 			wantErr:     true,
-			errContains: "at least 8 characters",
+			errContains: "at least 12 characters",
 		},
 	}
 

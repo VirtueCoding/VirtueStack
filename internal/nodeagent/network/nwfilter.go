@@ -117,124 +117,25 @@ func (m *NWFilterManager) FilterExists(ctx context.Context, vmName string) (bool
 // GenerateFilterXML generates the nwfilter XML for anti-spoofing protection.
 // The generated filter includes:
 //   - Reference to clean-traffic base filter
-//   - Rogue DHCP prevention: Drop outbound DHCP replies (prevent VM as DHCP server)
-//   - Allow outbound DHCP requests (0.0.0.0 -> DHCP server)
-//   - Allow outbound IPv6 Router Solicitations
+//   - Rogue DHCP prevention: Drop outbound DHCP replies
+//   - Allow outbound DHCP requests
+//   - Allow outbound IPv6 Router/Neighbor Solicitations
 //   - MAC validation rule (allow only from assigned MAC)
 //   - IPv4 validation rules (allow only from assigned IPv4s)
 //   - IPv6 validation rules (allow only from assigned IPv6s)
 //   - ARP validation rules (ARP replies must match MAC+IP)
 //   - Default drop rule for unmatched traffic
 func (m *NWFilterManager) GenerateFilterXML(filterName, vmName, mac string, ipv4s, ipv6s []string) string {
-	var sb strings.Builder
-
-	sb.WriteString(`<filter name='`)
-	sb.WriteString(escapeXML(filterName))
-	sb.WriteString(`'>`)
-
-	// Reference the clean-traffic base filter for common protections
-	sb.WriteString(`<filterref filter='clean-traffic'/>`)
-
-	// SECURITY: Rogue DHCP prevention
-	// Drop outbound DHCP replies to prevent VM from acting as a rogue DHCP server.
-	// This must come BEFORE the allow rules. Priority 80 ensures it's evaluated early.
-	sb.WriteString(`<rule action='drop' direction='out' priority='80'>`)
-	sb.WriteString(`<udp srcportstart='67' srcportend='67'/>`)
-	sb.WriteString(`</rule>`)
-
-	// Allow outbound DHCP requests (client -> server).
-	// VM needs to request IP via DHCP. Source IP is 0.0.0.0 initially.
-	// Priority 90 ensures this is evaluated before MAC/IP checks.
-	sb.WriteString(`<rule action='accept' direction='out' priority='90'>`)
-	sb.WriteString(`<ip srcipaddr='0.0.0.0' protocol='udp'/>`)
-	sb.WriteString(`<udp srcportstart='68' srcportend='68' dstportstart='67' dstportend='67'/>`)
-	sb.WriteString(`</rule>`)
-
-	// Allow outbound DHCPv6 requests (client -> server).
-	// VM needs to request IPv6 via DHCPv6. Uses link-local source.
-	sb.WriteString(`<rule action='accept' direction='out' priority='90'>`)
-	sb.WriteString(`<ipv6 protocol='udp'/>`)
-	sb.WriteString(`<udp srcportstart='546' srcportend='546' dstportstart='547' dstportend='547'/>`)
-	sb.WriteString(`</rule>`)
-
-	// Allow outbound IPv6 Router Solicitations (ICMPv6 type 133).
-	// Required for SLAAC and IPv6 auto-configuration.
-	sb.WriteString(`<rule action='accept' direction='out' priority='90'>`)
-	sb.WriteString(`<ipv6 protocol='icmpv6'/>`)
-	sb.WriteString(`<icmpv6 type='133'/>`)
-	sb.WriteString(`</rule>`)
-
-	// Allow outbound IPv6 Neighbor Solicitations (ICMPv6 type 135).
-	// Required for IPv6 address resolution.
-	sb.WriteString(`<rule action='accept' direction='out' priority='90'>`)
-	sb.WriteString(`<ipv6 protocol='icmpv6'/>`)
-	sb.WriteString(`<icmpv6 type='135'/>`)
-	sb.WriteString(`</rule>`)
-
-	// MAC spoofing protection: Only allow traffic from assigned MAC
-	// Priority 500 ensures this rule is evaluated early
-	sb.WriteString(`<rule action='accept' direction='out' priority='500'>`)
-	sb.WriteString(`<mac match='yes' srcmacaddr='`)
-	sb.WriteString(escapeXML(mac))
-	sb.WriteString(`'/>`)
-	sb.WriteString(`</rule>`)
-
-	// IPv4 spoofing protection: Only allow traffic from assigned IPv4 addresses
-	for i, ip := range ipv4s {
-		if ip == "" {
-			continue
-		}
-		// Each IP rule gets a unique priority (100 + index) for ordering
-		priority := 100 + i
-		sb.WriteString(`<rule action='accept' direction='out' priority='`)
-		sb.WriteString(fmt.Sprintf("%d", priority))
-		sb.WriteString(`'>`)
-		sb.WriteString(`<ip match='yes' srcipaddr='`)
-		sb.WriteString(escapeXML(ip))
-		sb.WriteString(`'/>`)
-		sb.WriteString(`</rule>`)
-	}
-
-	// IPv6 spoofing protection: Only allow traffic from assigned IPv6 addresses
-	for i, ip := range ipv6s {
-		if ip == "" {
-			continue
-		}
-		priority := 200 + i
-		sb.WriteString(`<rule action='accept' direction='out' priority='`)
-		sb.WriteString(fmt.Sprintf("%d", priority))
-		sb.WriteString(`'>`)
-		sb.WriteString(`<ipv6 match='yes' srcipaddr='`)
-		sb.WriteString(escapeXML(ip))
-		sb.WriteString(`'/>`)
-		sb.WriteString(`</rule>`)
-	}
-
-	// ARP spoofing protection: Validate ARP replies
-	// ARP replies must come from the assigned MAC and advertise the assigned IP
-	for _, ip := range ipv4s {
-		if ip == "" {
-			continue
-		}
-		// Priority 50 for ARP rules (higher priority than IP rules)
-		sb.WriteString(`<rule action='accept' direction='inout' priority='50'>`)
-		sb.WriteString(`<arp match='yes' arpsrcmacaddr='`)
-		sb.WriteString(escapeXML(mac))
-		sb.WriteString(`' arpsrcipaddr='`)
-		sb.WriteString(escapeXML(ip))
-		sb.WriteString(`'/>`)
-		sb.WriteString(`</rule>`)
-	}
-
-	// Explicit drop rule for any traffic that doesn't match the above rules
-	// This provides defense-in-depth (libvirt nwfilter has implicit drop, but explicit is clearer)
-	sb.WriteString(`<rule action='drop' direction='out' priority='1000'>`)
-	sb.WriteString(`<all/>`)
-	sb.WriteString(`</rule>`)
-
-	sb.WriteString(`</filter>`)
-
-	return sb.String()
+	b := newNWFilterBuilder(filterName)
+	b.addCleanTrafficRef()
+	b.addDHCPRules()
+	b.addIPv6ICMPRules()
+	b.addMACRule(mac)
+	b.addIPv4Rules(ipv4s)
+	b.addIPv6Rules(ipv6s)
+	b.addARPRules(mac, ipv4s)
+	b.addDefaultDrop()
+	return b.build()
 }
 
 // GetFilterName returns the nwfilter name for a VM.

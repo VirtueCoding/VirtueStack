@@ -1,3 +1,4 @@
+// Package repository provides PostgreSQL database operations for VirtueStack Controller.
 package repository
 
 import (
@@ -7,20 +8,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Setting represents a key-value configuration entry in system_settings.
 type Setting struct {
 	Key         string
 	Value       string
 	Description string
 }
 
+// SettingsRepository provides database operations for system settings.
 type SettingsRepository struct {
 	db DB
 }
 
+// NewSettingsRepository creates a new SettingsRepository with the given database connection.
 func NewSettingsRepository(db DB) *SettingsRepository {
 	return &SettingsRepository{db: db}
 }
 
+// List returns all system settings ordered by key.
 func (r *SettingsRepository) List(ctx context.Context) ([]Setting, error) {
 	const q = `
 		SELECT key,
@@ -41,6 +46,7 @@ func (r *SettingsRepository) List(ctx context.Context) ([]Setting, error) {
 	return settings, nil
 }
 
+// Get returns a single setting by key. Returns ErrNotFound if no setting matches.
 func (r *SettingsRepository) Get(ctx context.Context, key string) (*Setting, error) {
 	const q = `
 		SELECT key,
@@ -61,6 +67,7 @@ func (r *SettingsRepository) Get(ctx context.Context, key string) (*Setting, err
 	return &setting, nil
 }
 
+// Upsert inserts or updates a setting with the given key and value.
 func (r *SettingsRepository) Upsert(ctx context.Context, key, value string) error {
 	const q = `
 		INSERT INTO system_settings (key, value, updated_at)

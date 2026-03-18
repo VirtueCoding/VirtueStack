@@ -272,24 +272,74 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 		"console_type", ct,
 		"correlation_id", correlationID)
 
-	if ct == consoleTypeVNC {
-		h.proxyVNCStream(c.Request.Context(), ws, conn, vmID, correlationID)
-	} else {
-		h.proxySerialStream(c.Request.Context(), ws, conn, vmID, correlationID)
-	}
+	h.proxyConsoleStream(c.Request.Context(), ws, conn, vmID, correlationID, ct)
 }
 
-func (h *CustomerHandler) proxyVNCStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
+// consoleStreamConfig holds console-type-specific configuration for stream proxying.
+type consoleStreamConfig struct {
+	name           string
+	writeMsgType   int
+	acceptMsgTypes map[int]bool
+}
+
+// consoleStream implements bidirectional streaming between WebSocket and gRPC.
+type consoleStream interface {
+	Send(data []byte) error
+	Recv() ([]byte, error)
+	CloseSend() error
+}
+
+// vncStream wraps a VNC gRPC stream to implement consoleStream.
+type vncStream struct {
+	stream nodeagentpb.NodeAgentService_StreamVNCConsoleClient
+}
+
+func (s *vncStream) Send(data []byte) error {
+	return s.stream.Send(&nodeagentpb.VNCFrame{Data: data})
+}
+
+func (s *vncStream) Recv() ([]byte, error) {
+	frame, err := s.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return frame.Data, nil
+}
+
+func (s *vncStream) CloseSend() error {
+	return s.stream.CloseSend()
+}
+
+// serialStream wraps a Serial gRPC stream to implement consoleStream.
+type serialStream struct {
+	stream nodeagentpb.NodeAgentService_StreamSerialConsoleClient
+}
+
+func (s *serialStream) Send(data []byte) error {
+	return s.stream.Send(&nodeagentpb.SerialData{Data: data})
+}
+
+func (s *serialStream) Recv() ([]byte, error) {
+	data, err := s.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return data.Data, nil
+}
+
+func (s *serialStream) CloseSend() error {
+	return s.stream.CloseSend()
+}
+
+// proxyConsoleStream proxies data bidirectionally between WebSocket and gRPC console stream.
+// This is a generic implementation that handles both VNC and Serial console types.
+func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string, ct consoleType) {
 	defer ws.Close()
 
-	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-
-	streamCtx, cancel := context.WithTimeout(ctx, webSocketTotalTimeout)
-	defer cancel()
-
-	stream, err := client.StreamVNCConsole(streamCtx)
+	config := h.getConsoleConfig(ct)
+	stream, err := h.createConsoleStream(ctx, conn, ct)
 	if err != nil {
-		h.logger.Error("failed to create VNC stream",
+		h.logger.Error("failed to create "+string(ct)+" stream",
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", correlationID)
@@ -297,202 +347,157 @@ func (h *CustomerHandler) proxyVNCStream(ctx context.Context, ws *websocket.Conn
 	}
 	defer stream.CloseSend()
 
-	if err := stream.Send(&nodeagentpb.VNCFrame{Data: []byte(vmID)}); err != nil {
-		h.logger.Error("failed to send VM ID to VNC stream",
+	if err := stream.Send([]byte(vmID)); err != nil {
+		h.logger.Error("failed to send VM ID to "+string(ct)+" stream",
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", correlationID)
 		return
 	}
 
-	errChan := make(chan error, 2)
-	gCtx, gCancel := context.WithCancel(streamCtx)
-	defer gCancel()
+	h.runStreamProxy(ctx, ws, stream, vmID, correlationID, config)
 
-	go func() {
-		defer gCancel()
-
-		for {
-			select {
-			case <-gCtx.Done():
-				return
-			default:
-			}
-
-			ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
-
-			messageType, msg, err := ws.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					h.logger.Debug("WebSocket closed",
-						"vm_id", vmID,
-						"correlation_id", correlationID)
-				}
-				errChan <- err
-				return
-			}
-
-			if messageType != websocket.BinaryMessage {
-				continue
-			}
-
-			if err := stream.Send(&nodeagentpb.VNCFrame{Data: msg}); err != nil {
-				h.logger.Error("failed to send VNC frame to gRPC",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer gCancel()
-
-		for {
-			select {
-			case <-gCtx.Done():
-				return
-			default:
-			}
-
-			frame, err := stream.Recv()
-			if err != nil {
-				h.logger.Debug("VNC stream ended",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-
-			ws.SetWriteDeadline(time.Now().Add(webSocketIdleTimeout))
-
-			if err := ws.WriteMessage(websocket.BinaryMessage, frame.Data); err != nil {
-				h.logger.Error("failed to write VNC frame to WebSocket",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-		}
-	}()
-
-	<-errChan
-
-	h.logger.Info("VNC WebSocket connection closed",
+	h.logger.Info(string(ct)+" WebSocket connection closed",
 		"vm_id", vmID,
 		"correlation_id", correlationID)
 }
 
-func (h *CustomerHandler) proxySerialStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
-	defer ws.Close()
+// getConsoleConfig returns console-type-specific configuration.
+func (h *CustomerHandler) getConsoleConfig(ct consoleType) consoleStreamConfig {
+	if ct == consoleTypeVNC {
+		return consoleStreamConfig{
+			name:         "VNC",
+			writeMsgType: websocket.BinaryMessage,
+			acceptMsgTypes: map[int]bool{
+				websocket.BinaryMessage: true,
+			},
+		}
+	}
+	return consoleStreamConfig{
+		name:         "Serial",
+		writeMsgType: websocket.TextMessage,
+		acceptMsgTypes: map[int]bool{
+			websocket.BinaryMessage: true,
+			websocket.TextMessage:   true,
+		},
+	}
+}
 
+// createConsoleStream creates a console stream for the given console type.
+func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType) (consoleStream, error) {
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-
 	streamCtx, cancel := context.WithTimeout(ctx, webSocketTotalTimeout)
-	defer cancel()
+
+	if ct == consoleTypeVNC {
+		stream, err := client.StreamVNCConsole(streamCtx)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		return &vncStream{stream: stream}, nil
+	}
 
 	stream, err := client.StreamSerialConsole(streamCtx)
 	if err != nil {
-		h.logger.Error("failed to create serial stream",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", correlationID)
-		return
+		cancel()
+		return nil, err
 	}
-	defer stream.CloseSend()
+	return &serialStream{stream: stream}, nil
+}
 
-	if err := stream.Send(&nodeagentpb.SerialData{Data: []byte(vmID)}); err != nil {
-		h.logger.Error("failed to send VM ID to serial stream",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", correlationID)
-		return
-	}
-
+// runStreamProxy runs the bidirectional proxy between WebSocket and gRPC stream.
+func (h *CustomerHandler) runStreamProxy(ctx context.Context, ws *websocket.Conn, stream consoleStream, vmID, correlationID string, config consoleStreamConfig) {
 	errChan := make(chan error, 2)
-	gCtx, gCancel := context.WithCancel(streamCtx)
+	gCtx, gCancel := context.WithCancel(ctx)
 	defer gCancel()
 
-	go func() {
-		defer gCancel()
-
-		for {
-			select {
-			case <-gCtx.Done():
-				return
-			default:
-			}
-
-			ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
-
-			messageType, msg, err := ws.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					h.logger.Debug("WebSocket closed",
-						"vm_id", vmID,
-						"correlation_id", correlationID)
-				}
-				errChan <- err
-				return
-			}
-
-			if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
-				continue
-			}
-
-			if err := stream.Send(&nodeagentpb.SerialData{Data: msg}); err != nil {
-				h.logger.Error("failed to send serial data to gRPC",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer gCancel()
-
-		for {
-			select {
-			case <-gCtx.Done():
-				return
-			default:
-			}
-
-			data, err := stream.Recv()
-			if err != nil {
-				h.logger.Debug("Serial stream ended",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-
-			ws.SetWriteDeadline(time.Now().Add(webSocketIdleTimeout))
-
-			if err := ws.WriteMessage(websocket.TextMessage, data.Data); err != nil {
-				h.logger.Error("failed to write serial data to WebSocket",
-					"vm_id", vmID,
-					"error", err,
-					"correlation_id", correlationID)
-				errChan <- err
-				return
-			}
-		}
-	}()
+	go h.readFromWebSocket(gCtx, gCancel, ws, stream, vmID, correlationID, config, errChan)
+	go h.readFromStream(gCtx, gCancel, ws, stream, vmID, correlationID, config, errChan)
 
 	<-errChan
+}
 
-	h.logger.Info("Serial WebSocket connection closed",
-		"vm_id", vmID,
-		"correlation_id", correlationID)
+// readFromWebSocket reads messages from WebSocket and sends to gRPC stream.
+func (h *CustomerHandler) readFromWebSocket(ctx context.Context, cancel context.CancelFunc, ws *websocket.Conn, stream consoleStream, vmID, correlationID string, config consoleStreamConfig, errChan chan error) {
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
+
+		messageType, msg, err := ws.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				h.logger.Debug("WebSocket closed",
+					"vm_id", vmID,
+					"correlation_id", correlationID)
+			}
+			errChan <- err
+			return
+		}
+
+		if !config.acceptMsgTypes[messageType] {
+			continue
+		}
+
+		if err := stream.Send(msg); err != nil {
+			h.logger.Error("failed to send "+config.name+" data to gRPC",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+			errChan <- err
+			return
+		}
+	}
+}
+
+// readFromStream reads from gRPC stream and writes to WebSocket.
+func (h *CustomerHandler) readFromStream(ctx context.Context, cancel context.CancelFunc, ws *websocket.Conn, stream consoleStream, vmID, correlationID string, config consoleStreamConfig, errChan chan error) {
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		data, err := stream.Recv()
+		if err != nil {
+			h.logger.Debug(config.name+" stream ended",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+			errChan <- err
+			return
+		}
+
+		ws.SetWriteDeadline(time.Now().Add(webSocketIdleTimeout))
+
+		if err := ws.WriteMessage(config.writeMsgType, data); err != nil {
+			h.logger.Error("failed to write "+config.name+" data to WebSocket",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+			errChan <- err
+			return
+		}
+	}
+}
+
+// proxyVNCStream is kept for backward compatibility and delegates to proxyConsoleStream.
+func (h *CustomerHandler) proxyVNCStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
+	h.proxyConsoleStream(ctx, ws, conn, vmID, correlationID, consoleTypeVNC)
+}
+
+// proxySerialStream is kept for backward compatibility and delegates to proxyConsoleStream.
+func (h *CustomerHandler) proxySerialStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
+	h.proxyConsoleStream(ctx, ws, conn, vmID, correlationID, consoleTypeSerial)
 }
 
 func checkConnectionLimit(ip string) bool {

@@ -887,3 +887,13 @@ func (s *AuthService) RegenerateBackupCodes(ctx context.Context, customerID stri
 
 	return codes, nil
 }
+
+// GetAdminByID retrieves an admin by their ID.
+// This is a lightweight method used by the /me endpoint for session validation.
+func (s *AuthService) GetAdminByID(ctx context.Context, adminID string) (*models.Admin, error) {
+	admin, err := s.adminRepo.GetByID(ctx, adminID)
+	if err != nil {
+		return nil, fmt.Errorf("getting admin by id: %w", err)
+	}
+	return admin, nil
+}

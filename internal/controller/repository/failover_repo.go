@@ -1,3 +1,4 @@
+// Package repository provides PostgreSQL database operations for VirtueStack Controller.
 package repository
 
 import (
@@ -12,10 +13,12 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
 
+// FailoverRepository provides database operations for failover requests.
 type FailoverRepository struct {
 	db DB
 }
 
+// NewFailoverRepository creates a new FailoverRepository with the given database connection.
 func NewFailoverRepository(db DB) *FailoverRepository {
 	return &FailoverRepository{db: db}
 }
@@ -42,6 +45,7 @@ func scanFailoverRequest(row pgx.Row) (models.FailoverRequest, error) {
 	return fr, nil
 }
 
+// Create inserts a new failover request into the database.
 func (r *FailoverRepository) Create(ctx context.Context, req *models.FailoverRequest) error {
 	const q = `
 		INSERT INTO failover_requests (
@@ -60,6 +64,7 @@ func (r *FailoverRepository) Create(ctx context.Context, req *models.FailoverReq
 	return nil
 }
 
+// GetByID returns a failover request by its UUID. Returns ErrNotFound if no request matches.
 func (r *FailoverRepository) GetByID(ctx context.Context, id string) (*models.FailoverRequest, error) {
 	const q = `SELECT ` + failoverRequestSelectCols + ` FROM failover_requests WHERE id = $1`
 	fr, err := ScanRow(ctx, r.db, q, []any{id}, scanFailoverRequest)
@@ -69,6 +74,7 @@ func (r *FailoverRepository) GetByID(ctx context.Context, id string) (*models.Fa
 	return &fr, nil
 }
 
+// GetByNodeID returns all failover requests for a specific node.
 func (r *FailoverRepository) GetByNodeID(ctx context.Context, nodeID string) ([]models.FailoverRequest, error) {
 	const q = `SELECT ` + failoverRequestSelectCols + ` FROM failover_requests WHERE node_id = $1 ORDER BY created_at DESC`
 	requests, err := ScanRows(ctx, r.db, q, []any{nodeID}, func(rows pgx.Rows) (models.FailoverRequest, error) {
@@ -80,6 +86,9 @@ func (r *FailoverRepository) GetByNodeID(ctx context.Context, nodeID string) ([]
 	return requests, nil
 }
 
+// UpdateStatus updates the status of a failover request and sets timestamps accordingly.
+// When status is "approved", approved_at is set. When status is "completed" or "failed",
+// completed_at is set.
 func (r *FailoverRepository) UpdateStatus(ctx context.Context, id, status string, result any) error {
 	var resultJSON json.RawMessage
 	if result != nil {
@@ -119,6 +128,7 @@ func (r *FailoverRepository) UpdateStatus(ctx context.Context, id, status string
 	return nil
 }
 
+// List returns a paginated list of failover requests with optional filters and total count.
 func (r *FailoverRepository) List(ctx context.Context, filter models.FailoverRequestListFilter) ([]models.FailoverRequest, int, error) {
 	where := []string{"1=1"}
 	args := []any{}

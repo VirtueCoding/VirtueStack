@@ -1,12 +1,14 @@
 "use client"
 
-import * as React from "react"
+import { useState, useRef } from "react"
+import type { DragEvent, ChangeEvent } from "react"
 import { Upload, File, X, Check, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { isoApi, ApiClientError } from "@/lib/api-client"
+import { formatBytes } from "@/lib/vm-utils"
 
 interface ISOUploadProps {
   vmId: string
@@ -21,22 +23,14 @@ interface UploadedFile {
 }
 
 export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
-  const [uploadState, setUploadState] = React.useState<UploadState>("idle")
-  const [progress, setProgress] = React.useState(0)
-  const [file, setFile] = React.useState<UploadedFile | null>(null)
-  const [errorMessage, setErrorMessage] = React.useState<string>("")
-  const fileInputRef = React.useRef<HTMLInputElement>(null)
-  const abortControllerRef = React.useRef<AbortController | null>(null)
+  const [uploadState, setUploadState] = useState<UploadState>("idle")
+  const [progress, setProgress] = useState(0)
+  const [file, setFile] = useState<UploadedFile | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string>("")
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const MAX_ISO_SIZE_BYTES = 10 * 1024 * 1024 * 1024
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return "0 Bytes"
-    const k = 1024
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"]
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
-  }
 
   const validateFile = (file: File): boolean => {
     if (!file.name.toLowerCase().endsWith(".iso")) {
@@ -88,21 +82,21 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     }
   }
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     if (uploadState === "idle" || uploadState === "error") {
       setUploadState("dragOver")
     }
   }
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     if (uploadState === "dragOver") {
       setUploadState("idle")
     }
   }
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setUploadState("idle")
 
@@ -114,7 +108,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
     }
   }
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files
     if (selectedFiles && selectedFiles.length > 0) {
       startUpload(selectedFiles[0])
@@ -166,7 +160,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
                   {file?.name}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {file && formatFileSize(file.size)}
+                  {file && formatBytes(file.size)}
                 </p>
               </div>
             </div>
@@ -200,7 +194,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
           <div className="space-y-1">
             <p className="text-sm font-medium text-foreground">Upload Complete!</p>
             <p className="text-xs text-muted-foreground">
-              {file?.name} ({file && formatFileSize(file.size)})
+              {file?.name} ({file && formatBytes(file.size)})
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={handleCancel}>

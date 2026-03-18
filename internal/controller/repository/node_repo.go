@@ -240,6 +240,7 @@ func (r *NodeRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// Update updates all mutable fields of a node and returns the updated record.
 func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
 	const q = `
 		UPDATE nodes SET

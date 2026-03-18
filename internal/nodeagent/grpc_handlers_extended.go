@@ -159,6 +159,25 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	// Validate resource fields (QG-05: input validation)
+	// Note: 0 means keep current value, so only negative values are invalid
+	if req.GetNewVcpu() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "new_vcpu cannot be negative (0 keeps current)")
+	}
+	if req.GetNewMemoryMb() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "new_memory_mb cannot be negative (0 keeps current)")
+	}
+	if req.GetNewDiskGb() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "new_disk_gb cannot be negative (0 keeps current)")
+	}
+
+	// Validate storage_backend if provided
+	if storageBackend := req.GetStorageBackend(); storageBackend != "" {
+		if storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph' or 'qcow')", storageBackend)
+		}
+	}
+
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "resize")
 	logger.Info("resizing VM", "new_vcpu", req.GetNewVcpu(), "new_memory_mb", req.GetNewMemoryMb(), "new_disk_gb", req.GetNewDiskGb())
 

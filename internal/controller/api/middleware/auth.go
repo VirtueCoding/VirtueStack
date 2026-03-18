@@ -324,25 +324,6 @@ func GetRole(c *gin.Context) string {
 
 // ─── internal helpers ────────────────────────────────────────────────────────
 
-// extractBearerToken reads the Authorization header and returns the raw token.
-func extractBearerToken(c *gin.Context) (string, error) {
-	header := c.GetHeader("Authorization")
-	if header == "" {
-		return "", fmt.Errorf("Authorization header is missing")
-	}
-
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", fmt.Errorf("Authorization header format must be 'Bearer <token>'")
-	}
-
-	if parts[1] == "" {
-		return "", fmt.Errorf("Bearer token is empty")
-	}
-
-	return parts[1], nil
-}
-
 // parseAndValidateJWT parses the token string, verifies the signature and
 // standard claims (expiry, issuer, algorithm).
 func parseAndValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, error) {

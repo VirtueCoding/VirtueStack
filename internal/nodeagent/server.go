@@ -646,10 +646,26 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	// Validate resource fields (QG-05: input validation)
+	if req.GetVcpu() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "vcpu must be positive")
+	}
+	if req.GetMemoryMb() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "memory_mb must be positive")
+	}
+	if req.GetDiskGb() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "disk_gb must be positive")
+	}
+
+	// Validate storage_backend if provided
+	storageBackend := req.GetStorageBackend()
+	if storageBackend != "" && storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph' or 'qcow')", storageBackend)
+	}
+
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "create")
 	logger.Info("creating VM", "hostname", req.GetHostname(), "vcpu", req.GetVcpu(), "memory_mb", req.GetMemoryMb())
 
-	storageBackend := req.GetStorageBackend()
 	if storageBackend == "" {
 		storageBackend = h.server.config.StorageBackend
 		if storageBackend == "" {

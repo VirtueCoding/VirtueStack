@@ -36,6 +36,7 @@ type SnapshotListFilter struct {
 	VMID *string
 }
 
+// BackupScheduleListFilter holds filter parameters for listing backup schedules.
 type BackupScheduleListFilter struct {
 	models.PaginationParams
 	VMID       *string
@@ -96,6 +97,20 @@ func (r *BackupRepository) GetBackupByID(ctx context.Context, id string) (*model
 }
 
 // ListBackups returns a paginated list of backups with optional filters and total count.
+//
+// Pagination Strategy:
+// This method uses offset-based pagination (LIMIT/OFFSET). For most use cases this is
+// acceptable, but for very large datasets, cursor-based pagination (keyset pagination)
+// would be more efficient as it avoids COUNT(*) queries and provides stable results.
+//
+// Cursor-based pagination is available via the internal/controller/repository/cursor
+// package. Migration to cursor-based pagination is planned for a future release.
+// See CODING_STANDARD.md QG-16 for requirements.
+//
+// To use cursor-based pagination in the future:
+//  1. Check params.IsCursorBased() to determine pagination mode
+//  2. Use cursor.Params and cursor.BuildWhereClause for query construction
+//  3. Return models.NewCursorPaginationMeta instead of NewPaginationMeta
 func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFilter) ([]models.Backup, int, error) {
 	where := []string{"1=1"}
 	args := []any{}
@@ -141,6 +156,7 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 	return backups, total, nil
 }
 
+// ListBackupsByCustomer returns a paginated list of backups for a specific customer with optional filters.
 func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID string, filter BackupListFilter) ([]models.Backup, int, error) {
 	where := []string{"v.customer_id = $1"}
 	args := []any{customerID}
@@ -247,6 +263,7 @@ func (r *BackupRepository) DeleteBackup(ctx context.Context, id string) error {
 	return nil
 }
 
+// ListExpiredBackups returns all backups that have expired and need cleanup.
 func (r *BackupRepository) ListExpiredBackups(ctx context.Context, now time.Time) ([]models.Backup, error) {
 	const q = `SELECT ` + backupSelectCols + ` FROM backups WHERE expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC`
 	backups, err := ScanRows(ctx, r.db, q, []any{now}, func(rows pgx.Rows) (models.Backup, error) {
@@ -340,6 +357,7 @@ func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotLis
 	return snapshots, total, nil
 }
 
+// ListSnapshotsByCustomer returns a paginated list of snapshots for a specific customer with optional filters.
 func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customerID string, filter SnapshotListFilter) ([]models.Snapshot, int, error) {
 	where := []string{"v.customer_id = $1"}
 	args := []any{customerID}
@@ -375,6 +393,7 @@ func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customer
 	return snapshots, total, nil
 }
 
+// prefixSelectCols prefixes each column in a comma-separated list with the given table alias.
 func prefixSelectCols(cols, alias string) string {
 	parts := strings.Split(cols, ",")
 	for i := range parts {
@@ -405,6 +424,7 @@ func (r *BackupRepository) CountSnapshotsByVM(ctx context.Context, vmID string) 
 	return count, nil
 }
 
+// UpdateSnapshot updates all editable fields of a snapshot.
 func (r *BackupRepository) UpdateSnapshot(ctx context.Context, snapshot *models.Snapshot) error {
 	const q = `
 		UPDATE snapshots SET
@@ -478,6 +498,7 @@ func scanBackupSchedule(row pgx.Row) (models.BackupSchedule, error) {
 	return s, err
 }
 
+// CreateBackupSchedule inserts a new backup schedule into the database.
 func (r *BackupRepository) CreateBackupSchedule(ctx context.Context, schedule *models.BackupSchedule) error {
 	const q = `
 		INSERT INTO backup_schedules (
@@ -497,6 +518,7 @@ func (r *BackupRepository) CreateBackupSchedule(ctx context.Context, schedule *m
 	return nil
 }
 
+// GetBackupScheduleByID returns a backup schedule by its UUID. Returns ErrNotFound if no schedule matches.
 func (r *BackupRepository) GetBackupScheduleByID(ctx context.Context, id string) (*models.BackupSchedule, error) {
 	const q = `SELECT ` + backupScheduleSelectCols + ` FROM backup_schedules WHERE id = $1`
 	schedule, err := ScanRow(ctx, r.db, q, []any{id}, scanBackupSchedule)
@@ -506,6 +528,7 @@ func (r *BackupRepository) GetBackupScheduleByID(ctx context.Context, id string)
 	return &schedule, nil
 }
 
+// ListBackupSchedules returns a paginated list of backup schedules with optional filters and total count.
 func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter BackupScheduleListFilter) ([]models.BackupSchedule, int, error) {
 	where := []string{"1=1"}
 	args := []any{}
@@ -552,6 +575,7 @@ func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter Backu
 	return schedules, total, nil
 }
 
+// DeleteBackupSchedule permanently removes a backup schedule from the database.
 func (r *BackupRepository) DeleteBackupSchedule(ctx context.Context, id string) error {
 	const q = `DELETE FROM backup_schedules WHERE id = $1`
 	tag, err := r.db.Exec(ctx, q, id)
@@ -564,6 +588,7 @@ func (r *BackupRepository) DeleteBackupSchedule(ctx context.Context, id string) 
 	return nil
 }
 
+// UpdateBackupScheduleActive updates the active status of a backup schedule.
 func (r *BackupRepository) UpdateBackupScheduleActive(ctx context.Context, id string, active bool) error {
 	const q = `UPDATE backup_schedules SET active = $1 WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, active, id)
@@ -576,6 +601,7 @@ func (r *BackupRepository) UpdateBackupScheduleActive(ctx context.Context, id st
 	return nil
 }
 
+// UpdateBackupScheduleFrequency updates the frequency and next run time of a backup schedule.
 func (r *BackupRepository) UpdateBackupScheduleFrequency(ctx context.Context, id, frequency string, nextRunAt time.Time) error {
 	const q = `UPDATE backup_schedules SET frequency = $1, next_run_at = $2 WHERE id = $3`
 	tag, err := r.db.Exec(ctx, q, frequency, nextRunAt, id)

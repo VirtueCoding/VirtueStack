@@ -124,10 +124,12 @@ services:
         labels: "service"
         tag: "{{.Name}}"
     environment:
-      # sslmode=disable is safe for single-host Docker deployments: all services communicate within the same host via a
-      # Docker bridge network and traffic never leaves the machine. For multi-host or Docker Swarm deployments, use
-      # sslmode=require and configure PostgreSQL with proper SSL certificates.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
+      # DATABASE_SSL_MODE controls PostgreSQL SSL verification:
+      # - "disable": No SSL (ONLY safe for single-host Docker deployments on the same machine)
+      # - "require": SSL required, but does not verify server certificate
+      # - "verify-full": SSL required with verified server certificate (recommended for multi-host)
+      # Default is "require" for production security. Set to "verify-full" if using proper TLS certs.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=${DATABASE_SSL_MODE:-require}
       NATS_URL: nats://nats:4222
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}

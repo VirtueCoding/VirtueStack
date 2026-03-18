@@ -46,7 +46,6 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Header */}
       <div className="flex h-14 items-center border-b px-4">
         {!collapsed && (
           <span className="text-lg font-semibold">VirtueStack</span>
@@ -64,7 +63,6 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         </Button>
       </div>
 
-      {/* Navigation */}
       <ScrollArea className="flex-1 py-4">
         <nav className="flex flex-col gap-1 px-2">
           {adminNavItems.map((item) => {
@@ -90,7 +88,6 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         </nav>
       </ScrollArea>
 
-      {/* User Menu */}
       <div className="border-t p-4">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

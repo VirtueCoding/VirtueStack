@@ -143,7 +143,6 @@ export default function DashboardPage() {
         </div>
       )}
       <div className="mx-auto max-w-7xl space-y-8">
-        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
@@ -159,7 +158,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Stats Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {statCards.map((stat) => (
             <Card key={stat.title} className="relative overflow-hidden">
@@ -179,9 +177,7 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* Main Content Grid */}
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Recent Activity */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -233,7 +229,6 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

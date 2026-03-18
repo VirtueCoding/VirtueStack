@@ -41,6 +41,14 @@ type WebhookDeliveryPayload struct {
 }
 
 // WebhookDeliveryDeps contains dependencies for webhook delivery tasks.
+// Security Note (QG-02): EncryptionKey is stored as a plaintext string in memory.
+// This is an inherent limitation of symmetric encryption at rest - the key must be
+// accessible to encrypt/decrypt webhook secrets. The key is loaded from an environment
+// variable at startup and never logged or exposed in error messages. For higher security
+// requirements, consider using a hardware security module (HSM) or cloud key management
+// service (e.g., AWS KMS, HashiCorp Vault) which would require network calls for each
+// encryption operation. The current approach is appropriate for the threat model where
+// memory access by an attacker implies full system compromise.
 type WebhookDeliveryDeps struct {
 	WebhookRepo        *repository.WebhookRepository
 	HTTPClient         *http.Client

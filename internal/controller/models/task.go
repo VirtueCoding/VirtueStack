@@ -1,3 +1,4 @@
+// Package models provides data model types for VirtueStack Controller.
 package models
 
 import (
@@ -29,29 +30,48 @@ func SetClock(c Clock) { clock = c }
 // ResetClock restores the default clock.
 func ResetClock() { clock = DefaultClock }
 
+// TaskStatus represents the lifecycle state of an async task.
 type TaskStatus string
 
+// Task status constants define the lifecycle states of an async task.
 const (
-	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusRunning   TaskStatus = "running"
+	// TaskStatusPending indicates the task is waiting to be processed.
+	TaskStatusPending TaskStatus = "pending"
+	// TaskStatusRunning indicates the task is currently being processed.
+	TaskStatusRunning TaskStatus = "running"
+	// TaskStatusCompleted indicates the task finished successfully.
 	TaskStatusCompleted TaskStatus = "completed"
-	TaskStatusFailed    TaskStatus = "failed"
+	// TaskStatusFailed indicates the task encountered an error.
+	TaskStatusFailed TaskStatus = "failed"
+	// TaskStatusCancelled indicates the task was cancelled before completion.
 	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
+// Task type constants define the kinds of async operations.
 const (
-	TaskTypeVMCreate       = "vm.create"
-	TaskTypeVMReinstall    = "vm.reinstall"
-	TaskTypeVMMigrate      = "vm.migrate"
-	TaskTypeVMResize       = "vm.resize"
-	TaskTypeVMDelete       = "vm.delete"
-	TaskTypeBackupCreate   = "backup.create"
-	TaskTypeBackupRestore  = "backup.restore"
+	// TaskTypeVMCreate creates a new virtual machine.
+	TaskTypeVMCreate = "vm.create"
+	// TaskTypeVMReinstall reinstalls a VM with a new template.
+	TaskTypeVMReinstall = "vm.reinstall"
+	// TaskTypeVMMigrate migrates a VM to a different node.
+	TaskTypeVMMigrate = "vm.migrate"
+	// TaskTypeVMResize resizes a VM's resources.
+	TaskTypeVMResize = "vm.resize"
+	// TaskTypeVMDelete deletes a virtual machine.
+	TaskTypeVMDelete = "vm.delete"
+	// TaskTypeBackupCreate creates a backup of a VM.
+	TaskTypeBackupCreate = "backup.create"
+	// TaskTypeBackupRestore restores a VM from a backup.
+	TaskTypeBackupRestore = "backup.restore"
+	// TaskTypeSnapshotCreate creates a snapshot of a VM.
 	TaskTypeSnapshotCreate = "snapshot.create"
+	// TaskTypeSnapshotRevert reverts a VM to a snapshot.
 	TaskTypeSnapshotRevert = "snapshot.revert"
+	// TaskTypeSnapshotDelete deletes a VM snapshot.
 	TaskTypeSnapshotDelete = "snapshot.delete"
 )
 
+// Task represents an async operation tracked in the database and NATS JetStream.
 type Task struct {
 	ID             string          `json:"id"`
 	Type           string          `json:"type"`
@@ -67,18 +87,21 @@ type Task struct {
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 }
 
+// IsTerminal returns true if the task has reached a terminal state (completed, failed, or cancelled).
 func (t *Task) IsTerminal() bool {
 	return t.Status == TaskStatusCompleted ||
 		t.Status == TaskStatusFailed ||
 		t.Status == TaskStatusCancelled
 }
 
+// SetRunning marks the task as running and sets the StartedAt timestamp.
 func (t *Task) SetRunning() {
 	t.Status = TaskStatusRunning
 	now := clock.Now()
 	t.StartedAt = &now
 }
 
+// SetCompleted marks the task as completed with the given result.
 func (t *Task) SetCompleted(result json.RawMessage) {
 	t.Status = TaskStatusCompleted
 	t.Progress = 100
@@ -89,6 +112,7 @@ func (t *Task) SetCompleted(result json.RawMessage) {
 	}
 }
 
+// SetFailed marks the task as failed with the given error message.
 func (t *Task) SetFailed(errMsg string) {
 	t.Status = TaskStatusFailed
 	t.ErrorMessage = errMsg
@@ -96,6 +120,7 @@ func (t *Task) SetFailed(errMsg string) {
 	t.CompletedAt = &now
 }
 
+// SetProgress updates the task progress percentage, clamping to 0-100.
 func (t *Task) SetProgress(progress int) {
 	if progress < 0 {
 		progress = 0
@@ -105,6 +130,7 @@ func (t *Task) SetProgress(progress int) {
 	t.Progress = progress
 }
 
+// NewTask creates a new task with the given ID, type, and payload.
 func NewTask(id, taskType string, payload json.RawMessage) *Task {
 	return &Task{
 		ID:        id,
@@ -116,6 +142,7 @@ func NewTask(id, taskType string, payload json.RawMessage) *Task {
 	}
 }
 
+// NewTaskWithCreator creates a new task with the given ID, type, payload, and creator.
 func NewTaskWithCreator(id, taskType string, payload json.RawMessage, createdBy string) *Task {
 	task := NewTask(id, taskType, payload)
 	task.CreatedBy = createdBy
@@ -130,6 +157,7 @@ func NewTaskWithCreator(id, taskType string, payload json.RawMessage, createdBy 
 // This type is only used at the write/publish side to avoid boilerplate.
 type TaskPayload map[string]any
 
+// ToJSON marshals the TaskPayload to JSON for storage in Task.Payload.
 func (p TaskPayload) ToJSON() (json.RawMessage, error) {
 	return json.Marshal(p)
 }

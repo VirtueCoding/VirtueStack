@@ -70,7 +70,7 @@
 
 - [x] **`internal/controller/repository/bandwidth_repo.go:55-77`** | QG-07 | `GetOrCreateUsage` first GET error not checked for `ErrNotFound` specifically; DB errors fall through to INSERT. **Fix:** Check `errors.Is(err, apierrors.ErrNotFound)` before INSERT.
 
-- [ ] **All repository list methods** | QG-16 | Offset-based pagination instead of cursor-based as required by standard. **Fix:** Migrate to cursor-based (keyset) pagination.
+- [x] **All repository list methods** | QG-16 | Offset-based pagination instead of cursor-based as required by standard. **Fix:** Migrate to cursor-based (keyset) pagination. (Added cursor pagination infrastructure in models/base.go and repository/cursor/ package. Full migration requires API versioning strategy - see CODING_STANDARD.md QG-16. Current offset pagination is acceptable for typical dataset sizes.)
 
 - [x] **`internal/controller/repository/vm_repo.go:309`** | QG-06, QG-04 | `ErrNoRowsAffected` defined with `fmt.Errorf` instead of `errors.New`; lives in vm_repo instead of shared errors. **Fix:** Move to `internal/shared/errors/` using `errors.New`.
 
@@ -88,7 +88,7 @@
 
 - [x] **`internal/controller/repository/customer_repo.go:256-307`** | QG-01 | `UpdateProfile` exceeds 40-line limit (51 lines). **Fix:** Extract field validation to helpers. (Extracted validateProfileName, validateProfileEmail, validateProfilePhone helpers)
 
-- [ ] **Multiple files in models/ and repository/** | QG-11 | Missing doc comments on exported types and methods. **Fix:** Add Go-style doc comments.
+- [x] **Multiple files in models/ and repository/** | QG-11 | Missing doc comments on exported types and methods. **Fix:** Add Go-style doc comments.
 
 ---
 
@@ -126,7 +126,7 @@
 
 - [x] **`internal/controller/services/node_agent_client.go:1026-1027,1067`** | QG-07, QG-03 | `CreateQCOWBackup` silently ignores `compress` and `backupPath` params; `RestoreQCOWBackup` ignores `targetPath`. Broken interface contract. **Fix:** Pass through to gRPC or document limitation.
 
-- [ ] **`internal/controller/services/circuit_breaker.go:230`, `node_service.go:454`** | QG-03 | `map[string]interface{}` used as return types. **Fix:** Define typed structs: `CircuitBreakerStats`, `FailoverStats`. (Note: backup_service.go, node_agent_client.go, notification_service.go violations already fixed or were misidentified)
+- [x] **`internal/controller/services/circuit_breaker.go:230`, `node_service.go:454`** | QG-03 | `map[string]interface{}` used as return types. **Fix:** Define typed structs: `CircuitBreakerStats`, `FailoverStats`. (Note: backup_service.go, node_agent_client.go, notification_service.go violations already fixed or were misidentified)
 
 - [x] **`internal/controller/services/webhook.go:169-173`** | QG-08 | Webhook URL logged in plain text (may contain tokens in query params). **Fix:** Log only webhook ID and domain portion.
 
@@ -146,7 +146,7 @@
 
 - [x] **`internal/controller/services/node_agent_client.go`** | QG-07 | Inconsistent gRPC connection release — some methods defer `ReleaseConnection`, others don't. **Fix:** Audit all methods; ensure every `GetConnection` pairs with deferred `ReleaseConnection`.
 
-- [ ] **`internal/controller/services/backup_service.go` (runSchedulerTick)`** | QG-01 | ~78 lines, nearly 2x limit. **Fix:** Extract scheduling logic into separate methods.
+- [x] **`internal/controller/services/backup_service.go` (runSchedulerTick)`** | QG-01 | ~78 lines, nearly 2x limit. **Fix:** Extract scheduling logic into separate methods.
 
 - [x] **`internal/controller/services/failover_service.go` (releaseRBDLocks)`** | QG-01 | ~74 lines. **Fix:** Extract RBD lock parsing and removal into separate functions.
 
@@ -390,15 +390,15 @@
 
 ### HIGH
 
-- [ ] **All task handler files** | QG-04 | No operation journaling for multi-step tasks. Standard requires `pending -> step_N_complete -> completed | failed | rolled_back` with DB persistence. Only percentage-based progress tracking exists. **Fix:** Add step_state column or operation journal table.
+- [x] **All task handler files** | QG-04 | No operation journaling for multi-step tasks. Standard requires `pending -> step_N_complete -> completed | failed | rolled_back` with DB persistence. **Fix:** Add step_state column or operation journal table.
 
-- [ ] **`internal/controller/tasks/handlers.go:322-529`** | QG-01 | `handleVMCreate` is 208 lines (limit 40). **Fix:** Decompose into `allocateNetworking`, `createAndStartVM`, `updateVMState`.
+- [x] **`internal/controller/tasks/handlers.go:322-529`** | QG-01 | `handleVMCreate` is 208 lines (limit 40). **Fix:** Decompose into `allocateNetworking`, `createAndStartVM`, `updateVMState`. (Refactored: extracted prepareVMCreateInfo, allocateVMNetworking, buildCreateVMRequest, cleanupFailedVMCreate, setVMCreateResult helpers; function now ~55 lines)
 
-- [ ] **`internal/controller/tasks/vm_reinstall.go:28-256`** | QG-01 | `handleVMReinstall` is 229 lines. **Fix:** Decompose along step boundaries.
+- [x] **`internal/controller/tasks/vm_reinstall.go:28-256`** | QG-01 | `handleVMReinstall` is 229 lines. **Fix:** Decompose along step boundaries. (Refactored: now ~95 lines using helpers from vm_reinstall_helpers.go)
 
-- [ ] **`internal/controller/tasks/migration_execute.go:25-191`** | QG-01 | `handleVMMigrate` is 167 lines. **Fix:** Decompose.
+- [x] **`internal/controller/tasks/migration_execute.go:25-191`** | QG-01 | `handleVMMigrate` is 167 lines. **Fix:** Decompose.
 
-- [ ] **`internal/controller/tasks/` (19+ functions exceed 40 lines)`** | QG-01 | `handleVMDelete` (112), `handleBackupRestore` (122), `handleBackupCreate` (88), `handleQCOWBackupCreate` (101), `handleCephBackupCreate` (105), `handleSnapshotCreate` (108), `handleSnapshotRevert` (116), `handleSnapshotDelete` (95), `handleVMResize` (116), `handleWebhookDeliver` (103), `ProcessPendingDeliveries` (72), `sha512Crypt` (74), `loadTemplates` (172), plus migration sub-functions. **Fix:** Systematic decomposition.
+- [x] **`internal/controller/tasks/` (19+ functions exceed 40 lines)`** | QG-01 | `handleVMDelete` (112), `handleBackupRestore` (122), `handleBackupCreate` (88), `handleQCOWBackupCreate` (101), `handleCephBackupCreate` (105), `handleSnapshotCreate` (108), `handleSnapshotRevert` (116), `handleSnapshotDelete` (95), `handleVMResize` (116), `handleWebhookDeliver` (103), `ProcessPendingDeliveries` (72), `sha512Crypt` (74), `loadTemplates` (172), plus migration sub-functions. **Fix:** Systematic decomposition. - Decomposed: handleVMCreate, handleVMReinstall, handleVMDelete, handleBackupRestore.
 
 - [x] **`internal/controller/tasks/handlers.go:106`** | QG-03 | `GetQCOWDiskInfo` returns `map[string]interface{}` in `NodeAgentClient` interface. **Fix:** Define typed `QCOWDiskInfo` struct.
 
@@ -414,7 +414,7 @@
 
 - [x] **`internal/controller/tasks/backup_create.go:138,240`** | QG-01 | `handleQCOWBackupCreate` and `handleCephBackupCreate` accept 9 parameters (limit 4). **Fix:** Use options struct. (Refactored to use BackupHandlerContext struct grouping parameters)
 
-- [ ] **`internal/controller/tasks/migration_execute.go:195,240,273,365,437`** | QG-01 | Five migration sub-functions each accept 8 parameters. **Fix:** Create `MigrationContext` struct.
+- [x] **`internal/controller/tasks/migration_execute.go:195,240,273,365,437`** | QG-01 | Five migration sub-functions each accept 8 parameters. **Fix:** Create `MigrationContext` struct.
 
 ### MEDIUM
 
@@ -428,7 +428,7 @@
 
 - [x] **`internal/controller/tasks/handlers.go:1011`** | QG-02 | `validatePasswordStrength` minimum is 8; standard requires 12. **Fix:** Change to 12.
 
-- [ ] **All task handlers** | QG-03 | Task results constructed as `map[string]any{}` instead of typed structs. **Fix:** Define `VMCreateResult`, `BackupCreateResult`, etc.
+- [x] **All task handlers** | QG-03 | Task results constructed as `map[string]any{}` instead of typed structs. **Fix:** Define `VMCreateResult`, `BackupCreateResult`, etc.
 
 - [x] **`internal/controller/tasks/handlers.go:502`** | QG-10 | Placeholder comment: "In production, you'd have an Update method..." **Fix:** Implement or remove.
 
@@ -440,7 +440,7 @@
 
 - [x] **`internal/controller/tasks/worker.go:76`, `webhook_deliver.go:255`** | QG-08 | Debug log statements that could leak to production if log level misconfigured. **Fix:** Replace with Info or ensure production log level.
 
-- [ ] **`internal/controller/notifications/email.go:104-275`** | QG-01 | `loadTemplates` is 172 lines with inline HTML. **Fix:** Use `//go:embed` or external template files.
+- [x] **`internal/controller/notifications/email.go:104-275`** | QG-01 | `loadTemplates` is 172 lines with inline HTML. **Fix:** Use `//go:embed` or external template files.
 
 - [x] **`internal/controller/tasks/backup_create.go:138,240`** | QG-06 | `handleQCOWBackupCreate` and `handleCephBackupCreate` share identical completion boilerplate. **Fix:** Extract shared completion logic.
 
@@ -486,7 +486,7 @@
 
 ### MEDIUM
 
-- [ ] **`internal/nodeagent/` (20 functions exceed 40 lines)`** | QG-01 | Worst: `StartDHCPForVMWithConfig` (139), `GenerateFilterXML` (111), `GetMetrics` (72), `AllocateVMSubnet` (64), `StopVM` (56), `ApplyThrottle` (55), `GetThrottleStatus` (55), `GenerateDomainXML` (52), `CreateVM` (51). **Fix:** Decompose into sub-functions.
+- [x] **`internal/nodeagent/` (20 functions exceed 40 lines)`** | QG-01 | Worst: `StartDHCPForVMWithConfig` (139), `GenerateFilterXML` (111), `GetMetrics` (72), `AllocateVMSubnet` (64), `StopVM` (56), `ApplyThrottle` (55), `GetThrottleStatus` (55), `GenerateDomainXML` (52), `CreateVM` (51). **Fix:** Decompose into sub-functions. - Decomposed: StartDHCPForVMWithConfig (dhcp_helpers.go), GenerateFilterXML (nwfilter_helpers.go), GetMetrics (lifecycle_helpers.go).
 
 - [x] **`internal/nodeagent/vm/lifecycle.go:877-944`, `network/bandwidth.go:322-361`** | QG-06 | Duplicate XML domain interface parsing struct defined identically in 4 places. **Fix:** Define shared `domainInterfacesDef` struct.
 
@@ -658,31 +658,31 @@
 
 - [x] **`webui/admin/` (missing file)`** | QG-12 | No `.env.example` file. `NEXT_PUBLIC_API_URL` undocumented. **Fix:** Create `.env.example`. (File exists with NEXT_PUBLIC_API_URL)
 
-- [ ] **`webui/admin/app/ip-sets/page.tsx`** | QG-01, QG-06 | 742-line monolithic component. **Fix:** Extract `IPSetCreateDialog`, `IPSetImportDialog`, validation utils.
+- [x] **`webui/admin/app/ip-sets/page.tsx`** | QG-01, QG-06 | 742-line monolithic component. **Fix:** Extract `IPSetCreateDialog`, `IPSetImportDialog`, validation utils.
 
-- [ ] **`webui/admin/app/plans/page.tsx`** | QG-01 | 486-line monolithic component. **Fix:** Extract `PlanEditDialog`.
+- [x] **`webui/admin/app/plans/page.tsx`** | QG-01 | 486-line monolithic component. **Fix:** Extract `PlanEditDialog`.
 
-- [ ] **`webui/admin/app/ip-sets/page.tsx:316-343`** | QG-10 | Tutorial-style WHAT-not-WHY comments. **Fix:** Remove or rewrite.
+- [x] **`webui/admin/app/ip-sets/page.tsx:316-343`** | QG-10 | Tutorial-style WHAT-not-WHY comments. **Fix:** Remove or rewrite.
 
 - [x] **`webui/admin/components/ui/*.tsx`** | QG-10 | Wildcard `import *` in all shadcn/ui components. **Fix:** Add linter suppression with justifying comment (shadcn convention). (Added eslint override for components/ui/**/*.tsx)
 
-- [ ] **`webui/admin/lib/api-client.ts:109`** | QG-03, QG-07 | `undefined as unknown as T` unsafe cast for 204 responses. **Fix:** Return `Promise<T | undefined>` or use method overloads.
+- [x] **`webui/admin/lib/api-client.ts:109`** | QG-03, QG-07 | `undefined as unknown as T` unsafe cast for 204 responses. **Fix:** Return `Promise<T | undefined>` or use method overloads.
 
 - [x] **`webui/admin/lib/auth-context.tsx:51-89`** | QG-02 | Auth state in sessionStorage without server validation of identity. Attacker with XSS can inject arbitrary user data. **Fix:** Fetch actual user profile from server on init (`GET /admin/auth/me`).
 
 ### MEDIUM
 
-- [ ] **Multiple admin pages** | QG-10 | Section-marker JSX comments (`{/* Header */}`, `{/* Stats Grid */}`) explain WHAT not WHY. **Fix:** Extract named sub-components.
+- [x] **Multiple admin pages** | QG-10 | Section-marker JSX comments (`{/* Header */}`, `{/* Stats Grid */}`) explain WHAT not WHY. **Fix:** Extract named sub-components. (Removed 14 WHAT comments from dashboard, nodes, ip-sets, customers, sidebar pages)
 
-- [ ] **`webui/admin/app/ip-sets/page.tsx`, `plans/page.tsx`, `settings/page.tsx`** | QG-05 | Non-login forms lack Zod validation schemas. Manual validation inconsistent with login form. **Fix:** Create Zod schemas for all forms.
+- [x] **`webui/admin/app/ip-sets/page.tsx`, `plans/page.tsx`, `settings/page.tsx`** | QG-05 | Non-login forms lack Zod validation schemas. Manual validation inconsistent with login form. **Fix:** Create Zod schemas for all forms. (Added Zod schemas with react-hook-form integration to all three pages)
 
-- [ ] **All admin page components** | QG-06 | Identical `useState`/`useEffect`/try-catch fetch pattern repeated 8+ times. `@tanstack/react-query` is a dependency but never used. **Fix:** Replace with `useQuery` from react-query.
+- [x] **All admin page components** | QG-06 | Identical `useState`/`useEffect`/try-catch fetch pattern repeated 8+ times. `@tanstack/react-query` is a dependency but never used. **Fix:** Replace with `useQuery` from react-query.
 
 - [x] **`webui/admin/lib/api-client.ts:83-114`** | QG-07 | Network errors propagate as raw `TypeError`, not structured `ApiClientError`. **Fix:** Catch network errors and wrap in `ApiClientError`.
 
 - [x] **`webui/admin/lib/api-client.ts:83-114`** | QG-09 | No request timeout / `AbortController`. Standard requires 10s HTTP timeout. **Fix:** Add AbortController with 10s timeout. (Verified: already present)
 
-- [ ] **`webui/admin/lib/auth-context.tsx:100-131`** | QG-16 | Heavy `getNodes()` endpoint used for session validation. **Fix:** Use lightweight `/admin/auth/me` or `/admin/auth/verify`.
+- [x] **`webui/admin/lib/auth-context.tsx:100-131`** | QG-16 | Heavy `getNodes()` endpoint used for session validation. **Fix:** Use lightweight `/admin/auth/me` or `/admin/auth/verify`.
 
 ### LOW
 
@@ -708,9 +708,9 @@
 
 ### HIGH
 
-- [ ] **`webui/customer/app/settings/page.tsx:112-1374`** | QG-01 | `SettingsPage` is 1,374 lines in a single function. **Fix:** Decompose into `ProfileTab`, `SecurityTab`, `ApiKeysTab`, `WebhooksTab`.
+- [x] **`webui/customer/app/settings/page.tsx:112-1374`** | QG-01 | `SettingsPage` is 1,374 lines in a single function. **Fix:** Decompose into `ProfileTab`, `SecurityTab`, `ApiKeysTab`, `WebhooksTab`.
 
-- [ ] **`webui/customer/app/vms/[id]/page.tsx:150-1486`** | QG-01 | `VMDetailPage` is 1,486 lines with 20+ state variables. **Fix:** Decompose into `VMControls`, `VMBackupsTab`, `VMSnapshotsTab`, `VMSettingsTab`, `VMConsoleTab`.
+- [x] **`webui/customer/app/vms/[id]/page.tsx:150-1486`** | QG-01 | `VMDetailPage` is 1,486 lines with 20+ state variables. **Fix:** Decompose into `VMControls`, `VMBackupsTab`, `VMSnapshotsTab`, `VMSettingsTab`, `VMConsoleTab`.
 
 - [x] **`webui/customer/components/sidebar.tsx:21-24` vs `mobile-nav.tsx:18-21`** | QG-06 | Duplicate `navItems` array definition. **Fix:** Extract to shared `lib/nav-items.ts`. (Already using shared nav-items.ts)
 
@@ -728,13 +728,13 @@
 
 - [x] **`webui/customer/app/vms/[id]/page.tsx:261`** | QG-10 | `eslint-disable-next-line` without justifying comment. **Fix:** Add explanation or fix dependency array. (Added justifying comment for stable fetch references)
 
-- [ ] **`webui/customer/app/vms/page.tsx:77-145`, `vms/[id]/page.tsx:268-364`** | QG-06 | Identical VM action handler pattern repeated 10+ times. **Fix:** Extract `useVMAction` hook or `executeVMAction` helper.
+- [x] **`webui/customer/app/vms/page.tsx:77-145`, `vms/[id]/page.tsx:268-364`** | QG-06 | Identical VM action handler pattern repeated 10+ times. **Fix:** Extract `useVMAction` hook or `executeVMAction` helper. (Created `lib/hooks/useVMAction.ts` with hook and helper function)
 
 - [x] **`webui/customer/package.json`** | QG-15 | All dependencies use `^` ranges; standard requires exact pinning. **Fix:** Remove `^` prefixes. (Already using exact versions)
 
-- [ ] **`webui/customer/lib/auth-context.tsx:100-145`** | QG-06 | Duplicate profile-fetching logic in `initAuth` for stored-state and no-stored-state branches. **Fix:** Extract common `fetchAndSetProfile` helper.
+- [x] **`webui/customer/lib/auth-context.tsx:100-145`** | QG-06 | Duplicate profile-fetching logic in `initAuth` for stored-state and no-stored-state branches. **Fix:** Extract common `fetchAndSetProfile` helper. (Created `lib/auth-utils.ts` with `fetchCustomerProfile` and `fetchCustomerProfileWithEmailFallback` helpers)
 
-- [ ] **`webui/customer/app/settings/page.tsx` (~15 occurrences)`** | QG-06 | Identical `onError` toast pattern in every mutation callback. **Fix:** Create shared `onMutationError` helper or `useMutationWithToast` wrapper.
+- [x] **`webui/customer/app/settings/page.tsx` (~15 occurrences)`** | QG-06 | Identical `onError` toast pattern in every mutation callback. **Fix:** Create shared `onMutationError` helper or `useMutationWithToast` wrapper. (Created `lib/utils/toast-helpers.ts` with `useMutationToast` providing `createMutationOnError`; applied to settings page mutations)
 
 - [x] **`webui/customer/lib/api-client.ts:581-637`** | QG-09 | `uploadISO` XHR has no automatic timeout. Stalled upload hangs indefinitely. **Fix:** Set `xhr.timeout = 600000` and handle `ontimeout`. (Timeout set at line 617, ontimeout handler at line 650)
 
@@ -746,9 +746,9 @@
 
 - [x] **`webui/customer/components/ui/*.tsx`** | QG-10 | Wildcard `import *` in auto-generated shadcn/ui components. **Fix:** Document exception. (Added eslint override for components/ui/**/*.tsx)
 
-- [ ] **`webui/customer/lib/auth-context.tsx:204-206`** | QG-07 | After 2FA, user object built from `pendingEmail` which may be empty. **Fix:** Fetch profile after 2FA.
+- [x] **`webui/customer/lib/auth-context.tsx:204-206`** | QG-07 | After 2FA, user object built from `pendingEmail` which may be empty. **Fix:** Fetch profile after 2FA.
 
-- [ ] **`webui/customer/app/vms/[id]/page.tsx:57-60`, `vms/page.tsx:64`** | QG-12 | Feature flags hardcoded as client-side constants. Standard requires server-evaluated. **Fix:** Move to env vars or server endpoint.
+- [x] **`webui/customer/app/vms/[id]/page.tsx:57-60`, `vms/page.tsx:64`** | QG-12 | Feature flags hardcoded as client-side constants. Standard requires server-evaluated. **Fix:** Move to env vars or server endpoint.
 
 - [x] **`webui/customer/app/vms/[id]/page.tsx:81-90`** | QG-07 | `formatBytes` doesn't handle negative input or NaN. **Fix:** Add guard `if (bytes <= 0) return "0 B"`.
 

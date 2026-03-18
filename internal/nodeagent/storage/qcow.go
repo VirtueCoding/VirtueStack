@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -577,55 +576,3 @@ func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (*QCOW
 	return &info, nil
 }
 
-// CheckQemuImgAvailable checks if qemu-img is available on the system.
-// Returns an error if qemu-img is not found or not executable.
-func CheckQemuImgAvailable() error {
-	// context.TODO() is used because this is a package-level helper with no caller context.
-	cmd := exec.CommandContext(context.TODO(), "qemu-img", "--version")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("qemu-img not available: %w", err)
-	}
-	return nil
-}
-
-// parseSize parses a size string like "1.2G" or "500M" into bytes.
-func parseSize(sizeStr string) (int64, error) {
-	sizeStr = strings.TrimSpace(sizeStr)
-	if len(sizeStr) == 0 {
-		return 0, fmt.Errorf("empty size string")
-	}
-
-	// Extract numeric part and suffix
-	var numStr string
-	var multiplier int64 = 1
-
-	lastChar := strings.ToUpper(string(sizeStr[len(sizeStr)-1]))
-	switch lastChar {
-	case "K":
-		multiplier = 1024
-		numStr = sizeStr[:len(sizeStr)-1]
-	case "M":
-		multiplier = 1024 * 1024
-		numStr = sizeStr[:len(sizeStr)-1]
-	case "G":
-		multiplier = 1024 * 1024 * 1024
-		numStr = sizeStr[:len(sizeStr)-1]
-	case "T":
-		multiplier = 1024 * 1024 * 1024 * 1024
-		numStr = sizeStr[:len(sizeStr)-1]
-	default:
-		// No suffix, assume bytes
-		if lastChar >= "0" && lastChar <= "9" {
-			numStr = sizeStr
-		} else {
-			return 0, fmt.Errorf("invalid size suffix: %s", lastChar)
-		}
-	}
-
-	num, err := strconv.ParseFloat(numStr, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parsing size number %q: %w", numStr, err)
-	}
-
-	return int64(num * float64(multiplier)), nil
-}

@@ -9,28 +9,11 @@ import {
   HardDrive,
   MemoryStick,
   Network,
-  Play,
-  Square,
-  RotateCw,
-  Zap,
-  Loader2,
   Monitor,
-  Archive,
-  Camera,
-  Settings,
-  Trash2,
-  RefreshCcw,
-  Download,
-  Clock,
-  AlertCircle,
-  CheckCircle2,
-  XCircle,
   BarChart3,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -38,55 +21,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
-import { VNCConsole } from "@/components/novnc-console/vnc-console";
 import { ResourceCharts } from "@/components/charts/resource-charts";
 import { SerialConsole } from "@/components/serial-console/serial-console";
 import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot, ApiClientError } from "@/lib/api-client";
-import { getStatusBadgeVariant, getStatusLabel, formatMemory, formatBytes } from "@/lib/vm-utils";
-
-const FEATURE_FLAGS = {
-  enableResourceConfig: true,
-  enableNetworkConfig: true,
-};
-
-function getBackupStatusBadgeVariant(
-  status: Backup["status"]
-): "success" | "secondary" | "destructive" | "warning" | "default" {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "pending":
-      return "secondary";
-    case "creating":
-      return "warning";
-    case "failed":
-      return "destructive";
-    case "restoring":
-      return "warning";
-    default:
-      return "default";
-  }
-}
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
+import { useVMAction } from "@/lib/hooks/useVMAction";
+import { VMControls } from "@/components/vm/VMControls";
+import { VMBackupsTab } from "@/components/vm/VMBackupsTab";
+import { VMSnapshotsTab } from "@/components/vm/VMSnapshotsTab";
+import { VMSettingsTab } from "@/components/vm/VMSettingsTab";
+import { VMConsoleTab } from "@/components/vm/VMConsoleTab";
 
 function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string }) {
   const [token, setToken] = useState<string | null>(null);
@@ -119,7 +65,7 @@ function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string
   if (isLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-dashed bg-muted/50">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Server className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -127,7 +73,6 @@ function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string
   if (error) {
     return (
       <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-        <AlertCircle className="h-8 w-8 text-destructive mb-2" />
         <p className="text-sm text-destructive">{error}</p>
       </div>
     );
@@ -143,52 +88,18 @@ export default function VMDetailPage() {
   const vmId = Array.isArray(rawId) ? rawId[0] : (rawId as string);
   const [vm, setVm] = useState<VM | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isActionLoading, setIsActionLoading] = useState(false);
   const [showStopDialog, setShowStopDialog] = useState(false);
   const [showForceStopDialog, setShowForceStopDialog] = useState(false);
   const { toast } = useToast();
+  const { executeAction: executeVMAction, isLoading: isVMActionLoading } = useVMAction();
 
   // Backup state
   const [backups, setBackups] = useState<Backup[]>([]);
   const [isBackupsLoading, setIsBackupsLoading] = useState(false);
-  const [showCreateBackupDialog, setShowCreateBackupDialog] = useState(false);
-  const [showDeleteBackupDialog, setShowDeleteBackupDialog] = useState(false);
-  const [showRestoreBackupDialog, setShowRestoreBackupDialog] = useState(false);
-  const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);
-  const [backupName, setBackupName] = useState("");
 
   // Snapshot state
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [isSnapshotsLoading, setIsSnapshotsLoading] = useState(false);
-  const [showCreateSnapshotDialog, setShowCreateSnapshotDialog] = useState(false);
-  const [showDeleteSnapshotDialog, setShowDeleteSnapshotDialog] = useState(false);
-  const [showRevertSnapshotDialog, setShowRevertSnapshotDialog] = useState(false);
-  const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
-  const [snapshotName, setSnapshotName] = useState("");
-
-  // Console state
-  const [consoleUrl, setConsoleUrl] = useState<string | null>(null);
-  const [isConsoleLoading, setIsConsoleLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("console");
-
-  const handleOpenConsole = async () => {
-    setIsConsoleLoading(true);
-    try {
-      const response = await vmApi.getConsoleToken(vmId);
-      setConsoleUrl(response.url);
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to get console access token.";
-      toast({
-        title: "Console Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsConsoleLoading(false);
-    }
-  };
 
   const fetchVM = useCallback(async () => {
     if (!vmId) return;
@@ -248,268 +159,106 @@ export default function VMDetailPage() {
     fetchVM();
     fetchBackups();
     fetchSnapshots();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only depend on vmId; fetch functions are stable references
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only depend on vmId
   }, [vmId]);
 
   const handleBack = () => {
     router.push("/vms");
   };
 
-  const handleStart = async () => {
+  const handleStart = () => {
     if (!vmId) return;
-    setIsActionLoading(true);
-    try {
-      await vmApi.startVM(vmId);
-      toast({
-        title: "VM Started",
-        description: "Virtual machine started successfully.",
-      });
-      await fetchVM();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to start VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+    executeVMAction({
+      action: "start",
+      vmId,
+      onSuccess: fetchVM,
+    });
   };
 
-  const handleStop = async () => {
+  const handleStop = () => {
     if (!vmId) return;
     setShowStopDialog(false);
-    setIsActionLoading(true);
-    try {
-      await vmApi.stopVM(vmId);
-      toast({
-        title: "VM Stopped",
-        description: "Virtual machine stopped successfully.",
-      });
-      await fetchVM();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to stop VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+    executeVMAction({
+      action: "stop",
+      vmId,
+      onSuccess: fetchVM,
+    });
   };
 
-  const handleForceStop = async () => {
+  const handleForceStop = () => {
     if (!vmId) return;
     setShowForceStopDialog(false);
-    setIsActionLoading(true);
-    try {
-      await vmApi.forceStopVM(vmId);
-      toast({
-        title: "VM Force Stopped",
-        description: "Virtual machine force stopped successfully.",
-      });
-      await fetchVM();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to force stop VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+    executeVMAction({
+      action: "forceStop",
+      vmId,
+      onSuccess: fetchVM,
+    });
   };
 
-  const handleRestart = async () => {
+  const handleRestart = () => {
     if (!vmId) return;
-    setIsActionLoading(true);
-    try {
-      await vmApi.restartVM(vmId);
-      toast({
-        title: "VM Restarted",
-        description: "Virtual machine restarted successfully.",
-      });
-      await fetchVM();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to restart VM. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+    executeVMAction({
+      action: "restart",
+      vmId,
+      onSuccess: fetchVM,
+    });
   };
 
   // Backup handlers
-  const handleCreateBackup = async () => {
-    if (!vmId || !backupName.trim()) return;
-    setIsActionLoading(true);
-    try {
-      await backupApi.createBackup({ vm_id: vmId, name: backupName.trim() });
-      toast({
-        title: "Backup Created",
-        description: "Backup creation initiated successfully.",
-      });
-      setShowCreateBackupDialog(false);
-      setBackupName("");
-      await fetchBackups();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to create backup. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleCreateBackup = async (name: string) => {
+    if (!vmId) return;
+    await backupApi.createBackup({ vm_id: vmId, name });
+    toast({
+      title: "Backup Created",
+      description: "Backup creation initiated successfully.",
+    });
+    await fetchBackups();
   };
 
-  const handleDeleteBackup = async () => {
-    if (!selectedBackup) return;
-    setIsActionLoading(true);
-    try {
-      await backupApi.deleteBackup(selectedBackup.id);
-      toast({
-        title: "Backup Deleted",
-        description: "Backup deleted successfully.",
-      });
-      setShowDeleteBackupDialog(false);
-      setSelectedBackup(null);
-      await fetchBackups();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to delete backup. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleDeleteBackup = async (backupId: string) => {
+    await backupApi.deleteBackup(backupId);
+    toast({
+      title: "Backup Deleted",
+      description: "Backup deleted successfully.",
+    });
+    await fetchBackups();
   };
 
-  const handleRestoreBackup = async () => {
-    if (!selectedBackup) return;
-    setIsActionLoading(true);
-    try {
-      await backupApi.restoreBackup(selectedBackup.id);
-      toast({
-        title: "Backup Restore Initiated",
-        description: "The VM will be restored from the selected backup.",
-      });
-      setShowRestoreBackupDialog(false);
-      setSelectedBackup(null);
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to restore backup. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleRestoreBackup = async (backupId: string) => {
+    await backupApi.restoreBackup(backupId);
+    toast({
+      title: "Backup Restore Initiated",
+      description: "The VM will be restored from the selected backup.",
+    });
   };
 
   // Snapshot handlers
-  const handleCreateSnapshot = async () => {
-    if (!vmId || !snapshotName.trim()) return;
-    setIsActionLoading(true);
-    try {
-      await snapshotApi.createSnapshot({ vm_id: vmId, name: snapshotName.trim() });
-      toast({
-        title: "Snapshot Created",
-        description: "Snapshot creation initiated successfully.",
-      });
-      setShowCreateSnapshotDialog(false);
-      setSnapshotName("");
-      await fetchSnapshots();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to create snapshot. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleCreateSnapshot = async (name: string) => {
+    if (!vmId) return;
+    await snapshotApi.createSnapshot({ vm_id: vmId, name });
+    toast({
+      title: "Snapshot Created",
+      description: "Snapshot creation initiated successfully.",
+    });
+    await fetchSnapshots();
   };
 
-  const handleDeleteSnapshot = async () => {
-    if (!selectedSnapshot) return;
-    setIsActionLoading(true);
-    try {
-      await snapshotApi.deleteSnapshot(selectedSnapshot.id);
-      toast({
-        title: "Snapshot Deleted",
-        description: "Snapshot deleted successfully.",
-      });
-      setShowDeleteSnapshotDialog(false);
-      setSelectedSnapshot(null);
-      await fetchSnapshots();
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to delete snapshot. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleDeleteSnapshot = async (snapshotId: string) => {
+    await snapshotApi.deleteSnapshot(snapshotId);
+    toast({
+      title: "Snapshot Deleted",
+      description: "Snapshot deleted successfully.",
+    });
+    await fetchSnapshots();
   };
 
-  const handleRevertSnapshot = async () => {
-    if (!selectedSnapshot) return;
-    setIsActionLoading(true);
-    try {
-      await snapshotApi.restoreSnapshot(selectedSnapshot.id);
-      toast({
-        title: "Snapshot Revert Initiated",
-        description: "The VM will be reverted to the selected snapshot.",
-      });
-      setShowRevertSnapshotDialog(false);
-      setSelectedSnapshot(null);
-    } catch (error) {
-      const message = error instanceof ApiClientError
-        ? error.message
-        : "Failed to revert snapshot. Please try again.";
-      toast({
-        title: "Error",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleRevertSnapshot = async (snapshotId: string) => {
+    await snapshotApi.restoreSnapshot(snapshotId);
+    toast({
+      title: "Snapshot Revert Initiated",
+      description: "The VM will be reverted to the selected snapshot.",
+    });
   };
-
-
 
   if (isLoading) {
     return (
@@ -556,94 +305,18 @@ export default function VMDetailPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">VM Controls</CardTitle>
-          <CardDescription>
-            Manage the power state of your virtual machine
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-3">
-            {vm.status === "stopped" && (
-              <Button onClick={handleStart} disabled={isActionLoading}>
-                {isActionLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4" />
-                )}
-                Start
-              </Button>
-            )}
-            {vm.status === "running" && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowStopDialog(true)}
-                  disabled={isActionLoading}
-                >
-                  {isActionLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Square className="mr-2 h-4 w-4" />
-                  )}
-                  Stop
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowForceStopDialog(true)}
-                  disabled={isActionLoading}
-                >
-                  <Zap className="mr-2 h-4 w-4" />
-                  Force Stop
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleRestart}
-                  disabled={isActionLoading}
-                >
-                  {isActionLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <RotateCw className="mr-2 h-4 w-4" />
-                  )}
-                  Restart
-                </Button>
-              </>
-            )}
-            {vm.status === "error" && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={handleRestart}
-                  disabled={isActionLoading}
-                >
-                  {isActionLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <RotateCw className="mr-2 h-4 w-4" />
-                  )}
-                  Restart
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowForceStopDialog(true)}
-                  disabled={isActionLoading}
-                >
-                  <Zap className="mr-2 h-4 w-4" />
-                  Force Stop
-                </Button>
-              </>
-            )}
-            {vm.status === "provisioning" && (
-              <Button variant="outline" disabled>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Provisioning...
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <VMControls
+        vm={vm}
+        isActionLoading={isVMActionLoading}
+        onStart={handleStart}
+        onStop={handleStop}
+        onForceStop={handleForceStop}
+        onRestart={handleRestart}
+        showStopDialog={showStopDialog}
+        setShowStopDialog={setShowStopDialog}
+        showForceStopDialog={showForceStopDialog}
+        setShowForceStopDialog={setShowForceStopDialog}
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -729,11 +402,11 @@ export default function VMDetailPage() {
             Network
           </TabsTrigger>
           <TabsTrigger value="backups">
-            <Archive className="mr-2 h-4 w-4" />
+            <Server className="mr-2 h-4 w-4" />
             Backups
           </TabsTrigger>
           <TabsTrigger value="snapshots">
-            <Camera className="mr-2 h-4 w-4" />
+            <Server className="mr-2 h-4 w-4" />
             Snapshots
           </TabsTrigger>
           <TabsTrigger value="metrics">
@@ -741,66 +414,14 @@ export default function VMDetailPage() {
             Metrics
           </TabsTrigger>
           <TabsTrigger value="settings">
-            <Settings className="mr-2 h-4 w-4" />
+            <Server className="mr-2 h-4 w-4" />
             Settings
           </TabsTrigger>
         </TabsList>
 
         {/* Console Tab */}
         <TabsContent value="console">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">VM Console</CardTitle>
-              <CardDescription>
-                Access the virtual machine console via noVNC
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {vm?.status !== "running" ? (
-                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <div className="flex flex-col items-center gap-4 p-8 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                      <Monitor className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Console Unavailable</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        VM must be running to access the console
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="gap-1">
-                      <div className="h-2 w-2 rounded-full bg-yellow-500" />
-                      VM {vm?.status || "Unknown"}
-                    </Badge>
-                  </div>
-                </div>
-              ) : consoleUrl ? (
-                <VNCConsole wsUrl={consoleUrl} vmId={vmId} className="min-h-[500px]" />
-              ) : (
-                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <div className="flex flex-col items-center gap-4 p-8 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                      <Monitor className="h-8 w-8 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Console Access</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Connect to your VM&apos;s graphical console
-                      </p>
-                    </div>
-                    <Button onClick={handleOpenConsole} disabled={isConsoleLoading}>
-                      {isConsoleLoading ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Monitor className="mr-2 h-4 w-4" />
-                      )}
-                      {isConsoleLoading ? "Connecting..." : "Connect to Console"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <VMConsoleTab vmId={vmId} vmStatus={vm.status} />
         </TabsContent>
 
         <TabsContent value="serial">
@@ -814,21 +435,9 @@ export default function VMDetailPage() {
             <CardContent>
               {vm?.status !== "running" ? (
                 <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <div className="flex flex-col items-center gap-4 p-8 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                      <Monitor className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Serial Console Unavailable</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        VM must be running to access the serial console
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="gap-1">
-                      <div className="h-2 w-2 rounded-full bg-yellow-500" />
-                      VM {vm?.status || "Unknown"}
-                    </Badge>
-                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    VM must be running to access the serial console
+                  </p>
                 </div>
               ) : (
                 <SerialConsoleWithToken vmId={vmId} vmName={vm.name} />
@@ -881,200 +490,32 @@ export default function VMDetailPage() {
 
         {/* Backups Tab */}
         <TabsContent value="backups">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-lg">Backups</CardTitle>
-                <CardDescription>
-                  Manage automated and manual backups
-                </CardDescription>
-              </div>
-              <Button
-                onClick={() => {
-                  setBackupName(`Backup ${new Date().toLocaleDateString()}`);
-                  setShowCreateBackupDialog(true);
-                }}
-                disabled={isActionLoading}
-              >
-                {isActionLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                Create Backup
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {isBackupsLoading ? (
-                <div className="flex min-h-[200px] items-center justify-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
-              ) : backups.length === 0 ? (
-                <div className="flex min-h-[200px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <Archive className="h-12 w-12 text-muted-foreground" />
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    No backups found
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Create your first backup to protect your data
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {backups.map((backup) => (
-                    <div
-                      key={backup.id}
-                      className="flex items-center justify-between rounded-lg border p-4"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                          {backup.status === "completed" ? (
-                            <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          ) : backup.status === "failed" ? (
-                            <XCircle className="h-5 w-5 text-red-500" />
-                          ) : (
-                            <Loader2 className="h-5 w-5 animate-spin text-yellow-500" />
-                          )}
-                        </div>
-                        <div>
-                          <p className="font-medium">{backup.name}</p>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            <span>{formatDate(backup.created_at)}</span>
-                            <span>•</span>
-                            <span>{formatBytes(backup.size_bytes)}</span>
-                            <span>•</span>
-                            <Badge variant={getBackupStatusBadgeVariant(backup.status)}>
-                              {getStatusLabel(backup.status)}
-                            </Badge>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedBackup(backup);
-                            setShowRestoreBackupDialog(true);
-                          }}
-                          disabled={backup.status !== "completed" || isActionLoading}
-                        >
-                          <RefreshCcw className="mr-2 h-4 w-4" />
-                          Restore
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedBackup(backup);
-                            setShowDeleteBackupDialog(true);
-                          }}
-                          disabled={isActionLoading}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <VMBackupsTab
+            vmId={vmId}
+            vmName={vm.name}
+            backups={backups}
+            isLoading={isBackupsLoading}
+            isActionLoading={isVMActionLoading}
+            onRefresh={fetchBackups}
+            onCreateBackup={handleCreateBackup}
+            onDeleteBackup={handleDeleteBackup}
+            onRestoreBackup={handleRestoreBackup}
+          />
         </TabsContent>
 
         {/* Snapshots Tab */}
         <TabsContent value="snapshots">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-lg">Snapshots</CardTitle>
-                <CardDescription>
-                  Create and restore VM snapshots for quick rollbacks
-                </CardDescription>
-              </div>
-              <Button
-                onClick={() => {
-                  setSnapshotName(`Snapshot ${new Date().toLocaleDateString()}`);
-                  setShowCreateSnapshotDialog(true);
-                }}
-                disabled={isActionLoading}
-              >
-                {isActionLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Camera className="mr-2 h-4 w-4" />
-                )}
-                Create Snapshot
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {isSnapshotsLoading ? (
-                <div className="flex min-h-[200px] items-center justify-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
-              ) : snapshots.length === 0 ? (
-                <div className="flex min-h-[200px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <Camera className="h-12 w-12 text-muted-foreground" />
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    No snapshots found
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Create snapshots before making changes to your VM
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {snapshots.map((snapshot) => (
-                    <div
-                      key={snapshot.id}
-                      className="flex items-center justify-between rounded-lg border p-4"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                          <Camera className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <p className="font-medium">{snapshot.name}</p>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            <span>{formatDate(snapshot.created_at)}</span>
-                            <span>•</span>
-                            <span>{formatBytes(snapshot.size_bytes)}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedSnapshot(snapshot);
-                            setShowRevertSnapshotDialog(true);
-                          }}
-                          disabled={isActionLoading}
-                        >
-                          <RefreshCcw className="mr-2 h-4 w-4" />
-                          Revert
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedSnapshot(snapshot);
-                            setShowDeleteSnapshotDialog(true);
-                          }}
-                          disabled={isActionLoading}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <VMSnapshotsTab
+            vmId={vmId}
+            vmName={vm.name}
+            snapshots={snapshots}
+            isLoading={isSnapshotsLoading}
+            isActionLoading={isVMActionLoading}
+            onRefresh={fetchSnapshots}
+            onCreateSnapshot={handleCreateSnapshot}
+            onDeleteSnapshot={handleDeleteSnapshot}
+            onRevertSnapshot={handleRevertSnapshot}
+          />
         </TabsContent>
 
         {/* Metrics Tab */}
@@ -1092,17 +533,9 @@ export default function VMDetailPage() {
             <CardContent>
               {vm?.status !== "running" ? (
                 <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-                  <div className="flex flex-col items-center gap-4 p-8 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                      <BarChart3 className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Metrics Unavailable</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        VM must be running to view metrics
-                      </p>
-                    </div>
-                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    VM must be running to view metrics
+                  </p>
                 </div>
               ) : (
                 <ResourceCharts vmId={vmId} />
@@ -1113,364 +546,9 @@ export default function VMDetailPage() {
 
         {/* Settings Tab */}
         <TabsContent value="settings">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">VM Settings</CardTitle>
-              <CardDescription>
-                View virtual machine parameters
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Basic Settings */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-medium">Basic Information</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="vm-name">VM Name</Label>
-                    <p className="text-sm">{vm.name}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="vm-hostname">Hostname</Label>
-                    <p className="text-sm text-muted-foreground">{vm.hostname}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Resource Configuration */}
-              {FEATURE_FLAGS.enableResourceConfig && (
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-sm font-medium">Resource Configuration</h3>
-                  {vm && (
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <div className="rounded-lg border p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Cpu className="h-4 w-4" />
-                          <span>CPU Cores</span>
-                        </div>
-                        <p className="mt-1 text-2xl font-bold">{vm.vcpu}</p>
-                      </div>
-                      <div className="rounded-lg border p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <MemoryStick className="h-4 w-4" />
-                          <span>Memory</span>
-                        </div>
-                        <p className="mt-1 text-2xl font-bold">{formatMemory(vm.memory_mb)}</p>
-                      </div>
-                      <div className="rounded-lg border p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <HardDrive className="h-4 w-4" />
-                          <span>Disk</span>
-                        </div>
-                        <p className="mt-1 text-2xl font-bold">{vm.disk_gb} GB</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Network Configuration */}
-              {FEATURE_FLAGS.enableNetworkConfig && (
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-sm font-medium">Network Configuration</h3>
-                  {vm && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="rounded-lg border p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Network className="h-4 w-4" />
-                          <span>Primary IP</span>
-                        </div>
-                        <p className="mt-1 font-mono text-lg font-semibold">{vm.ipv4 || "Not assigned"}</p>
-                      </div>
-                      <div className="rounded-lg border p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Network className="h-4 w-4" />
-                          <span>Hostname</span>
-                        </div>
-                        <p className="mt-1 font-mono text-lg font-semibold">{vm.hostname || vm.name}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <VMSettingsTab vm={vm} />
         </TabsContent>
       </Tabs>
-
-      {/* Stop Dialog */}
-      <Dialog open={showStopDialog} onOpenChange={setShowStopDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Stop Virtual Machine</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to stop <strong>{vm?.name}</strong>?
-              This will perform a graceful shutdown of the VM.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowStopDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleStop} disabled={isActionLoading}>
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Stopping...
-                </>
-              ) : (
-                "Stop VM"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Force Stop Dialog */}
-      <Dialog open={showForceStopDialog} onOpenChange={setShowForceStopDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Force Stop Virtual Machine</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to force stop <strong>{vm?.name}</strong>?
-              This is equivalent to pulling the power plug and may result in data loss.
-              Use this only when graceful shutdown fails.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowForceStopDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleForceStop}
-              disabled={isActionLoading}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Force Stopping...
-                </>
-              ) : (
-                "Force Stop"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Backup Dialog */}
-      <Dialog open={showCreateBackupDialog} onOpenChange={setShowCreateBackupDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Backup</DialogTitle>
-            <DialogDescription>
-              Create a new backup of <strong>{vm?.name}</strong>.
-              This may take several minutes depending on the VM size.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="backup-name">Backup Name</Label>
-              <Input
-                id="backup-name"
-                value={backupName}
-                onChange={(e) => setBackupName(e.target.value)}
-                placeholder="Enter backup name"
-                maxLength={128}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateBackupDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateBackup}
-              disabled={isActionLoading || !backupName.trim()}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                "Create Backup"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Backup Dialog */}
-      <Dialog open={showDeleteBackupDialog} onOpenChange={setShowDeleteBackupDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Backup</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete the backup &quot;{selectedBackup?.name}&quot;?
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteBackupDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteBackup}
-              disabled={isActionLoading}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete Backup"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Restore Backup Dialog */}
-      <Dialog open={showRestoreBackupDialog} onOpenChange={setShowRestoreBackupDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Restore Backup</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to restore <strong>{vm?.name}</strong> from the backup &quot;{selectedBackup?.name}&quot;?
-              This will overwrite the current VM state and cannot be undone.
-              The VM will be temporarily unavailable during restoration.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRestoreBackupDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleRestoreBackup}
-              disabled={isActionLoading}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Restoring...
-                </>
-              ) : (
-                "Restore Backup"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Snapshot Dialog */}
-      <Dialog open={showCreateSnapshotDialog} onOpenChange={setShowCreateSnapshotDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Snapshot</DialogTitle>
-            <DialogDescription>
-              Create a new snapshot of <strong>{vm?.name}</strong>.
-              Snapshots allow quick rollback to this point in time.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="snapshot-name">Snapshot Name</Label>
-              <Input
-                id="snapshot-name"
-                value={snapshotName}
-                onChange={(e) => setSnapshotName(e.target.value)}
-                placeholder="Enter snapshot name"
-                maxLength={128}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateSnapshotDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateSnapshot}
-              disabled={isActionLoading || !snapshotName.trim()}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                "Create Snapshot"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Snapshot Dialog */}
-      <Dialog open={showDeleteSnapshotDialog} onOpenChange={setShowDeleteSnapshotDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Snapshot</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete the snapshot &quot;{selectedSnapshot?.name}&quot;?
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteSnapshotDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteSnapshot}
-              disabled={isActionLoading}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete Snapshot"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Revert Snapshot Dialog */}
-      <Dialog open={showRevertSnapshotDialog} onOpenChange={setShowRevertSnapshotDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Revert to Snapshot</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to revert <strong>{vm?.name}</strong> to the snapshot &quot;{selectedSnapshot?.name}&quot;?
-              This will discard all changes made since the snapshot was created.
-              The VM will be temporarily unavailable during reversion.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRevertSnapshotDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleRevertSnapshot}
-              disabled={isActionLoading}
-            >
-              {isActionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Reverting...
-                </>
-              ) : (
-                "Revert to Snapshot"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

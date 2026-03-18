@@ -361,60 +361,10 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 		return &VMMetrics{VMID: vmID}, nil
 	}
 
-	// Get CPU stats
-	cpuPercent, err := m.getCPUUsage(domain)
-	if err != nil {
-		m.logger.Warn("could not get CPU usage", "error", err, "vm_id", vmID)
-	}
-
-	// Get memory stats
-	memUsage, memTotal, err := m.getMemoryUsage(domain)
-	if err != nil {
-		m.logger.Warn("could not get memory usage", "error", err, "vm_id", vmID)
-	}
-
-	// Get disk stats
-	diskRead, diskWrite, err := m.getDiskStats(domain)
-	if err != nil {
-		m.logger.Warn("could not get disk stats", "error", err, "vm_id", vmID)
-	}
-
-	// Get disk ops
-	_, _, diskRdOps, diskWrOps, diskOpsErr := m.getDiskStatsFull(domain)
-	if diskOpsErr != nil {
-		m.logger.Warn("could not get disk ops", "error", diskOpsErr, "vm_id", vmID)
-	}
-
-	// Get network stats
-	netRX, netTX, err := m.getNetworkStats(domain)
-	if err != nil {
-		m.logger.Warn("could not get network stats", "error", err, "vm_id", vmID)
-	}
-
-	// Get full network stats (packets, errors, drops)
-	_, _, netRXPkts, netTXPkts, netRXErrs, netTXErrs, netRXDrop, netTXDrop, netFullErr := m.getNetworkStatsFull(domain)
-	if netFullErr != nil {
-		m.logger.Warn("could not get full network stats", "error", netFullErr, "vm_id", vmID)
-	}
-
-	return &VMMetrics{
-		VMID:             vmID,
-		CPUUsagePercent:  cpuPercent,
-		MemoryUsageBytes: memUsage,
-		MemoryTotalBytes: memTotal,
-		DiskReadBytes:    diskRead,
-		DiskWriteBytes:   diskWrite,
-		DiskReadOps:      diskRdOps,
-		DiskWriteOps:     diskWrOps,
-		NetworkRXBytes:   netRX,
-		NetworkTXBytes:   netTX,
-		NetworkRXPkts:    netRXPkts,
-		NetworkTXPkts:    netTXPkts,
-		NetworkRXErrs:    netRXErrs,
-		NetworkTXErrs:    netTXErrs,
-		NetworkRXDrop:    netRXDrop,
-		NetworkTXDrop:    netTXDrop,
-	}, nil
+	// Collect all metrics
+	logger := m.logger.With("vm_id", vmID)
+	data := m.collectMetrics(domain, vmID, logger)
+	return data.toVMMetrics(vmID), nil
 }
 
 // GetNodeResources returns aggregate resource information for the node.

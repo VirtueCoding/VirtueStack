@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    
+
     CONSTRAINT password_resets_token_hash_valid CHECK (length(token_hash) = 64),
     CONSTRAINT password_resets_user_type_valid CHECK (user_type IN ('customer', 'admin'))
 );
@@ -41,6 +41,18 @@ GRANT SELECT, INSERT, UPDATE ON password_resets TO app_user;
 
 -- Grant permissions to app_customer for RLS (if needed)
 GRANT SELECT, INSERT ON password_resets TO app_customer;
+
+-- ============================================================================
+-- ROW LEVEL SECURITY (QG-02)
+-- Enable RLS immediately after granting permissions to prevent gap window
+-- where app_customer could access all rows before RLS is enforced.
+-- ============================================================================
+
+ALTER TABLE password_resets ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for customer access: customers can only access their own resets
+CREATE POLICY customer_password_resets ON password_resets FOR ALL TO app_customer
+    USING (user_id = current_setting('app.current_customer_id')::UUID);
 
 -- ============================================================================
 -- COMMENTS

@@ -2387,9 +2387,11 @@ Every component maps to the 19 Quality Gates from `CODING_STANDARD.md`:
 | `PDNS_API_KEY` | No | PowerDNS API key | `changeme` |
 | `SMTP_HOST` | No | SMTP server hostname | `smtp.example.com` |
 | `SMTP_PORT` | No | SMTP port | `587` |
-| `SMTP_USERNAME` | No | SMTP auth username | `noreply@example.com` |
+| `SMTP_USER` | No | SMTP auth username | `noreply@example.com` |
 | `SMTP_PASSWORD` | No | SMTP auth password | `(secret)` |
 | `SMTP_FROM` | No | Email sender address | `VirtueStack <noreply@example.com>` |
+| `SMTP_ENABLED` | No | Enable email notifications | `true` |
+| `SMTP_REQUIRE_TLS` | No | Enforce STARTTLS for non-465 ports (prevents plaintext credential exposure) | `true` (recommended for port 587) |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token | `123456:ABC-DEF` |
 | `TELEGRAM_ADMIN_CHAT_IDS` | No | Comma-separated admin chat IDs | `123456789,987654321` |
 | `BACKUP_STORAGE_PATH` | No | Mounted volume for backups | `/mnt/backups` |

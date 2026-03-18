@@ -1,10 +1,12 @@
 package customer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,81 +41,152 @@ type ISOUploadResponse struct {
 	SHA256   string `json:"sha256"`
 }
 
+// isoUploadContext holds the validated context for an ISO upload operation.
+type isoUploadContext struct {
+	vmID       string
+	customerID string
+	vm         *models.VM
+	file       io.ReadCloser
+	header     *multipart.FileHeader
+}
+
 // UploadISO handles POST /vms/:id/iso/upload - multipart ISO upload.
 func (h *CustomerHandler) UploadISO(c *gin.Context) {
+	ctx, ok := h.validateISOUploadAccess(c)
+	if !ok {
+		return
+	}
+	defer ctx.file.Close()
+
+	if !h.validateISOFile(c, ctx.header) {
+		return
+	}
+
+	if !h.checkISOLimit(c, ctx.vm, ctx.customerID, ctx.vmID) {
+		return
+	}
+
+	result, ok := h.writeISOFile(c, ctx.file, ctx.customerID, ctx.vmID, ctx.header.Filename)
+	if !ok {
+		return
+	}
+
+	h.logger.Info("ISO uploaded",
+		"iso_id", result.ID,
+		"vm_id", ctx.vmID,
+		"customer_id", ctx.customerID,
+		"file_name", ctx.header.Filename,
+		"file_size", result.FileSize,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusCreated, models.Response{Data: result})
+}
+
+// validateISOUploadAccess validates the VM ID and retrieves the VM for upload.
+func (h *CustomerHandler) validateISOUploadAccess(c *gin.Context) (*isoUploadContext, bool) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
 
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
-		return
+		return nil, false
 	}
 
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
+			return nil, false
 		}
 		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to verify VM")
-		return
+		return nil, false
 	}
 
 	if vm.Status == models.VMStatusDeleted {
 		respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-		return
+		return nil, false
 	}
 
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxISOSizeBytes+1024)
-
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		respondWithError(c, http.StatusBadRequest, "MISSING_FILE", "No file provided in 'file' form field")
-		return
+		return nil, false
 	}
-	defer file.Close()
 
+	return &isoUploadContext{
+		vmID:       vmID,
+		customerID: customerID,
+		vm:         vm,
+		file:       file,
+		header:     header,
+	}, true
+}
+
+// validateISOFile validates the uploaded file extension and size.
+func (h *CustomerHandler) validateISOFile(c *gin.Context, header *multipart.FileHeader) bool {
 	if !strings.EqualFold(filepath.Ext(header.Filename), ".iso") {
 		respondWithError(c, http.StatusBadRequest, "INVALID_FILE_TYPE", "Only .iso files are allowed")
-		return
+		return false
 	}
 
 	if header.Size > maxISOSizeBytes {
 		respondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
-		return
+		return false
 	}
 
+	return true
+}
+
+// checkISOLimit checks if the VM has reached its ISO upload limit.
+func (h *CustomerHandler) checkISOLimit(c *gin.Context, vm *models.VM, customerID, vmID string) bool {
 	isoDir := filepath.Join(h.isoStoragePath, customerID, vmID)
 	if err := os.MkdirAll(isoDir, 0750); err != nil {
 		h.logger.Error("failed to create ISO directory",
 			"path", isoDir, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to prepare upload directory")
-		return
+		return false
 	}
 
 	existing, _ := os.ReadDir(isoDir)
+	isoCount := countISOFiles(existing)
 
-	isoCount := 0
-	for _, entry := range existing {
-		if strings.HasSuffix(strings.ToLower(entry.Name()), ".iso") {
-			isoCount++
-		}
-	}
-
-	planLimit := defaultISOLimit
-	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
-	if planErr == nil && plan.ISOUploadLimit > 0 {
-		planLimit = plan.ISOUploadLimit
-	}
-
+	planLimit := h.getISOPlanLimit(c.Request.Context(), vm.PlanID)
 	if isoCount >= planLimit {
 		respondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
 			fmt.Sprintf("ISO upload limit reached for this VM (%d/%d). Delete existing ISOs first.", isoCount, planLimit))
-		return
+		return false
 	}
 
+	return true
+}
+
+// countISOFiles counts the number of .iso files in a directory listing.
+func countISOFiles(entries []os.DirEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".iso") {
+			count++
+		}
+	}
+	return count
+}
+
+// getISOPlanLimit returns the ISO upload limit for a plan.
+func (h *CustomerHandler) getISOPlanLimit(ctx context.Context, planID string) int {
+	planLimit := defaultISOLimit
+	plan, err := h.planRepo.GetByID(ctx, planID)
+	if err == nil && plan.ISOUploadLimit > 0 {
+		planLimit = plan.ISOUploadLimit
+	}
+	return planLimit
+}
+
+// writeISOFile writes the ISO file to disk and computes its checksum.
+func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerID, vmID, filename string) (*ISOUploadResponse, bool) {
 	isoID := uuid.New().String()
+	isoDir := filepath.Join(h.isoStoragePath, customerID, vmID)
 	destPath := filepath.Join(isoDir, isoID+".iso")
 
 	dst, err := os.Create(destPath)
@@ -122,55 +195,59 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 			"path", destPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to create file on disk")
-		return
+		return nil, false
 	}
 	defer dst.Close()
 
-	hasher := sha256.New()
-	multiWriter := io.MultiWriter(dst, hasher)
-
-	written, err := io.CopyN(multiWriter, file, maxISOSizeBytes+1)
-	if err != nil && err != io.EOF {
-		dst.Close()
-		os.Remove(destPath)
+	written, checksum, err := h.copyFileWithHash(dst, file, destPath)
+	if err != nil {
 		h.logger.Error("failed to write ISO file",
 			"path", destPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to write file")
-		return
+		return nil, false
 	}
 
 	if written > maxISOSizeBytes {
-		dst.Close()
 		os.Remove(destPath)
 		respondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
-		return
+		return nil, false
+	}
+
+	h.writeChecksumSidecar(destPath, checksum, middleware.GetCorrelationID(c))
+
+	return &ISOUploadResponse{
+		ID:       isoID,
+		FileName: sanitizeFileName(filename),
+		FileSize: written,
+		SHA256:   checksum,
+	}, true
+}
+
+// copyFileWithHash copies data from reader to file while computing SHA256 hash.
+func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath string) (int64, string, error) {
+	hasher := sha256.New()
+	multiWriter := io.MultiWriter(dst, hasher)
+
+	written, err := io.CopyN(multiWriter, src, maxISOSizeBytes+1)
+	if err != nil && err != io.EOF {
+		dst.Close()
+		os.Remove(destPath)
+		return 0, "", err
 	}
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
+	return written, checksum, nil
+}
 
+// writeChecksumSidecar writes the SHA256 checksum to a sidecar file.
+func (h *CustomerHandler) writeChecksumSidecar(destPath, checksum, correlationID string) {
 	sumPath := destPath + ".sha256"
 	if err := os.WriteFile(sumPath, []byte(checksum), 0640); err != nil {
 		h.logger.Warn("failed to write checksum sidecar",
 			"path", sumPath, "error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+			"correlation_id", correlationID)
 	}
-
-	c.JSON(http.StatusCreated, models.Response{Data: ISOUploadResponse{
-		ID:       isoID,
-		FileName: sanitizeFileName(header.Filename),
-		FileSize: written,
-		SHA256:   checksum,
-	}})
-
-	h.logger.Info("ISO uploaded",
-		"iso_id", isoID,
-		"vm_id", vmID,
-		"customer_id", customerID,
-		"file_name", header.Filename,
-		"file_size", written,
-		"correlation_id", middleware.GetCorrelationID(c),
-	)
 }
 
 // ListISOs handles GET /vms/:id/iso - lists uploaded ISOs for a VM.

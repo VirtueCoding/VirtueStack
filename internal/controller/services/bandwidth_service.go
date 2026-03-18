@@ -244,30 +244,52 @@ func (s *BandwidthService) GetThrottledVMs(ctx context.Context) ([]string, error
 
 // CheckAllVMs checks bandwidth limits for all active VMs and applies throttling
 // where necessary. This should be called periodically (e.g., daily).
+// Uses batch processing to avoid loading all VMs into memory at once.
 func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 	logger := s.logger.With("operation", "check_all_vms")
 
-	// List all active VMs
-	vms, _, err := s.vmRepo.List(ctx, models.VMListFilter{Status: util.StringPtr(models.VMStatusRunning)})
-	if err != nil {
-		return 0, fmt.Errorf("listing running VMs: %w", err)
-	}
-
+	const batchSize = 100
 	throttledCount := 0
-	for _, vm := range vms {
-		if err := s.checkAndThrottle(ctx, &vm); err != nil {
-			logger.Warn("failed to check VM bandwidth", "vm_id", vm.ID, "error", err)
-			continue
+	totalChecked := 0
+
+	for page := 1; ; page++ {
+		filter := models.VMListFilter{
+			Status: util.StringPtr(models.VMStatusRunning),
+			PaginationParams: models.PaginationParams{
+				Page:    page,
+				PerPage: batchSize,
+			},
 		}
 
-		// Check if now throttled
-		usage, err := s.GetMonthlyUsage(ctx, vm.ID, 0, 0)
-		if err == nil && usage.Throttled {
-			throttledCount++
+		vms, total, err := s.vmRepo.List(ctx, filter)
+		if err != nil {
+			return throttledCount, fmt.Errorf("listing running VMs (page %d): %w", page, err)
+		}
+
+		if len(vms) == 0 {
+			break
+		}
+
+		for i := range vms {
+			if err := s.checkAndThrottle(ctx, &vms[i]); err != nil {
+				logger.Warn("failed to check VM bandwidth", "vm_id", vms[i].ID, "error", err)
+				continue
+			}
+
+			usage, err := s.GetMonthlyUsage(ctx, vms[i].ID, 0, 0)
+			if err == nil && usage.Throttled {
+				throttledCount++
+			}
+		}
+
+		totalChecked += len(vms)
+
+		if totalChecked >= total || len(vms) < batchSize {
+			break
 		}
 	}
 
-	logger.Info("bandwidth check completed", "vms_checked", len(vms), "throttled", throttledCount)
+	logger.Info("bandwidth check completed", "vms_checked", totalChecked, "throttled", throttledCount)
 	return throttledCount, nil
 }
 

@@ -161,24 +161,8 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 	defer m.mu.Unlock()
 
 	// Check if already running
-	if proc, exists := m.runningProcs[cfg.VMID]; exists {
-		// Check if process is actually running
-		if m.isProcessRunning(proc.pid) {
-			logger.Warn("DHCP already running for VM")
-			return fmt.Errorf("DHCP already running for VM %s: %w", cfg.VMID, errors.ErrAlreadyExists)
-		}
-		// Process is dead, clean up
-		delete(m.runningProcs, cfg.VMID)
-	}
-
-	// Check PID file as well
-	pidFile := m.pidFilePath(cfg.VMID)
-	if pidData, err := os.ReadFile(pidFile); err == nil {
-		pid, _ := strconv.Atoi(string(pidData))
-		if pid > 0 && m.isProcessRunning(pid) {
-			logger.Warn("DHCP already running for VM (from PID file)")
-			return fmt.Errorf("DHCP already running for VM %s: %w", cfg.VMID, errors.ErrAlreadyExists)
-		}
+	if _, err := m.checkExistingDHCPProcess(cfg.VMID, logger); err != nil {
+		return err
 	}
 
 	// Set defaults
@@ -189,105 +173,24 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 		cfg.BridgeInterface = DefaultBridgeInterface
 	}
 
-	// Generate config file content
-	configContent, err := m.GenerateDNSMasqConfigFull(cfg)
+	// Write config files
+	files, err := m.writeDHCPConfigFiles(cfg)
 	if err != nil {
-		return fmt.Errorf("generating DHCP config for VM %s: %w", cfg.VMID, err)
-	}
-	configPath := m.configFilePath(cfg.VMID)
-
-	// Write config file
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("writing DHCP config file: %w", err)
+		return err
 	}
 
-	// Create lease file path
-	leasePath := m.leaseFilePath(cfg.VMID)
-
-	// Ensure log directory exists
-	logPath := m.logFilePath(cfg.VMID)
-	logDir := filepath.Dir(logPath)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("creating log directory: %w", err)
-	}
-
-	// Create empty lease file
-	if err := os.WriteFile(leasePath, []byte{}, 0644); err != nil {
-		return fmt.Errorf("creating lease file: %w", err)
-	}
-
-	// Test config before starting
-	if err := m.testDNSMasqConfig(configPath); err != nil {
-		os.Remove(configPath)
-		os.Remove(leasePath)
-		return fmt.Errorf("invalid dnsmasq config: %w", err)
-	}
-
-	// Start dnsmasq
-	cmd := exec.CommandContext(ctx, "dnsmasq",
-		"-C", configPath,
-		"--keep-in-foreground",
-		"--no-daemon",
-	)
-
-	// Set up log file for dnsmasq output
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// Start dnsmasq process
+	cmd, logFile, pid, err := m.startDNSMasqProcess(ctx, files, logger)
 	if err != nil {
-		return fmt.Errorf("opening log file: %w", err)
+		return err
 	}
 
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	// Track process and save status
+	m.trackDHCPProcess(cfg, cmd, pid, logger)
 
-	// Start the process
-	if err := cmd.Start(); err != nil {
-		logFile.Close()
-		return fmt.Errorf("starting dnsmasq: %w", err)
-	}
+	// Start process monitor
+	m.startProcessMonitor(ctx, cfg, cmd, logFile)
 
-	// Get the PID
-	pid := cmd.Process.Pid
-
-	// Write PID file
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		// Kill the process if we can't write PID file
-		cmd.Process.Kill()
-		logFile.Close()
-		return fmt.Errorf("writing PID file: %w", err)
-	}
-
-	// Save status
-	lease := &DHCPLease{
-		VMID:       cfg.VMID,
-		VMName:     cfg.VMName,
-		MACAddress: cfg.MACAddress,
-		IPAddress:  cfg.IPAddress,
-		Gateway:    cfg.Gateway,
-		DNS:        cfg.DNS,
-		StartedAt:  time.Now(),
-		PID:        pid,
-		Status:     "running",
-	}
-	if err := m.saveLeaseStatus(cfg.VMID, lease); err != nil {
-		logger.Warn("failed to save lease status", "error", err)
-	}
-
-	// Track the process
-	m.runningProcs[cfg.VMID] = &dnsmasqProcess{
-		cmd:       cmd,
-		startTime: time.Now(),
-		pid:       pid,
-	}
-
-	// Start goroutine to wait for process exit and clean up.
-	// A fresh background context with timeout is created so that cancellation of the
-	// caller's ctx does not immediately cancel the monitor. cancel() is called inside
-	// the goroutine after it finishes so the context is properly released.
-	m.wg.Add(1)
-	monitorCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	go m.monitorProcess(monitorCtx, cancel, cfg.VMID, cmd, logFile)
-
-	logger.Info("DHCP started successfully", "pid", pid)
 	return nil
 }
 

@@ -17,6 +17,17 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
+// Failover thresholds and timeouts.
+const (
+	// FailoverHeartbeatThreshold is the minimum consecutive heartbeat misses
+	// required before a node is considered failed and eligible for failover.
+	FailoverHeartbeatThreshold = 3
+	// STONITHWaitDuration is the time to wait after IPMI power-off for the node to fully shut down.
+	STONITHWaitDuration = 10 * time.Second
+	// CephBlocklistTimeout is the timeout for Ceph OSD blocklist commands.
+	CephBlocklistTimeout = 30 * time.Second
+)
+
 // FailoverService provides high-availability failover operations for VirtueStack.
 // It handles the complete failover workflow including STONITH, Ceph blocklisting,
 // and VM migration to surviving nodes.
@@ -80,114 +91,110 @@ type FailedMigration struct {
 
 // ApproveFailover executes the failover workflow for a failed node.
 // This is a destructive operation that should only be called after admin approval.
-//
-// The workflow:
-// 1. Verify the node is in a failed state (consecutive_heartbeat_misses >= 3)
-// 2. If IPMI credentials exist, execute STONITH (power off)
-// 3. Blocklist the failed node's management IP in Ceph
-// 4. Release RBD locks for VMs on the failed node
-// 5. Find surviving nodes
-// 6. Migrate each VM to a suitable surviving node
 func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNodeID string) (*FailoverResult, error) {
-	s.logger.Info("failover initiated",
-		"admin_id", adminID,
-		"target_node_id", targetNodeID)
+	s.logger.Info("failover initiated", "admin_id", adminID, "target_node_id", targetNodeID)
 
 	node, err := s.verifyFailedNode(ctx, targetNodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &FailoverResult{
-		NodeID:       targetNodeID,
-		NodeHostname: node.Hostname,
-	}
+	result := &FailoverResult{NodeID: targetNodeID, NodeHostname: node.Hostname}
+	failoverReq := s.createFailoverRequest(ctx, targetNodeID, adminID)
 
-	var failoverReq *models.FailoverRequest
-	if s.failoverRepo != nil {
-		failoverReq = &models.FailoverRequest{
-			NodeID:      targetNodeID,
-			RequestedBy: adminID,
-			Status:      models.FailoverStatusApproved,
-		}
-		if err := s.failoverRepo.Create(ctx, failoverReq); err != nil {
-			s.logger.Warn("failed to create failover request record", "error", err)
-		}
-	}
-
-	finalizeRequest := func(status string, resultData any) {
-		if s.failoverRepo != nil && failoverReq != nil {
-			if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, status, resultData); err != nil {
-				s.logger.Warn("failed to update failover request status", "error", err)
-			}
-		}
-	}
-
-	if s.failoverRepo != nil && failoverReq != nil {
-		if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, models.FailoverStatusInProgress, nil); err != nil {
-			s.logger.Error("failed to update failover request status to in_progress", "operation", "UpdateStatus", "err", err)
-		}
-	}
-
-	if node.IPMIAddress != nil && *node.IPMIAddress != "" {
-		if err := s.executeSTONITH(ctx, node); err != nil {
-			s.logger.Error("STONITH failed, continuing with failover",
-				"node_id", targetNodeID,
-				"error", err)
-		} else {
-			result.STONITHExecuted = true
-			s.logger.Info("STONITH completed successfully",
-				"node_id", targetNodeID,
-				"ipmi_address", *node.IPMIAddress)
-		}
-	} else {
-		s.logger.Info("no IPMI configured, assuming manual power-off confirmed",
-			"node_id", targetNodeID)
-	}
-
-	if err := s.blocklistNodeInCeph(ctx, node); err != nil {
-		s.logger.Error("failed to blocklist node in Ceph",
-			"node_id", targetNodeID,
-			"management_ip", node.ManagementIP,
-			"error", err)
-	} else {
-		result.BlocklistAdded = true
-		s.logger.Info("node blocklisted in Ceph",
-			"node_id", targetNodeID,
-			"management_ip", node.ManagementIP)
-	}
-
-	if err := s.releaseRBDLocks(ctx, node); err != nil {
-		s.logger.Error("failed to release RBD locks, continuing with failover",
-			"node_id", targetNodeID,
-			"error", err)
-	}
+	s.executeFailoverSteps(ctx, node, result)
 
 	vms, err := s.getVMsOnNode(ctx, targetNodeID)
 	if err != nil {
-		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": err.Error()})
+		s.finalizeRequest(ctx, failoverReq, models.FailoverStatusFailed, map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("getting VMs on failed node: %w", err)
 	}
 	result.TotalVMs = len(vms)
 
 	if len(vms) == 0 {
-		s.logger.Info("no VMs to migrate on failed node",
-			"node_id", targetNodeID)
-		finalizeRequest(models.FailoverStatusCompleted, result)
+		s.logger.Info("no VMs to migrate on failed node", "node_id", targetNodeID)
+		s.finalizeRequest(ctx, failoverReq, models.FailoverStatusCompleted, result)
 		return result, nil
 	}
 
 	survivingNodes, err := s.findSurvivingNodes(ctx, node)
 	if err != nil {
-		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": err.Error()})
+		s.finalizeRequest(ctx, failoverReq, models.FailoverStatusFailed, map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("finding surviving nodes: %w", err)
 	}
 
 	if len(survivingNodes) == 0 {
-		finalizeRequest(models.FailoverStatusFailed, map[string]string{"error": "no surviving nodes available"})
+		s.finalizeRequest(ctx, failoverReq, models.FailoverStatusFailed, map[string]string{"error": "no surviving nodes available"})
 		return nil, fmt.Errorf("no surviving nodes available for VM migration")
 	}
 
+	s.migrateFailoverVMs(ctx, vms, survivingNodes, result)
+	s.logFailoverAudit(ctx, adminID, result)
+
+	s.logger.Info("failover completed", "node_id", targetNodeID, "total_vms", result.TotalVMs, "migrated", len(result.MigratedVMs), "failed", len(result.FailedMigrations))
+	s.finalizeRequest(ctx, failoverReq, models.FailoverStatusCompleted, result)
+
+	return result, nil
+}
+
+// createFailoverRequest creates a failover request record and returns it.
+func (s *FailoverService) createFailoverRequest(ctx context.Context, nodeID, adminID string) *models.FailoverRequest {
+	if s.failoverRepo == nil {
+		return nil
+	}
+
+	failoverReq := &models.FailoverRequest{
+		NodeID:      nodeID,
+		RequestedBy: adminID,
+		Status:      models.FailoverStatusApproved,
+	}
+	if err := s.failoverRepo.Create(ctx, failoverReq); err != nil {
+		s.logger.Warn("failed to create failover request record", "error", err)
+		return nil
+	}
+
+	if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, models.FailoverStatusInProgress, nil); err != nil {
+		s.logger.Error("failed to update failover request status to in_progress", "operation", "UpdateStatus", "err", err)
+	}
+	return failoverReq
+}
+
+// finalizeRequest updates the failover request status.
+func (s *FailoverService) finalizeRequest(ctx context.Context, failoverReq *models.FailoverRequest, status string, resultData any) {
+	if s.failoverRepo != nil && failoverReq != nil {
+		if err := s.failoverRepo.UpdateStatus(ctx, failoverReq.ID, status, resultData); err != nil {
+			s.logger.Warn("failed to update failover request status", "error", err)
+		}
+	}
+}
+
+// executeFailoverSteps executes STONITH, Ceph blocklist, and RBD lock release.
+func (s *FailoverService) executeFailoverSteps(ctx context.Context, node *models.Node, result *FailoverResult) {
+	if node.IPMIAddress != nil && *node.IPMIAddress != "" {
+		if err := s.executeSTONITH(ctx, node); err != nil {
+			s.logger.Error("STONITH failed, continuing with failover", "node_id", node.ID, "error", err)
+		} else {
+			result.STONITHExecuted = true
+			s.logger.Info("STONITH completed successfully", "node_id", node.ID, "ipmi_address", *node.IPMIAddress)
+		}
+	} else {
+		s.logger.Info("no IPMI configured, assuming manual power-off confirmed", "node_id", node.ID)
+	}
+
+	if err := s.blocklistNodeInCeph(ctx, node); err != nil {
+		s.logger.Error("failed to blocklist node in Ceph", "node_id", node.ID, "management_ip", node.ManagementIP, "error", err)
+	} else {
+		result.BlocklistAdded = true
+		s.logger.Info("node blocklisted in Ceph", "node_id", node.ID, "management_ip", node.ManagementIP)
+	}
+
+	if err := s.releaseRBDLocks(ctx, node); err != nil {
+		s.logger.Error("failed to release RBD locks, continuing with failover", "node_id", node.ID, "error", err)
+	}
+}
+
+// migrateFailoverVMs migrates all VMs to surviving nodes.
+func (s *FailoverService) migrateFailoverVMs(ctx context.Context, vms []models.VM, survivingNodes []models.Node, result *FailoverResult) {
 	result.MigratedVMs = make([]MigratedVM, 0)
 	result.FailedMigrations = make([]FailedMigration, 0)
 
@@ -199,18 +206,6 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 			result.FailedMigrations = append(result.FailedMigrations, *failed)
 		}
 	}
-
-	s.logFailoverAudit(ctx, adminID, result)
-
-	s.logger.Info("failover completed",
-		"node_id", targetNodeID,
-		"total_vms", result.TotalVMs,
-		"migrated", len(result.MigratedVMs),
-		"failed", len(result.FailedMigrations))
-
-	finalizeRequest(models.FailoverStatusCompleted, result)
-
-	return result, nil
 }
 
 // verifyFailedNode checks that the node is in a proper failed state for failover.
@@ -225,9 +220,9 @@ func (s *FailoverService) verifyFailedNode(ctx context.Context, nodeID string) (
 	}
 
 	// Check if node is in failed state
-	if node.ConsecutiveHeartbeatMisses < 3 {
-		return nil, fmt.Errorf("node %s is not in failed state (consecutive_heartbeat_misses: %d, required: >= 3)",
-			nodeID, node.ConsecutiveHeartbeatMisses)
+	if node.ConsecutiveHeartbeatMisses < FailoverHeartbeatThreshold {
+		return nil, fmt.Errorf("node %s is not in failed state (consecutive_heartbeat_misses: %d, required: >= %d)",
+			nodeID, node.ConsecutiveHeartbeatMisses, FailoverHeartbeatThreshold)
 	}
 
 	// Update node status to failed if not already
@@ -284,8 +279,8 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		return fmt.Errorf("IPMI power off failed: %w, output: %s", err, string(output))
 	}
 
-	// Wait 10 seconds for power-off to complete
-	timer := time.NewTimer(10 * time.Second)
+	// Wait for power-off to complete
+	timer := time.NewTimer(STONITHWaitDuration)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -333,7 +328,7 @@ func (s *FailoverService) blocklistNodeInCeph(ctx context.Context, node *models.
 		"management_ip", safeIP)
 
 	// Ensure a timeout is applied to prevent the command from hanging indefinitely
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, CephBlocklistTimeout)
 	defer cancel()
 
 	// Execute ceph osd blocklist add command

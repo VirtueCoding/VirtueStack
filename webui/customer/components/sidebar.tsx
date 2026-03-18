@@ -1,11 +1,12 @@
 "use client";
 
-import { Monitor, Settings, LogOut, ChevronLeft } from "lucide-react";
+import { Settings, LogOut, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
+import { navItems } from "@/lib/nav-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -17,11 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-
-const navItems = [
-  { href: "/vms", label: "My VMs", icon: Monitor },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
 
 interface SidebarProps {
   collapsed?: boolean;

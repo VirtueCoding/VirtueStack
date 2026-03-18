@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -13,17 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Settings, Loader2, Edit3, Save, X } from "lucide-react";
 import { adminSettingsApi, type SystemSetting } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
+
+// Zod schema for settings value validation
+const settingValueSchema = z.string().max(1000, "Value must be less than 1000 characters");
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -64,9 +59,21 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     if (!editingKey) return;
+
+    // Validate with Zod schema
+    const validationResult = settingValueSchema.safeParse(editValue);
+    if (!validationResult.success) {
+      toast({
+        title: "Validation Error",
+        description: validationResult.error.errors[0]?.message || "Invalid value",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     try {
-      const updated = await adminSettingsApi.putSetting(editingKey, editValue);
+      const updated = await adminSettingsApi.putSetting(editingKey, validationResult.data);
       setSettings((prev) =>
         prev.map((s) => (s.key === editingKey ? { ...s, value: updated.value } : s))
       );

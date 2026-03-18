@@ -201,6 +201,7 @@ func (r *CustomerRepository) SoftDelete(ctx context.Context, id string) error {
 // Note: This is intentionally simple - full RFC 5322 validation is not practical.
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
+// phoneRegex validates phone number format with optional international prefix.
 var phoneRegex = regexp.MustCompile(`^\+?[0-9\s\-\(\)]{1,20}$`)
 
 // Update updates a customer's profile information (name and email).
@@ -247,6 +248,7 @@ func (r *CustomerRepository) Update(ctx context.Context, customer *models.Custom
 	return nil
 }
 
+// ProfileUpdateParams holds optional fields for updating a customer profile.
 type ProfileUpdateParams struct {
 	Name  *string
 	Email *string
@@ -307,6 +309,8 @@ func validateProfilePhone(phone *string) (*string, error) {
 	return &trimmed, nil
 }
 
+// UpdateProfile updates a customer's profile information within a transaction.
+// It validates name, email, and phone fields before applying changes.
 func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID string, params ProfileUpdateParams) (*models.Customer, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

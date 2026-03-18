@@ -24,6 +24,12 @@ import (
 // DefaultSnapshotQuota is the default maximum number of snapshots per VM.
 const DefaultSnapshotQuota = 10
 
+// Backup retention and scheduling constants.
+const (
+	// DefaultBackupRetentionDays is the default number of days before backups expire.
+	DefaultBackupRetentionDays = 30
+)
+
 var (
 	// ErrSnapshotQuotaExceeded is returned when a VM has reached its snapshot quota.
 	ErrSnapshotQuotaExceeded = fmt.Errorf("snapshot quota exceeded")
@@ -262,7 +268,7 @@ func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, bac
 		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
 	}
 
-	expiresAt := time.Now().AddDate(0, 0, 30)
+	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
 	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
 		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
 	}
@@ -298,7 +304,7 @@ func (s *BackupService) createCephBackup(ctx context.Context, vm *models.VM, bac
 		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
 	}
 
-	expiresAt := time.Now().AddDate(0, 0, 30)
+	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
 	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
 		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
 	}
@@ -834,74 +840,101 @@ func (s *BackupService) runSchedulerTick(ctx context.Context) {
 		"month", currentMonth,
 		"year", currentYear)
 
-	// Get all active VMs
 	vms, err := s.vmRepo.ListAllActive(ctx)
 	if err != nil {
 		s.logger.Error("failed to list active VMs for backup scheduling", "error", err)
 		return
 	}
 
-	backupCount := 0
-	skippedCount := 0
-	errorCount := 0
+	stats := s.processVMsForBackup(ctx, vms, currentDay, currentYear, int(currentMonth))
+
+	s.logger.Info("backup scheduler tick completed",
+		"total_vms", len(vms),
+		"backups_scheduled", stats.backupsScheduled,
+		"skipped_has_backup", stats.skippedCount,
+		"errors", stats.errorCount)
+}
+
+// schedulerStats tracks backup scheduling statistics.
+type schedulerStats struct {
+	backupsScheduled int
+	skippedCount     int
+	errorCount       int
+}
+
+// processVMsForBackup iterates through VMs and schedules backups for those eligible.
+func (s *BackupService) processVMsForBackup(ctx context.Context, vms []models.VM, currentDay, currentYear, currentMonth int) schedulerStats {
+	var stats schedulerStats
 
 	for _, vm := range vms {
-		// Check if this VM should be backed up today using staggered schedule
 		assignedDay := s.getVMBackupDay(vm.ID)
 		if assignedDay != currentDay {
 			continue
 		}
 
-		// Check if VM already has a backup this month
-		hasBackup, err := s.backupRepo.HasBackupInMonth(ctx, vm.ID, currentYear, int(currentMonth))
+		shouldBackup, err := s.shouldBackupVM(ctx, vm.ID, currentYear, currentMonth)
 		if err != nil {
-			s.logger.Error("failed to check backup status for VM",
-				"vm_id", vm.ID,
-				"error", err)
-			errorCount++
+			stats.errorCount++
+			continue
+		}
+		if !shouldBackup {
+			stats.skippedCount++
 			continue
 		}
 
-		if hasBackup {
-			skippedCount++
-			s.logger.Debug("VM already has backup this month, skipping",
-				"vm_id", vm.ID,
-				"assigned_day", assignedDay)
-			continue
+		if s.scheduleBackupForVM(ctx, vm.ID, currentYear, currentMonth) {
+			stats.backupsScheduled++
 		}
-
-		// Publish backup task
-		if s.taskPublisher == nil {
-			s.logger.Warn("task publisher not configured, cannot schedule backup",
-				"vm_id", vm.ID)
-			continue
-		}
-
-		taskID, err := s.taskPublisher.PublishTask(ctx, "backup.create", map[string]any{
-			"vm_id":       vm.ID,
-			"backup_name": fmt.Sprintf("monthly-%d-%02d", currentYear, currentMonth),
-			"backup_type": "full",
-		})
-		if err != nil {
-			s.logger.Error("failed to publish backup task for VM",
-				"vm_id", vm.ID,
-				"error", err)
-			errorCount++
-			continue
-		}
-
-		backupCount++
-		s.logger.Info("scheduled monthly backup for VM",
-			"vm_id", vm.ID,
-			"task_id", taskID,
-			"assigned_day", assignedDay)
 	}
 
-	s.logger.Info("backup scheduler tick completed",
-		"total_vms", len(vms),
-		"backups_scheduled", backupCount,
-		"skipped_has_backup", skippedCount,
-		"errors", errorCount)
+	return stats
+}
+
+// shouldBackupVM checks if a VM needs a backup this month.
+func (s *BackupService) shouldBackupVM(ctx context.Context, vmID string, year, month int) (bool, error) {
+	hasBackup, err := s.backupRepo.HasBackupInMonth(ctx, vmID, year, month)
+	if err != nil {
+		s.logger.Error("failed to check backup status for VM",
+			"vm_id", vmID,
+			"error", err)
+		return false, err
+	}
+
+	if hasBackup {
+		s.logger.Debug("VM already has backup this month, skipping",
+			"vm_id", vmID)
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// scheduleBackupForVM publishes a backup task for the specified VM.
+func (s *BackupService) scheduleBackupForVM(ctx context.Context, vmID string, year, month int) bool {
+	if s.taskPublisher == nil {
+		s.logger.Warn("task publisher not configured, cannot schedule backup",
+			"vm_id", vmID)
+		return false
+	}
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, "backup.create", map[string]any{
+		"vm_id":       vmID,
+		"backup_name": fmt.Sprintf("monthly-%d-%02d", year, month),
+		"backup_type": "full",
+	})
+	if err != nil {
+		s.logger.Error("failed to publish backup task for VM",
+			"vm_id", vmID,
+			"error", err)
+		return false
+	}
+
+	s.logger.Info("scheduled monthly backup for VM",
+		"vm_id", vmID,
+		"task_id", taskID,
+		"assigned_day", s.getVMBackupDay(vmID))
+
+	return true
 }
 
 // getVMBackupDay calculates the assigned backup day for a VM using a deterministic

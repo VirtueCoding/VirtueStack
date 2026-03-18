@@ -15,12 +15,11 @@ import {
   type LoginRequest,
   type Verify2FARequest,
 } from "./api-client";
-
-interface CustomerUser {
-  id: string;
-  email: string;
-  role: string;
-}
+import {
+  fetchCustomerProfile,
+  fetchCustomerProfileWithEmailFallback,
+  type CustomerUser,
+} from "./auth-utils";
 
 interface AuthState {
   user: CustomerUser | null;
@@ -102,14 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const stored = loadStoredState();
     if (stored) {
-      try {
-        const { settingsApi } = await import("./api-client");
-        const profile = await settingsApi.getProfile();
-        const user: CustomerUser = {
-          id: profile.id,
-          email: profile.email,
-          role: "customer",
-        };
+      const user = await fetchCustomerProfile();
+      if (user) {
         setState({
           user,
           isAuthenticated: true,
@@ -117,21 +110,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           requires2FA: false,
         });
         persistState(user, true);
-      } catch {
+      } else {
         sessionStorage.removeItem(AUTH_STATE_KEY);
         setState((prev) => ({ ...prev, isLoading: false }));
       }
       return;
     }
 
-    try {
-      const { settingsApi } = await import("./api-client");
-      const profile = await settingsApi.getProfile();
-      const user: CustomerUser = {
-        id: profile.id,
-        email: profile.email,
-        role: "customer",
-      };
+    const user = await fetchCustomerProfile();
+    if (user) {
       setState({
         user,
         isAuthenticated: true,
@@ -139,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         requires2FA: false,
       });
       persistState(user, true);
-    } catch {
+    } else {
       setState((prev) => ({ ...prev, isLoading: false }));
     }
   }, [persistState]);
@@ -164,20 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         // Fetch the real profile to get the UUID rather than using email as ID.
-        let userId = credentials.email;
-        try {
-          const { settingsApi } = await import("./api-client");
-          const profile = await settingsApi.getProfile();
-          userId = profile.id;
-        } catch {
-          // Non-fatal: fall back to email as a temporary placeholder until
-          // the next initAuth cycle resolves the real profile.
-        }
-        const user: CustomerUser = {
-          id: userId,
-          email: credentials.email,
-          role: "customer",
-        };
+        const user = await fetchCustomerProfileWithEmailFallback(credentials.email);
         setState({
           user,
           isAuthenticated: true,
@@ -211,11 +185,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         await customerAuthApi.verify2FA(request);
-        const user: CustomerUser = {
-          id: pendingEmail || "",
-          email: pendingEmail || "",
-          role: "customer",
-        };
+
+        // Fetch the real profile to get the UUID rather than using email as ID.
+        const user = await fetchCustomerProfileWithEmailFallback(pendingEmail || "");
         setState({
           user,
           isAuthenticated: true,

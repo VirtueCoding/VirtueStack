@@ -89,6 +89,14 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		auth.POST("/logout", handler.Logout)
 	}
 
+	// Protected auth endpoints - require valid JWT but not CSRF (read-only identity)
+	protectedAuth := admin.Group("/auth")
+	protectedAuth.Use(middleware.JWTAuth(handler.authConfig))
+	protectedAuth.Use(middleware.RequireRole("admin", "super_admin"))
+	{
+		protectedAuth.GET("/me", handler.Me)
+	}
+
 	protected := admin.Group("")
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireRole("admin", "super_admin"))
