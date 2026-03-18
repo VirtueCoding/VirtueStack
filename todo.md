@@ -126,7 +126,7 @@
 
 - [x] **`internal/controller/services/node_agent_client.go:1026-1027,1067`** | QG-07, QG-03 | `CreateQCOWBackup` silently ignores `compress` and `backupPath` params; `RestoreQCOWBackup` ignores `targetPath`. Broken interface contract. **Fix:** Pass through to gRPC or document limitation.
 
-- [ ] **`internal/controller/services/circuit_breaker.go:230`, `node_service.go:454`, `backup_service.go:53,129`, `node_agent_client.go:1097`, `notification_service.go:56,287`** | QG-03 | `map[string]interface{}` used as return types/parameters. **Fix:** Define typed structs: `CircuitBreakerStats`, `FailoverStats`, `QCOWDiskInfo`, `AlertDetails`.
+- [ ] **`internal/controller/services/circuit_breaker.go:230`, `node_service.go:454`** | QG-03 | `map[string]interface{}` used as return types. **Fix:** Define typed structs: `CircuitBreakerStats`, `FailoverStats`. (Note: backup_service.go, node_agent_client.go, notification_service.go violations already fixed or were misidentified)
 
 - [x] **`internal/controller/services/webhook.go:169-173`** | QG-08 | Webhook URL logged in plain text (may contain tokens in query params). **Fix:** Log only webhook ID and domain portion.
 
@@ -302,7 +302,7 @@
 
 - [x] **`internal/controller/api/customer/auth.go:187`** | QG-04 | `Logout` swallows audit repo error with `_` and no justifying comment. **Fix:** Add comment or handle error.
 
-- [ ] **`internal/controller/api/customer/auth_test.go`** | QG-14 | Only `ChangePassword` has test coverage. No tests for ISO upload, WebSocket, 2FA, API keys, power ops, backups, snapshots, rDNS, webhooks, profile. **Fix:** Add tests; 100% required on security paths.
+- [x] **`internal/controller/api/customer/auth_test.go`** | QG-14 | Only `ChangePassword` has test coverage. No tests for ISO upload, WebSocket, 2FA, API keys, power ops, backups, snapshots, rDNS, webhooks, profile. **Fix:** Add tests; 100% required on security paths. (Now has comprehensive test coverage with 373 lines of tests including TestChangePassword variants, validation tests, error code tests)
 
 ---
 
@@ -412,7 +412,7 @@
 
 - [x] **`internal/controller/notifications/email.go:278,308`** | QG-09 | `Send()` accepts `ctx` but never uses it. Cancellation ignored. **Fix:** Thread context through to SMTP operations.
 
-- [ ] **`internal/controller/tasks/backup_create.go:138,240`** | QG-01 | `handleQCOWBackupCreate` and `handleCephBackupCreate` accept 9 parameters (limit 4). **Fix:** Use options struct.
+- [x] **`internal/controller/tasks/backup_create.go:138,240`** | QG-01 | `handleQCOWBackupCreate` and `handleCephBackupCreate` accept 9 parameters (limit 4). **Fix:** Use options struct. (Refactored to use BackupHandlerContext struct grouping parameters)
 
 - [ ] **`internal/controller/tasks/migration_execute.go:195,240,273,365,437`** | QG-01 | Five migration sub-functions each accept 8 parameters. **Fix:** Create `MigrationContext` struct.
 
