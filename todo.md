@@ -654,7 +654,7 @@
 
 ### HIGH
 
-- [ ] **`webui/admin/package.json:13-49`** | QG-15 | All dependencies use `^` ranges; standard requires exact pinning. **Fix:** Remove all `^` prefixes.
+- [x] **`webui/admin/package.json:13-49`** | QG-15 | All dependencies use `^` ranges; standard requires exact pinning. **Fix:** Remove all `^` prefixes. (Already using exact versions)
 
 - [x] **`webui/admin/` (missing file)`** | QG-12 | No `.env.example` file. `NEXT_PUBLIC_API_URL` undocumented. **Fix:** Create `.env.example`. (File exists with NEXT_PUBLIC_API_URL)
 
@@ -730,7 +730,7 @@
 
 - [ ] **`webui/customer/app/vms/page.tsx:77-145`, `vms/[id]/page.tsx:268-364`** | QG-06 | Identical VM action handler pattern repeated 10+ times. **Fix:** Extract `useVMAction` hook or `executeVMAction` helper.
 
-- [ ] **`webui/customer/package.json`** | QG-15 | All dependencies use `^` ranges; standard requires exact pinning. **Fix:** Remove `^` prefixes.
+- [x] **`webui/customer/package.json`** | QG-15 | All dependencies use `^` ranges; standard requires exact pinning. **Fix:** Remove `^` prefixes. (Already using exact versions)
 
 - [ ] **`webui/customer/lib/auth-context.tsx:100-145`** | QG-06 | Duplicate profile-fetching logic in `initAuth` for stored-state and no-stored-state branches. **Fix:** Extract common `fetchAndSetProfile` helper.
 
