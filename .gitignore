@@ -75,3 +75,4 @@ list_all_catches.js
 
 # Sisyphus orchestration
 .sisyphus/
+.worktrees/
