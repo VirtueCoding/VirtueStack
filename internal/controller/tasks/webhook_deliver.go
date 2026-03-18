@@ -137,7 +137,7 @@ func executeDeliveryAttempt(
 	delivery *models.WebhookDelivery,
 	logger *slog.Logger,
 ) bool {
-	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, logger, deps.EncryptionKey)
+	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, deps.EncryptionKey)
 
 	// Calculate next retry time if failed.
 	var nextRetryAt *time.Time
@@ -194,27 +194,12 @@ func executeDeliveryAttempt(
 
 // deliverWebhook performs the actual HTTP delivery of a webhook.
 // Returns success status, HTTP response code, response body, and error message.
-func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.CustomerWebhook, delivery *models.WebhookDelivery, logger *slog.Logger, encryptionKey string) (bool, int, string, string) {
-	// Resolve and validate the destination to prevent SSRF attacks.
-	parsedDest, err := url.Parse(webhook.URL)
+func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.CustomerWebhook, delivery *models.WebhookDelivery, encryptionKey string) (bool, int, string, string) {
+	// Validate the URL is parseable. SSRF protection is enforced at TCP connect
+	// time by the custom dialer in the HTTP client (see newSSRFSafeDialContext).
+	_, err := url.Parse(webhook.URL)
 	if err != nil {
 		return false, 0, "", fmt.Sprintf("parsing webhook URL: %s", err.Error())
-	}
-	addrs, err := net.LookupHost(parsedDest.Hostname())
-	if err != nil {
-		return false, 0, "", fmt.Sprintf("resolving webhook hostname: %s", err.Error())
-	}
-	for _, addr := range addrs {
-		ip := net.ParseIP(addr)
-		if ip == nil {
-			continue
-		}
-		if isPrivateIPDeliver(ip) {
-			logger.Warn("webhook delivery blocked: destination resolves to private IP",
-				"webhook_id", webhook.ID,
-				"hostname", parsedDest.Hostname())
-			return false, 0, "", "webhook URL resolves to private/internal IP address"
-		}
 	}
 
 	// Create HTTP request
@@ -342,11 +327,50 @@ func ProcessPendingDeliveries(ctx context.Context, deps *WebhookDeliveryDeps, ba
 	return nil
 }
 
+// newSSRFSafeDialContext returns a DialContext function that resolves the target
+// hostname and validates every resolved IP against the private-range blocklist
+// before opening the TCP connection. Because the check and the dial happen
+// atomically inside the same call, this eliminates the DNS-rebinding TOCTOU
+// window that exists when a pre-flight lookup is performed separately.
+func newSSRFSafeDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	baseDialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing dial address %q: %w", addr, err)
+		}
+
+		// Resolve the hostname to IP addresses.
+		ipAddrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolving webhook hostname %q: %w", host, err)
+		}
+
+		// Block any address that falls in a private or reserved range.
+		for _, ia := range ipAddrs {
+			if isPrivateIPDeliver(ia.IP) {
+				return nil, fmt.Errorf("webhook URL resolves to private/internal IP: %s", addr)
+			}
+		}
+
+		// Reconnect using the resolved address so the exact IP that passed the
+		// check is the one being dialed (not a second resolution).
+		if len(ipAddrs) == 0 {
+			return nil, fmt.Errorf("no addresses resolved for webhook hostname %q", host)
+		}
+		resolvedAddr := net.JoinHostPort(ipAddrs[0].IP.String(), port)
+		return baseDialer.DialContext(ctx, network, resolvedAddr)
+	}
+}
+
 // DefaultHTTPClient returns a configured HTTP client for webhook deliveries.
+// SSRF protection is enforced at TCP connection time via newSSRFSafeDialContext.
 func DefaultHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
+			DialContext:         newSSRFSafeDialContext(),
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
