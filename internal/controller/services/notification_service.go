@@ -11,24 +11,25 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/smtp"
 	"strings"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/notifications"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 )
 
 // AlertConfig holds configuration for notification channels.
 type AlertConfig struct {
 	// SMTP configuration for email notifications
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUsername string
-	SMTPPassword string
-	SMTPFrom     string // From address for emails
+	SMTPHost       string
+	SMTPPort       int
+	SMTPUsername   string
+	SMTPPassword   string
+	SMTPFrom       string // From address for emails
+	SMTPRequireTLS bool   // When true, enforce STARTTLS for non-465 ports (QG-02)
 
 	// Admin notification recipients
-	AdminEmails []string
+	AdminEmails   []string
 	AdminWebhooks []string // Webhook URLs for admin notifications
 
 	// Enable/disable specific channels
@@ -62,10 +63,11 @@ type Alert struct {
 // AlertService handles sending alert notifications through various channels.
 // Supports email (SMTP) and webhook notifications for operational alerts.
 type AlertService struct {
-	config      *AlertConfig
-	webhookRepo *repository.WebhookRepository
-	httpClient  *http.Client
-	logger      *slog.Logger
+	config        *AlertConfig
+	emailProvider *notifications.EmailProvider
+	webhookRepo   *repository.WebhookRepository
+	httpClient    *http.Client
+	logger        *slog.Logger
 }
 
 // NewAlertService creates a new NotificationService with the given configuration.
@@ -74,9 +76,28 @@ func NewAlertService(
 	webhookRepo *repository.WebhookRepository,
 	logger *slog.Logger,
 ) *AlertService {
+	emailCfg := notifications.EmailConfig{
+		Enabled:    config.EnableEmail,
+		Host:       config.SMTPHost,
+		Port:       config.SMTPPort,
+		Username:   config.SMTPUsername,
+		Password:   config.SMTPPassword,
+		From:       config.SMTPFrom,
+		RequireTLS: config.SMTPRequireTLS,
+	}
+	emailProvider, err := notifications.NewEmailProvider(emailCfg, logger)
+	if err != nil {
+		logger.Warn("alert service: failed to initialise email provider, email alerts disabled",
+			"error", err)
+		// Disable email so sendEmailAlert short-circuits safely.
+		config.EnableEmail = false
+		emailProvider = nil
+	}
+
 	return &AlertService{
-		config:      config,
-		webhookRepo: webhookRepo,
+		config:        config,
+		emailProvider: emailProvider,
+		webhookRepo:   webhookRepo,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -131,19 +152,25 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 }
 
 // sendEmailAlert sends an email notification to configured admin addresses.
+// It delegates to EmailProvider so that RequireTLS / STARTTLS logic is applied
+// consistently — the same path used by all other notification emails.
 func (s *AlertService) sendEmailAlert(ctx context.Context, alert *Alert) error {
-	if s.config.SMTPHost == "" {
-		return fmt.Errorf("SMTP host not configured")
+	if s.emailProvider == nil {
+		return fmt.Errorf("email provider not initialised")
 	}
 
-	// Build email body
-	body := s.buildEmailBody(alert)
 	subject := fmt.Sprintf("[VirtueStack] %s", alert.Subject)
+	body := s.buildEmailBody(alert)
 
-	// Send to each admin
 	var errs []string
 	for _, to := range s.config.AdminEmails {
-		if err := s.sendEmail(to, subject, body); err != nil {
+		payload := &notifications.EmailPayload{
+			To:       to,
+			Subject:  subject,
+			Template: "default",
+			Data:     map[string]any{"body": body},
+		}
+		if err := s.emailProvider.Send(ctx, payload); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", to, err))
 		}
 	}
@@ -155,30 +182,6 @@ func (s *AlertService) sendEmailAlert(ctx context.Context, alert *Alert) error {
 	s.logger.Info("email alert sent",
 		"alert_type", alert.Type,
 		"recipients", len(s.config.AdminEmails))
-
-	return nil
-}
-
-// sendEmail sends a single email via SMTP.
-func (s *AlertService) sendEmail(to, subject, body string) error {
-	// Build message
-	msg := fmt.Sprintf("From: %s\r\n", s.config.SMTPFrom)
-	msg += fmt.Sprintf("To: %s\r\n", to)
-	msg += fmt.Sprintf("Subject: %s\r\n", subject)
-	msg += "MIME-version: 1.0;\r\nContent-Type: text/plain; charset=\"UTF-8\";\r\n"
-	msg += "\r\n" + body
-
-	// SMTP authentication
-	var auth smtp.Auth
-	if s.config.SMTPUsername != "" && s.config.SMTPPassword != "" {
-		auth = smtp.PlainAuth("", s.config.SMTPUsername, s.config.SMTPPassword, s.config.SMTPHost)
-	}
-
-	// Send email
-	addr := fmt.Sprintf("%s:%d", s.config.SMTPHost, s.config.SMTPPort)
-	if err := smtp.SendMail(addr, auth, s.config.SMTPFrom, []string{to}, []byte(msg)); err != nil {
-		return fmt.Errorf("sending email to %s: %w", to, err)
-	}
 
 	return nil
 }

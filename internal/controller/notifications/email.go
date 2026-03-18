@@ -89,9 +89,11 @@ func NewEmailProvider(config EmailConfig, logger *slog.Logger) (*EmailProvider, 
 	}
 
 	// Warn operators who have credentials configured but haven't opted into RequireTLS
-	// on port 25, where PlainAuth would send credentials without encryption.
-	if config.Username != "" && !config.RequireTLS && config.Port == 25 {
-		logger.Warn("SMTP credentials configured without RequireTLS; credentials may be sent in plaintext on port 25 — set SMTP_REQUIRE_TLS=true to enforce STARTTLS")
+	// on any non-implicit-TLS port (i.e. not 465), where PlainAuth could send
+	// credentials without encryption — including port 587 without STARTTLS.
+	if config.Username != "" && !config.RequireTLS && config.Port != 465 {
+		logger.Warn("SMTP credentials configured without RequireTLS; credentials may be sent in plaintext — set SMTP_REQUIRE_TLS=true to enforce STARTTLS",
+			"port", config.Port)
 	}
 
 	provider := &EmailProvider{
@@ -614,14 +616,16 @@ func (p *EmailProvider) IsEnabled() bool {
 
 // LoadEmailConfigFromEnv loads email configuration from environment variables.
 func LoadEmailConfigFromEnv() EmailConfig {
+	smtpRequireTLS := os.Getenv("SMTP_REQUIRE_TLS")
 	return EmailConfig{
-		Enabled:  os.Getenv("NOTIFICATION_EMAIL_ENABLED") == "true",
-		Host:     os.Getenv("NOTIFICATION_EMAIL_SMTP_HOST"),
-		Port:     parsePort(os.Getenv("NOTIFICATION_EMAIL_SMTP_PORT")),
-		Username: os.Getenv("NOTIFICATION_EMAIL_USERNAME"),
-		Password: os.Getenv("NOTIFICATION_EMAIL_PASSWORD"),
-		From:     os.Getenv("NOTIFICATION_EMAIL_FROM"),
-		UseTLS:   true,
+		Enabled:    os.Getenv("NOTIFICATION_EMAIL_ENABLED") == "true",
+		Host:       os.Getenv("NOTIFICATION_EMAIL_SMTP_HOST"),
+		Port:       parsePort(os.Getenv("NOTIFICATION_EMAIL_SMTP_PORT")),
+		Username:   os.Getenv("NOTIFICATION_EMAIL_USERNAME"),
+		Password:   os.Getenv("NOTIFICATION_EMAIL_PASSWORD"),
+		From:       os.Getenv("NOTIFICATION_EMAIL_FROM"),
+		UseTLS:     true,
+		RequireTLS: smtpRequireTLS == "true" || smtpRequireTLS == "1",
 	}
 }
 
