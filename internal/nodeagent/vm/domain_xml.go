@@ -21,6 +21,10 @@ const (
 // (NodeAgentConfig.CephMonitors entries of the form "host:port").
 const DefaultCephMonitorPort = "6789"
 
+// DefaultEmulatorPath is the default path to the QEMU emulator binary.
+// Override via DomainConfig.EmulatorPath if a different path is needed.
+const DefaultEmulatorPath = "/usr/bin/qemu-system-x86_64"
+
 // VMDiskFileFmt is the format for file-based VM disk paths.
 // Arguments: base path, vmID
 const VMDiskFileFmt = "%s/%s-disk0.qcow2"
@@ -65,6 +69,9 @@ type DomainConfig struct {
 	BurstKB int
 	// CloudInitISOPath is the path to the cloud-init ISO file.
 	CloudInitISOPath string
+	// EmulatorPath is the path to the QEMU emulator binary.
+	// Defaults to DefaultEmulatorPath if empty.
+	EmulatorPath string
 }
 
 // CreateResult contains the result of a VM creation operation.
@@ -106,7 +113,7 @@ const domainXMLTemplate = `<domain type='kvm'>
     <suspend-to-disk enabled='no'/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <emulator>{{.EmulatorPath}}</emulator>
 {{.DiskXML}}
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
@@ -213,6 +220,7 @@ type templateData struct {
 	BurstKB           int
 	HasBandwidthLimit bool
 	CloudInitISOPath  string
+	EmulatorPath      string
 }
 
 // GenerateDomainXML generates a libvirt domain XML from the given configuration.
@@ -260,6 +268,12 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 		BurstKB:           cfg.BurstKB,
 		HasBandwidthLimit: cfg.PortSpeedKbps > 0,
 		CloudInitISOPath:  cfg.CloudInitISOPath,
+		EmulatorPath:      cfg.EmulatorPath,
+	}
+
+	// Set default emulator path if not specified
+	if data.EmulatorPath == "" {
+		data.EmulatorPath = DefaultEmulatorPath
 	}
 
 	var buf bytes.Buffer

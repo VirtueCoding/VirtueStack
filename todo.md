@@ -488,25 +488,25 @@
 
 - [ ] **`internal/nodeagent/` (20 functions exceed 40 lines)`** | QG-01 | Worst: `StartDHCPForVMWithConfig` (139), `GenerateFilterXML` (111), `GetMetrics` (72), `AllocateVMSubnet` (64), `StopVM` (56), `ApplyThrottle` (55), `GetThrottleStatus` (55), `GenerateDomainXML` (52), `CreateVM` (51). **Fix:** Decompose into sub-functions.
 
-- [ ] **`internal/nodeagent/vm/lifecycle.go:877-944`, `network/bandwidth.go:322-361`** | QG-06 | Duplicate XML domain interface parsing struct defined identically in 4 places. **Fix:** Define shared `domainInterfacesDef` struct.
+- [x] **`internal/nodeagent/vm/lifecycle.go:877-944`, `network/bandwidth.go:322-361`** | QG-06 | Duplicate XML domain interface parsing struct defined identically in 4 places. **Fix:** Define shared `domainInterfacesDef` struct.
 
-- [ ] **`internal/nodeagent/vm/lifecycle.go:1018`, `network/bandwidth.go:432`** | QG-06 | Duplicate `isLibvirtError` function in two packages. **Fix:** Move to shared `libvirtutil` package.
+- [x] **`internal/nodeagent/vm/lifecycle.go:1018`, `network/bandwidth.go:432`** | QG-06 | Duplicate `isLibvirtError` function in two packages. **Fix:** Move to shared `libvirtutil` package.
 
 - [x] **Multiple files** | QG-12 | Hardcoded values: `cloudInitOutputDir` path, `DefaultDNS = "8.8.8.8"`, Ceph pool names `vs-images`/`vs-vms`, Ceph monitor port `6789`, CPU sampling interval `5s`, UUID `6f1c7f7e...` for clean-traffic filter. **Fix:** Accept as config parameters or env vars.
 
-- [ ] **`internal/nodeagent/metrics/prometheus.go:8-157`** | QG-11 | All 19 exported Prometheus metric variables and `StatusToValue` lack doc comments. **Fix:** Add doc comments.
+- [x] **`internal/nodeagent/metrics/prometheus.go:8-157`** | QG-11 | All 19 exported Prometheus metric variables and `StatusToValue` lack doc comments. **Fix:** Add doc comments.
 
-- [ ] **`internal/nodeagent/vm/metrics.go:40-47`** | QG-11 | 8 exported fields in `VMMetrics` struct lack doc comments while others have them. **Fix:** Add doc comments.
+- [x] **`internal/nodeagent/vm/metrics.go:40-47`** | QG-11 | 8 exported fields in `VMMetrics` struct lack doc comments while others have them. **Fix:** Add doc comments.
 
 - [x] **`internal/nodeagent/network/dhcp.go:341`** | QG-10 | `time.Sleep(500ms)` between stop/start DHCP. Fragile timing. **Fix:** Poll for port/process availability with bounded timeout.
 
 ### LOW
 
-- [ ] **`internal/nodeagent/vm/lifecycle.go:871-968`** | QG-06 | `getNetworkStatsFromXML` and `getNetworkStatsFullFromXML` are near-duplicates. **Fix:** Extract shared XML parsing helper.
+- [x] **`internal/nodeagent/vm/lifecycle.go:871-968`** | QG-06 | `getNetworkStatsFromXML` and `getNetworkStatsFullFromXML` are near-duplicates. **Fix:** Extract shared XML parsing helper.
 
-- [ ] **`internal/nodeagent/vm/lifecycle.go:735-777`** | QG-01 | `getMemoryUsage` nesting depth approaches 4 levels. **Fix:** Extract `parseMemoryStats` helper.
+- [x] **`internal/nodeagent/vm/lifecycle.go:735-777`** | QG-01 | `getMemoryUsage` nesting depth approaches 4 levels. **Fix:** Extract `parseMemoryStats` helper.
 
-- [ ] **`internal/nodeagent/vm/domain_xml.go:103`** | QG-12 | Emulator path `/usr/bin/qemu-system-x86_64` hardcoded. **Fix:** Add `EmulatorPath` field to `DomainConfig`.
+- [x] **`internal/nodeagent/vm/domain_xml.go:103`** | QG-12 | Emulator path `/usr/bin/qemu-system-x86_64` hardcoded. **Fix:** Add `EmulatorPath` field to `DomainConfig`.
 
 - [x] **`internal/nodeagent/storage/template.go:242,264`** | QG-09 | `convertToRaw` and `importRawToRBD` use parent context without per-step timeout. Large templates could take minutes. **Fix:** Apply 5-minute per-step timeout.
 

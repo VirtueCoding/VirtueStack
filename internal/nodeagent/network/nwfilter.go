@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	"libvirt.org/go/libvirt"
 )
 
@@ -82,7 +83,7 @@ func (m *NWFilterManager) RemoveFilter(ctx context.Context, vmName string) error
 	// Look up the filter
 	filter, err := m.conn.LookupNWFilterByName(filterName)
 	if err != nil {
-		if isLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
+		if libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
 			logger.Info("nwfilter already removed")
 			return nil
 		}
@@ -104,7 +105,7 @@ func (m *NWFilterManager) FilterExists(ctx context.Context, vmName string) (bool
 	filterName := m.filterName(vmName)
 	filter, err := m.conn.LookupNWFilterByName(filterName)
 	if err != nil {
-		if isLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
+		if libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
 			return false, nil
 		}
 		return false, fmt.Errorf("checking nwfilter %s existence: %w", filterName, err)
@@ -287,7 +288,7 @@ func (m *NWFilterManager) EnsureBaseFilters(ctx context.Context) error {
 		return nil
 	}
 
-	if !isLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
+	if !libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
 		return fmt.Errorf("checking clean-traffic nwfilter: %w", err)
 	}
 
@@ -358,7 +359,7 @@ func (m *NWFilterManager) GetFilter(ctx context.Context, vmName string) (*NWFilt
 
 	filter, err := m.conn.LookupNWFilterByName(filterName)
 	if err != nil {
-		if isLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
+		if libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_NWFILTER) {
 			return nil, fmt.Errorf("nwfilter %s: %w", filterName, errors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("looking up nwfilter %s: %w", filterName, err)

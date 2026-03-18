@@ -37,14 +37,22 @@ type VMMetrics struct {
 	NetworkRXBytes int64
 	// NetworkTXBytes is the total bytes transmitted on network interfaces since VM start.
 	NetworkTXBytes int64
-	DiskReadOps    int64
-	DiskWriteOps   int64
-	NetworkRXPkts  int64
-	NetworkTXPkts  int64
-	NetworkRXErrs  int64
-	NetworkTXErrs  int64
-	NetworkRXDrop  int64
-	NetworkTXDrop  int64
+	// DiskReadOps is the total number of disk read operations since VM start.
+	DiskReadOps int64
+	// DiskWriteOps is the total number of disk write operations since VM start.
+	DiskWriteOps int64
+	// NetworkRXPkts is the total number of network packets received since VM start.
+	NetworkRXPkts int64
+	// NetworkTXPkts is the total number of network packets transmitted since VM start.
+	NetworkTXPkts int64
+	// NetworkRXErrs is the total number of network receive errors since VM start.
+	NetworkRXErrs int64
+	// NetworkTXErrs is the total number of network transmit errors since VM start.
+	NetworkTXErrs int64
+	// NetworkRXDrop is the total number of network receive drops since VM start.
+	NetworkRXDrop int64
+	// NetworkTXDrop is the total number of network transmit drops since VM start.
+	NetworkTXDrop int64
 }
 
 // NodeResources contains aggregate resource information for a compute node.

@@ -4,7 +4,6 @@ package network
 
 import (
 	"context"
-	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -12,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	"libvirt.org/go/libvirt"
 )
 
@@ -319,28 +319,17 @@ func (m *NodeBandwidthManager) getInterfaceNameFromDomain(domain *libvirt.Domain
 		return "", fmt.Errorf("getting domain XML: %w", err)
 	}
 
-	var domainDef struct {
-		Devices struct {
-			Interfaces []struct {
-				Target struct {
-					Dev string `xml:"dev,attr"`
-				} `xml:"target"`
-			} `xml:"interface"`
-		} `xml:"devices"`
-	}
-
-	if err := xml.Unmarshal([]byte(xmlDesc), &domainDef); err != nil {
+	names, err := libvirtutil.GetInterfaceNames(xmlDesc)
+	if err != nil {
 		return "", fmt.Errorf("parsing domain XML: %w", err)
 	}
 
-	// Return first interface (primary)
-	for _, iface := range domainDef.Devices.Interfaces {
-		if iface.Target.Dev != "" {
-			return iface.Target.Dev, nil
-		}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no network interface found in domain XML")
 	}
 
-	return "", fmt.Errorf("no network interface found in domain XML")
+	// Return first interface (primary)
+	return names[0], nil
 }
 
 // getInterfaceNames extracts all interface names from a domain.
@@ -350,25 +339,9 @@ func (m *NodeBandwidthManager) getInterfaceNames(domain *libvirt.Domain) ([]stri
 		return nil, fmt.Errorf("getting domain XML: %w", err)
 	}
 
-	var domainDef struct {
-		Devices struct {
-			Interfaces []struct {
-				Target struct {
-					Dev string `xml:"dev,attr"`
-				} `xml:"target"`
-			} `xml:"interface"`
-		} `xml:"devices"`
-	}
-
-	if err := xml.Unmarshal([]byte(xmlDesc), &domainDef); err != nil {
+	names, err := libvirtutil.GetInterfaceNames(xmlDesc)
+	if err != nil {
 		return nil, fmt.Errorf("parsing domain XML: %w", err)
-	}
-
-	var names []string
-	for _, iface := range domainDef.Devices.Interfaces {
-		if iface.Target.Dev != "" {
-			names = append(names, iface.Target.Dev)
-		}
 	}
 
 	if len(names) == 0 {
@@ -424,20 +397,12 @@ func (m *NodeBandwidthManager) removeThrottleFromInterface(ifaceName string) err
 func (m *NodeBandwidthManager) lookupDomain(vmName string) (*libvirt.Domain, error) {
 	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
-		if isLibvirtError(err, libvirt.ERR_NO_DOMAIN) {
+		if libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_DOMAIN) {
 			return nil, fmt.Errorf("VM %s: %w", vmName, errors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("looking up domain %s: %w", vmName, err)
 	}
 	return domain, nil
-}
-
-// isLibvirtError checks if an error is a specific libvirt error code.
-func isLibvirtError(err error, code libvirt.ErrorNumber) bool {
-	if lerr, ok := err.(libvirt.Error); ok {
-		return lerr.Code == code
-	}
-	return false
 }
 
 // GetThrottleStatus returns the current throttle configuration for an interface.

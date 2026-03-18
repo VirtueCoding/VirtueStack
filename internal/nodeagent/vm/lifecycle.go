@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	"libvirt.org/go/libvirt"
 )
 
@@ -469,7 +470,7 @@ func (m *Manager) lookupDomain(vmID string) (*libvirt.Domain, error) {
 	domainName := DomainNameFromID(vmID)
 	domain, err := m.conn.LookupDomainByName(domainName)
 	if err != nil {
-		if isLibvirtError(err, libvirt.ERR_NO_DOMAIN) {
+		if libvirtutil.IsLibvirtError(err, libvirt.ERR_NO_DOMAIN) {
 			return nil, fmt.Errorf("VM %s: %w", vmID, errors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("looking up domain %s: %w", domainName, err)
@@ -750,33 +751,54 @@ func (m *Manager) getMemoryUsage(domain *libvirt.Domain) (int64, int64, error) {
 		}
 	}
 
-	stats, statsErr := domain.MemoryStats(uint32(libvirt.DOMAIN_MEMORY_STAT_NR), 0)
-	if statsErr == nil {
-		var available, unused, rss uint64
-		for _, stat := range stats {
-			switch libvirt.DomainMemoryStatTags(stat.Tag) {
-			case libvirt.DOMAIN_MEMORY_STAT_AVAILABLE:
-				available = stat.Val
-			case libvirt.DOMAIN_MEMORY_STAT_UNUSED:
-				unused = stat.Val
-			case libvirt.DOMAIN_MEMORY_STAT_RSS:
-				rss = stat.Val
-			}
-		}
-
-		if available > 0 && available >= unused {
-			usedBytes := int64((available - unused) * 1024)
-			if usedBytes >= 0 {
-				return usedBytes, totalBytes, nil
-			}
-		}
-
-		if rss > 0 {
-			return int64(rss * 1024), totalBytes, nil
-		}
+	// Fall back to libvirt memory stats
+	usage, ok := m.getMemoryUsageFromStats(domain)
+	if ok {
+		return usage, totalBytes, nil
 	}
 
 	return 0, totalBytes, nil
+}
+
+// getMemoryUsageFromStats extracts memory usage from libvirt domain memory stats.
+// Returns the usage in bytes and true if successful, or 0 and false if not available.
+func (m *Manager) getMemoryUsageFromStats(domain *libvirt.Domain) (int64, bool) {
+	stats, err := domain.MemoryStats(uint32(libvirt.DOMAIN_MEMORY_STAT_NR), 0)
+	if err != nil {
+		return 0, false
+	}
+
+	available, unused, rss := parseMemoryStats(stats)
+
+	// Try available/unused calculation first
+	if available > 0 && available >= unused {
+		usedBytes := int64((available - unused) * 1024)
+		if usedBytes >= 0 {
+			return usedBytes, true
+		}
+	}
+
+	// Fall back to RSS
+	if rss > 0 {
+		return int64(rss * 1024), true
+	}
+
+	return 0, false
+}
+
+// parseMemoryStats extracts available, unused, and RSS values from memory stats.
+func parseMemoryStats(stats []libvirt.DomainMemoryStat) (available, unused, rss uint64) {
+	for _, stat := range stats {
+		switch libvirt.DomainMemoryStatTags(stat.Tag) {
+		case libvirt.DOMAIN_MEMORY_STAT_AVAILABLE:
+			available = stat.Val
+		case libvirt.DOMAIN_MEMORY_STAT_UNUSED:
+			unused = stat.Val
+		case libvirt.DOMAIN_MEMORY_STAT_RSS:
+			rss = stat.Val
+		}
+	}
+	return
 }
 
 func readDomainMemoryUsage(domainName string) (int64, error) {
@@ -877,30 +899,19 @@ func (m *Manager) getNetworkStatsFromXML(domain *libvirt.Domain) (int64, int64, 
 		return 0, 0, err
 	}
 
-	var domainDef struct {
-		Devices struct {
-			Interfaces []struct {
-				Target struct {
-					Dev string `xml:"dev,attr"`
-				} `xml:"target"`
-			} `xml:"interface"`
-		} `xml:"devices"`
-	}
-
-	if err := xml.Unmarshal([]byte(xmlDesc), &domainDef); err != nil {
+	names, err := libvirtutil.GetInterfaceNames(xmlDesc)
+	if err != nil {
 		return 0, 0, err
 	}
 
 	var totalRX, totalTX int64
-	for _, iface := range domainDef.Devices.Interfaces {
-		if iface.Target.Dev != "" {
-			stats, err := domain.InterfaceStats(iface.Target.Dev)
-			if err != nil {
-				continue
-			}
-			totalRX += stats.RxBytes
-			totalTX += stats.TxBytes
+	for _, ifaceName := range names {
+		stats, err := domain.InterfaceStats(ifaceName)
+		if err != nil {
+			continue
 		}
+		totalRX += stats.RxBytes
+		totalTX += stats.TxBytes
 	}
 
 	return totalRX, totalTX, nil
@@ -936,25 +947,13 @@ func (m *Manager) getNetworkStatsFullFromXML(domain *libvirt.Domain) (rxBytes, t
 		return 0, 0, 0, 0, 0, 0, 0, 0, err
 	}
 
-	var domainDef struct {
-		Devices struct {
-			Interfaces []struct {
-				Target struct {
-					Dev string `xml:"dev,attr"`
-				} `xml:"target"`
-			} `xml:"interface"`
-		} `xml:"devices"`
-	}
-
-	if err := xml.Unmarshal([]byte(xmlDesc), &domainDef); err != nil {
+	names, err := libvirtutil.GetInterfaceNames(xmlDesc)
+	if err != nil {
 		return 0, 0, 0, 0, 0, 0, 0, 0, err
 	}
 
-	for _, iface := range domainDef.Devices.Interfaces {
-		if iface.Target.Dev == "" {
-			continue
-		}
-		stats, err := domain.InterfaceStats(iface.Target.Dev)
+	for _, ifaceName := range names {
+		stats, err := domain.InterfaceStats(ifaceName)
 		if err != nil {
 			continue
 		}
@@ -1015,12 +1014,4 @@ func (m *Manager) readUptime() int64 {
 	}
 
 	return int64(uptime)
-}
-
-// isLibvirtError checks if an error is a specific libvirt error code.
-func isLibvirtError(err error, code libvirt.ErrorNumber) bool {
-	if lerr, ok := err.(libvirt.Error); ok {
-		return lerr.Code == code
-	}
-	return false
 }
