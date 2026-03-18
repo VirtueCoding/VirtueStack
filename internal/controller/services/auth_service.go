@@ -34,7 +34,7 @@ const (
 	TempTokenDuration = 5 * time.Minute
 
 	// PasswordResetTokenDuration is the lifetime of password reset tokens.
-	PasswordResetTokenDuration = 1 * time.Hour
+	PasswordResetTokenDuration = 24 * time.Hour
 
 	// MaxAdminSessions is the maximum concurrent sessions for admin users.
 	MaxAdminSessions = 3
@@ -536,22 +536,10 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword stri
 	return nil
 }
 
-// AdminLogin authenticates an admin user.
-// 2FA is MANDATORY for admin accounts - always returns temp_token with requires_2fa=true.
-// Account lockout is enforced: after MaxFailedLoginAttempts failures within LockoutWindow
-// the account is locked and ErrAccountLocked is returned.
-func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*models.AuthTokens, error) {
-	// Check admin failed-login count using the same customer-repo table that
-	// stores failed attempts for all user types.
-	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, email, LockoutWindow)
-	if err != nil {
-		return nil, fmt.Errorf("checking admin login attempts: %w", err)
-	}
-	if failedCount >= MaxFailedLoginAttempts {
-		s.logger.Warn("admin login attempt on locked account", "email", util.MaskEmail(email), "attempts", failedCount)
-		return nil, sharederrors.ErrAccountLocked
-	}
-
+// verifyAdminCredentials fetches the admin by email and verifies the password.
+// On wrong password or missing email it records a failed login attempt and returns
+// ErrUnauthorized. Returns the admin record on success.
+func (s *AuthService) verifyAdminCredentials(ctx context.Context, email, password string) (*models.Admin, error) {
 	admin, err := s.adminRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -563,7 +551,6 @@ func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*
 		return nil, fmt.Errorf("getting admin by email: %w", err)
 	}
 
-	// Verify password using Argon2id
 	match, err := s.verifyPassword(password, admin.PasswordHash)
 	if err != nil {
 		return nil, fmt.Errorf("verifying password: %w", err)
@@ -573,29 +560,39 @@ func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*
 		_ = s.customerRepo.RecordFailedLogin(ctx, email)
 		return nil, sharederrors.ErrUnauthorized
 	}
+	return admin, nil
+}
+
+// AdminLogin authenticates an admin user.
+// 2FA is MANDATORY for admin accounts - always returns temp_token with requires_2fa=true.
+// Account lockout is enforced: after MaxFailedLoginAttempts failures within LockoutWindow
+// the account is locked and ErrAccountLocked is returned.
+func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*models.AuthTokens, error) {
+	if err := s.checkLoginLockout(ctx, email); err != nil {
+		return nil, err
+	}
+
+	admin, err := s.verifyAdminCredentials(ctx, email, password)
+	if err != nil {
+		return nil, err
+	}
 
 	// Clear failed login counter on success.
 	_ = s.customerRepo.ClearFailedLogins(ctx, email)
 
-	// 2FA is MANDATORY for admins - always require verification
+	// 2FA is MANDATORY for admins - always require verification.
 	if !admin.TOTPEnabled {
 		s.logger.Error("admin account does not have 2FA enabled", "admin_id", admin.ID)
 		return nil, fmt.Errorf("admin account must have 2FA enabled")
 	}
 
-	// Generate temp token for 2FA verification
 	tempToken, err := middleware.GenerateTempToken(s.authConfig, admin.ID, "admin")
 	if err != nil {
 		return nil, fmt.Errorf("generating temp token: %w", err)
 	}
 
 	s.logger.Info("admin login requires 2FA", "admin_id", admin.ID)
-
-	return &models.AuthTokens{
-		TokenType:   "Bearer",
-		Requires2FA: true,
-		TempToken:   tempToken,
-	}, nil
+	return &models.AuthTokens{TokenType: "Bearer", Requires2FA: true, TempToken: tempToken}, nil
 }
 
 // enforceAdminSessionLimit evicts the oldest admin session when MaxAdminSessions
@@ -671,24 +668,11 @@ func (s *AuthService) verifyPassword(password, hash string) (bool, error) {
 	return match, nil
 }
 
-// ValidateTOTP validates a TOTP code against a secret (utility method).
+// ValidateTOTP validates a TOTP code against an encrypted secret (utility method).
 // This is useful for backup code verification or re-auth scenarios.
+// Delegates to validateTOTPCode to avoid duplication.
 func (s *AuthService) ValidateTOTP(totpCode, encryptedSecret string) (bool, error) {
-	secret, err := crypto.Decrypt(encryptedSecret, s.encryptionKey)
-	if err != nil {
-		return false, fmt.Errorf("decrypting TOTP secret: %w", err)
-	}
-
-	valid, err := totp.ValidateCustom(totpCode, secret, time.Now(), totp.ValidateOpts{
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		return false, fmt.Errorf("validating TOTP: %w", err)
-	}
-
-	return valid, nil
+	return s.validateTOTPCode(encryptedSecret, totpCode)
 }
 
 // ConstantTimeCompare performs a constant-time comparison of two strings.
@@ -773,18 +757,9 @@ func (s *AuthService) Enable2FA(ctx context.Context, customerID, totpCode string
 		return fmt.Errorf("2FA setup not initiated")
 	}
 
-	totpSecret, err := crypto.Decrypt(*customer.TOTPSecretEncrypted, s.encryptionKey)
+	valid, err := s.validateTOTPCode(*customer.TOTPSecretEncrypted, totpCode)
 	if err != nil {
-		return fmt.Errorf("decrypting TOTP secret: %w", err)
-	}
-
-	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		return fmt.Errorf("validating TOTP: %w", err)
+		return err
 	}
 	if !valid {
 		return sharederrors.ErrUnauthorized

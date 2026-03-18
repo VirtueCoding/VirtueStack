@@ -152,6 +152,23 @@ func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*mo
 	return best, nil
 }
 
+// buildVMRecord constructs the VM struct from the creation request, resolved deps,
+// and pre-generated MAC address and encrypted password. It does not touch the database.
+func buildVMRecord(req *models.VMCreateRequest, deps vmCreateDeps, customerID, macAddress, encryptedPassword string) *models.VM {
+	vmID := uuid.New().String()
+	libvirtDomainName := generateLibvirtDomainName(req.Hostname, vmID)
+	return &models.VM{
+		ID: vmID, CustomerID: customerID, NodeID: &deps.node.ID,
+		PlanID: deps.plan.ID, Hostname: req.Hostname, Status: models.VMStatusProvisioning,
+		VCPU: deps.plan.VCPU, MemoryMB: deps.plan.MemoryMB, DiskGB: deps.plan.DiskGB,
+		PortSpeedMbps: deps.plan.PortSpeedMbps, BandwidthLimitGB: deps.plan.BandwidthLimitGB,
+		BandwidthUsedBytes: 0, BandwidthResetAt: time.Now().UTC(),
+		MACAddress: macAddress, TemplateID: &deps.template.ID,
+		LibvirtDomainName: &libvirtDomainName, RootPasswordEncrypted: &encryptedPassword,
+		WHMCSServiceID: req.WHMCSServiceID, StorageBackend: deps.plan.StorageBackend,
+	}
+}
+
 // persistVMRecord creates the VM row in the database, then best-effort allocates
 // an IPv4 address. It returns the created VM and any allocated IP (may be nil).
 func (s *VMService) persistVMRecord(ctx context.Context, req *models.VMCreateRequest, deps vmCreateDeps, customerID string) (*models.VM, *models.IPAddress, error) {
@@ -163,24 +180,13 @@ func (s *VMService) persistVMRecord(ctx context.Context, req *models.VMCreateReq
 	if err != nil {
 		return nil, nil, fmt.Errorf("encrypting password: %w", err)
 	}
-	vmID := uuid.New().String()
-	libvirtDomainName := generateLibvirtDomainName(req.Hostname, vmID)
 
 	locationID := ""
 	if req.LocationID != nil {
 		locationID = *req.LocationID
 	}
 
-	vm := &models.VM{
-		ID: vmID, CustomerID: customerID, NodeID: &deps.node.ID,
-		PlanID: deps.plan.ID, Hostname: req.Hostname, Status: models.VMStatusProvisioning,
-		VCPU: deps.plan.VCPU, MemoryMB: deps.plan.MemoryMB, DiskGB: deps.plan.DiskGB,
-		PortSpeedMbps: deps.plan.PortSpeedMbps, BandwidthLimitGB: deps.plan.BandwidthLimitGB,
-		BandwidthUsedBytes: 0, BandwidthResetAt: time.Now().UTC(),
-		MACAddress: macAddress, TemplateID: &deps.template.ID,
-		LibvirtDomainName: &libvirtDomainName, RootPasswordEncrypted: &encryptedPassword,
-		WHMCSServiceID: req.WHMCSServiceID, StorageBackend: deps.plan.StorageBackend,
-	}
+	vm := buildVMRecord(req, deps, customerID, macAddress, encryptedPassword)
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
 		return nil, nil, fmt.Errorf("creating VM record: %w", err)
 	}

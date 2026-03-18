@@ -263,19 +263,19 @@ func TestMain(m *testing.M) {
 		suite.Logger,
 	)
 
-	suite.VMService = services.NewVMService(
-		suite.VMRepo,
-		suite.NodeRepo,
-		suite.IPRepo,
-		suite.PlanRepo,
-		suite.TemplateRepo,
-		suite.TaskRepo,
-		nil, // taskPublisher
-		nil, // nodeAgentClient
-		nil, // ipamService
-		suite.EncryptionKey,
-		suite.Logger,
-	)
+	suite.VMService = services.NewVMService(services.VMServiceConfig{
+		VMRepo:        suite.VMRepo,
+		NodeRepo:      suite.NodeRepo,
+		IPRepo:        suite.IPRepo,
+		PlanRepo:      suite.PlanRepo,
+		TemplateRepo:  suite.TemplateRepo,
+		TaskRepo:      suite.TaskRepo,
+		TaskPublisher: nil, // taskPublisher
+		NodeAgent:     nil, // nodeAgentClient
+		IPAMService:   nil, // ipamService
+		EncryptionKey: suite.EncryptionKey,
+		Logger:        suite.Logger,
+	})
 
 	suite.BackupService = services.NewBackupService(
 		suite.BackupRepo,
