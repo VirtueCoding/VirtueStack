@@ -8,60 +8,39 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // GetStatus handles GET /vms/:id/status - retrieves the current status of a VM.
-// This endpoint is used by WHMCS to check if a VM is running, stopped, suspended, etc.
-// It returns both the database status and, if available, the live status from the node agent.
 func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 	vmID := c.Param("id")
 
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
-		return
-	}
-
-	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
+	vm, err := getValidVM(c.Request.Context(), h.vmRepo, vmID, h.logger)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
-		}
-		h.logger.Error("failed to get VM",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
+		respondWithValidationError(c, err)
 		return
 	}
 
-	resp := VMStatusResponse{
-		Status: vm.Status,
-	}
+	resp := buildVMStatusResponse(vm)
 
-	if vm.NodeID != nil {
-		resp.NodeID = *vm.NodeID
-	}
-
-	// Prefer live hypervisor state for running VMs; fall back to DB status on error
-	// so transient node connectivity issues don't break WHMCS polling.
+	// Prefer live hypervisor state for running VMs
 	if vm.Status == models.VMStatusRunning && vm.NodeID != nil {
-		liveStatus, err := h.vmService.GetVMStatus(c.Request.Context(), vmID, vm.CustomerID, true)
-		if err != nil {
-			h.logger.Warn("failed to get live VM status, returning database status",
-				"vm_id", vmID,
-				"error", err,
-				"correlation_id", middleware.GetCorrelationID(c))
-			// Continue with database status
+		if liveStatus, err := h.vmService.GetVMStatus(c.Request.Context(), vmID, vm.CustomerID, true); err != nil {
+			h.logger.Warn("failed to get live VM status, returning database status", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		} else {
 			resp.Status = liveStatus
 		}
 	}
 
-	c.JSON(http.StatusOK, models.Response{
-		Data: resp,
-	})
+	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+// buildVMStatusResponse builds a VMStatusResponse from a VM.
+func buildVMStatusResponse(vm *models.VM) VMStatusResponse {
+	resp := VMStatusResponse{Status: vm.Status}
+	if vm.NodeID != nil {
+		resp.NodeID = *vm.NodeID
+	}
+	return resp
 }
 
 // GetVMInfo handles GET /vms/:id - retrieves detailed VM information.
@@ -69,8 +48,8 @@ func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 	vmID := c.Param("id")
 
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+	if _, err := validateVMID(vmID); err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
 
@@ -80,17 +59,12 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		h.logger.Error("failed to get VM details",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+		h.logger.Error("failed to get VM details", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	c.JSON(http.StatusOK, models.Response{
-		Data: detail,
-	})
+	c.JSON(http.StatusOK, models.Response{Data: detail})
 }
 
 // GetVMByWHMCSServiceID handles GET /vms/by-service/:service_id - finds a VM by WHMCS service ID.
@@ -134,8 +108,9 @@ type PowerOperationRequest struct {
 func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 	vmID := c.Param("id")
 
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+	vm, err := getValidVM(c.Request.Context(), h.vmRepo, vmID, h.logger)
+	if err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
 
@@ -149,65 +124,19 @@ func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 		return
 	}
 
-	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
-		}
-		h.logger.Error("failed to get VM for power operation",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
+	if err := validatePowerOperation(vm, req.Operation); err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
 
-	if vm.IsDeleted() {
-		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
-		return
-	}
-
-	// A suspended VM can only be started (unsuspend must happen first for stop/restart).
-	if vm.Status == models.VMStatusSuspended && req.Operation != "start" {
-		respondWithError(c, http.StatusBadRequest, "VM_SUSPENDED", "VM is suspended. Unsuspend it first.")
-		return
-	}
-
-	var opErr error
-	switch req.Operation {
-	case "start":
-		opErr = h.vmService.StartVM(c.Request.Context(), vmID, vm.CustomerID, true)
-	case "stop":
-		opErr = h.vmService.StopVM(c.Request.Context(), vmID, vm.CustomerID, false, true)
-	case "restart":
-		opErr = h.vmService.RestartVM(c.Request.Context(), vmID, vm.CustomerID, true)
-	default:
-		respondWithError(c, http.StatusBadRequest, "INVALID_OPERATION", "Invalid operation. Use: start, stop, or restart")
-		return
-	}
-
-	if opErr != nil {
-		h.logger.Error("power operation failed",
-			"vm_id", vmID,
-			"operation", req.Operation,
-			"error", opErr,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "POWER_OPERATION_FAILED", "Internal server error")
+	if err := h.executePowerOperation(c.Request.Context(), vmID, vm.CustomerID, req.Operation); err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
 
 	h.logger.Info("power operation completed via provisioning API",
-		"vm_id", vmID,
-		"operation", req.Operation,
-		"customer_id", vm.CustomerID,
+		"vm_id", vmID, "operation", req.Operation, "customer_id", vm.CustomerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{
-		Data: gin.H{
-			"vm_id":     vmID,
-			"operation": req.Operation,
-			"message":   "Power operation completed successfully",
-		},
-	})
+	c.JSON(http.StatusOK, models.Response{Data: powerOperationResponse(vmID, req.Operation)})
 }

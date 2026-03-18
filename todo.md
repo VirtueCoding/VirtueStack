@@ -324,7 +324,7 @@
 
 - [x] **`internal/controller/api/provisioning/handler.go:30-40`** | QG-01 | `NewProvisioningHandler` accepts 9 parameters (limit is 4). **Fix:** Use options struct.
 
-- [ ] **`internal/controller/api/provisioning/` (14 functions exceed 40 lines)`** | QG-01 | Worst: `ResizeVM` (117 lines), `PowerOperation` (80), `SetPassword` (73), CSRF middleware (102), `IPAllowlist` (59). **Fix:** Extract validate-fetch-check pattern into shared `getValidVM` helper.
+- [x] **`internal/controller/api/provisioning/` (14 functions exceed 40 lines)`** | QG-01 | Worst: `ResizeVM` (117 lines), `PowerOperation` (80), `SetPassword` (73), CSRF middleware (102), `IPAllowlist` (59). **Fix:** Extract validate-fetch-check pattern into shared `getValidVM` helper.
 
 - [x] **`internal/controller/api/provisioning/status.go:120-134`** | QG-05, QG-07 | `GetVMByWHMCSServiceID` has broken integer parser: accepts non-digit suffixes silently ("123abc" → 123), no overflow protection. **Fix:** Use `strconv.Atoi` and validate bounds.
 

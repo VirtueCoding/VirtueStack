@@ -8,34 +8,51 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // GetTask handles GET /tasks/:id - retrieves the status of an async task.
-// This endpoint is used by WHMCS to poll the status of long-running operations
-// like VM creation, deletion, or reinstallation.
 func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 	taskID := c.Param("id")
 
-	if _, err := uuid.Parse(taskID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TASK_ID", "Task ID must be a valid UUID")
+	if _, err := validateTaskID(taskID); err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
 
 	task, err := h.taskRepo.GetByID(c.Request.Context(), taskID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "TASK_NOT_FOUND", "Task not found")
-			return
-		}
-		h.logger.Error("failed to get task",
-			"task_id", taskID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", "Internal server error")
+		h.handleTaskGetError(c, err, taskID)
 		return
 	}
 
+	resp := buildTaskStatusResponse(task)
+	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+// validateTaskID validates that a task ID is a valid UUID.
+func validateTaskID(taskID string) (string, error) {
+	if _, err := validateVMID(taskID); err != nil {
+		return "", vmValidationError{
+			status:  http.StatusBadRequest,
+			errCode: "INVALID_TASK_ID",
+			errMsg:  "Task ID must be a valid UUID",
+		}
+	}
+	return taskID, nil
+}
+
+// handleTaskGetError handles errors from task repository GetByID calls.
+func (h *ProvisioningHandler) handleTaskGetError(c *gin.Context, err error, taskID string) {
+	if sharederrors.Is(err, sharederrors.ErrNotFound) {
+		respondWithError(c, http.StatusNotFound, "TASK_NOT_FOUND", "Task not found")
+		return
+	}
+	h.logger.Error("failed to get task", "task_id", taskID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+	respondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", "Internal server error")
+}
+
+// buildTaskStatusResponse builds a TaskStatusResponse from a Task.
+func buildTaskStatusResponse(task *models.Task) TaskStatusResponse {
 	resp := TaskStatusResponse{
 		ID:        task.ID,
 		Type:      task.Type,
@@ -56,9 +73,7 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 		resp.Message = task.ErrorMessage
 	}
 
-	c.JSON(http.StatusOK, models.Response{
-		Data: resp,
-	})
+	return resp
 }
 
 // getTaskMessage returns a human-readable message for a task based on its type and status.

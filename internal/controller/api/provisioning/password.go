@@ -2,7 +2,6 @@ package provisioning
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"unicode"
 
@@ -11,7 +10,6 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/alexedwards/argon2id"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // SetPassword handles POST /vms/:id/password - sets the root password for a VM.
@@ -20,11 +18,11 @@ func (h *ProvisioningHandler) SetPassword(c *gin.Context) {
 	ctx := c.Request.Context()
 	vmID := c.Param("id")
 
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+	vm, err := getValidVM(ctx, h.vmRepo, vmID, h.logger)
+	if err != nil {
+		respondWithValidationError(c, err)
 		return
 	}
-
 	var req PasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
@@ -40,55 +38,21 @@ func (h *ProvisioningHandler) SetPassword(c *gin.Context) {
 		return
 	}
 
-	vm, err := h.vmRepo.GetByID(ctx, vmID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
-		}
-		h.logger.Error("failed to get VM",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Failed to lookup VM")
-		return
-	}
-
-	if vm.IsDeleted() {
-		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
-		return
-	}
-
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
-		h.logger.Error("failed to hash password",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+		h.logger.Error("failed to hash password", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
 		return
 	}
 
 	if err := h.vmRepo.UpdatePassword(ctx, vmID, hashedPassword); err != nil {
-		h.logger.Error("failed to update password in database",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+		h.logger.Error("failed to update password in database", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
 		return
 	}
 
-	h.logger.Info("VM password set via provisioning API",
-		"vm_id", vmID,
-		"customer_id", vm.CustomerID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
-	c.JSON(http.StatusOK, models.Response{
-		Data: gin.H{
-			"vm_id":   vmID,
-			"message": "Password updated successfully",
-		},
-	})
+	h.logger.Info("VM password set via provisioning API", "vm_id", vmID, "customer_id", vm.CustomerID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"vm_id": vmID, "message": "Password updated successfully"}})
 }
 
 // ResetPassword handles POST /vms/:id/password/reset - generates and sets a new random password.
@@ -96,27 +60,9 @@ func (h *ProvisioningHandler) ResetPassword(c *gin.Context) {
 	ctx := c.Request.Context()
 	vmID := c.Param("id")
 
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
-		return
-	}
-
-	vm, err := h.vmRepo.GetByID(ctx, vmID)
+	vm, err := getValidVM(ctx, h.vmRepo, vmID, h.logger)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
-		}
-		h.logger.Error("failed to get VM",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Failed to lookup VM")
-		return
-	}
-
-	if vm.IsDeleted() {
-		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
+		respondWithValidationError(c, err)
 		return
 	}
 
@@ -124,35 +70,19 @@ func (h *ProvisioningHandler) ResetPassword(c *gin.Context) {
 
 	hashedPassword, err := hashPassword(newPassword)
 	if err != nil {
-		h.logger.Error("failed to hash password during reset",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+		h.logger.Error("failed to hash password during reset", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
 		return
 	}
 
 	if err := h.vmRepo.UpdatePassword(ctx, vmID, hashedPassword); err != nil {
-		h.logger.Error("failed to update password in database",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
+		h.logger.Error("failed to update password in database", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		respondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
 		return
 	}
 
-	h.logger.Info("VM password reset via provisioning API",
-		"vm_id", vmID,
-		"customer_id", vm.CustomerID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
-	c.JSON(http.StatusOK, models.Response{
-		Data: gin.H{
-			"vm_id":    vmID,
-			"password": newPassword,
-			"message":  "Password reset successfully",
-		},
-	})
+	h.logger.Info("VM password reset via provisioning API", "vm_id", vmID, "customer_id", vm.CustomerID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"vm_id": vmID, "password": newPassword, "message": "Password reset successfully"}})
 }
 
 var hashPasswordParams = &argon2id.Params{
@@ -179,13 +109,15 @@ func hashPassword(password string) (string, error) {
 	return hash, nil
 }
 
+// validatePasswordStrength validates that a password meets security requirements.
+// It returns a ValidationError with specific field and issue information.
 func validatePasswordStrength(password string) error {
 	if len(password) < 12 {
-		return fmt.Errorf("password must be at least 12 characters long")
+		return sharederrors.NewValidationError("password", "must be at least 12 characters long")
 	}
 
 	if len(password) > 128 {
-		return fmt.Errorf("password must not exceed 128 characters")
+		return sharederrors.NewValidationError("password", "must not exceed 128 characters")
 	}
 
 	hasUpper := false
@@ -207,16 +139,16 @@ func validatePasswordStrength(password string) error {
 	}
 
 	if !hasUpper {
-		return fmt.Errorf("password must contain at least one uppercase letter")
+		return sharederrors.NewValidationError("password", "must contain at least one uppercase letter")
 	}
 	if !hasLower {
-		return fmt.Errorf("password must contain at least one lowercase letter")
+		return sharederrors.NewValidationError("password", "must contain at least one lowercase letter")
 	}
 	if !hasDigit {
-		return fmt.Errorf("password must contain at least one digit")
+		return sharederrors.NewValidationError("password", "must contain at least one digit")
 	}
 	if !hasSpecial {
-		return fmt.Errorf("password must contain at least one special character")
+		return sharederrors.NewValidationError("password", "must contain at least one special character")
 	}
 
 	return nil

@@ -10,12 +10,10 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // CreateVM handles POST /vms - creates a new VM asynchronously.
 // This endpoint is called by WHMCS when a new service is provisioned.
-// Returns 202 Accepted with a task_id for polling the operation status.
 func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	var req ProvisioningCreateVMRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -27,14 +25,48 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 		return
 	}
 
-	// Get idempotency key from header if present
 	idempotencyKey := c.GetHeader("Idempotency-Key")
-
-	// Generate a random password if not provided via SSH keys
-	// WHMCS module should provide the password, but we generate one if not
 	password := generateRandomPassword()
+	vmReq := buildVMCreateRequest(&req, password, idempotencyKey)
 
-	// Build the VM create request for the service layer
+	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, req.CustomerID)
+	if err != nil {
+		h.logger.Error("failed to create VM", "customer_id", req.CustomerID, "hostname", req.Hostname, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		return
+	}
+
+	h.logger.Info("VM creation initiated via provisioning API", "vm_id", vm.ID, "task_id", taskID, "customer_id", req.CustomerID, "whmcs_service_id", req.WHMCSServiceID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusAccepted, models.Response{Data: CreateVMResponse{TaskID: taskID, VMID: vm.ID}})
+}
+
+// DeleteVM handles DELETE /vms/:id - terminates a VM asynchronously.
+// This endpoint is called by WHMCS when a service is cancelled/terminated.
+func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
+	vmID := c.Param("id")
+
+	vm, err := getValidVMWithChecks(c.Request.Context(), h.vmRepo, vmID, h.logger, checkVMOpts{
+		AlreadyDeleted: true,
+		DeletedErrMsg:   "VM has already been terminated",
+	})
+	if err != nil {
+		respondWithValidationError(c, err)
+		return
+	}
+
+	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, vm.CustomerID, true)
+	if err != nil {
+		h.logger.Error("failed to delete VM", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
+		return
+	}
+
+	h.logger.Info("VM termination initiated via provisioning API", "vm_id", vmID, "task_id", taskID, "customer_id", vm.CustomerID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusAccepted, models.Response{Data: TaskResponse{TaskID: taskID}})
+}
+
+// buildVMCreateRequest builds a VMCreateRequest from a ProvisioningCreateVMRequest.
+func buildVMCreateRequest(req *ProvisioningCreateVMRequest, password, idempotencyKey string) *models.VMCreateRequest {
 	vmReq := &models.VMCreateRequest{
 		CustomerID:     req.CustomerID,
 		PlanID:         req.PlanID,
@@ -45,91 +77,10 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 		WHMCSServiceID: &req.WHMCSServiceID,
 		IdempotencyKey: idempotencyKey,
 	}
-
 	if req.LocationID != "" {
 		vmReq.LocationID = &req.LocationID
 	}
-
-	// Create VM through the service layer
-	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, req.CustomerID)
-	if err != nil {
-		h.logger.Error("failed to create VM",
-			"customer_id", req.CustomerID,
-			"hostname", req.Hostname,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
-		return
-	}
-
-	h.logger.Info("VM creation initiated via provisioning API",
-		"vm_id", vm.ID,
-		"task_id", taskID,
-		"customer_id", req.CustomerID,
-		"whmcs_service_id", req.WHMCSServiceID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
-	c.JSON(http.StatusAccepted, models.Response{
-		Data: CreateVMResponse{
-			TaskID: taskID,
-			VMID:   vm.ID,
-		},
-	})
-}
-
-// DeleteVM handles DELETE /vms/:id - terminates a VM asynchronously.
-// This endpoint is called by WHMCS when a service is cancelled/terminated.
-// Returns 202 Accepted with a task_id for polling the operation status.
-func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
-	vmID := c.Param("id")
-
-	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
-		return
-	}
-
-	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
-			return
-		}
-		h.logger.Error("failed to get VM for delete",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
-		return
-	}
-
-	// Reject early to avoid queueing a delete task for an already-gone resource.
-	if vm.IsDeleted() {
-		respondWithError(c, http.StatusGone, "VM_ALREADY_DELETED", "VM has already been terminated")
-		return
-	}
-
-	// admin=true bypasses ownership checks; WHMCS acts on behalf of any customer.
-	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, vm.CustomerID, true)
-	if err != nil {
-		h.logger.Error("failed to delete VM",
-			"vm_id", vmID,
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
-		return
-	}
-
-	h.logger.Info("VM termination initiated via provisioning API",
-		"vm_id", vmID,
-		"task_id", taskID,
-		"customer_id", vm.CustomerID,
-		"correlation_id", middleware.GetCorrelationID(c))
-
-	c.JSON(http.StatusAccepted, models.Response{
-		Data: TaskResponse{
-			TaskID: taskID,
-		},
-	})
+	return vmReq
 }
 
 // generateRandomPassword creates a cryptographically secure random password
