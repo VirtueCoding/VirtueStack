@@ -1,8 +1,5 @@
 package tasks
 
-// Test credentials in this file are for testing purposes only.
-// DO NOT use these credentials in production environments.
-
 import (
 	"strings"
 	"testing"
@@ -22,7 +19,7 @@ func TestHashPassword(t *testing.T) {
 		},
 		{
 			name:        "too short",
-			password:    "Short1!",
+			password:    "Short1!Ab",
 			wantErr:     true,
 			errContains: "at least 12 characters",
 		},
@@ -46,7 +43,7 @@ func TestHashPassword(t *testing.T) {
 		},
 		{
 			name:        "missing special character",
-			password:    "NoSpecial1Abc",
+			password:    "NoSpecial1234",
 			wantErr:     true,
 			errContains: "special character",
 		},
@@ -214,7 +211,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		},
 		{
 			name:     "valid with multiple special chars",
-			password: "C0mpl3x!@#Abc",
+			password: "C0mpl3x!@#Pass",
 			wantErr:  false,
 		},
 		{
@@ -243,7 +240,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		},
 		{
 			name:        "no special chars",
-			password:    "NoSpecialAbc1",
+			password:    "NoSpecial12345",
 			wantErr:     true,
 			errContains: "special character",
 		},

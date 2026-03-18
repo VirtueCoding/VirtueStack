@@ -37,11 +37,10 @@ func (m *mockCustomerDB) Exec(ctx context.Context, sql string, arguments ...any)
 }
 
 func (m *mockCustomerDB) Begin(ctx context.Context) (pgx.Tx, error) {
-	// Return self as transaction for simple mock behavior
 	return &mockTx{mockCustomerDB: m}, nil
 }
 
-// mockTx implements pgx.Tx for testing.
+// mockTx implements pgx.Tx for testing transactions.
 type mockTx struct {
 	*mockCustomerDB
 }
@@ -53,6 +52,11 @@ func (m *mockTx) Commit(ctx context.Context) error {
 func (m *mockTx) Rollback(ctx context.Context) error {
 	return nil
 }
+
+func (m *mockTx) Conn() *pgx.Conn {
+	return nil
+}
+
 
 func (m *mockTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	return 0, nil
@@ -70,12 +74,12 @@ func (m *mockTx) Prepare(ctx context.Context, name, sql string) (*pgconn.Stateme
 	return nil, nil
 }
 
-func (m *mockTx) Conn() *pgx.Conn {
-	return nil
-}
-
 func (m *mockTx) Begin(ctx context.Context) (pgx.Tx, error) {
 	return m, nil
+}
+
+func (m *mockTx) ExecParams(ctx context.Context, sql string, arguments []any, oid uint32, paramOIDs []uint32) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
 }
 
 // mockCustomerRow implements pgx.Row for testing QueryRow results.
@@ -88,58 +92,52 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 	if m.err != nil {
 		return m.err
 	}
-	// Handle both single *models.Customer and multiple column pointers
-	if len(dest) == 1 {
-		if c, ok := dest[0].(*models.Customer); ok {
-			*c = m.customer
-			return nil
-		}
-	}
-	// Handle scanCustomer case with multiple column pointers
+	// The actual scanCustomer function scans into 13 fields:
+	// id, email, password_hash, name, phone, whmcs_client_id, totp_secret_encrypted,
+	// totp_enabled, totp_backup_codes_hash, totp_backup_codes_shown, status, created_at, updated_at
+	// Note: phone, whmcs_client_id, totp_secret_encrypted are pointers to pointers (**string, **int)
+	c := m.customer
 	if len(dest) >= 13 {
 		if id, ok := dest[0].(*string); ok {
-			*id = m.customer.ID
+			*id = c.ID
 		}
 		if email, ok := dest[1].(*string); ok {
-			*email = m.customer.Email
+			*email = c.Email
 		}
 		if pw, ok := dest[2].(*string); ok {
-			*pw = m.customer.PasswordHash
+			*pw = c.PasswordHash
 		}
 		if name, ok := dest[3].(*string); ok {
-			*name = m.customer.Name
+			*name = c.Name
 		}
-		if phone, ok := dest[4].(*string); ok {
-			*phone = ""
-			if m.customer.Phone != nil {
-				*phone = *m.customer.Phone
-			}
+		// Phone is **string - scan into the pointer
+		if phone, ok := dest[4].(**string); ok {
+			*phone = c.Phone
 		}
-		if whmcs, ok := dest[5].(**int); ok {
-			*whmcs = m.customer.WHMCSClientID
+		if whmcsID, ok := dest[5].(**int); ok {
+			*whmcsID = c.WHMCSClientID
 		}
 		if totpSecret, ok := dest[6].(**string); ok {
-			*totpSecret = m.customer.TOTPSecretEncrypted
+			*totpSecret = c.TOTPSecretEncrypted
 		}
 		if totpEnabled, ok := dest[7].(*bool); ok {
-			*totpEnabled = m.customer.TOTPEnabled
+			*totpEnabled = c.TOTPEnabled
 		}
-		if totpBackup, ok := dest[8].(*[]string); ok {
-			*totpBackup = nil
+		if totpCodes, ok := dest[8].(*[]string); ok {
+			*totpCodes = c.TOTPBackupCodesHash
 		}
 		if totpShown, ok := dest[9].(*bool); ok {
-			*totpShown = m.customer.TOTPBackupCodesShown
+			*totpShown = c.TOTPBackupCodesShown
 		}
 		if status, ok := dest[10].(*string); ok {
-			*status = m.customer.Status
+			*status = c.Status
 		}
 		if createdAt, ok := dest[11].(*time.Time); ok {
-			*createdAt = m.customer.CreatedAt
+			*createdAt = c.CreatedAt
 		}
 		if updatedAt, ok := dest[12].(*time.Time); ok {
-			*updatedAt = m.customer.UpdatedAt
+			*updatedAt = c.UpdatedAt
 		}
-		return nil
 	}
 	return nil
 }
@@ -258,19 +256,19 @@ func TestCustomerUpdate(t *testing.T) {
 					if tt.queryRowErr != nil {
 						return mockCustomerRow{err: tt.queryRowErr}
 					}
-					// Return the updated customer
+					// Return the updated customer with fields from the input
 					updated := validCustomer
-					if len(args) >= 2 {
-						name, ok := args[0].(string)
-						if !ok {
-							t.Fatalf("expected string for name arg, got %T", args[0])
+					if tt.customer != nil {
+						updated.ID = tt.customer.ID
+						if tt.customer.Name != "" {
+							updated.Name = tt.customer.Name
 						}
-						email, ok := args[1].(string)
-						if !ok {
-							t.Fatalf("expected string for email arg, got %T", args[1])
+						if tt.customer.Email != "" {
+							updated.Email = tt.customer.Email
 						}
-						updated.Name = name
-						updated.Email = email
+						if tt.customer.Phone != nil {
+							updated.Phone = tt.customer.Phone
+						}
 					}
 					updated.UpdatedAt = time.Now()
 					return mockCustomerRow{customer: updated}
