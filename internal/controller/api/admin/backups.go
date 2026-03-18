@@ -125,8 +125,8 @@ func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 		"backup_id", backupID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{
-		"backup_id": backupID,
-		"status":    "restored",
+	c.JSON(http.StatusOK, models.Response{Data: BackupRestoreResponse{
+		BackupID: backupID,
+		Status:   "restored",
 	}})
 }

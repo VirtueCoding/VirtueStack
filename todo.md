@@ -112,13 +112,13 @@
 
 - [x] **`internal/controller/services/vm_service.go:83-243`** | QG-01 | `CreateVM` is ~160 lines (limit is 40). **Fix:** Decompose into `validateCreateVMRequest`, `selectNodeForVM`, `allocateVMResources`, `persistVMRecord`, `publishVMCreateTask`.
 
-- [ ] **`internal/controller/services/migration_service.go` (MigrateVM)`** | QG-01 | `MigrateVM` is ~145 lines. **Fix:** Extract pre-flight validation, target selection, migration dispatch.
+- [x] **`internal/controller/services/migration_service.go` (MigrateVM)`** | QG-01 | `MigrateVM` is ~145 lines. **Fix:** Extract pre-flight validation, target selection, migration dispatch.
 
 - [x] **`internal/controller/services/auth_service.go` (AdminVerify2FA)`** | QG-01 | `AdminVerify2FA` is ~107 lines. **Fix:** Extract shared 2FA verification logic with `Verify2FA`.
 
 - [x] **`internal/controller/services/auth_service.go:181-277`** | QG-01 | `Verify2FA` is ~97 lines. **Fix:** Extract token validation, TOTP verification, session creation into shared helpers.
 
-- [ ] **`internal/controller/services/failover_service.go` (ApproveFailover)`** | QG-01 | `ApproveFailover` is ~120 lines. **Fix:** Split into `executeStonith`, `blocklistCeph`, `releaseRBDLocks`, `migrateFailoverVMs`.
+- [x] **`internal/controller/services/failover_service.go` (ApproveFailover)`** | QG-01 | `ApproveFailover` is ~120 lines. **Fix:** Split into `executeStonith`, `blocklistCeph`, `releaseRBDLocks`, `migrateFailoverVMs`.
 
 - [x] **`internal/controller/services/auth_service.go:92-177`** | QG-01 | `Login` is ~85 lines. **Fix:** Extract lockout checking, credential verification, 2FA challenge, session creation.
 
@@ -134,7 +134,7 @@
 
 - [x] **`internal/controller/services/backup_service.go:149`** | QG-12 | Hardcoded backup path `/var/lib/virtuestack/backups`. **Fix:** Load from env var or config constant.
 
-- [ ] **Multiple files** | QG-12, QG-01 | Magic numbers throughout: heartbeat threshold (3), failover threshold (3), backup expiration (30 days), webhook limits (5), template minDiskGB (10), VM stop timeout (120s), restart timeout (60s). **Fix:** Extract to named constants.
+- [x] **Multiple files** | QG-12, QG-01 | Magic numbers throughout: heartbeat threshold (3), failover threshold (3), backup expiration (30 days), webhook limits (5), template minDiskGB (10), VM stop timeout (120s), restart timeout (60s). **Fix:** Extract to named constants.
 
 - [x] **`internal/controller/services/node_service.go:430`, `customer_service.go:106`** | QG-04 | `json.Marshal` error ignored with `_` in `logAudit`. **Fix:** Add justifying comment or handle.
 
@@ -148,11 +148,11 @@
 
 - [ ] **`internal/controller/services/backup_service.go` (runSchedulerTick)`** | QG-01 | ~78 lines, nearly 2x limit. **Fix:** Extract scheduling logic into separate methods.
 
-- [ ] **`internal/controller/services/failover_service.go` (releaseRBDLocks)`** | QG-01 | ~74 lines. **Fix:** Extract RBD lock parsing and removal into separate functions.
+- [x] **`internal/controller/services/failover_service.go` (releaseRBDLocks)`** | QG-01 | ~74 lines. **Fix:** Extract RBD lock parsing and removal into separate functions.
 
-- [ ] **`internal/controller/services/migration_service.go` (findBestTargetNode)`** | QG-01 | ~79 lines. **Fix:** Extract filtering and scoring into separate functions.
+- [x] **`internal/controller/services/migration_service.go` (findBestTargetNode)`** | QG-01 | ~79 lines. **Fix:** Extract filtering and scoring into separate functions.
 
-- [ ] **`internal/controller/services/template_service.go` (Import)`** | QG-01 | ~69 lines. **Fix:** Extract validation and storage-specific logic.
+- [x] **`internal/controller/services/template_service.go` (Import)`** | QG-01 | ~69 lines. **Fix:** Extract validation and storage-specific logic.
 
 - [x] **`internal/controller/services/migration_service.go:153-154`** | QG-11 | Duplicate "step 10" numbering in comments (copy-paste error). **Fix:** Correct step numbering.
 
@@ -162,15 +162,15 @@
 
 - [x] **`internal/controller/services/rbac_service.go`** | QG-16 | `DestructiveActions` checked via linear scan instead of map lookup. **Fix:** Use `map[string]bool`.
 
-- [ ] **`internal/controller/services/backup_service.go:30`** | QG-01 | `BackupNodeAgentClient` interface has 12 methods. **Fix:** Split into role-specific interfaces.
+- [x] **`internal/controller/services/backup_service.go:30`** | QG-01 | `BackupNodeAgentClient` interface has 12 methods. **Fix:** Split into role-specific interfaces.
 
-- [ ] **`internal/controller/services/bandwidth_service.go` (CheckAllVMs)`** | QG-16 | Loads all running VMs into memory at once. **Fix:** Implement cursor-based pagination or batch processing.
+- [x] **`internal/controller/services/bandwidth_service.go` (CheckAllVMs)`** | QG-16 | Loads all running VMs into memory at once. **Fix:** Implement cursor-based pagination or batch processing.
 
 - [x] **`internal/controller/services/heartbeat_checker.go`** | QG-11 | Missing doc comments on exported types. **Fix:** Add doc comments.
 
 - [x] **`internal/controller/services/failover_monitor.go` (Start loop)`** | QG-04 | `checkNodes` return value ignored in ticker loop. **Fix:** Log the error at warn level.
 
-- [ ] **`internal/controller/services/rdns_service_test.go`** | QG-14 | Only 3 unit tests; no coverage for `SetReverseDNS`, `DeleteReverseDNS`, `GetReverseDNS`, `IsConnected`. **Fix:** Add integration tests or introduce repository interface for unit testing.
+- [x] **`internal/controller/services/rdns_service_test.go`** | QG-14 | Only 3 unit tests; no coverage for `SetReverseDNS`, `DeleteReverseDNS`, `GetReverseDNS`, `IsConnected`. **Fix:** Add integration tests or introduce repository interface for unit testing.
 
 - [x] **`internal/controller/services/webhook.go:600-622`** | QG-16 | `GetDeliveryStats` fetches up to 1000 records for app-side counting. **Fix:** Use DB aggregation query with `COUNT(*) GROUP BY status`.
 
@@ -190,13 +190,13 @@
 
 - [x] **`internal/controller/api/admin/handler.go:38-56`** | QG-01 | `NewAdminHandler` accepts 17 parameters (limit is 4). **Fix:** Use `AdminHandlerConfig` options struct.
 
-- [ ] **`internal/controller/api/admin/` (30+ functions)`** | QG-01 | 30+ functions exceed 40-line limit. Worst: `RegisterAdminRoutes` (119 lines), `UpdatePlan` (100), `UpdateNode` (90), `UpdateVM` (86), `MigrateVM` (82), `UpdateCustomer` (80), `ListAuditLogs` (73). **Fix:** Extract field-application helpers, filter builders, route sub-registration.
+- [x] **`internal/controller/api/admin/` (30+ functions)`** | QG-01 | 30+ functions exceed 40-line limit. Worst: `RegisterAdminRoutes` (119 lines), `UpdatePlan` (100), `UpdateNode` (90), `UpdateVM` (86), `MigrateVM` (82), `UpdateCustomer` (80), `ListAuditLogs` (73). **Fix:** Extract field-application helpers, filter builders, route sub-registration.
 
 - [x] **`internal/controller/api/admin/customers.go:110,198`, `ip_sets.go:162,165`, `vms.go:267`** | QG-04, QG-07 | Errors silently ignored with `_, _ :=` — failed fetches return nil/zero data to client. **Fix:** Handle errors or add justifying comments.
 
 - [x] **`internal/controller/api/admin/helpers.go:24`** | QG-03 | `logAuditEvent` uses bare `interface{}` for `changes` parameter. 12 occurrences of `map[string]interface{}` literals across files. **Fix:** Accept `json.RawMessage` or define typed `AuditChanges`.
 
-- [ ] **`internal/controller/api/admin/` (15 occurrences)`** | QG-03, QG-15 | Ad-hoc `gin.H{}` (`map[string]any`) response objects instead of typed structs. **Fix:** Define named response types (`DeleteResponse`, `StatusResponse`, `VMCreateResponse`).
+- [x] **`internal/controller/api/admin/` (15 occurrences)`** | QG-03, QG-15 | Ad-hoc `gin.H{}` (`map[string]any`) response objects instead of typed structs. **Fix:** Define named response types (`DeleteResponse`, `StatusResponse`, `VMCreateResponse`).
 
 - [x] **`internal/controller/api/admin/nodes.go:266`, `plans.go:226`, `templates.go:218`, `ip_sets.go:286`, `customers.go:247`** | QG-15 | Delete endpoints return 200 instead of 204. Two other delete endpoints correctly use 204. **Fix:** Change all to `c.Status(http.StatusNoContent)`.
 
@@ -216,7 +216,7 @@
 
 - [x] **`internal/controller/models/base.go:19-24`** | QG-15 | `PaginationMeta` missing required `hasMore` field. Affects every list endpoint. **Fix:** Add `HasMore bool` field and compute in `NewPaginationMeta`.
 
-- [ ] **`internal/controller/api/admin/failover.go`, `nodes.go`, `rdns.go` (multiple functions)`** | QG-11 | Missing doc comments on exported functions. **Fix:** Add Go doc comments.
+- [x] **`internal/controller/api/admin/failover.go`, `nodes.go`, `rdns.go` (multiple functions)`** | QG-11 | Missing doc comments on exported functions. **Fix:** Add Go doc comments.
 
 - [x] **`internal/controller/api/admin/ip_sets.go:147-173`** | QG-07 | `GetIPSet` loads IPs 3 times with MaxPerPage (100) for counting. Fails for large sets (e.g., /16 = 65K IPs). **Fix:** Use `CountIPsByStatus()` DB aggregation method.
 
@@ -252,11 +252,11 @@
 
 - [x] **`internal/controller/api/customer/websocket.go:28`** | QG-12 | WebSocket per-IP limit is 5; standard requires 10. **Fix:** Change to `maxConcurrentConnectionsPerIP = 10`.
 
-- [ ] **`internal/controller/api/customer/iso_upload.go:43-174`** | QG-01 | `UploadISO` is 132 lines. **Fix:** Extract `validateISOUploadRequest`, `checkISOQuota`, `writeISOToDisk`, `computeISOChecksum`.
+- [x] **`internal/controller/api/customer/iso_upload.go:43-174`** | QG-01 | `UploadISO` is 132 lines. **Fix:** Extract `validateISOUploadRequest`, `checkISOQuota`, `writeISOToDisk`, `computeISOChecksum`.
 
-- [ ] **`internal/controller/api/customer/` (39 functions)`** | QG-01 | 39 functions exceed 40-line limit. Worst: `UpdateRDNS` (126), `DeleteRDNS` (105), `proxyVNCStream` (107), `proxySerialStream` (107), `handleConsoleWebSocket` (105), `RegisterCustomerRoutes` (123), `CreateAPIKey` (86). **Fix:** Decompose systematically.
+- [x] **`internal/controller/api/customer/` (39 functions)`** | QG-01 | 39 functions exceed 40-line limit. Worst: `UpdateRDNS` (126), `DeleteRDNS` (105), `proxyVNCStream` (107), `proxySerialStream` (107), `handleConsoleWebSocket` (105), `RegisterCustomerRoutes` (123), `CreateAPIKey` (86). **Fix:** Decompose systematically.
 
-- [ ] **`internal/controller/api/customer/websocket.go:305-485`** | QG-01 | Nesting exceeds 3 levels in WebSocket proxy functions (goroutine closures with for/select/if = 4-5 levels). **Fix:** Extract read/write loops into named methods.
+- [x] **`internal/controller/api/customer/websocket.go:305-485`** | QG-01 | Nesting exceeds 3 levels in WebSocket proxy functions (goroutine closures with for/select/if = 4-5 levels). **Fix:** Extract read/write loops into named methods.
 
 - [x] **`internal/controller/api/customer/iso_upload.go:412-418`** | QG-07 | `listISODirectory` computes SHA-256 of multi-GB ISO files on-the-fly during GET list request when sidecar missing. **Fix:** Return empty checksum if sidecar missing; don't compute on list.
 
@@ -292,13 +292,13 @@
 
 ### LOW
 
-- [ ] **`internal/controller/api/customer/websocket.go:271-485`** | QG-06 | `proxyVNCStream` and `proxySerialStream` are nearly identical (~107 lines each, ~200 lines duplicated). **Fix:** Create generic `proxyStream` function parameterized by stream interface.
+- [x] **`internal/controller/api/customer/websocket.go:271-485`** | QG-06 | `proxyVNCStream` and `proxySerialStream` are nearly identical (~107 lines each, ~200 lines duplicated). **Fix:** Create generic `proxyStream` function parameterized by stream interface.
 
-- [ ] **`internal/controller/api/customer/backups.go:266-269`, `snapshots.go:265-268`** | QG-06 | `verifyBackupOwnership` and `verifySnapshotOwnership` are identical. **Fix:** Extract single `verifyVMOwnership`.
+- [x] **`internal/controller/api/customer/backups.go:266-269`, `snapshots.go:265-268`** | QG-06 | `verifyBackupOwnership` and `verifySnapshotOwnership` are identical. **Fix:** Extract single `verifyVMOwnership`.
 
-- [ ] **`internal/controller/api/customer/routes.go:94-216`** | QG-01 | `RegisterCustomerRoutes` at 123 lines. **Fix:** Break into `registerVMRoutes`, `registerBackupRoutes`, etc.
+- [x] **`internal/controller/api/customer/routes.go:94-216`** | QG-01 | `RegisterCustomerRoutes` at 123 lines. **Fix:** Break into `registerVMRoutes`, `registerBackupRoutes`, etc.
 
-- [ ] **`internal/controller/api/customer/profile.go`, `twofa.go`** | QG-11 | Missing doc comments on exported types and functions. **Fix:** Add Go doc comments.
+- [x] **`internal/controller/api/customer/profile.go`, `twofa.go`** | QG-11 | Missing doc comments on exported types and functions. **Fix:** Add Go doc comments.
 
 - [x] **`internal/controller/api/customer/auth.go:187`** | QG-04 | `Logout` swallows audit repo error with `_` and no justifying comment. **Fix:** Add comment or handle error.
 
@@ -368,7 +368,7 @@
 
 - [x] **`internal/controller/api/middleware/csrf.go:52,77`** | QG-12 | CSRF `MaxAge` hardcoded as `86400`. **Fix:** Define `const defaultCSRFMaxAge = 86400`.
 
-- [ ] **`internal/controller/api/provisioning/password.go:182-219`** | QG-04 | `validatePasswordStrength` returns plain `fmt.Errorf` instead of typed errors. **Fix:** Use `*sharederrors.ValidationError`.
+- [x] **`internal/controller/api/provisioning/password.go:182-219`** | QG-04 | `validatePasswordStrength` returns plain `fmt.Errorf` instead of typed errors. **Fix:** Use `*sharederrors.ValidationError`.
 
 - [x] **`internal/controller/api/middleware/auth.go:434-439`** | QG-02 | `tokenFingerprint` logs first 8 chars of JWT (always base64 header, reveals algorithm). **Fix:** Log `sha256(token)[:8]` instead.
 
@@ -444,7 +444,7 @@
 
 - [x] **`internal/controller/tasks/backup_create.go:138,240`** | QG-06 | `handleQCOWBackupCreate` and `handleCephBackupCreate` share identical completion boilerplate. **Fix:** Extract shared completion logic.
 
-- [ ] **`internal/controller/tasks/webhook_deliver.go:45`** | QG-02 | `WebhookDeliveryDeps.EncryptionKey` stored as plaintext string in memory. **Fix:** Consider key provider interface or document implications.
+- [x] **`internal/controller/tasks/webhook_deliver.go:45`** | QG-02 | `WebhookDeliveryDeps.EncryptionKey` stored as plaintext string in memory. **Fix:** Consider key provider interface or document implications.
 
 ### LOW
 
@@ -634,7 +634,7 @@
 
 - [x] **`migrations/000001`** | QG-16 | Missing composite index `tasks(status, created_at DESC)` for ORDER BY queries. **Fix:** Create index. (Added in migration 000029)
 
-- [ ] **`migrations/000011_password_resets.up.sql`** | QG-02 | `password_resets` grants `app_customer` access but RLS not enabled until migration 022. Gap window. **Fix:** Enable RLS in same migration.
+- [x] **`migrations/000011_password_resets.up.sql`** | QG-02 | `password_resets` grants `app_customer` access but RLS not enabled until migration 022. Gap window. **Fix:** Enable RLS in same migration.
 
 - [ ] **`migrations/000020:6`** | QG-07 | `failover_requests.requested_by` FK missing explicit ON DELETE behavior. **Fix:** Add `ON DELETE RESTRICT` to document intent.
 
@@ -772,7 +772,7 @@
 
 ### HIGH
 
-- [ ] **`docker-compose.prod.yml:124-125`** | QG-02 | Production DB uses `sslmode=disable`. Docker bridge networks are NOT encrypted. **Fix:** Use `sslmode=require` or `verify-full`.
+- [x] **`docker-compose.prod.yml:124-125`** | QG-02 | Production DB uses `sslmode=disable`. Docker bridge networks are NOT encrypted. **Fix:** Use `sslmode=require` or `verify-full`.
 
 - [x] **`docker-compose.yml` + `docker-compose.prod.yml`** | QG-19, QG-02 | No `security_opt`, `cap_drop`, or `read_only` on any container. **Fix:** Add `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `read_only: true`.
 
@@ -800,7 +800,7 @@
 
 - [x] **`Makefile:24`** | QG-02 | Fallback `DATABASE_URL` has empty password and `sslmode=disable`. **Fix:** Add comment "local dev only" or fail-fast.
 
-- [ ] **`nginx/conf.d/default.conf:67`** | QG-02 | CSP `script-src 'self'` may break Next.js hydration (needs nonces or `unsafe-inline`). **Fix:** Test and add nonces if needed.
+- [x] **`nginx/conf.d/default.conf:67`** | QG-02 | CSP `script-src 'self'` may break Next.js hydration (needs nonces or `unsafe-inline`). **Fix:** Test and add nonces if needed.
 
 - [x] **`nginx/conf.d/default.conf:147-223`** | QG-02 | Security headers lost in nested location blocks (nginx doesn't inherit `add_header`). **Fix:** Include security headers in every location block via shared snippet.
 
@@ -850,7 +850,7 @@
 
 - [x] **`internal/controller/api/admin/handler.go`** | QG-08 | Login attempt logs include username, which is PII. **Fix:** Log only hashed/masked username or just "login attempt from IP". (Verified: already uses maskEmail)
 
-- [ ] **`configs/prometheus/prometheus.yml`** | QG-02, QG-18 | Metrics endpoint scraped over plain HTTP. Sensitive runtime metrics (error rates, resource usage) exposed without TLS. **Fix:** Enable TLS for scrape targets or use mTLS.
+- [x] **`configs/prometheus/prometheus.yml`** | QG-02, QG-18 | Metrics endpoint scraped over plain HTTP. Sensitive runtime metrics (error rates, resource usage) exposed without TLS. **Fix:** Enable TLS for scrape targets or use mTLS.
 
 - [x] **`internal/shared/config/config.go`** | QG-02 | TLS minimum version set to 1.2. TLS 1.2 has known weaknesses with certain cipher suites. **Fix:** Set minimum to TLS 1.3 (`tls.VersionTLS13`) unless legacy client support is required.
 
@@ -860,9 +860,9 @@
 
 ### LOW
 
-- [ ] **`proto/virtuestack/node_agent.proto`** | QG-05, QG-02 | No `option` annotations for field validation (e.g., `buf validate`). Invalid values (negative RAM, empty VM IDs) pass through to handler code. **Fix:** Add proto validation annotations or validate exhaustively in handler.
+- [x] **`proto/virtuestack/node_agent.proto`** | QG-05, QG-02 | No `option` annotations for field validation (e.g., `buf validate`). Invalid values (negative RAM, empty VM IDs) pass through to handler code. **Fix:** Add proto validation annotations or validate exhaustively in handler.
 
-- [ ] **`internal/nodeagent/server.go`** | QG-02 | `GuestExecCommand` RPC has no command allowlist. Any command can be executed inside guest VMs via the agent. **Fix:** Add an allowlist of permitted commands or restrict to predefined operations.
+- [x] **`internal/nodeagent/server.go`** | QG-02 | `GuestExecCommand` RPC has no command allowlist. Any command can be executed inside guest VMs via the agent. **Fix:** Add an allowlist of permitted commands or restrict to predefined operations.
 
 ---
 

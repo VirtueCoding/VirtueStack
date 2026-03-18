@@ -1,7 +1,7 @@
 # Binaries
 bin/
-controller
-node-agent
+/controller
+/node-agent
 *.exe
 *.exe~
 *.dll

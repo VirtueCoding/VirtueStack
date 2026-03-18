@@ -65,9 +65,9 @@ func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 		"frequency", schedule.Frequency,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusCreated, models.Response{Data: gin.H{
-		"id":          scheduleID,
-		"next_run_at": schedule.NextRunAt,
+	c.JSON(http.StatusCreated, models.Response{Data: BackupScheduleCreateResponse{
+		ID:        scheduleID,
+		NextRunAt: schedule.NextRunAt,
 	}})
 }
 
@@ -192,9 +192,7 @@ func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
 		"schedule_id", scheduleID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{
-		"message": "Schedule updated",
-	}})
+	c.JSON(http.StatusOK, models.Response{Data: MessageResponse{Message: "Schedule updated"}})
 }
 
 // DeleteBackupSchedule handles DELETE /backup-schedules/:id - deletes a backup schedule.

@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// ListFailoverRequests handles GET /failover-requests - lists all failover requests.
+// Supports filtering by node_id and status.
 func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -55,6 +57,7 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 	})
 }
 
+// GetFailoverRequest handles GET /failover-requests/:id - retrieves a specific failover request.
 func (h *AdminHandler) GetFailoverRequest(c *gin.Context) {
 	requestID := c.Param("id")
 

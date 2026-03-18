@@ -9,7 +9,6 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // ListPlans handles GET /plans - lists all service plans.
@@ -92,11 +91,8 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 
 // UpdatePlan handles PUT /plans/:id - updates an existing plan.
 func (h *AdminHandler) UpdatePlan(c *gin.Context) {
-	planID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(planID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
@@ -113,60 +109,14 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	// Get existing plan
 	plan, err := h.planService.GetByID(c.Request.Context(), planID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "PLAN_NOT_FOUND", "Plan not found")
+		if handleNotFoundError(c, err, "PLAN_NOT_FOUND", "Plan not found") {
 			return
 		}
 		respondWithError(c, http.StatusInternalServerError, "PLAN_GET_FAILED", "Failed to retrieve plan")
 		return
 	}
 
-	// Apply updates
-	if req.Name != nil {
-		plan.Name = *req.Name
-	}
-	if req.Slug != nil {
-		plan.Slug = *req.Slug
-	}
-	if req.VCPU != nil {
-		plan.VCPU = *req.VCPU
-	}
-	if req.MemoryMB != nil {
-		plan.MemoryMB = *req.MemoryMB
-	}
-	if req.DiskGB != nil {
-		plan.DiskGB = *req.DiskGB
-	}
-	if req.BandwidthLimitGB != nil {
-		plan.BandwidthLimitGB = *req.BandwidthLimitGB
-	}
-	if req.PortSpeedMbps != nil {
-		plan.PortSpeedMbps = *req.PortSpeedMbps
-	}
-	if req.PriceMonthly != nil {
-		plan.PriceMonthly = *req.PriceMonthly
-	}
-	if req.PriceHourly != nil {
-		plan.PriceHourly = *req.PriceHourly
-	}
-	if req.IsActive != nil {
-		plan.IsActive = *req.IsActive
-	}
-	if req.SortOrder != nil {
-		plan.SortOrder = *req.SortOrder
-	}
-	if req.StorageBackend != nil {
-		plan.StorageBackend = *req.StorageBackend
-	}
-	if req.SnapshotLimit != nil {
-		plan.SnapshotLimit = *req.SnapshotLimit
-	}
-	if req.BackupLimit != nil {
-		plan.BackupLimit = *req.BackupLimit
-	}
-	if req.ISOUploadLimit != nil {
-		plan.ISOUploadLimit = *req.ISOUploadLimit
-	}
+	applyPlanUpdates(plan, req)
 
 	err = h.planService.Update(c.Request.Context(), plan)
 	if err != nil {
@@ -178,7 +128,6 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "plan.update", "plan", planID, req, true)
 
 	h.logger.Info("plan updated via admin API",
@@ -192,18 +141,14 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 // DeletePlan handles DELETE /plans/:id - deletes a plan.
 // Plans with existing VMs cannot be deleted (FK constraint).
 func (h *AdminHandler) DeletePlan(c *gin.Context) {
-	planID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(planID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	err := h.planService.Delete(c.Request.Context(), planID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "PLAN_NOT_FOUND", "Plan not found")
+		if handleNotFoundError(c, err, "PLAN_NOT_FOUND", "Plan not found") {
 			return
 		}
 		h.logger.Error("failed to delete plan",
@@ -219,7 +164,6 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "plan.delete", "plan", planID, nil, true)
 
 	h.logger.Info("plan deleted via admin API",

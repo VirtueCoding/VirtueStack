@@ -23,6 +23,7 @@ type NodeUpdateRequest struct {
 }
 
 // validateStorageConfig validates storage_backend and storage_path consistency.
+// Returns an error if storage_backend is 'qcow' but storage_path is empty.
 func validateStorageConfig(storageBackend, storagePath string) error {
 	if storageBackend == models.StorageBackendQcow && storagePath == "" {
 		return errors.New("storage_path is required when storage_backend is 'qcow'")
@@ -118,18 +119,14 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 
 // GetNode handles GET /nodes/:id - retrieves details for a specific node.
 func (h *AdminHandler) GetNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	node, err := h.nodeService.GetNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		h.logger.Error("failed to get node",
@@ -155,11 +152,8 @@ func (h *AdminHandler) GetNode(c *gin.Context) {
 
 // UpdateNode handles PUT /nodes/:id - updates an existing node's configuration.
 func (h *AdminHandler) UpdateNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
@@ -176,8 +170,7 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 	// Get existing node
 	node, err := h.nodeService.GetNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve node")
@@ -199,28 +192,7 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 		}
 	}
 
-	// Apply updates
-	if req.GRPCAddress != nil {
-		node.GRPCAddress = *req.GRPCAddress
-	}
-	if req.LocationID != nil {
-		node.LocationID = req.LocationID
-	}
-	if req.TotalVCPU != nil {
-		node.TotalVCPU = *req.TotalVCPU
-	}
-	if req.TotalMemory != nil {
-		node.TotalMemoryMB = *req.TotalMemory
-	}
-	if req.IPMIAddress != nil {
-		node.IPMIAddress = req.IPMIAddress
-	}
-	if req.StorageBackend != nil {
-		node.StorageBackend = *req.StorageBackend
-	}
-	if req.StoragePath != nil {
-		node.StoragePath = *req.StoragePath
-	}
+	applyNodeUpdates(node, req)
 
 	if err := h.nodeService.UpdateNode(c.Request.Context(), node); err != nil {
 		h.logger.Error("failed to update node",
@@ -237,7 +209,6 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "node.update", "node", nodeID, req, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: updatedNode})
@@ -245,18 +216,14 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 
 // DeleteNode handles DELETE /nodes/:id - permanently removes a node.
 func (h *AdminHandler) DeleteNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	err := h.nodeService.DeleteNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		h.logger.Error("failed to delete node",
@@ -267,7 +234,6 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "node.delete", "node", nodeID, nil, true)
 
 	h.logger.Info("node deleted via admin API",
@@ -280,18 +246,14 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 // DrainNode handles POST /nodes/:id/drain - sets a node to draining mode.
 // Draining prevents new VM placements while allowing existing VMs to run.
 func (h *AdminHandler) DrainNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	err := h.nodeService.DrainNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		h.logger.Error("failed to drain node",
@@ -302,31 +264,26 @@ func (h *AdminHandler) DrainNode(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "node.drain", "node", nodeID, nil, true)
 
 	h.logger.Info("node set to draining mode via admin API",
 		"node_id", nodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"status": "draining"}})
+	c.JSON(http.StatusOK, models.Response{Data: NodeStatusResponse{Status: "draining"}})
 }
 
 // FailoverNode handles POST /nodes/:id/failover - marks a node as failed.
 // This triggers alerting and potentially automatic VM migration.
 func (h *AdminHandler) FailoverNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	// Validate UUID
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	err := h.nodeService.FailoverNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		h.logger.Error("failed to failover node",
@@ -337,28 +294,25 @@ func (h *AdminHandler) FailoverNode(c *gin.Context) {
 		return
 	}
 
-	// Log audit event
 	h.logAuditEvent(c, "node.failover", "node", nodeID, nil, true)
 
 	h.logger.Warn("node marked as failed via admin API",
 		"node_id", nodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"status": "failed"}})
+	c.JSON(http.StatusOK, models.Response{Data: NodeStatusResponse{Status: "failed"}})
 }
 
+// UndrainNode handles POST /nodes/:id/undrain - restores a node to online mode.
 func (h *AdminHandler) UndrainNode(c *gin.Context) {
-	nodeID := c.Param("id")
-
-	if _, err := uuid.Parse(nodeID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	err := h.nodeService.UndrainNode(c.Request.Context(), nodeID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
 		h.logger.Error("failed to undrain node",
@@ -375,5 +329,5 @@ func (h *AdminHandler) UndrainNode(c *gin.Context) {
 		"node_id", nodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"status": "online"}})
+	c.JSON(http.StatusOK, models.Response{Data: NodeStatusResponse{Status: "online"}})
 }

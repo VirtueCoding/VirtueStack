@@ -11,15 +11,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// AdminRDNSRequest represents the request body for updating rDNS.
 type AdminRDNSRequest struct {
 	Hostname string `json:"hostname" validate:"required,hostname_rfc1123,max=253"`
 }
 
+// AdminRDNSResponse represents the response for rDNS operations.
 type AdminRDNSResponse struct {
 	IPAddress    string  `json:"ip_address"`
 	RDNSHostname *string `json:"rdns_hostname,omitempty"`
 }
 
+// GetIPRDNS handles GET /vms/:id/ips/:ipId/rdns - retrieves rDNS for an IP address.
 func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -50,6 +53,7 @@ func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
 	})
 }
 
+// UpdateIPRDNS handles PUT /vms/:id/ips/:ipId/rdns - updates rDNS for an IP address.
 func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -110,6 +114,7 @@ func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 	})
 }
 
+// DeleteIPRDNS handles DELETE /vms/:id/ips/:ipId/rdns - clears rDNS for an IP address.
 func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -154,6 +159,7 @@ func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// GetVMIPs handles GET /vms/:id/ips - lists all IP addresses for a VM.
 func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 	vmID := c.Param("id")
 
