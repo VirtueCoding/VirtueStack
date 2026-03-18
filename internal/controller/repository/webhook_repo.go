@@ -8,7 +8,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
+
+// WebhookMaxFailCount is the consecutive-failure threshold at which a webhook
+// is automatically disabled to prevent continued delivery attempts.
+const WebhookMaxFailCount = 50
 
 // WebhookRepository provides database operations for webhooks and their deliveries.
 type WebhookRepository struct {
@@ -20,40 +26,6 @@ func NewWebhookRepository(db DB) *WebhookRepository {
 	return &WebhookRepository{db: db}
 }
 
-// Webhook represents a webhook endpoint configuration.
-type Webhook struct {
-	ID            string     `json:"id"`
-	CustomerID    string     `json:"customer_id"`
-	URL           string     `json:"url"`
-	SecretHash    string     `json:"-"` // Never expose in JSON
-	Events        []string   `json:"events"`
-	Active        bool       `json:"active"`
-	FailCount     int        `json:"fail_count"`
-	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
-	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-}
-
-// WebhookDelivery represents a single webhook delivery attempt.
-type WebhookDelivery struct {
-	ID             string     `json:"id"`
-	WebhookID      string     `json:"webhook_id"`
-	Event          string     `json:"event"`
-	IdempotencyKey string     `json:"idempotency_key"`
-	Payload        []byte     `json:"payload"`
-	Status         string     `json:"status"`
-	AttemptCount   int        `json:"attempt_count"`
-	MaxAttempts    int        `json:"max_attempts"`
-	NextRetryAt    *time.Time `json:"next_retry_at,omitempty"`
-	ResponseStatus *int       `json:"response_status,omitempty"`
-	ResponseBody   string     `json:"response_body,omitempty"`
-	ErrorMessage   string     `json:"error_message,omitempty"`
-	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-}
-
 // Delivery status constants.
 const (
 	DeliveryStatusPending   = "pending"
@@ -62,28 +34,9 @@ const (
 	DeliveryStatusRetrying  = "retrying"
 )
 
-// PaginationParams holds pagination query parameters.
-type PaginationParams struct {
-	Page    int
-	PerPage int
-}
-
-// Offset returns the SQL offset for the pagination params.
-func (p PaginationParams) Offset() int {
-	if p.Page <= 1 {
-		return 0
-	}
-	return (p.Page - 1) * p.PerPage
-}
-
-// Limit returns the SQL limit for the pagination params.
-func (p PaginationParams) Limit() int {
-	return p.PerPage
-}
-
 // WebhookListFilter holds filter parameters for listing webhooks.
 type WebhookListFilter struct {
-	PaginationParams
+	models.PaginationParams
 	CustomerID *string
 	Active     *bool
 	Event      *string // Filter by event subscription
@@ -91,7 +44,7 @@ type WebhookListFilter struct {
 
 // DeliveryListFilter holds filter parameters for listing deliveries.
 type DeliveryListFilter struct {
-	PaginationParams
+	models.PaginationParams
 	WebhookID *string
 	Status    *string
 	Event     *string
@@ -105,17 +58,17 @@ const webhookSelectCols = `
 	id, customer_id, url, secret_hash, events, active, fail_count,
 	last_success_at, last_failure_at, created_at, updated_at`
 
-func scanWebhook(row pgx.Row) (Webhook, error) {
-	var w Webhook
+func scanWebhook(row pgx.Row) (models.CustomerWebhook, error) {
+	var w models.CustomerWebhook
 	err := row.Scan(
-		&w.ID, &w.CustomerID, &w.URL, &w.SecretHash, &w.Events, &w.Active, &w.FailCount,
+		&w.ID, &w.CustomerID, &w.URL, &w.SecretHash, &w.Events, &w.IsActive, &w.FailCount,
 		&w.LastSuccessAt, &w.LastFailureAt, &w.CreatedAt, &w.UpdatedAt,
 	)
 	return w, err
 }
 
 // Create inserts a new webhook into the database.
-func (r *WebhookRepository) Create(ctx context.Context, webhook *Webhook) error {
+func (r *WebhookRepository) Create(ctx context.Context, webhook *models.CustomerWebhook) error {
 	const q = `
 		INSERT INTO webhooks (
 			customer_id, url, secret_hash, events, active
@@ -123,7 +76,7 @@ func (r *WebhookRepository) Create(ctx context.Context, webhook *Webhook) error 
 		RETURNING ` + webhookSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		webhook.CustomerID, webhook.URL, webhook.SecretHash, webhook.Events, webhook.Active,
+		webhook.CustomerID, webhook.URL, webhook.SecretHash, webhook.Events, webhook.IsActive,
 	)
 	created, err := scanWebhook(row)
 	if err != nil {
@@ -134,7 +87,7 @@ func (r *WebhookRepository) Create(ctx context.Context, webhook *Webhook) error 
 }
 
 // GetByID returns a webhook by its UUID. Returns ErrNotFound if no webhook matches.
-func (r *WebhookRepository) GetByID(ctx context.Context, id string) (*Webhook, error) {
+func (r *WebhookRepository) GetByID(ctx context.Context, id string) (*models.CustomerWebhook, error) {
 	const q = `SELECT ` + webhookSelectCols + ` FROM webhooks WHERE id = $1`
 	webhook, err := ScanRow(ctx, r.db, q, []any{id}, scanWebhook)
 	if err != nil {
@@ -145,7 +98,7 @@ func (r *WebhookRepository) GetByID(ctx context.Context, id string) (*Webhook, e
 
 // GetByIDAndCustomer returns a webhook by ID, ensuring it belongs to the customer.
 // Returns ErrNotFound if no webhook matches or if it belongs to a different customer.
-func (r *WebhookRepository) GetByIDAndCustomer(ctx context.Context, id, customerID string) (*Webhook, error) {
+func (r *WebhookRepository) GetByIDAndCustomer(ctx context.Context, id, customerID string) (*models.CustomerWebhook, error) {
 	const q = `SELECT ` + webhookSelectCols + ` FROM webhooks WHERE id = $1 AND customer_id = $2`
 	webhook, err := ScanRow(ctx, r.db, q, []any{id, customerID}, scanWebhook)
 	if err != nil {
@@ -155,7 +108,7 @@ func (r *WebhookRepository) GetByIDAndCustomer(ctx context.Context, id, customer
 }
 
 // List returns a paginated list of webhooks with optional filters and total count.
-func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) ([]Webhook, int, error) {
+func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) ([]models.CustomerWebhook, int, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -191,7 +144,7 @@ func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) 
 	)
 	args = append(args, limit, offset)
 
-	webhooks, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (Webhook, error) {
+	webhooks, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.CustomerWebhook, error) {
 		return scanWebhook(rows)
 	})
 	if err != nil {
@@ -201,9 +154,9 @@ func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) 
 }
 
 // ListByCustomer returns all webhooks for a specific customer.
-func (r *WebhookRepository) ListByCustomer(ctx context.Context, customerID string) ([]Webhook, error) {
+func (r *WebhookRepository) ListByCustomer(ctx context.Context, customerID string) ([]models.CustomerWebhook, error) {
 	const q = `SELECT ` + webhookSelectCols + ` FROM webhooks WHERE customer_id = $1 ORDER BY created_at DESC`
-	webhooks, err := ScanRows(ctx, r.db, q, []any{customerID}, func(rows pgx.Rows) (Webhook, error) {
+	webhooks, err := ScanRows(ctx, r.db, q, []any{customerID}, func(rows pgx.Rows) (models.CustomerWebhook, error) {
 		return scanWebhook(rows)
 	})
 	if err != nil {
@@ -213,9 +166,9 @@ func (r *WebhookRepository) ListByCustomer(ctx context.Context, customerID strin
 }
 
 // ListActiveForEvent returns all active webhooks subscribed to a specific event.
-func (r *WebhookRepository) ListActiveForEvent(ctx context.Context, event string) ([]Webhook, error) {
+func (r *WebhookRepository) ListActiveForEvent(ctx context.Context, event string) ([]models.CustomerWebhook, error) {
 	const q = `SELECT ` + webhookSelectCols + ` FROM webhooks WHERE active = TRUE AND $1 = ANY(events)`
-	webhooks, err := ScanRows(ctx, r.db, q, []any{event}, func(rows pgx.Rows) (Webhook, error) {
+	webhooks, err := ScanRows(ctx, r.db, q, []any{event}, func(rows pgx.Rows) (models.CustomerWebhook, error) {
 		return scanWebhook(rows)
 	})
 	if err != nil {
@@ -305,23 +258,23 @@ func (r *WebhookRepository) DeleteByCustomer(ctx context.Context, id, customerID
 
 // UpdateDeliveryStatus updates the webhook's delivery status after an attempt.
 // If success is true, resets fail_count. If false, increments fail_count.
-// Auto-disables webhook if fail_count reaches 50.
+// Auto-disables webhook if fail_count reaches WebhookMaxFailCount.
 func (r *WebhookRepository) UpdateDeliveryStatus(ctx context.Context, id string, success bool) error {
 	var q string
 	if success {
 		q = `
-			UPDATE webhooks 
-			SET fail_count = 0, 
-			    last_success_at = NOW(), 
+			UPDATE webhooks
+			SET fail_count = 0,
+			    last_success_at = NOW(),
 			    active = TRUE
 			WHERE id = $1`
 	} else {
-		q = `
-			UPDATE webhooks 
-			SET fail_count = fail_count + 1, 
+		q = fmt.Sprintf(`
+			UPDATE webhooks
+			SET fail_count = fail_count + 1,
 			    last_failure_at = NOW(),
-			    active = CASE WHEN fail_count + 1 >= 50 THEN FALSE ELSE active END
-			WHERE id = $1`
+			    active = CASE WHEN fail_count + 1 >= %d THEN FALSE ELSE active END
+			WHERE id = $1`, WebhookMaxFailCount)
 	}
 
 	tag, err := r.db.Exec(ctx, q, id)
@@ -349,8 +302,8 @@ const deliverySelectCols = `
 	max_attempts, next_retry_at, response_status, response_body, error_message,
 	delivered_at, created_at, updated_at`
 
-func scanDelivery(row pgx.Row) (WebhookDelivery, error) {
-	var d WebhookDelivery
+func scanDelivery(row pgx.Row) (models.WebhookDelivery, error) {
+	var d models.WebhookDelivery
 	err := row.Scan(
 		&d.ID, &d.WebhookID, &d.Event, &d.IdempotencyKey, &d.Payload, &d.Status, &d.AttemptCount,
 		&d.MaxAttempts, &d.NextRetryAt, &d.ResponseStatus, &d.ResponseBody, &d.ErrorMessage,
@@ -360,7 +313,7 @@ func scanDelivery(row pgx.Row) (WebhookDelivery, error) {
 }
 
 // CreateDelivery inserts a new delivery record into the database.
-func (r *WebhookRepository) CreateDelivery(ctx context.Context, delivery *WebhookDelivery) error {
+func (r *WebhookRepository) CreateDelivery(ctx context.Context, delivery *models.WebhookDelivery) error {
 	const q = `
 		INSERT INTO webhook_deliveries (
 			webhook_id, event, idempotency_key, payload, status, max_attempts
@@ -380,7 +333,7 @@ func (r *WebhookRepository) CreateDelivery(ctx context.Context, delivery *Webhoo
 }
 
 // GetDeliveryByID returns a delivery by its UUID.
-func (r *WebhookRepository) GetDeliveryByID(ctx context.Context, id string) (*WebhookDelivery, error) {
+func (r *WebhookRepository) GetDeliveryByID(ctx context.Context, id string) (*models.WebhookDelivery, error) {
 	const q = `SELECT ` + deliverySelectCols + ` FROM webhook_deliveries WHERE id = $1`
 	delivery, err := ScanRow(ctx, r.db, q, []any{id}, scanDelivery)
 	if err != nil {
@@ -390,7 +343,7 @@ func (r *WebhookRepository) GetDeliveryByID(ctx context.Context, id string) (*We
 }
 
 // GetDeliveryByIdempotencyKey returns a delivery by its idempotency key.
-func (r *WebhookRepository) GetDeliveryByIdempotencyKey(ctx context.Context, key string) (*WebhookDelivery, error) {
+func (r *WebhookRepository) GetDeliveryByIdempotencyKey(ctx context.Context, key string) (*models.WebhookDelivery, error) {
 	const q = `SELECT ` + deliverySelectCols + ` FROM webhook_deliveries WHERE idempotency_key = $1`
 	delivery, err := ScanRow(ctx, r.db, q, []any{key}, scanDelivery)
 	if err != nil {
@@ -400,7 +353,7 @@ func (r *WebhookRepository) GetDeliveryByIdempotencyKey(ctx context.Context, key
 }
 
 // ListDeliveries returns a paginated list of deliveries with optional filters.
-func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryListFilter) ([]WebhookDelivery, int, error) {
+func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryListFilter) ([]models.WebhookDelivery, int, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -436,7 +389,7 @@ func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryL
 	)
 	args = append(args, limit, offset)
 
-	deliveries, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (WebhookDelivery, error) {
+	deliveries, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
@@ -446,7 +399,7 @@ func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryL
 }
 
 // ListDeliveriesByWebhook returns deliveries for a specific webhook.
-func (r *WebhookRepository) ListDeliveriesByWebhook(ctx context.Context, webhookID string, limit, offset int) ([]WebhookDelivery, int, error) {
+func (r *WebhookRepository) ListDeliveriesByWebhook(ctx context.Context, webhookID string, limit, offset int) ([]models.WebhookDelivery, int, error) {
 	const countQ = `SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = $1`
 	total, err := CountRows(ctx, r.db, countQ, webhookID)
 	if err != nil {
@@ -454,13 +407,13 @@ func (r *WebhookRepository) ListDeliveriesByWebhook(ctx context.Context, webhook
 	}
 
 	const listQ = `
-		SELECT ` + deliverySelectCols + ` 
-		FROM webhook_deliveries 
-		WHERE webhook_id = $1 
-		ORDER BY created_at DESC 
+		SELECT ` + deliverySelectCols + `
+		FROM webhook_deliveries
+		WHERE webhook_id = $1
+		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`
 
-	deliveries, err := ScanRows(ctx, r.db, listQ, []any{webhookID, limit, offset}, func(rows pgx.Rows) (WebhookDelivery, error) {
+	deliveries, err := ScanRows(ctx, r.db, listQ, []any{webhookID, limit, offset}, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
@@ -476,8 +429,8 @@ func (r *WebhookRepository) UpdateDeliveryAttempt(ctx context.Context, id string
 
 	if success {
 		q = `
-			UPDATE webhook_deliveries 
-			SET status = $2, 
+			UPDATE webhook_deliveries
+			SET status = $2,
 			    attempt_count = attempt_count + 1,
 			    response_status = $3,
 			    response_body = $4,
@@ -487,7 +440,7 @@ func (r *WebhookRepository) UpdateDeliveryAttempt(ctx context.Context, id string
 		args = []any{id, DeliveryStatusDelivered, responseStatus, responseBody}
 	} else {
 		q = `
-			UPDATE webhook_deliveries 
+			UPDATE webhook_deliveries
 			SET status = CASE WHEN attempt_count + 1 >= max_attempts THEN $2 ELSE $3 END,
 			    attempt_count = attempt_count + 1,
 			    response_status = $4,
@@ -511,8 +464,8 @@ func (r *WebhookRepository) UpdateDeliveryAttempt(ctx context.Context, id string
 // MarkDeliveryFailed marks a delivery as permanently failed.
 func (r *WebhookRepository) MarkDeliveryFailed(ctx context.Context, id, errMsg string) error {
 	const q = `
-		UPDATE webhook_deliveries 
-		SET status = $2, 
+		UPDATE webhook_deliveries
+		SET status = $2,
 		    error_message = $3,
 		    next_retry_at = NULL
 		WHERE id = $1`
@@ -529,16 +482,16 @@ func (r *WebhookRepository) MarkDeliveryFailed(ctx context.Context, id, errMsg s
 
 // GetPendingDeliveries returns deliveries that are ready to be processed.
 // This includes pending deliveries and retries that are due.
-func (r *WebhookRepository) GetPendingDeliveries(ctx context.Context, limit int) ([]WebhookDelivery, error) {
+func (r *WebhookRepository) GetPendingDeliveries(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
 	const q = `
 		SELECT ` + deliverySelectCols + `
-		FROM webhook_deliveries 
+		FROM webhook_deliveries
 		WHERE status IN ('pending', 'retrying')
 		  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
 		ORDER BY created_at ASC
 		LIMIT $1`
 
-	deliveries, err := ScanRows(ctx, r.db, q, []any{limit}, func(rows pgx.Rows) (WebhookDelivery, error) {
+	deliveries, err := ScanRows(ctx, r.db, q, []any{limit}, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
@@ -566,7 +519,7 @@ func (r *WebhookRepository) ResetDeliveryForRetry(ctx context.Context, id string
 	return nil
 }
 
-func (r *WebhookRepository) GetPendingRetries(ctx context.Context, before time.Time) ([]WebhookDelivery, error) {
+func (r *WebhookRepository) GetPendingRetries(ctx context.Context, before time.Time) ([]models.WebhookDelivery, error) {
 	const q = `
 		SELECT ` + deliverySelectCols + `
 		FROM webhook_deliveries
@@ -575,11 +528,47 @@ func (r *WebhookRepository) GetPendingRetries(ctx context.Context, before time.T
 		  AND next_retry_at <= $2
 		ORDER BY next_retry_at ASC`
 
-	deliveries, err := ScanRows(ctx, r.db, q, []any{DeliveryStatusRetrying, before}, func(rows pgx.Rows) (WebhookDelivery, error) {
+	deliveries, err := ScanRows(ctx, r.db, q, []any{DeliveryStatusRetrying, before}, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting pending retries: %w", err)
 	}
 	return deliveries, nil
+}
+
+// DeliveryStatusCount holds the count of deliveries for a single status value.
+type DeliveryStatusCount struct {
+	Status string
+	Count  int
+}
+
+// CountDeliveriesByStatus returns the total delivery count and per-status counts
+// for the given webhook using a single DB aggregation query (COUNT(*) GROUP BY status).
+// This avoids fetching individual delivery rows for statistical purposes.
+func (r *WebhookRepository) CountDeliveriesByStatus(ctx context.Context, webhookID string) (total int, counts []DeliveryStatusCount, err error) {
+	const q = `
+		SELECT status, COUNT(*) AS cnt
+		FROM webhook_deliveries
+		WHERE webhook_id = $1
+		GROUP BY status`
+
+	rows, queryErr := r.db.Query(ctx, q, webhookID)
+	if queryErr != nil {
+		return 0, nil, fmt.Errorf("counting deliveries by status for webhook %s: %w", webhookID, queryErr)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sc DeliveryStatusCount
+		if scanErr := rows.Scan(&sc.Status, &sc.Count); scanErr != nil {
+			return 0, nil, fmt.Errorf("scanning delivery status count: %w", scanErr)
+		}
+		counts = append(counts, sc)
+		total += sc.Count
+	}
+	if rowErr := rows.Err(); rowErr != nil {
+		return 0, nil, fmt.Errorf("iterating delivery status counts: %w", rowErr)
+	}
+	return total, counts, nil
 }

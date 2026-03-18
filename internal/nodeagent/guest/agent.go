@@ -104,6 +104,17 @@ func (a *QEMUGuestAgent) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// guestSetPasswordCmd is the JSON structure for the guest-set-user-password command.
+type guestSetPasswordCmd struct {
+	Execute   string                   `json:"execute"`
+	Arguments guestSetPasswordCmdArgs  `json:"arguments"`
+}
+
+type guestSetPasswordCmdArgs struct {
+	Username string `json:"username"`
+	Password string `json:"cryptopassword,omitempty"`
+}
+
 // SetUserPassword sets the password for a user in the guest VM.
 // The password is base64 encoded as required by the QEMU Guest Agent protocol.
 // This operation requires the guest agent to have appropriate permissions.
@@ -111,12 +122,19 @@ func (a *QEMUGuestAgent) SetUserPassword(ctx context.Context, username, password
 	// Base64 encode the password as required by guest-set-user-password
 	encodedPassword := base64.StdEncoding.EncodeToString([]byte(password))
 
-	cmd := fmt.Sprintf(
-		`{"execute":"guest-set-user-password","arguments":{"username":"%s","password":"%s"}}`,
-		username, encodedPassword,
-	)
+	payload := guestSetPasswordCmd{
+		Execute: "guest-set-user-password",
+		Arguments: guestSetPasswordCmdArgs{
+			Username: username,
+			Password: encodedPassword,
+		},
+	}
+	cmdBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling set-user-password command: %w", err)
+	}
 
-	_, err := a.executeCommand(ctx, cmd, "set-user-password")
+	_, err = a.executeCommand(ctx, string(cmdBytes), "set-user-password")
 	if err != nil {
 		return fmt.Errorf("guest agent set-user-password: %w", err)
 	}

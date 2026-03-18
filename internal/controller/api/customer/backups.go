@@ -47,7 +47,14 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 	}
 
 	// Optional status filter
+	validBackupStatuses := map[string]bool{
+		"creating": true, "completed": true, "failed": true, "restoring": true, "deleted": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validBackupStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 
@@ -120,7 +127,7 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -201,7 +208,7 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -210,7 +217,7 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Backup deleted successfully"}})
+	c.Status(http.StatusNoContent)
 }
 
 // RestoreBackup handles POST /backups/:id/restore - restores a VM from a backup.
@@ -249,7 +256,7 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

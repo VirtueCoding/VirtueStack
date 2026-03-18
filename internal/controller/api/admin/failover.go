@@ -18,9 +18,20 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 	}
 
 	if nodeID := c.Query("node_id"); nodeID != "" {
+		if _, err := uuid.Parse(nodeID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "node_id must be a valid UUID")
+			return
+		}
 		filter.NodeID = &nodeID
 	}
+	validFailoverStatuses := map[string]bool{
+		"pending": true, "approved": true, "in_progress": true, "completed": true, "failed": true, "cancelled": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validFailoverStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 

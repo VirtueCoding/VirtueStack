@@ -40,6 +40,9 @@ const (
 	DefaultLibvirtURI = "qemu:///system"
 	// DefaultDataDir is the default directory for VM state persistence.
 	DefaultDataDir = "/var/lib/virtuestack"
+	// CPUSampleInterval is the interval between CPU usage samples.
+	// Override via NodeAgentConfig if finer or coarser granularity is needed.
+	CPUSampleInterval = 5 * time.Second
 )
 
 // Manager handles VM lifecycle operations via libvirt.
@@ -677,7 +680,7 @@ func (m *Manager) runCPUSampler(domainName string) {
 	defer m.cpuWg.Done()
 
 	m.sampleCPUUsage(domainName)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(CPUSampleInterval)
 	defer ticker.Stop()
 
 	for {

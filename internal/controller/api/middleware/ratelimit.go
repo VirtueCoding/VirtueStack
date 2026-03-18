@@ -41,6 +41,14 @@ type rateLimiter struct {
 }
 
 // newRateLimiter constructs a rateLimiter and starts a background cleanup goroutine.
+// The goroutine is stopped by calling Stop() on the returned limiter.
+//
+// Lifecycle note: middleware-registered rate limiters are intentionally scoped to
+// the process lifetime. They are created once at server startup (inside
+// RateLimit/RateLimit* helper functions) and live until the process exits. Callers
+// that need early teardown should retain the *rateLimiter and invoke Stop() during
+// graceful shutdown. The cleanup goroutine exits promptly when Stop() is called
+// because it selects on rl.ctx.Done().
 func newRateLimiter(config RateLimitConfig) *rateLimiter {
 	ctx, cancel := context.WithCancel(context.Background())
 	rl := &rateLimiter{
@@ -382,7 +390,7 @@ type RedisClient interface {
 	// ZCard returns the cardinality (number of elements) of a sorted set.
 	ZCard(ctx context.Context, key string) (int64, error)
 	// Eval executes a Lua script.
-	Eval(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error)
+	Eval(ctx context.Context, script string, keys []string, args ...any) (any, error)
 }
 
 // RedisZMember represents a member in a Redis sorted set.

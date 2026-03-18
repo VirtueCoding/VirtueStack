@@ -3,12 +3,14 @@
 
 BEGIN;
 
+SET lock_timeout = '5s';
+
 -- ============================================================================
 -- PASSWORD_RESETS TABLE
 -- Stores password reset tokens for customers
 -- ============================================================================
 
-CREATE TABLE password_resets (
+CREATE TABLE IF NOT EXISTS password_resets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     user_type VARCHAR(20) NOT NULL DEFAULT 'customer',
@@ -22,13 +24,13 @@ CREATE TABLE password_resets (
 );
 
 -- Index for looking up reset by token hash (most common query)
-CREATE INDEX idx_password_resets_token_hash ON password_resets(token_hash);
+CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash);
 
 -- Index for finding resets by user
-CREATE INDEX idx_password_resets_user ON password_resets(user_id, user_type);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id, user_type);
 
 -- Index for cleanup of expired tokens
-CREATE INDEX idx_password_resets_expires_at ON password_resets(expires_at);
+CREATE INDEX IF NOT EXISTS idx_password_resets_expires_at ON password_resets(expires_at);
 
 -- ============================================================================
 -- GRANT PERMISSIONS

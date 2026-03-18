@@ -27,6 +27,29 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	vmID := c.Query("vm_id")
 	status := c.Query("status")
 
+	// Validate UUID query parameters
+	if customerID != "" {
+		if _, err := uuid.Parse(customerID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+			return
+		}
+	}
+	if vmID != "" {
+		if _, err := uuid.Parse(vmID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
+			return
+		}
+	}
+
+	// Validate status against known enum values
+	validBackupStatuses := map[string]bool{
+		"creating": true, "completed": true, "failed": true, "restoring": true, "deleted": true,
+	}
+	if status != "" && !validBackupStatuses[status] {
+		respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+		return
+	}
+
 	// Build filter
 	filter := AdminBackupListFilter{
 		CustomerID: &customerID,
@@ -61,13 +84,6 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
-	// Log the filter for debugging
-	h.logger.Debug("listing backups with filter",
-		"customer_id", filter.CustomerID,
-		"vm_id", filter.VMID,
-		"status", filter.Status,
-		"correlation_id", middleware.GetCorrelationID(c))
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: backups,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
@@ -96,7 +112,7 @@ func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 			"backup_id", backupID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

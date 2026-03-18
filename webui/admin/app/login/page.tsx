@@ -20,7 +20,7 @@ import { useAuth } from "@/lib/auth-context";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(12, "Password must be at least 12 characters"),
 });
 
 const totpSchema = z.object({

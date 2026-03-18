@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE INDEX IF NOT EXISTS idx_templates_os_family_active
     ON templates(os_family, is_active);
 

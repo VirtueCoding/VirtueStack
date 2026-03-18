@@ -3,6 +3,8 @@
 
 BEGIN;
 
+SET lock_timeout = '5s';
+
 -- 2026 partitions (May through December)
 CREATE TABLE audit_logs_2026_05 PARTITION OF audit_logs
     FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');

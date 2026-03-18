@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE INDEX IF NOT EXISTS idx_ip_sets_location_ip_version
     ON ip_sets(location_id, ip_version);
 

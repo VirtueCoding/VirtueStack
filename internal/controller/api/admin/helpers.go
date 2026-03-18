@@ -21,7 +21,9 @@ func respondWithError(c *gin.Context, status int, code, message string) {
 }
 
 // logAuditEvent logs an audit event for admin actions.
-func (h *AdminHandler) logAuditEvent(c *gin.Context, action, resourceType, resourceID string, changes interface{}, success bool) {
+// changes accepts any JSON-marshalable value (e.g. map[string]any, a struct, or json.RawMessage).
+// Pass nil when there are no changes to record.
+func (h *AdminHandler) logAuditEvent(c *gin.Context, action, resourceType, resourceID string, changes any, success bool) {
 	actorID := middleware.GetUserID(c)
 	correlationID := middleware.GetCorrelationID(c)
 	clientIP := c.ClientIP()

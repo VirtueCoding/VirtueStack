@@ -162,11 +162,15 @@ func (r *TaskRepository) ListByStatus(ctx context.Context, status models.TaskSta
 	return taskList, nil
 }
 
-// ListPending returns all tasks with status 'pending'.
+// maxPendingBatch is the maximum number of pending tasks returned in a single ListPending call.
+// This prevents unbounded result sets when the task queue grows large.
+const maxPendingBatch = 500
+
+// ListPending returns up to maxPendingBatch tasks with status 'pending', oldest first.
 // Convenience method for ListByStatus with pending status.
 func (r *TaskRepository) ListPending(ctx context.Context) ([]models.Task, error) {
-	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'pending' ORDER BY created_at ASC`
-	taskList, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.Task, error) {
+	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT $1`
+	taskList, err := ScanRows(ctx, r.db, q, []any{maxPendingBatch}, func(rows pgx.Rows) (models.Task, error) {
 		return scanTask(rows)
 	})
 	if err != nil {

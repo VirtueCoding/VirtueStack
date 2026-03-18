@@ -1,6 +1,9 @@
 -- VirtueStack Webhook Delivery System - Down Migration
--- Rolls back webhooks and webhook_deliveries tables
--- Restores the original customer_webhooks and webhook_deliveries tables from migration 001
+-- Rolls back webhooks and webhook_deliveries tables (migration 010).
+-- Restores the original customer_webhooks and webhook_deliveries schema from migration 001.
+--
+-- NOTE: The row data that was dropped when 000010_webhooks.up.sql was applied
+-- CANNOT be recovered by this rollback. Only the schema structure is restored.
 
 BEGIN;
 
@@ -30,7 +33,7 @@ DROP TABLE IF EXISTS webhooks CASCADE;
 -- RESTORE ORIGINAL WEBHOOK TABLES (from migration 001)
 -- ============================================================================
 
-CREATE TABLE customer_webhooks (
+CREATE TABLE IF NOT EXISTS customer_webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     url VARCHAR(2048) NOT NULL,
@@ -42,7 +45,7 @@ CREATE TABLE customer_webhooks (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE webhook_deliveries (
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     webhook_id UUID NOT NULL REFERENCES customer_webhooks(id) ON DELETE CASCADE,
     event_type VARCHAR(100) NOT NULL,
@@ -55,7 +58,7 @@ CREATE TABLE webhook_deliveries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
-CREATE INDEX idx_webhook_deliveries_status_retry ON webhook_deliveries(status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status_retry ON webhook_deliveries(status, next_retry_at);
 
 COMMIT;

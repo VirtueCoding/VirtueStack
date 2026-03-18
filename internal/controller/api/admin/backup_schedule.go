@@ -39,30 +39,10 @@ func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 		return
 	}
 
-	if _, err := uuid.Parse(req.VMID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
-		return
-	}
-	if _, err := uuid.Parse(req.CustomerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
-		return
-	}
-
-	freq := strings.ToLower(strings.TrimSpace(req.Frequency))
-	if freq != "daily" && freq != "weekly" && freq != "monthly" {
-		respondWithError(c, http.StatusBadRequest, "INVALID_FREQUENCY", "frequency must be daily, weekly, or monthly")
-		return
-	}
-
-	if req.RetentionCount <= 0 {
-		respondWithError(c, http.StatusBadRequest, "INVALID_RETENTION", "retention_count must be greater than 0")
-		return
-	}
-
 	schedule := &models.BackupSchedule{
 		VMID:           req.VMID,
 		CustomerID:     req.CustomerID,
-		Frequency:      freq,
+		Frequency:      strings.ToLower(strings.TrimSpace(req.Frequency)),
 		RetentionCount: req.RetentionCount,
 		Active:         req.Active,
 	}
@@ -82,7 +62,7 @@ func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 	h.logger.Info("backup schedule created",
 		"schedule_id", scheduleID,
 		"vm_id", req.VMID,
-		"frequency", freq,
+		"frequency", schedule.Frequency,
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	c.JSON(http.StatusCreated, models.Response{Data: gin.H{
@@ -102,7 +82,9 @@ func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 		}
 	}
 
-	schedules, err := h.backupService.ListSchedules(c.Request.Context(), vmID)
+	pagination := models.ParsePagination(c)
+
+	schedules, total, err := h.backupService.ListSchedulesPaginated(c.Request.Context(), vmID, pagination)
 	if err != nil {
 		h.logger.Error("failed to list backup schedules",
 			"error", err,
@@ -112,7 +94,10 @@ func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.Response{Data: schedules})
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: schedules,
+		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+	})
 }
 
 // GetBackupSchedule handles GET /backup-schedules/:id - gets a backup schedule by ID.

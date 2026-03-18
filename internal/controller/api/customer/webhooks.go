@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -54,13 +55,13 @@ type WebhookDeliveryResponse struct {
 	CreatedAt      string  `json:"created_at"`
 }
 
-// toWebhookResponse converts a repository webhook to an API response.
-func toWebhookResponse(w *repository.Webhook) WebhookResponse {
+// toWebhookResponse converts a webhook model to an API response.
+func toWebhookResponse(w *models.CustomerWebhook) WebhookResponse {
 	return WebhookResponse{
 		ID:            w.ID,
 		URL:           w.URL,
 		Events:        w.Events,
-		IsActive:      w.Active,
+		IsActive:      w.IsActive,
 		FailCount:     w.FailCount,
 		LastSuccessAt: w.LastSuccessAt,
 		LastFailureAt: w.LastFailureAt,
@@ -69,8 +70,8 @@ func toWebhookResponse(w *repository.Webhook) WebhookResponse {
 	}
 }
 
-// toDeliveryResponse converts a repository delivery to an API response.
-func toDeliveryResponse(d *repository.WebhookDelivery) WebhookDeliveryResponse {
+// toDeliveryResponse converts a webhook delivery model to an API response.
+func toDeliveryResponse(d *models.WebhookDelivery) WebhookDeliveryResponse {
 	success := d.Status == repository.DeliveryStatusDelivered
 	resp := WebhookDeliveryResponse{
 		ID:             d.ID,
@@ -94,7 +95,6 @@ func toDeliveryResponse(d *repository.WebhookDelivery) WebhookDeliveryResponse {
 // ListWebhooks handles GET /webhooks - lists all webhooks for the customer.
 func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
-	pagination := models.ParsePagination(c)
 
 	webhooks, err := h.webhookService.List(c.Request.Context(), customerID)
 	if err != nil {
@@ -112,9 +112,9 @@ func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 		responses[i] = toWebhookResponse(&w)
 	}
 
+	// Meta is omitted: the service layer returns all webhooks without pagination support.
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, len(responses)),
 	})
 }
 
@@ -149,16 +149,16 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 		Events:     req.Events,
 	})
 	if err != nil {
-		switch err {
-		case services.ErrInvalidURL:
+		switch {
+		case errors.Is(err, services.ErrInvalidURL):
 			respondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
-		case services.ErrInvalidEvent:
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", err.Error())
-		case services.ErrTooManyWebhooks:
+		case errors.Is(err, services.ErrInvalidEvent):
+			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
+		case errors.Is(err, services.ErrTooManyWebhooks):
 			respondWithError(c, http.StatusBadRequest, "LIMIT_EXCEEDED", "Maximum webhook limit reached (5)")
-		case services.ErrSecretTooShort:
+		case errors.Is(err, services.ErrSecretTooShort):
 			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
-		case services.ErrSecretTooLong:
+		case errors.Is(err, services.ErrSecretTooLong):
 			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
 		default:
 			h.logger.Error("failed to create webhook",
@@ -193,7 +193,7 @@ func (h *CustomerHandler) GetWebhook(c *gin.Context) {
 
 	webhook, err := h.webhookService.Get(c.Request.Context(), webhookID, customerID)
 	if err != nil {
-		if err == services.ErrWebhookNotFound {
+		if errors.Is(err, services.ErrWebhookNotFound) {
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}
@@ -252,16 +252,16 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 
 	webhook, err := h.webhookService.Update(c.Request.Context(), webhookID, customerID, updateReq)
 	if err != nil {
-		switch err {
-		case services.ErrWebhookNotFound:
+		switch {
+		case errors.Is(err, services.ErrWebhookNotFound):
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
-		case services.ErrInvalidURL:
+		case errors.Is(err, services.ErrInvalidURL):
 			respondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
-		case services.ErrInvalidEvent:
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", err.Error())
-		case services.ErrSecretTooShort:
+		case errors.Is(err, services.ErrInvalidEvent):
+			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
+		case errors.Is(err, services.ErrSecretTooShort):
 			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
-		case services.ErrSecretTooLong:
+		case errors.Is(err, services.ErrSecretTooLong):
 			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
 		default:
 			h.logger.Error("failed to update webhook",
@@ -295,7 +295,7 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 
 	err := h.webhookService.Delete(c.Request.Context(), webhookID, customerID)
 	if err != nil {
-		if err == services.ErrWebhookNotFound {
+		if errors.Is(err, services.ErrWebhookNotFound) {
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}
@@ -313,7 +313,7 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Webhook deleted successfully"}})
+	c.Status(http.StatusNoContent)
 }
 
 // ListWebhookDeliveries handles GET /webhooks/:id/deliveries - lists delivery attempts for a webhook.
@@ -332,7 +332,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 
 	deliveries, total, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination.Page, pagination.PerPage)
 	if err != nil {
-		if err == services.ErrWebhookNotFound {
+		if errors.Is(err, services.ErrWebhookNotFound) {
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}

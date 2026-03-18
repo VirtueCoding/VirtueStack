@@ -39,12 +39,23 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 	}
 
 	// Optional status filter
+	validNodeStatuses := map[string]bool{
+		"online": true, "degraded": true, "offline": true, "draining": true, "failed": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validNodeStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 
 	// Optional location filter
 	if locationID := c.Query("location_id"); locationID != "" {
+		if _, err := uuid.Parse(locationID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
+			return
+		}
 		filter.LocationID = &locationID
 	}
 
@@ -86,7 +97,7 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_REGISTER_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_REGISTER_FAILED", "Internal server error")
 		return
 	}
 
@@ -216,7 +227,7 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_UPDATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -252,7 +263,7 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -263,7 +274,7 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 		"node_id", nodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"deleted": true}})
+	c.Status(http.StatusNoContent)
 }
 
 // DrainNode handles POST /nodes/:id/drain - sets a node to draining mode.
@@ -287,7 +298,7 @@ func (h *AdminHandler) DrainNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_DRAIN_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_DRAIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -322,7 +333,7 @@ func (h *AdminHandler) FailoverNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_FAILOVER_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_FAILOVER_FAILED", "Internal server error")
 		return
 	}
 
@@ -354,7 +365,7 @@ func (h *AdminHandler) UndrainNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_UNDRAIN_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "NODE_UNDRAIN_FAILED", "Internal server error")
 		return
 	}
 

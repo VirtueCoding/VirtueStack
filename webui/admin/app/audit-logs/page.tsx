@@ -80,26 +80,31 @@ export default function AuditLogsPage() {
       toast({ title: "No Data", description: "No logs to export.", variant: "destructive" });
       return;
     }
-    const headers = ["Timestamp", "Actor Type", "Actor ID", "Action", "Resource Type", "Resource ID", "Success", "IP Address"];
-    const rows = filteredLogs.map((log) => [
-      log.timestamp,
-      log.actor_type,
-      log.actor_id || "",
-      log.action,
-      log.resource_type,
-      log.resource_id || "",
-      log.success ? "true" : "false",
-      log.actor_ip || "",
-    ]);
-    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audit-logs-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast({ title: "Export Complete", description: `Exported ${filteredLogs.length} log entries.` });
+    try {
+      const headers = ["Timestamp", "Actor Type", "Actor ID", "Action", "Resource Type", "Resource ID", "Success", "IP Address"];
+      const rows = filteredLogs.map((log) => [
+        log.timestamp,
+        log.actor_type,
+        log.actor_id || "",
+        log.action,
+        log.resource_type,
+        log.resource_id || "",
+        log.success ? "true" : "false",
+        log.actor_ip || "",
+      ]);
+      const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-logs-${new Date().toISOString().split("T")[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Export Complete", description: `Exported ${filteredLogs.length} log entries.` });
+    } catch (err) {
+      console.error("CSV export failed:", err);
+      toast({ title: "Export Failed", description: "Failed to generate CSV export.", variant: "destructive" });
+    }
   };
 
   return (

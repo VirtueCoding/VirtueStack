@@ -155,7 +155,7 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 		return nil, fmt.Errorf("storage backend validation failed: %w", err)
 	}
 
-	// 10. Get storage paths for disk copy operations
+	// 11. Get storage paths for disk copy operations
 	sourceDiskPath := s.getVMDiskPath(vm, sourceNode)
 	targetDiskPath := s.getVMDiskPathForTarget(vm, targetNode)
 
@@ -166,12 +166,12 @@ func (s *MigrationService) MigrateVM(ctx context.Context, req *MigrateVMRequest,
 		"source_disk", sourceDiskPath,
 		"target_disk", targetDiskPath)
 
-	// 11. Update VM status to migrating before publishing task
+	// 12. Update VM status to migrating before publishing task
 	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusMigrating); err != nil {
 		return nil, fmt.Errorf("updating VM status to migrating: %w", err)
 	}
 
-	// 12. Publish migration task with storage-aware payload
+	// 13. Publish migration task with storage-aware payload
 	taskPayload := map[string]any{
 		"vm_id":               vm.ID,
 		"source_node_id":      sourceNodeID,

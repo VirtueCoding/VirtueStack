@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -102,7 +103,7 @@ func TestVMRepository_UpdatePassword(t *testing.T) {
 					t.Errorf("UpdatePassword() expected error but got none")
 					return
 				}
-				if tt.errContains != "" && !containsStr(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("UpdatePassword() error = %v, should contain %q", err, tt.errContains)
 				}
 				return
@@ -115,15 +116,3 @@ func TestVMRepository_UpdatePassword(t *testing.T) {
 	}
 }
 
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || containsSubstring(s, substr))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

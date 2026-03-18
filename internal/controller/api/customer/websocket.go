@@ -25,9 +25,9 @@ import (
 var wsLogger = slog.Default()
 
 const (
-	maxConcurrentConnectionsPerIP = 5
+	maxConcurrentConnectionsPerIP = 10
 	maxIPTrackerEntries           = 100000
-	webSocketIdleTimeout          = 30 * time.Second
+	webSocketIdleTimeout          = 5 * time.Minute
 	webSocketTotalTimeout         = 5 * time.Minute
 	webSocketBufferSize           = 32 * 1024
 
@@ -193,6 +193,17 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	// Validate the console token server-side: it must have been issued for this
+	// exact VM and customer, must not be expired, and is invalidated on first use.
+	if !h.tokenStore.Validate(token, vmID, customerID) {
+		h.logger.Warn("invalid or expired console token in WebSocket request",
+			"vm_id", vmID,
+			"correlation_id", correlationID,
+			"client_ip", clientIP)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 		return
 	}
 
@@ -502,20 +513,15 @@ func checkConnectionLimit(ip string) bool {
 
 	wsConnectionCounts[ip]++
 
-	go cleanupIPTracker()
-
-	return true
-}
-
-func cleanupIPTracker() {
-	wsConnectionMu.Lock()
-	defer wsConnectionMu.Unlock()
-
-	for ip, count := range wsConnectionCounts {
+	// Inline cleanup of zero-count entries to avoid unbounded map growth.
+	// The mutex is already held, so this is safe without a goroutine.
+	for trackedIP, count := range wsConnectionCounts {
 		if count <= 0 {
-			delete(wsConnectionCounts, ip)
+			delete(wsConnectionCounts, trackedIP)
 		}
 	}
+
+	return true
 }
 
 func releaseConnection(ip string) {

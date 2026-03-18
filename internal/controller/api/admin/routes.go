@@ -81,6 +81,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	admin := router.Group("/admin")
 
 	auth := admin.Group("/auth")
+	auth.Use(middleware.LoginRateLimit())
 	{
 		auth.POST("/login", handler.Login)
 		auth.POST("/verify-2fa", handler.Verify2FA)
@@ -92,6 +93,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireRole("admin", "super_admin"))
 	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	protected.Use(middleware.AdminRateLimit())
 	{
 		// Node management
 		nodes := protected.Group("/nodes")

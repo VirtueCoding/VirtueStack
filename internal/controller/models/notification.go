@@ -3,6 +3,7 @@ package models
 
 import (
 	"encoding/json"
+	"log/slog"
 	"time"
 )
 
@@ -61,20 +62,27 @@ type NotificationEvent struct {
 
 // NotificationEventResponse represents a notification event in responses.
 type NotificationEventResponse struct {
-	ID           string                 `json:"id"`
-	EventType    string                 `json:"event_type"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   string                 `json:"resource_id"`
-	Data         map[string]interface{} `json:"data,omitempty"`
-	Status       string                 `json:"status"`
-	CreatedAt    string                 `json:"created_at"`
+	ID           string          `json:"id"`
+	EventType    string          `json:"event_type"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   string          `json:"resource_id"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	Status       string          `json:"status"`
+	CreatedAt    string          `json:"created_at"`
 }
 
 // ToResponse converts NotificationEvent to a response.
 func (e *NotificationEvent) ToResponse() *NotificationEventResponse {
-	var data map[string]interface{}
-	if e.Data != nil {
-		json.Unmarshal(e.Data, &data)
+	var data json.RawMessage
+	if len(e.Data) > 0 {
+		// Validate that the stored JSON is well-formed before passing it through.
+		if !json.Valid(e.Data) {
+			slog.Warn("notification event contains invalid JSON in Data field",
+				"event_id", e.ID, "event_type", e.EventType)
+			data = json.RawMessage(`{}`)
+		} else {
+			data = e.Data
+		}
 	}
 	return &NotificationEventResponse{
 		ID:           e.ID,

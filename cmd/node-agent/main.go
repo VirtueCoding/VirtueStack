@@ -16,7 +16,7 @@ import (
 )
 
 // Shutdown timeout for graceful termination.
-const shutdownTimeout = 10 * time.Second
+const shutdownTimeout = 30 * time.Second
 
 func main() {
 	// Load configuration
@@ -72,12 +72,20 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
-	// Stop the server
-	server.Stop()
+	// Stop the server. Stop() is synchronous and returns as soon as the gRPC
+	// server has drained and all background goroutines have completed, so we
+	// do not wait on shutdownCtx.Done() afterward. The context is kept only to
+	// surface a timeout warning if Stop() somehow blocks past the deadline.
+	stopDone := make(chan struct{})
+	go func() {
+		server.Stop()
+		close(stopDone)
+	}()
 
-	// Wait for shutdown context
-	<-shutdownCtx.Done()
-	if shutdownCtx.Err() == context.DeadlineExceeded {
+	select {
+	case <-stopDone:
+		// Server stopped cleanly before the timeout.
+	case <-shutdownCtx.Done():
 		logger.Warn("Shutdown timeout exceeded, forcing exit")
 	}
 

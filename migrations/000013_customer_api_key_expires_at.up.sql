@@ -2,6 +2,8 @@
 
 BEGIN;
 
+SET lock_timeout = '5s';
+
 ALTER TABLE customer_api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 -- Add index for finding expired keys

@@ -10,6 +10,7 @@ services:
   # ===========================================================================
   postgres:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -71,6 +72,7 @@ services:
   # ===========================================================================
   nats:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -105,6 +107,7 @@ services:
   # ===========================================================================
   controller:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -121,7 +124,9 @@ services:
         labels: "service"
         tag: "{{.Name}}"
     environment:
-      # sslmode=disable is safe: all services share the same Docker network (encrypted at the overlay level)
+      # sslmode=disable is safe for single-host Docker deployments: all services communicate within the same host via a
+      # Docker bridge network and traffic never leaves the machine. For multi-host or Docker Swarm deployments, use
+      # sslmode=require and configure PostgreSQL with proper SSL certificates.
       DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
       NATS_URL: nats://nats:4222
       JWT_SECRET: ${JWT_SECRET}
@@ -136,6 +141,7 @@ services:
   # ===========================================================================
   admin-webui:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -160,6 +166,7 @@ services:
   # ===========================================================================
   customer-webui:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -184,6 +191,7 @@ services:
   # ===========================================================================
   nginx:
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:

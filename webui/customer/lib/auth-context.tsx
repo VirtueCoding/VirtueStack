@@ -163,8 +163,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // Fetch the real profile to get the UUID rather than using email as ID.
+        let userId = credentials.email;
+        try {
+          const { settingsApi } = await import("./api-client");
+          const profile = await settingsApi.getProfile();
+          userId = profile.id;
+        } catch {
+          // Non-fatal: fall back to email as a temporary placeholder until
+          // the next initAuth cycle resolves the real profile.
+        }
         const user: CustomerUser = {
-          id: credentials.email,
+          id: userId,
           email: credentials.email,
           role: "customer",
         };
@@ -237,7 +247,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       await customerAuthApi.logout();
-    } catch {
+    } catch (err) {
+      // Logout errors are non-fatal — session may already be invalid.
+      // Log for debugging but always clear local state regardless.
+      console.warn("Logout request failed (session may already be invalid):", err);
     } finally {
       setState({
         user: null,

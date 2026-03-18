@@ -117,9 +117,20 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 
 	// Optional filters
 	if eventType := c.Query("event_type"); eventType != "" {
+		if !services.IsValidEventType(eventType) {
+			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Invalid event_type value")
+			return
+		}
 		filter.EventType = &eventType
 	}
+	validNotificationStatuses := map[string]bool{
+		"pending": true, "sent": true, "failed": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validNotificationStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 

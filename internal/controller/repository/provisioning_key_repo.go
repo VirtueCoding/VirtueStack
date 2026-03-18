@@ -86,6 +86,9 @@ func (r *ProvisioningKeyRepository) GetByHash(ctx context.Context, keyHash strin
 }
 
 // List returns all provisioning keys with optional filters.
+// Pagination is intentionally omitted: the total number of provisioning keys is
+// expected to be very small (typically single digits) in any deployment, making
+// an unbounded query safe for internal administrative use.
 func (r *ProvisioningKeyRepository) List(ctx context.Context, includeRevoked bool) ([]models.ProvisioningKey, error) {
 	q := `SELECT ` + provisioningKeySelectCols + ` FROM provisioning_keys`
 	if !includeRevoked {

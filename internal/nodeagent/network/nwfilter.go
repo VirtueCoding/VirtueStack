@@ -18,6 +18,11 @@ const (
 	FilterNamePrefix = "vs-anti-spoof-"
 	// CleanTrafficFilter is the reference to the base clean-traffic nwfilter.
 	CleanTrafficFilter = "clean-traffic"
+	// cleanTrafficFilterUUID is the fixed UUID assigned to the VirtueStack
+	// clean-traffic base nwfilter. A stable UUID is required so that operator
+	// tooling and libvirt backups can reference the filter consistently across
+	// node agent restarts and re-deployments.
+	cleanTrafficFilterUUID = "6f1c7f7e-9c4a-4e7b-8f3d-2a5e9c8b7d6f"
 )
 
 // NWFilterManager manages libvirt network filters for VM anti-spoofing protection.
@@ -290,9 +295,7 @@ func (m *NWFilterManager) EnsureBaseFilters(ctx context.Context) error {
 	// IMPORTANT: This is intentionally empty. All MAC/IP/ARP validation is done
 	// in per-VM filters to prevent bypass scenarios. Do NOT add rules here that
 	// could allow spoofed traffic to pass.
-	cleanTrafficXML := `<filter name='clean-traffic' chain='root'>
-  <uuid>6f1c7f7e-9c4a-4e7b-8f3d-2a5e9c8b7d6f</uuid>
-</filter>`
+	cleanTrafficXML := fmt.Sprintf("<filter name='clean-traffic' chain='root'>\n  <uuid>%s</uuid>\n</filter>", cleanTrafficFilterUUID)
 
 	filter, err := m.conn.NWFilterDefineXML(cleanTrafficXML)
 	if err != nil {

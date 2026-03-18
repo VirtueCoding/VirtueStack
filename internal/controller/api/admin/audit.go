@@ -6,7 +6,6 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
-	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,7 +14,7 @@ import (
 func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
-	filter := repository.AuditLogFilter{
+	filter := models.AuditLogFilter{
 		PaginationParams: pagination,
 	}
 
@@ -58,17 +57,21 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 	// Optional start_date filter (ISO 8601 format)
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		startDate, err := time.Parse(time.RFC3339, startDateStr)
-		if err == nil {
-			filter.StartTime = &startDate
+		if err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
+			return
 		}
+		filter.StartTime = &startDate
 	}
 
 	// Optional end_date filter (ISO 8601 format)
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
 		endDate, err := time.Parse(time.RFC3339, endDateStr)
-		if err == nil {
-			filter.EndTime = &endDate
+		if err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
+			return
 		}
+		filter.EndTime = &endDate
 	}
 
 	logs, total, err := h.auditRepo.List(c.Request.Context(), filter)

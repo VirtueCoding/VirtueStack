@@ -89,7 +89,7 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 	}
 
 	// Generate RBD snapshot name
-	rbdSnapshotName := fmt.Sprintf("snap-%s-%d", payload.SnapshotID[:8], time.Now().Unix())
+	rbdSnapshotName := fmt.Sprintf("snap-%s-%d", shortID(payload.SnapshotID), time.Now().Unix())
 
 	// Create snapshot via node agent
 	snapshotResp, err := deps.NodeClient.CreateSnapshot(ctx, nodeID, payload.VMID, rbdSnapshotName)
@@ -143,6 +143,8 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 		"rbd_snapshot": snapshotResp.RBDSnapshotName,
 		"size_bytes":   snapshotResp.SizeBytes,
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -216,12 +218,9 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 	// Stop VM if running
 	wasRunning := vm.Status == models.VMStatusRunning
 	if wasRunning {
-		if err := deps.NodeClient.StopVM(ctx, nodeID, payload.VMID, 120); err != nil {
-			logger.Warn("failed to stop VM gracefully, forcing", "error", err)
-			if err := deps.NodeClient.ForceStopVM(ctx, nodeID, payload.VMID); err != nil {
-				logger.Error("failed to force stop VM", "error", err)
-				return fmt.Errorf("stopping VM %s: %w", payload.VMID, err)
-			}
+		if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 120, logger); err != nil {
+			logger.Error("failed to stop VM for snapshot revert", "error", err)
+			return fmt.Errorf("stopping VM %s: %w", payload.VMID, err)
 		}
 		// Update VM status
 		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusStopped); err != nil {
@@ -269,6 +268,8 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 		"status":      "reverted",
 		"was_running": wasRunning,
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -373,6 +374,8 @@ func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerD
 		"vm_id":       payload.VMID,
 		"status":      "deleted",
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)

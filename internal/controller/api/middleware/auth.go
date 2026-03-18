@@ -429,13 +429,14 @@ func abortWithAuthError(c *gin.Context, status int, code, message string) {
 	c.AbortWithStatusJSON(status, resp)
 }
 
-// tokenFingerprint returns the first 8 characters of a token for safe logging.
-// Never logs the full token value.
+// tokenFingerprint returns the first 8 hex characters of sha256(token) for safe logging.
+// Never logs any portion of the raw token value.
 func tokenFingerprint(token string) string {
-	if len(token) < 8 {
+	if token == "" {
 		return "***"
 	}
-	return token[:8] + "..."
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // Cookie configuration constants for secure token storage.
@@ -461,32 +462,48 @@ const (
 // Refresh token: configurable expiry, path=/api/v1/{userType}/auth/refresh
 func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenMaxAge, refreshTokenMaxAge int, refreshPath string) {
 	// Set access token cookie
-	c.SetCookie(
-		AccessTokenCookieName,
-		accessToken,
-		accessTokenMaxAge,
-		"/",
-		"",   // domain - let browser determine
-		true, // secure
-		true, // httpOnly
-	)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     AccessTokenCookieName,
+		Value:    accessToken,
+		Path:     "/",
+		MaxAge:   accessTokenMaxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
 
 	// Set refresh token cookie with restricted path
-	c.SetCookie(
-		RefreshTokenCookieName,
-		refreshToken,
-		refreshTokenMaxAge,
-		refreshPath,
-		"",   // domain - let browser determine
-		true, // secure
-		true, // httpOnly
-	)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     RefreshTokenCookieName,
+		Value:    refreshToken,
+		Path:     refreshPath,
+		MaxAge:   refreshTokenMaxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 // ClearAuthCookies clears both access and refresh token cookies.
 func ClearAuthCookies(c *gin.Context, refreshPath string) {
-	c.SetCookie(AccessTokenCookieName, "", -1, "/", "", true, true)
-	c.SetCookie(RefreshTokenCookieName, "", -1, refreshPath, "", true, true)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     AccessTokenCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     RefreshTokenCookieName,
+		Value:    "",
+		Path:     refreshPath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 // GetAccessTokenFromCookie extracts the access token from the cookie.

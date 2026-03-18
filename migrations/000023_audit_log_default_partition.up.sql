@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS audit_logs_default PARTITION OF audit_logs DEFAULT;
 
 CREATE TABLE audit_logs_2028_01 PARTITION OF audit_logs

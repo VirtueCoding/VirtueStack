@@ -36,7 +36,8 @@ func scanTemplate(row pgx.Row) (models.Template, error) {
 		&t.ID, &t.Name, &t.OSFamily, &t.OSVersion,
 		&t.RBDImage, &t.RBDSnapshot, &t.MinDiskGB,
 		&t.SupportsCloudInit, &t.IsActive, &t.SortOrder,
-		&t.Version, &t.Description, &t.CreatedAt, &t.UpdatedAt,
+		&t.Version, &t.Description, &t.StorageBackend, &t.FilePath,
+		&t.CreatedAt, &t.UpdatedAt,
 	)
 	return t, err
 }
@@ -45,7 +46,8 @@ const templateSelectCols = `
 	id, name, os_family, os_version,
 	rbd_image, rbd_snapshot, min_disk_gb,
 	supports_cloudinit, is_active, sort_order,
-	version, description, created_at, updated_at`
+	version, description, storage_backend, file_path,
+	created_at, updated_at`
 
 // Create inserts a new template record into the database.
 // The template's ID, CreatedAt, and UpdatedAt are populated by the database.
@@ -53,8 +55,9 @@ func (r *TemplateRepository) Create(ctx context.Context, template *models.Templa
 	const q = `
 		INSERT INTO templates (
 			name, os_family, os_version, rbd_image, rbd_snapshot,
-			min_disk_gb, supports_cloudinit, is_active, sort_order, description
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			min_disk_gb, supports_cloudinit, is_active, sort_order, description,
+			storage_backend, file_path
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING ` + templateSelectCols
 
 	row := r.db.QueryRow(ctx, q,
@@ -62,6 +65,7 @@ func (r *TemplateRepository) Create(ctx context.Context, template *models.Templa
 		template.RBDImage, template.RBDSnapshot,
 		template.MinDiskGB, template.SupportsCloudInit,
 		template.IsActive, template.SortOrder, template.Description,
+		template.StorageBackend, template.FilePath,
 	)
 	created, err := scanTemplate(row)
 	if err != nil {
@@ -157,15 +161,17 @@ func (r *TemplateRepository) Update(ctx context.Context, template *models.Templa
 			name = $1, os_family = $2, os_version = $3,
 			rbd_image = $4, rbd_snapshot = $5, min_disk_gb = $6,
 			supports_cloudinit = $7, is_active = $8, sort_order = $9,
-			description = $10, version = version + 1, updated_at = NOW()
-		WHERE id = $11
+			description = $10, storage_backend = $11, file_path = $12,
+			version = version + 1, updated_at = NOW()
+		WHERE id = $13
 		RETURNING ` + templateSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		template.Name, template.OSFamily, template.OSVersion,
 		template.RBDImage, template.RBDSnapshot, template.MinDiskGB,
 		template.SupportsCloudInit, template.IsActive, template.SortOrder,
-		template.Description, template.ID,
+		template.Description, template.StorageBackend, template.FilePath,
+		template.ID,
 	)
 	updated, err := scanTemplate(row)
 	if err != nil {

@@ -161,6 +161,11 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	return s, nil
 }
 
+// grpcMaxMsgSize is the maximum allowed gRPC message size (64 MiB).
+// This prevents a malicious or buggy client from triggering OOM by sending
+// arbitrarily large messages.
+const grpcMaxMsgSize = 64 * 1024 * 1024
+
 // createGRPCServer creates a gRPC server with mTLS configuration.
 func (s *Server) createGRPCServer() (*grpc.Server, error) {
 	// Load TLS credentials
@@ -169,10 +174,12 @@ func (s *Server) createGRPCServer() (*grpc.Server, error) {
 		return nil, fmt.Errorf("loading TLS config: %w", err)
 	}
 
-	// Create gRPC server with TLS credentials
+	// Create gRPC server with TLS credentials and bounded message sizes.
 	creds := credentials.NewTLS(tlsConfig)
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
+		grpc.MaxRecvMsgSize(grpcMaxMsgSize),
+		grpc.MaxSendMsgSize(grpcMaxMsgSize),
 	}
 
 	return grpc.NewServer(opts...), nil
@@ -197,12 +204,16 @@ func (s *Server) loadTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("loading server certificate: %w", err)
 	}
 
-	// Create TLS config with mutual TLS
+	// Create TLS config with mutual TLS.
+	// MinVersion is set to TLS 1.3 to avoid known weaknesses in TLS 1.2
+	// (BEAST, CRIME, POODLE, LUCKY13, RC4, CBC-mode cipher suites).
+	// If legacy node agents that support only TLS 1.2 must be supported,
+	// temporarily lower this to tls.VersionTLS12 during the transition.
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    caCertPool,
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	return tlsConfig, nil
@@ -664,6 +675,9 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		if templatePath == "" {
 			return nil, status.Error(codes.InvalidArgument, "template_file_path is required for qcow storage backend")
 		}
+		if err := validatePath(templatePath, h.server.config.StoragePath); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid template_file_path: %v", err)
+		}
 
 		templateMgr, ok := h.server.templateMgr.(*storage.QCOWTemplateManager)
 		if !ok {
@@ -809,6 +823,9 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 		if diskPath == "" {
 			diskPath = fmt.Sprintf("%s/vms/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
 		}
+		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
+		}
 		if err := h.server.storageBackend.Delete(ctx, diskPath); err != nil {
 			logger.Warn("failed to delete QCOW disk", "error", err, "path", diskPath)
 		} else {
@@ -830,11 +847,28 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 	}, nil
 }
 
-// mapError maps internal errors to gRPC status codes.
+// mapError maps internal errors to safe gRPC status codes.
+// The original error is logged server-side and only a generic message is
+// returned to the caller to prevent leaking internal details such as file
+// paths or stack traces.
 func (h *grpcHandler) mapError(err error, operation string) error {
-	// Import errors package for checking
-	// This maps our errors to appropriate gRPC codes
-	return status.Errorf(codes.Internal, "%s: %v", operation, err)
+	h.server.logger.Error("gRPC handler error", "operation", operation, "error", err)
+	return status.Errorf(codes.Internal, "%s failed", operation)
+}
+
+// validatePath checks that path is non-empty and, after cleaning, is located
+// within allowedPrefix. This prevents path-traversal attacks (e.g. "../..") on
+// disk or ISO paths that arrive from the controller over gRPC.
+// allowedPrefix must end without a trailing slash.
+func validatePath(path, allowedPrefix string) error {
+	if path == "" {
+		return fmt.Errorf("path must not be empty")
+	}
+	cleaned := filepath.Clean(path)
+	if !strings.HasPrefix(cleaned, allowedPrefix+"/") && cleaned != allowedPrefix {
+		return fmt.Errorf("path %q is outside the allowed directory %q", cleaned, allowedPrefix)
+	}
+	return nil
 }
 
 // mapStatusToProto maps a string status to the proto VMStatus enum.

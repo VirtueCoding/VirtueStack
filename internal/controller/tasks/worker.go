@@ -73,7 +73,7 @@ func (w *Worker) RegisterHandler(taskType string, handler TaskHandler) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.handlers[taskType] = handler
-	w.logger.Debug("registered task handler", "task_type", taskType)
+	w.logger.Info("registered task handler", "task_type", taskType)
 }
 
 // Start begins consuming tasks from the NATS JetStream stream.
@@ -110,6 +110,7 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(numWorkers)
 	w.eg = eg
 	w.egCtx = egCtx
 
@@ -119,11 +120,12 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 		"workers", numWorkers,
 	)
 
-	go func() {
-		<-ctx.Done()
+	eg.Go(func() error {
+		<-egCtx.Done()
 		w.logger.Info("stopping task worker")
 		sub.Unsubscribe()
-	}()
+		return nil
+	})
 
 	return nil
 }
@@ -168,9 +170,10 @@ func (w *Worker) processMessage(msg *nats.Msg) error {
 
 	taskStart := time.Now()
 
-	ctx := context.Background()
+	handlerCtx, handlerCancel := context.WithTimeout(w.egCtx, 5*time.Minute)
+	defer handlerCancel()
 
-	if err := w.updateTaskStatus(ctx, &task, models.TaskStatusRunning, nil, ""); err != nil {
+	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusRunning, nil, ""); err != nil {
 		logger.Error("failed to update task status to running", "error", err)
 		msg.Nak()
 		return err
@@ -183,24 +186,27 @@ func (w *Worker) processMessage(msg *nats.Msg) error {
 	if !ok {
 		errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
 		logger.Error(errMsg)
-		w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, errMsg)
+		// Error is intentionally discarded: the task is already being failed and the
+		// handler context may be near expiry; the outer Ack() below ensures the message
+		// is removed from the queue regardless of this status-update outcome.
+		_ = w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, errMsg)
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 		msg.Ack()
 		return nil
 	}
 
-	err := handler(ctx, &task)
+	err := handler(handlerCtx, &task)
 	if err != nil {
 		logger.Error("task handler failed", "error", err)
-		w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, err.Error())
+		w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, err.Error())
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 		msg.Nak()
 		return err
 	}
 
-	if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
+	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
 		logger.Error("failed to update task status to completed", "error", err)
 	}
 

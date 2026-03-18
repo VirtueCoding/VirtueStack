@@ -139,7 +139,7 @@ func TestJWTAuth(t *testing.T) {
 				assert.Contains(t, body.Error.Code, tt.wantBodyContains)
 			}
 			if tt.wantStatus == http.StatusOK {
-				var body map[string]interface{}
+				var body map[string]any
 				err := json.Unmarshal(w.Body.Bytes(), &body)
 				require.NoError(t, err)
 				assert.Contains(t, body, "user_id")
@@ -363,7 +363,7 @@ func TestOptionalJWTAuth(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var body map[string]interface{}
+		var body map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &body)
 		require.NoError(t, err)
 		assert.Equal(t, "", body["user_id"])
@@ -379,7 +379,7 @@ func TestOptionalJWTAuth(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var body map[string]interface{}
+		var body map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &body)
 		require.NoError(t, err)
 		assert.Equal(t, "user-opt", body["user_id"])

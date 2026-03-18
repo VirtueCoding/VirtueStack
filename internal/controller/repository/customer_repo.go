@@ -254,7 +254,15 @@ type ProfileUpdateParams struct {
 }
 
 func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID string, params ProfileUpdateParams) (*models.Customer, error) {
-	existing, err := r.GetByID(ctx, customerID)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	txRepo := &CustomerRepository{db: tx}
+
+	existing, err := txRepo.GetByID(ctx, customerID)
 	if err != nil {
 		return nil, fmt.Errorf("getting customer: %w", err)
 	}
@@ -299,8 +307,12 @@ func (r *CustomerRepository) UpdateProfile(ctx context.Context, customerID strin
 		}
 	}
 
-	if err := r.Update(ctx, existing); err != nil {
+	if err := txRepo.Update(ctx, existing); err != nil {
 		return nil, fmt.Errorf("updating profile: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
 	return existing, nil

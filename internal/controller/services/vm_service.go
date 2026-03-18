@@ -51,32 +51,37 @@ type VMService struct {
 	logger        *slog.Logger
 }
 
-// NewVMService creates a new VMService with the given dependencies.
-func NewVMService(
-	vmRepo *repository.VMRepository,
-	nodeRepo *repository.NodeRepository,
-	ipRepo *repository.IPRepository,
-	planRepo *repository.PlanRepository,
-	templateRepo *repository.TemplateRepository,
-	taskRepo *repository.TaskRepository,
-	taskPublisher TaskPublisher,
-	nodeAgent NodeAgentClient,
-	ipamService IPAllocator,
-	encryptionKey string,
-	logger *slog.Logger,
-) *VMService {
+// VMServiceConfig holds all dependencies for VMService construction.
+// Using a config struct keeps NewVMService compliant with the ≤4-parameter
+// constructor rule (QG-01) and makes future dependency additions non-breaking.
+type VMServiceConfig struct {
+	VMRepo        *repository.VMRepository
+	NodeRepo      *repository.NodeRepository
+	IPRepo        *repository.IPRepository
+	PlanRepo      *repository.PlanRepository
+	TemplateRepo  *repository.TemplateRepository
+	TaskRepo      *repository.TaskRepository
+	TaskPublisher TaskPublisher
+	NodeAgent     NodeAgentClient
+	IPAMService   IPAllocator
+	EncryptionKey string
+	Logger        *slog.Logger
+}
+
+// NewVMService creates a new VMService with the given configuration.
+func NewVMService(cfg VMServiceConfig) *VMService {
 	return &VMService{
-		vmRepo:        vmRepo,
-		nodeRepo:      nodeRepo,
-		ipRepo:        ipRepo,
-		planRepo:      planRepo,
-		templateRepo:  templateRepo,
-		taskRepo:      taskRepo,
-		taskPublisher: taskPublisher,
-		nodeAgent:     nodeAgent,
-		ipamService:   ipamService,
-		encryptionKey: encryptionKey,
-		logger:        logger.With("component", "vm-service"),
+		vmRepo:        cfg.VMRepo,
+		nodeRepo:      cfg.NodeRepo,
+		ipRepo:        cfg.IPRepo,
+		planRepo:      cfg.PlanRepo,
+		templateRepo:  cfg.TemplateRepo,
+		taskRepo:      cfg.TaskRepo,
+		taskPublisher: cfg.TaskPublisher,
+		nodeAgent:     cfg.NodeAgent,
+		ipamService:   cfg.IPAMService,
+		encryptionKey: cfg.EncryptionKey,
+		logger:        cfg.Logger.With("component", "vm-service"),
 	}
 }
 
@@ -708,6 +713,21 @@ func (s *VMService) UpdateVMHostname(ctx context.Context, vmID, newHostname, cus
 	s.logger.Info("VM hostname updated",
 		"vm_id", vmID,
 		"new_hostname", newHostname)
+
+	return nil
+}
+
+// UpdateVMNetworkLimits updates the port speed and bandwidth limit for a VM.
+// Only admins may call this; isAdmin must be true.
+func (s *VMService) UpdateVMNetworkLimits(ctx context.Context, vmID string, portSpeedMbps, bandwidthLimitGB int) error {
+	if err := s.vmRepo.UpdateNetworkLimits(ctx, vmID, portSpeedMbps, bandwidthLimitGB); err != nil {
+		return fmt.Errorf("updating VM network limits: %w", err)
+	}
+
+	s.logger.Info("VM network limits updated",
+		"vm_id", vmID,
+		"port_speed_mbps", portSpeedMbps,
+		"bandwidth_limit_gb", bandwidthLimitGB)
 
 	return nil
 }

@@ -175,17 +175,27 @@ func GenerateRandomHex(hexChars int) string {
 	return token[:hexChars]
 }
 
-// GenerateRandomDigits generates a string of random decimal digits.
-func GenerateRandomDigits(count int) string {
-	b, err := GenerateRandomBytes(count)
-	if err != nil {
-		panic(fmt.Sprintf("generating random digits: %v", err))
+// GenerateRandomDigits generates a string of n random decimal digits.
+// It uses rejection sampling to avoid modulo bias (bytes 250-255 are discarded
+// because 256 is not divisible by 10, so naively using b%10 would over-represent
+// digits 0-5 relative to 6-9).
+func GenerateRandomDigits(n int) (string, error) {
+	digits := make([]byte, 0, n)
+	buf := make([]byte, n*2) // extra bytes for rejection
+	for len(digits) < n {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("generate random bytes: %w", err)
+		}
+		for _, b := range buf {
+			if b < 250 { // reject bytes 250-255 to avoid modulo bias
+				digits = append(digits, '0'+b%10)
+				if len(digits) == n {
+					break
+				}
+			}
+		}
 	}
-	digits := make([]byte, count)
-	for i := range digits {
-		digits[i] = '0' + b[i]%10
-	}
-	return string(digits)
+	return string(digits), nil
 }
 
 // GenerateUUID generates a new UUID v4.

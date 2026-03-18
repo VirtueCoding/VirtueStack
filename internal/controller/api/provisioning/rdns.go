@@ -22,6 +22,12 @@ type ProvisioningRDNSResponse struct {
 
 func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 	vmID := c.Param("id")
+	correlationID := middleware.GetCorrelationID(c)
+
+	if _, err := uuid.Parse(vmID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
 
 	_, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
@@ -29,6 +35,10 @@ func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
+		h.logger.Error("failed to get VM for rDNS lookup",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", correlationID)
 		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
 		return
 	}
@@ -38,6 +48,10 @@ func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 	}
 	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
+		h.logger.Error("failed to list IPs for VM rDNS",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", correlationID)
 		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve VM IPs")
 		return
 	}
@@ -54,15 +68,26 @@ func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 		})
 	}
 
+	h.logger.Info("VM rDNS retrieved",
+		"vm_id", vmID,
+		"ip_count", len(result),
+		"correlation_id", correlationID)
+
 	c.JSON(http.StatusOK, models.Response{Data: result})
 }
 
 func (h *ProvisioningHandler) SetVMRDNS(c *gin.Context) {
 	vmID := c.Param("id")
 	ipID := c.Query("ip_id")
+	correlationID := middleware.GetCorrelationID(c)
 
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	if _, err := uuid.Parse(ipID); err != nil {
+		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "ip_id must be a valid UUID")
 		return
 	}
 
@@ -82,6 +107,11 @@ func (h *ProvisioningHandler) SetVMRDNS(c *gin.Context) {
 			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
+		h.logger.Error("failed to get IP address for rDNS update",
+			"ip_id", ipID,
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", correlationID)
 		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to retrieve IP address")
 		return
 	}
@@ -92,9 +122,22 @@ func (h *ProvisioningHandler) SetVMRDNS(c *gin.Context) {
 	}
 
 	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, req.Hostname); err != nil {
+		h.logger.Error("failed to set rDNS",
+			"ip_id", ipID,
+			"vm_id", vmID,
+			"hostname", req.Hostname,
+			"error", err,
+			"correlation_id", correlationID)
 		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}
+
+	h.logger.Info("rDNS updated via provisioning API",
+		"ip_id", ipID,
+		"vm_id", vmID,
+		"ip_address", ip.Address,
+		"hostname", req.Hostname,
+		"correlation_id", correlationID)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: ProvisioningRDNSResponse{

@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +16,9 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 )
 
 // DefaultSnapshotQuota is the default maximum number of snapshots per VM.
@@ -50,7 +54,7 @@ type BackupNodeAgentClient interface {
 	// DeleteQCOWBackupFile deletes a QCOW backup file from the backup storage.
 	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
 	// GetQCOWDiskInfo returns information about a QCOW disk including size.
-	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error)
+	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (*tasks.QCOWDiskInfo, error)
 }
 
 // BackupService provides business logic for managing VM backups and snapshots.
@@ -126,7 +130,7 @@ func (a *BackupNodeAgentAdapter) DeleteQCOWBackupFile(ctx context.Context, nodeI
 	return a.nodeAgent.DeleteQCOWBackupFile(ctx, nodeID, backupPath)
 }
 
-func (a *BackupNodeAgentAdapter) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
+func (a *BackupNodeAgentAdapter) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (*tasks.QCOWDiskInfo, error) {
 	return a.nodeAgent.GetQCOWDiskInfo(ctx, nodeID, diskPath)
 }
 
@@ -135,27 +139,41 @@ const (
 	storageBackendQCOW = "qcow"
 )
 
-// NewBackupService creates a new BackupService with the given dependencies.
-func NewBackupService(
-	backupRepo *repository.BackupRepository,
-	snapshotRepo *repository.BackupRepository,
-	vmRepo *repository.VMRepository,
-	nodeAgent BackupNodeAgentClient,
-	taskPublisher TaskPublisher,
-	backupPath string,
-	logger *slog.Logger,
-) *BackupService {
-	if backupPath == "" {
-		backupPath = "/var/lib/virtuestack/backups"
+// defaultBackupPath returns the backup storage path from the BACKUP_STORAGE_PATH
+// environment variable, falling back to the standard path derived from the
+// config constants (defaultStoragePath / DefaultBackupsDir).
+func defaultBackupPath() string {
+	if v := os.Getenv("BACKUP_STORAGE_PATH"); v != "" {
+		return v
 	}
+	return filepath.Join("/var/lib/virtuestack", config.DefaultBackupsDir)
+}
+
+// BackupServiceConfig holds all dependencies for BackupService construction.
+// Using a config struct keeps NewBackupService compliant with the ≤4-parameter
+// constructor rule (QG-01) and makes future dependency additions non-breaking.
+type BackupServiceConfig struct {
+	BackupRepo    *repository.BackupRepository
+	SnapshotRepo  *repository.BackupRepository
+	VMRepo        *repository.VMRepository
+	NodeAgent     BackupNodeAgentClient
+	TaskPublisher TaskPublisher
+	Logger        *slog.Logger
+}
+
+// NewBackupService creates a new BackupService with the given configuration.
+// The backup storage path is resolved from the BACKUP_STORAGE_PATH environment
+// variable; if unset it defaults to /var/lib/virtuestack/backups.
+func NewBackupService(cfg BackupServiceConfig) *BackupService {
+	backupPath := defaultBackupPath()
 	return &BackupService{
-		backupRepo:    backupRepo,
-		snapshotRepo:  snapshotRepo,
-		vmRepo:        vmRepo,
-		nodeAgent:     nodeAgent,
-		taskPublisher: taskPublisher,
+		backupRepo:    cfg.BackupRepo,
+		snapshotRepo:  cfg.SnapshotRepo,
+		vmRepo:        cfg.VMRepo,
+		nodeAgent:     cfg.NodeAgent,
+		taskPublisher: cfg.TaskPublisher,
 		backupPath:    backupPath,
-		logger:        logger.With("component", "backup-service"),
+		logger:        cfg.Logger.With("component", "backup-service"),
 	}
 }
 
@@ -954,6 +972,30 @@ func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*mode
 	}
 
 	return result, nil
+}
+
+// ListSchedulesPaginated returns backup schedules with pagination support,
+// returning the slice, total count, and any error.
+func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string, pagination models.PaginationParams) ([]*models.BackupSchedule, int, error) {
+	filter := repository.BackupScheduleListFilter{
+		PaginationParams: pagination,
+	}
+	if vmID != "" {
+		filter.VMID = &vmID
+	}
+
+	schedules, total, err := s.backupRepo.ListBackupSchedules(ctx, filter)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing schedules: %w", err)
+	}
+
+	result := make([]*models.BackupSchedule, 0, len(schedules))
+	for i := range schedules {
+		sched := schedules[i]
+		result = append(result, &sched)
+	}
+
+	return result, total, nil
 }
 
 func (s *BackupService) UpdateSchedule(ctx context.Context, scheduleID string, enabled bool) error {

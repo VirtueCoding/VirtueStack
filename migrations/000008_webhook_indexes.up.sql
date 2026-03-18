@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE INDEX IF NOT EXISTS idx_customer_webhooks_customer_active
     ON customer_webhooks(customer_id, is_active);
 

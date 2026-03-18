@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -54,6 +55,53 @@ func ProvisioningAuditLogger(auditRepo *repository.AuditRepository) middleware.A
 	}
 }
 
+// requireProvisioningAuth is a defense-in-depth middleware that verifies the
+// provisioning API key has been authenticated and its ID is present in the
+// request context. This guards against middleware ordering changes that could
+// accidentally bypass the upstream APIKeyAuth middleware.
+func requireProvisioningAuth(c *gin.Context) {
+	keyID, exists := c.Get("api_key_id")
+	if !exists || keyID == "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			"error": "MISSING_API_KEY",
+			"message": "provisioning API key authentication is required",
+		})
+		return
+	}
+	c.Next()
+}
+
+// registerRoutes registers all provisioning VM and task routes onto the given group.
+// This shared helper is called by both RegisterProvisioningRoutes and any future
+// route registration variants to avoid duplication.
+func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
+	// Defense-in-depth: verify API key auth context is present regardless of
+	// how this group was assembled. This is a secondary check; primary auth is
+	// the APIKeyAuth middleware applied by RegisterProvisioningRoutes.
+	group.Use(requireProvisioningAuth)
+	vms := group.Group("/vms")
+	{
+		vms.POST("", handler.CreateVM)
+		vms.GET("/:id", handler.GetVMInfo)
+		vms.GET("/by-service/:service_id", handler.GetVMByWHMCSServiceID)
+		vms.DELETE("/:id", handler.DeleteVM)
+		vms.POST("/:id/suspend", handler.SuspendVM)
+		vms.POST("/:id/unsuspend", handler.UnsuspendVM)
+		vms.POST("/:id/resize", handler.ResizeVM)
+		vms.POST("/:id/password", handler.SetPassword)
+		vms.POST("/:id/password/reset", handler.ResetPassword)
+		vms.POST("/:id/power", handler.PowerOperation)
+		vms.GET("/:id/status", handler.GetStatus)
+		vms.GET("/:id/rdns", handler.GetVMRDNS)
+		vms.PUT("/:id/rdns", handler.SetVMRDNS)
+	}
+
+	tasks := group.Group("/tasks")
+	{
+		tasks.GET("/:id", handler.GetTask)
+	}
+}
+
 // RegisterProvisioningRoutes registers all provisioning API routes.
 // These routes are designed for WHMCS integration and use API key authentication.
 //
@@ -81,56 +129,6 @@ func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHa
 	provisioning.Use(middleware.APIKeyAuth(apiKeyValidator))
 	provisioning.Use(middleware.ProvisioningRateLimit())
 	provisioning.Use(middleware.Audit(ProvisioningAuditLogger(auditRepo)))
-	{
-		vms := provisioning.Group("/vms")
-		{
-			vms.POST("", handler.CreateVM)
-			vms.GET("/:id", handler.GetVMInfo)
-			vms.GET("/by-service/:service_id", handler.GetVMByWHMCSServiceID)
-			vms.DELETE("/:id", handler.DeleteVM)
-			vms.POST("/:id/suspend", handler.SuspendVM)
-			vms.POST("/:id/unsuspend", handler.UnsuspendVM)
-			vms.POST("/:id/resize", handler.ResizeVM)
-			vms.POST("/:id/password", handler.SetPassword)
-			vms.POST("/:id/password/reset", handler.ResetPassword)
-			vms.POST("/:id/power", handler.PowerOperation)
-			vms.GET("/:id/status", handler.GetStatus)
-			vms.GET("/:id/rdns", handler.GetVMRDNS)
-			vms.PUT("/:id/rdns", handler.SetVMRDNS)
-		}
 
-		tasks := provisioning.Group("/tasks")
-		{
-			tasks.GET("/:id", handler.GetTask)
-		}
-	}
-}
-
-// RegisterProvisioningRoutesSimple registers provisioning routes without API key validation.
-// This is intended only for development/testing environments.
-func RegisterProvisioningRoutesSimple(router *gin.RouterGroup, handler *ProvisioningHandler) {
-	provisioning := router.Group("/provisioning")
-	{
-		vms := provisioning.Group("/vms")
-		{
-			vms.POST("", handler.CreateVM)
-			vms.GET("/:id", handler.GetVMInfo)
-			vms.GET("/by-service/:service_id", handler.GetVMByWHMCSServiceID)
-			vms.DELETE("/:id", handler.DeleteVM)
-			vms.POST("/:id/suspend", handler.SuspendVM)
-			vms.POST("/:id/unsuspend", handler.UnsuspendVM)
-			vms.POST("/:id/resize", handler.ResizeVM)
-			vms.POST("/:id/password", handler.SetPassword)
-			vms.POST("/:id/password/reset", handler.ResetPassword)
-			vms.POST("/:id/power", handler.PowerOperation)
-			vms.GET("/:id/status", handler.GetStatus)
-			vms.GET("/:id/rdns", handler.GetVMRDNS)
-			vms.PUT("/:id/rdns", handler.SetVMRDNS)
-		}
-
-		tasks := provisioning.Group("/tasks")
-		{
-			tasks.GET("/:id", handler.GetTask)
-		}
-	}
+	registerRoutes(provisioning, handler)
 }

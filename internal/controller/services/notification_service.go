@@ -92,7 +92,7 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 		alert.Timestamp = time.Now()
 	}
 
-	var errors []string
+	var errs []string
 
 	// Send email notifications
 	if s.config.EnableEmail && len(s.config.AdminEmails) > 0 {
@@ -100,7 +100,7 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 			s.logger.Error("failed to send email alert",
 				"alert_type", alert.Type,
 				"error", err)
-			errors = append(errors, fmt.Sprintf("email: %v", err))
+			errs = append(errs, fmt.Sprintf("email: %v", err))
 		}
 	}
 
@@ -110,21 +110,21 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 			s.logger.Error("failed to send webhook alert",
 				"alert_type", alert.Type,
 				"error", err)
-			errors = append(errors, fmt.Sprintf("webhook: %v", err))
+			errs = append(errs, fmt.Sprintf("webhook: %v", err))
 		}
 	}
 
 	// If all channels failed, return an error
-	if len(errors) > 0 && (!s.config.EnableEmail || len(s.config.AdminEmails) == 0) &&
+	if len(errs) > 0 && (!s.config.EnableEmail || len(s.config.AdminEmails) == 0) &&
 		(!s.config.EnableWebhook || len(s.config.AdminWebhooks) == 0) {
-		return fmt.Errorf("all notification channels failed: %s", strings.Join(errors, "; "))
+		return fmt.Errorf("all notification channels failed: %s", strings.Join(errs, "; "))
 	}
 
 	// Log partial failures but don't return error
-	if len(errors) > 0 {
+	if len(errs) > 0 {
 		s.logger.Warn("some notification channels failed",
 			"alert_type", alert.Type,
-			"errors", strings.Join(errors, "; "))
+			"errors", strings.Join(errs, "; "))
 	}
 
 	return nil
@@ -141,15 +141,15 @@ func (s *AlertService) sendEmailAlert(ctx context.Context, alert *Alert) error {
 	subject := fmt.Sprintf("[VirtueStack] %s", alert.Subject)
 
 	// Send to each admin
-	var errors []string
+	var errs []string
 	for _, to := range s.config.AdminEmails {
 		if err := s.sendEmail(to, subject, body); err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", to, err))
+			errs = append(errs, fmt.Sprintf("%s: %v", to, err))
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("email send failures: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return fmt.Errorf("email send failures: %s", strings.Join(errs, "; "))
 	}
 
 	s.logger.Info("email alert sent",
@@ -226,15 +226,15 @@ func (s *AlertService) sendWebhookAlert(ctx context.Context, alert *Alert) error
 		"details":      alert.Details,
 	}
 
-	var errors []string
+	var errs []string
 	for _, webhookURL := range s.config.AdminWebhooks {
 		if err := s.sendWebhook(ctx, webhookURL, "", payload); err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", webhookURL, err))
+			errs = append(errs, fmt.Sprintf("%s: %v", webhookURL, err))
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("webhook send failures: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return fmt.Errorf("webhook send failures: %s", strings.Join(errs, "; "))
 	}
 
 	s.logger.Info("webhook alerts sent",
@@ -299,14 +299,14 @@ func (s *AlertService) SendCustomerWebhook(ctx context.Context, event string, cu
 	payload["event"] = event
 	payload["timestamp"] = time.Now().Format(time.RFC3339)
 
-	var errors []string
+	var errs []string
 	for _, webhook := range webhooks {
 		if webhook.CustomerID != customerID {
 			continue
 		}
 
 		if err := s.sendWebhook(ctx, webhook.URL, webhook.SecretHash, payload); err != nil {
-			errors = append(errors, fmt.Sprintf("webhook %s: %v", webhook.ID, err))
+			errs = append(errs, fmt.Sprintf("webhook %s: %v", webhook.ID, err))
 			if updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, false); updateErr != nil {
 				s.logger.Error("failed to update webhook status",
 					"webhook_id", webhook.ID,
@@ -321,8 +321,8 @@ func (s *AlertService) SendCustomerWebhook(ctx context.Context, event string, cu
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("webhook failures: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return fmt.Errorf("webhook failures: %s", strings.Join(errs, "; "))
 	}
 
 	return nil

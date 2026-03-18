@@ -40,8 +40,8 @@ function getCsrfToken(): string | null {
 async function fetchCsrfToken(): Promise<void> {
   try {
     await fetch(`${API_BASE_URL}/customer/profile`, { method: "GET", credentials: "include" });
-  } catch {
-    // CSRF token will be set in cookie
+  } catch (err) {
+    console.warn('Logout/CSRF fetch failed (non-fatal):', err);
   }
 }
 
@@ -98,7 +98,26 @@ export async function apiRequest<T>(
     },
   };
 
-  const response = await fetch(url, config);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  let response: Response;
+  try {
+    try {
+      response = await fetch(url, {
+        ...config,
+        signal: controller.signal,
+      });
+    } catch (networkErr) {
+      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError";
+      throw new ApiClientError(
+        isAbort ? "Request timed out" : "Network error: unable to reach the server",
+        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
+        0,
+      );
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const error = await parseError(response);
@@ -185,7 +204,8 @@ export const customerAuthApi = {
   async logout(): Promise<void> {
     try {
       await apiClient.post("/customer/auth/logout", {});
-    } catch {
+    } catch (err) {
+      console.warn('Logout/CSRF fetch failed (non-fatal):', err);
     }
     tokenValidUntil = 0;
   },

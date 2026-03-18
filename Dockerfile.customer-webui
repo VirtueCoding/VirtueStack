@@ -8,8 +8,8 @@
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
-ARG NODE_VERSION=20
-FROM node:${NODE_VERSION}-alpine AS builder
+ARG NODE_VERSION=22.14.0
+FROM node:${NODE_VERSION}-alpine3.21 AS builder # TODO: Pin to digest for production builds
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -50,7 +50,7 @@ RUN cp -r public ./.next/standalone/ && \
 # -----------------------------------------------------------------------------
 # Development Stage
 # -----------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS development
+FROM node:${NODE_VERSION}-alpine3.21 AS development # TODO: Pin to digest for production builds
 
 # Install development dependencies
 RUN apk add --no-cache \
@@ -86,7 +86,7 @@ CMD ["npm", "run", "dev"]
 # -----------------------------------------------------------------------------
 # Runtime Stage (Nginx for static serving)
 # -----------------------------------------------------------------------------
-FROM nginx:1.25-alpine AS runtime
+FROM nginx:1.25.5-alpine3.19 AS runtime # TODO: Pin to digest for production builds
 
 # Install additional tools
 RUN apk add --no-cache \
@@ -129,7 +129,7 @@ CMD ["nginx", "-g", "daemon off;"]
 # -----------------------------------------------------------------------------
 # Alternative Runtime Stage (Next.js Standalone)
 # -----------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS standalone
+FROM node:${NODE_VERSION}-alpine3.21 AS standalone # TODO: Pin to digest for production builds
 
 # Install runtime dependencies
 RUN apk add --no-cache \

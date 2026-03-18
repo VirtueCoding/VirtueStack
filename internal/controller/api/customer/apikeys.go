@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -94,9 +95,9 @@ func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 		}
 	}
 
+	// Meta is omitted: ListByCustomer returns all keys without pagination support.
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: resp,
-		Meta: models.NewPaginationMeta(1, 20, len(resp)),
 	})
 }
 
@@ -158,7 +159,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	h.logAudit(c, "api_key.create", keyID, map[string]any{
+	h.logAudit(c, "api_key.create", "api_key", keyID, map[string]any{
 		"name":        req.Name,
 		"permissions": req.Permissions,
 	}, true)
@@ -201,7 +202,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 
 	existingKey, err := h.apiKeyRepo.GetByIDAndCustomer(c.Request.Context(), keyID, customerID)
 	if err != nil {
-		if err == sharederrors.ErrNotFound {
+		if errors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
 			return
 		}
@@ -237,7 +238,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 		return
 	}
 
-	h.logAudit(c, "api_key.rotate", keyID, map[string]any{
+	h.logAudit(c, "api_key.rotate", "api_key", keyID, map[string]any{
 		"name": existingKey.Name,
 	}, true)
 
@@ -278,7 +279,7 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 
 	existingKey, err := h.apiKeyRepo.GetByIDAndCustomer(c.Request.Context(), keyID, customerID)
 	if err != nil {
-		if err == sharederrors.ErrNotFound {
+		if errors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
 			return
 		}
@@ -306,7 +307,7 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
-	h.logAudit(c, "api_key.revoke", keyID, map[string]any{
+	h.logAudit(c, "api_key.revoke", "api_key", keyID, map[string]any{
 		"name": existingKey.Name,
 	}, true)
 
@@ -315,7 +316,7 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", correlationID)
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "API key revoked successfully"}})
+	c.Status(http.StatusNoContent)
 }
 
 // hashAPIKey returns the hex-encoded SHA-256 hash of a raw API key.
@@ -324,8 +325,9 @@ func hashAPIKey(rawKey string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// logAudit creates an audit log entry for API key operations.
-func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceID string, changes map[string]any, success bool) {
+// logAudit creates an audit log entry for customer operations.
+// resourceType identifies the kind of entity being acted upon (e.g. "api_key", "ip_address").
+func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourceID string, changes map[string]any, success bool) {
 	if h.auditRepo == nil {
 		return
 	}
@@ -341,7 +343,7 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceID string, ch
 		ActorType:     models.AuditActorCustomer,
 		ActorIP:       &actorIP,
 		Action:        action,
-		ResourceType:  "api_key",
+		ResourceType:  resourceType,
 		ResourceID:    &resourceID,
 		Changes:       changesJSON,
 		CorrelationID: &correlationID,

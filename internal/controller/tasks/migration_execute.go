@@ -10,6 +10,9 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
 
+// defaultMigrationBandwidthMbps is the default bandwidth limit for VM migrations in Mbps.
+const defaultMigrationBandwidthMbps = 1000
+
 // handleVMMigrate handles the VM migration flow with storage-aware logic.
 // Steps:
 //  1. Parse payload and determine migration strategy
@@ -64,7 +67,9 @@ func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) 
 			"target_node_id": payload.TargetNodeID,
 			"status":         "already_migrated",
 		}
-		resultJSON, _ := json.Marshal(result)
+		// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
+	resultJSON, _ := json.Marshal(result)
 		if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 			logger.Warn("failed to set task completed", "error", err)
 		}
@@ -176,6 +181,8 @@ func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) 
 		"source_storage_backend": payload.SourceStorageBackend,
 		"target_storage_backend": payload.TargetStorageBackend,
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -211,7 +218,7 @@ func executeLiveSharedStorageMigration(
 	// Prepare migration options
 	migrateOpts := &MigrateVMOptions{
 		TargetNodeAddress:  targetNode.GRPCAddress,
-		BandwidthLimitMbps: 1000,
+		BandwidthLimitMbps: defaultMigrationBandwidthMbps,
 		Compression:        true,
 		AutoConverge:       true,
 	}
@@ -284,7 +291,7 @@ func executeLiveDiskCopyMigration(
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	snapshotName := fmt.Sprintf("migrate-%s", payload.VMID[:8])
+	snapshotName := fmt.Sprintf("migrate-%s", shortID(payload.VMID))
 	if _, err := deps.NodeClient.CreateSnapshot(ctx, payload.SourceNodeID, payload.VMID, snapshotName); err != nil {
 		return fmt.Errorf("creating migration snapshot: %w", err)
 	}
@@ -320,11 +327,8 @@ func executeLiveDiskCopyMigration(
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	if err := deps.NodeClient.StopVM(ctx, payload.SourceNodeID, payload.VMID, 60); err != nil {
-		logger.Warn("graceful stop failed, forcing", "error", err)
-		if err := deps.NodeClient.ForceStopVM(ctx, payload.SourceNodeID, payload.VMID); err != nil {
-			return fmt.Errorf("stopping VM: %w", err)
-		}
+	if err := stopVMGracefully(ctx, deps.NodeClient, payload.SourceNodeID, payload.VMID, 60, logger); err != nil {
+		return fmt.Errorf("stopping VM: %w", err)
 	}
 
 	// Step 4: Sync final delta (if any)
@@ -376,11 +380,8 @@ func executeColdDiskCopyMigration(
 		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 25, "Stopping VM..."); err != nil {
 			logger.Warn("failed to update task progress", "error", err)
 		}
-		if err := deps.NodeClient.StopVM(ctx, payload.SourceNodeID, payload.VMID, 120); err != nil {
-			logger.Warn("graceful stop failed, forcing", "error", err)
-			if err := deps.NodeClient.ForceStopVM(ctx, payload.SourceNodeID, payload.VMID); err != nil {
-				return fmt.Errorf("stopping VM: %w", err)
-			}
+		if err := stopVMGracefully(ctx, deps.NodeClient, payload.SourceNodeID, payload.VMID, 120, logger); err != nil {
+			return fmt.Errorf("stopping VM: %w", err)
 		}
 	}
 
@@ -452,11 +453,8 @@ func executeColdMigration(
 		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 20, "Stopping VM for cold migration..."); err != nil {
 			logger.Warn("failed to update task progress", "error", err)
 		}
-		if err := deps.NodeClient.StopVM(ctx, payload.SourceNodeID, payload.VMID, 120); err != nil {
-			logger.Warn("graceful stop failed, forcing", "error", err)
-			if err := deps.NodeClient.ForceStopVM(ctx, payload.SourceNodeID, payload.VMID); err != nil {
-				return fmt.Errorf("stopping VM: %w", err)
-			}
+		if err := stopVMGracefully(ctx, deps.NodeClient, payload.SourceNodeID, payload.VMID, 120, logger); err != nil {
+			return fmt.Errorf("stopping VM: %w", err)
 		}
 	}
 

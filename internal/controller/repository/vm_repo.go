@@ -305,11 +305,25 @@ func (r *VMRepository) UpdateHostname(ctx context.Context, vmID, hostname string
 	return nil
 }
 
-// ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
-var ErrNoRowsAffected = fmt.Errorf("no rows affected")
+// UpdateNetworkLimits updates the port_speed_mbps and bandwidth_limit_gb fields of a VM.
+func (r *VMRepository) UpdateNetworkLimits(ctx context.Context, vmID string, portSpeedMbps, bandwidthLimitGB int) error {
+	const q = `UPDATE vms SET port_speed_mbps = $1, bandwidth_limit_gb = $2, updated_at = NOW()
+		WHERE id = $3 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, portSpeedMbps, bandwidthLimitGB, vmID)
+	if err != nil {
+		return fmt.Errorf("updating network limits for VM %s: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating network limits for VM %s: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
+}
 
 // ListAllActive returns all active (non-deleted) VMs that have a node assigned.
-// This is used for scheduled operations like automated backups.
+// Pagination is intentionally omitted: this method is used exclusively by
+// internal scheduled tasks (e.g. automated bandwidth checks and backup scheduling)
+// that must process every active VM. Callers are responsible for chunking work
+// if the result set is large.
 func (r *VMRepository) ListAllActive(ctx context.Context) ([]models.VM, error) {
 	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL`
 	vms, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.VM, error) {

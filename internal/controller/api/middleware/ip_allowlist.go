@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -18,6 +19,8 @@ type IPAllowlistConfig struct {
 
 // IPAllowlist returns a middleware that restricts access to allowed IPs.
 // If no allowed IPs are configured and the middleware is enabled, all requests are denied.
+// Invalid CIDR or IP entries in AllowedIPs are logged as warnings and skipped so that
+// a misconfiguration does not silently expand access beyond the intended allowlist.
 func IPAllowlist(config IPAllowlistConfig) gin.HandlerFunc {
 	if !config.Enabled {
 		return func(c *gin.Context) { c.Next() }
@@ -33,14 +36,21 @@ func IPAllowlist(config IPAllowlistConfig) gin.HandlerFunc {
 		}
 		if strings.Contains(entry, "/") {
 			_, ipNet, err := net.ParseCIDR(entry)
-			if err == nil {
-				allowedNets = append(allowedNets, ipNet)
+			if err != nil {
+				slog.Warn("ip_allowlist: invalid CIDR entry skipped",
+					"entry", entry,
+					"error", err)
+				continue
 			}
+			allowedNets = append(allowedNets, ipNet)
 		} else {
 			ip := net.ParseIP(entry)
-			if ip != nil {
-				allowedIPs = append(allowedIPs, ip)
+			if ip == nil {
+				slog.Warn("ip_allowlist: invalid IP entry skipped",
+					"entry", entry)
+				continue
 			}
+			allowedIPs = append(allowedIPs, ip)
 		}
 	}
 

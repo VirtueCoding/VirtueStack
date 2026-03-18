@@ -29,7 +29,7 @@ type Enable2FAResponse struct {
 }
 
 type Disable2FARequest struct {
-	Password string `json:"password" validate:"required,min=1"`
+	Password string `json:"password" validate:"required,min=12"`
 }
 
 type Disable2FAResponse struct {
@@ -92,8 +92,8 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 	customer, err := h.customerRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("failed to get customer for 2FA initiation", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "GET_CUSTOMER_FAILED", err.Error())
+		h.logger.Error("failed to get customer for 2FA initiation", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "GET_CUSTOMER_FAILED", "Internal server error")
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "INITIATION_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "INITIATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -157,7 +157,7 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "ENABLE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "ENABLE_FAILED", "Internal server error")
 		return
 	}
 
@@ -195,7 +195,7 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "DISABLE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "DISABLE_FAILED", "Internal server error")
 		return
 	}
 
@@ -209,8 +209,8 @@ func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("2FA status check failed", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", err.Error())
+		h.logger.Error("2FA status check failed", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
@@ -225,8 +225,8 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 	// Check if 2FA is enabled first
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("failed to get 2FA status for backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", err.Error())
+		h.logger.Error("failed to get 2FA status for backup codes", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
@@ -238,8 +238,8 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 	// Get backup codes
 	codes, alreadyShown, err := h.authService.GetBackupCodes(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("failed to get backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "GET_BACKUP_CODES_FAILED", err.Error())
+		h.logger.Error("failed to get backup codes", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "GET_BACKUP_CODES_FAILED", "Internal server error")
 		return
 	}
 
@@ -269,8 +269,8 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	// Check if 2FA is enabled first
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("failed to get 2FA status for backup codes regeneration", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", err.Error())
+		h.logger.Error("failed to get 2FA status for backup codes regeneration", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
@@ -282,8 +282,8 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	// Regenerate backup codes
 	codes, err := h.authService.RegenerateBackupCodes(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Warn("failed to regenerate backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "REGENERATE_BACKUP_CODES_FAILED", err.Error())
+		h.logger.Error("failed to regenerate backup codes", "user_id", userID, "error", err)
+		respondWithError(c, http.StatusInternalServerError, "REGENERATE_BACKUP_CODES_FAILED", "Internal server error")
 		return
 	}
 

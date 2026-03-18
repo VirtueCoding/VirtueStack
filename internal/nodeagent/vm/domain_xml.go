@@ -2,6 +2,7 @@ package vm
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"text/template"
@@ -14,6 +15,11 @@ const (
 	// StorageBackendQcow indicates local QCOW2 file-based storage.
 	StorageBackendQcow = "qcow"
 )
+
+// DefaultCephMonitorPort is the default TCP port for Ceph monitor daemons.
+// Override by specifying the port explicitly in the monitor address list
+// (NodeAgentConfig.CephMonitors entries of the form "host:port").
+const DefaultCephMonitorPort = "6789"
 
 // VMDiskFileFmt is the format for file-based VM disk paths.
 // Arguments: base path, vmID
@@ -352,12 +358,22 @@ func DomainNameFromID(vmID string) string {
 	return domainName(vmID)
 }
 
+// escapeXML escapes special XML characters in s so it is safe to embed in
+// XML attribute values and text content.
+func escapeXML(s string) string {
+	var buf strings.Builder
+	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
+		return ""
+	}
+	return buf.String()
+}
+
 // generateRBDDiskXML generates the disk XML element for Ceph/RBD storage.
 // Uses network-attached RBD with authentication.
 func generateRBDDiskXML(cfg *DomainConfig) (string, error) {
 	var hostsXML strings.Builder
 	for _, monitor := range cfg.CephMonitors {
-		hostsXML.WriteString(fmt.Sprintf("\n        <host name='%s' port='6789'/>", monitor))
+		hostsXML.WriteString(fmt.Sprintf("\n        <host name='%s' port='%s'/>", escapeXML(monitor), DefaultCephMonitorPort))
 	}
 
 	return fmt.Sprintf(`    <disk type='network' device='disk'>
@@ -369,10 +385,10 @@ func generateRBDDiskXML(cfg *DomainConfig) (string, error) {
       </source>
       <target dev='vda' bus='virtio'/>
     </disk>`,
-		cfg.CephUser,
-		cfg.CephSecretUUID,
-		cfg.CephPool,
-		diskName(cfg.VMID),
+		escapeXML(cfg.CephUser),
+		escapeXML(cfg.CephSecretUUID),
+		escapeXML(cfg.CephPool),
+		escapeXML(diskName(cfg.VMID)),
 		hostsXML.String(),
 	), nil
 }
@@ -385,6 +401,6 @@ func generateFileDiskXML(cfg *DomainConfig) (string, error) {
       <source file='%s'/>
       <target dev='vda' bus='virtio'/>
     </disk>`,
-		cfg.DiskPath,
+		escapeXML(cfg.DiskPath),
 	), nil
 }

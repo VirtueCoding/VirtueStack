@@ -2,6 +2,7 @@ package provisioning
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -16,13 +17,11 @@ import (
 func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Get the VM from repository
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -33,22 +32,20 @@ func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Build the response
 	resp := VMStatusResponse{
 		Status: vm.Status,
 	}
 
-	// Include node ID if VM is assigned to a node
 	if vm.NodeID != nil {
 		resp.NodeID = *vm.NodeID
 	}
 
-	// For running VMs, try to get live status from node agent
-	// This gives WHMCS the most accurate status
+	// Prefer live hypervisor state for running VMs; fall back to DB status on error
+	// so transient node connectivity issues don't break WHMCS polling.
 	if vm.Status == models.VMStatusRunning && vm.NodeID != nil {
 		liveStatus, err := h.vmService.GetVMStatus(c.Request.Context(), vmID, vm.CustomerID, true)
 		if err != nil {
@@ -72,13 +69,11 @@ func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Get the VM with details
 	detail, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, "", true)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -89,7 +84,7 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
@@ -103,37 +98,13 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
 	serviceIDStr := c.Param("service_id")
 
-	// Parse service ID as integer
-	var serviceID int
-	if _, err := uuid.Parse(serviceIDStr); err == nil {
-		// If it's a valid UUID, it's not a service ID
-		respondWithError(c, http.StatusBadRequest, "INVALID_SERVICE_ID", "Service ID must be a number, not a UUID")
+	// strconv.Atoi rejects non-digit suffixes (e.g. "123abc") that Sscanf would silently accept.
+	serviceID, err := strconv.Atoi(serviceIDStr)
+	if err != nil || serviceID <= 0 {
+		respondWithError(c, http.StatusBadRequest, "INVALID_SERVICE_ID", "Service ID must be a positive integer")
 		return
 	}
 
-	// Try to parse as integer
-	if _, err := c.Params.Get("service_id"); !err {
-		respondWithError(c, http.StatusBadRequest, "MISSING_SERVICE_ID", "Service ID is required")
-		return
-	}
-
-	// Simple integer parsing
-	for i, ch := range serviceIDStr {
-		if ch < '0' || ch > '9' {
-			if i == 0 {
-				respondWithError(c, http.StatusBadRequest, "INVALID_SERVICE_ID", "Service ID must be a positive integer")
-				return
-			}
-			break
-		}
-	}
-
-	// Parse to int
-	for _, ch := range serviceIDStr {
-		serviceID = serviceID*10 + int(ch-'0')
-	}
-
-	// Get the VM by WHMCS service ID
 	vm, err := h.vmRepo.GetByWHMCSServiceID(c.Request.Context(), serviceID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -144,7 +115,7 @@ func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
 			"service_id", serviceID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
@@ -163,13 +134,11 @@ type PowerOperationRequest struct {
 func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Parse request body
 	var req PowerOperationRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
@@ -180,30 +149,31 @@ func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 		return
 	}
 
-	// Get the VM
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		h.logger.Error("failed to get VM for power operation",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Check if VM is already deleted
 	if vm.IsDeleted() {
 		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
 		return
 	}
 
-	// Check if VM is suspended (only allow start operation)
+	// A suspended VM can only be started (unsuspend must happen first for stop/restart).
 	if vm.Status == models.VMStatusSuspended && req.Operation != "start" {
 		respondWithError(c, http.StatusBadRequest, "VM_SUSPENDED", "VM is suspended. Unsuspend it first.")
 		return
 	}
 
-	// Perform the power operation
 	var opErr error
 	switch req.Operation {
 	case "start":
@@ -223,7 +193,7 @@ func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 			"operation", req.Operation,
 			"error", opErr,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "POWER_OPERATION_FAILED", opErr.Error())
+		respondWithError(c, http.StatusInternalServerError, "POWER_OPERATION_FAILED", "Internal server error")
 		return
 	}
 

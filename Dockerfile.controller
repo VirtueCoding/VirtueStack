@@ -8,8 +8,8 @@
 # -----------------------------------------------------------------------------
 # Build Stage
 # -----------------------------------------------------------------------------
-ARG GO_VERSION=1.25
-FROM golang:${GO_VERSION}-alpine AS builder
+ARG GO_VERSION=1.24.2
+FROM golang:${GO_VERSION}-alpine3.21 AS builder # TODO: Pin to digest for production builds
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -54,7 +54,7 @@ RUN chmod +x /build/controller && \
 # -----------------------------------------------------------------------------
 # Development Stage (for hot reload with air/delve)
 # -----------------------------------------------------------------------------
-FROM golang:${GO_VERSION}-alpine AS development
+FROM golang:${GO_VERSION}-alpine3.21 AS development # TODO: Pin to digest for production builds
 
 # Install development tools
 RUN apk add --no-cache \
@@ -88,7 +88,7 @@ CMD ["air", "-c", ".air.toml"]
 # -----------------------------------------------------------------------------
 # Runtime Stage
 # -----------------------------------------------------------------------------
-FROM alpine:3.19 AS runtime
+FROM alpine:3.19.4 AS runtime # TODO: Pin to digest for production builds
 
 # Install runtime dependencies
 RUN apk add --no-cache \

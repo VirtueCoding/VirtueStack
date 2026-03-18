@@ -1,6 +1,7 @@
 package provisioning
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"unicode"
@@ -164,7 +165,7 @@ var hashPasswordParams = &argon2id.Params{
 
 func hashPassword(password string) (string, error) {
 	if password == "" {
-		return "", nil
+		return "", errors.New("password cannot be empty")
 	}
 
 	if err := validatePasswordStrength(password); err != nil {
@@ -179,8 +180,8 @@ func hashPassword(password string) (string, error) {
 }
 
 func validatePasswordStrength(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters long")
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters long")
 	}
 
 	if len(password) > 128 {

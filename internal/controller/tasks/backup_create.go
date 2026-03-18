@@ -19,6 +19,8 @@ const (
 	BackupPoolName              = "vs-backups"
 	storageBackendCeph          = "ceph"
 	storageBackendQCOW          = "qcow"
+	defaultBackupBasePath       = "/var/lib/virtuestack/backups"
+	defaultVMDiskPathTemplate   = "/var/lib/virtuestack/vms/%s-disk0.qcow2"
 )
 
 // BackupConfig holds configuration for backup operations.
@@ -26,10 +28,29 @@ type BackupConfig struct {
 	BackupPath string
 }
 
+// completeBackupTask marks a backup task as 100% complete, persists the result JSON,
+// and emits a structured log. Both QCOW and Ceph paths share this final sequence.
+func completeBackupTask(ctx context.Context, task *models.Task, deps *HandlerDeps, backup *models.Backup, result map[string]any, logger *slog.Logger) {
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "Backup created successfully"); err != nil {
+		logger.Warn("failed to update task progress", "error", err)
+	}
+
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
+	resultJSON, _ := json.Marshal(result)
+	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
+		logger.Warn("failed to set task completed", "error", err)
+	}
+
+	logger.Info("backup.create task completed successfully",
+		"backup_id", backup.ID,
+		"storage_backend", result["storage_backend"])
+}
+
 // DefaultBackupConfig returns the default backup configuration.
 func DefaultBackupConfig() *BackupConfig {
 	return &BackupConfig{
-		BackupPath: "/var/lib/virtuestack/backups",
+		BackupPath: defaultBackupBasePath,
 	}
 }
 
@@ -115,6 +136,9 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 
 	defer func() {
 		if freezeSuccessful && frozenCount > 0 {
+			// context.Background() is intentional here: the parent task context may already
+			// be cancelled or near expiry by the time the defer runs, but we must always
+			// attempt to thaw the filesystems to avoid leaving the guest in a frozen state.
 			thawCtx, thawCancel := context.WithTimeout(context.Background(), GuestAgentFreezeTimeout)
 			defer thawCancel()
 
@@ -142,7 +166,7 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 
 	diskPath := vm.DiskPath
 	if diskPath == "" {
-		diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+		diskPath = fmt.Sprintf(defaultVMDiskPathTemplate, vm.ID)
 	}
 
 	snapshotName := fmt.Sprintf("backup-%s-%d", payload.VMID, time.Now().Unix())
@@ -160,7 +184,7 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 
 	backupConfig := DefaultBackupConfig()
 	backupDir := fmt.Sprintf("%s/%s", backupConfig.BackupPath, payload.VMID)
-	backupFileName := fmt.Sprintf("%s-%s.qcow2", task.ID[:8], time.Now().Format("20060102-150405"))
+	backupFileName := fmt.Sprintf("%s-%s.qcow2", shortID(task.ID), time.Now().Format("20060102-150405"))
 	backupFilePath := fmt.Sprintf("%s/%s", backupDir, backupFileName)
 
 	sizeBytes, err := deps.NodeClient.CreateQCOWBackup(ctx, nodeID, payload.VMID, diskPath, snapshotName, backupFilePath, false)
@@ -209,10 +233,6 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		return fmt.Errorf("creating backup record: %w", err)
 	}
 
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "Backup created successfully"); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
 	result := map[string]any{
 		"backup_id":          backup.ID,
 		"vm_id":              payload.VMID,
@@ -223,16 +243,7 @@ func handleQCOWBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		"frozen_filesystems": frozenCount,
 		"storage_backend":    storageBackendQCOW,
 	}
-	resultJSON, _ := json.Marshal(result)
-	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
-		logger.Warn("failed to set task completed", "error", err)
-	}
-
-	logger.Info("backup.create task completed successfully",
-		"backup_id", backup.ID,
-		"snapshot", snapshotName,
-		"file_path", backupFilePath,
-		"consistency", backupConsistency)
+	completeBackupTask(ctx, task, deps, backup, result, logger)
 
 	return nil
 }
@@ -315,10 +326,6 @@ func handleCephBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		return fmt.Errorf("creating backup record: %w", err)
 	}
 
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "Backup created successfully"); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
 	result := map[string]any{
 		"backup_id":          backup.ID,
 		"vm_id":              payload.VMID,
@@ -329,16 +336,7 @@ func handleCephBackupCreate(ctx context.Context, task *models.Task, deps *Handle
 		"frozen_filesystems": frozenCount,
 		"storage_backend":    storageBackendCeph,
 	}
-	resultJSON, _ := json.Marshal(result)
-	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
-		logger.Warn("failed to set task completed", "error", err)
-	}
-
-	logger.Info("backup.create task completed successfully",
-		"backup_id", backup.ID,
-		"snapshot", snapshotResp.RBDSnapshotName,
-		"storage_path", storagePath,
-		"consistency", backupConsistency)
+	completeBackupTask(ctx, task, deps, backup, result, logger)
 
 	return nil
 }

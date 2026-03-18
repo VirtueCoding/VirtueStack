@@ -61,8 +61,11 @@ export function VNCConsole({
   const getWsUrl = useCallback(() => {
     if (wsUrl) return wsUrl
     if (vmId && token) {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-      return `${protocol}//${window.location.host}/api/v1/customer/ws/vnc/${vmId}?token=${token}`
+      // Always use wss:// in production. ws:// only allowed in dev.
+      const wsProtocol = process.env.NEXT_PUBLIC_ALLOW_WS === 'true' ?
+        (window.location.protocol === 'https:' ? 'wss:' : 'ws:') :
+        'wss:';
+      return `${wsProtocol}//${window.location.host}/api/v1/customer/ws/vnc/${vmId}?token=${token}`
     }
     return null
   }, [wsUrl, vmId, token])
@@ -167,10 +170,14 @@ export function VNCConsole({
     if (!containerRef.current) return
 
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {})
+      containerRef.current.requestFullscreen().catch(() => {
+        // Fullscreen not supported or denied by user — non-fatal.
+      })
       setIsFullScreen(true)
     } else {
-      document.exitFullscreen().catch(() => {})
+      document.exitFullscreen().catch(() => {
+        // Fullscreen not supported or denied by user — non-fatal.
+      })
       setIsFullScreen(false)
     }
   }, [])

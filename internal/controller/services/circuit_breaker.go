@@ -37,11 +37,12 @@ type CircuitBreakerConfig struct {
 }
 
 // DefaultCircuitBreakerConfig returns a sensible default configuration.
+// Values align with CODING_STANDARD: FailureThreshold=5, CooldownPeriod=30s.
 func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	return CircuitBreakerConfig{
-		FailureThreshold: 3,
+		FailureThreshold: 5,
 		SuccessThreshold: 2,
-		CooldownPeriod:   5 * time.Minute,
+		CooldownPeriod:   30 * time.Second,
 		MaxRetries:       3,
 		Timeout:          30 * time.Second,
 	}

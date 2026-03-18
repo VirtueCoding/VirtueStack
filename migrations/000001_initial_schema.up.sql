@@ -3,6 +3,8 @@
 
 BEGIN;
 
+SET lock_timeout = '5s';
+
 -- ============================================================================
 -- EXTENSIONS
 -- ============================================================================
@@ -405,6 +407,19 @@ CREATE INDEX idx_snapshots_vm_id ON snapshots(vm_id);
 -- Webhook deliveries indexes
 CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
 CREATE INDEX idx_webhook_deliveries_status_retry ON webhook_deliveries(status, next_retry_at);
+
+-- Indexes for customer_api_keys
+CREATE INDEX IF NOT EXISTS idx_customer_api_keys_customer_id ON customer_api_keys(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_api_keys_key_hash_active ON customer_api_keys(key_hash) WHERE revoked_at IS NULL;
+
+-- Indexes for provisioning_keys
+CREATE INDEX IF NOT EXISTS idx_provisioning_keys_key_hash ON provisioning_keys(key_hash);
+
+-- Composite index for backups
+CREATE INDEX IF NOT EXISTS idx_backups_status_created ON backups(status, created_at DESC);
+
+-- Composite index for tasks
+CREATE INDEX IF NOT EXISTS idx_tasks_status_created ON tasks(status, created_at DESC);
 
 -- ============================================================================
 -- ROW LEVEL SECURITY

@@ -3,12 +3,14 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // BandwidthRepository provides database operations for bandwidth usage tracking.
@@ -57,6 +59,9 @@ func (r *BandwidthRepository) GetOrCreateUsage(ctx context.Context, vmID string,
 	usage, err := r.GetUsage(ctx, vmID, year, month)
 	if err == nil {
 		return usage, nil
+	}
+	if !errors.Is(err, apierrors.ErrNotFound) {
+		return nil, fmt.Errorf("getting bandwidth usage for VM %s: %w", vmID, err)
 	}
 
 	// If not found, create new record
@@ -129,12 +134,15 @@ func (r *BandwidthRepository) UpdateLimit(ctx context.Context, vmID string, year
 	return nil
 }
 
-// ListThrottled returns all VMs that are currently throttled.
+// maxThrottledBatch is the maximum number of throttled VMs returned in a single ListThrottled call.
+const maxThrottledBatch = 1000
+
+// ListThrottled returns up to maxThrottledBatch VMs that are currently throttled.
 func (r *BandwidthRepository) ListThrottled(ctx context.Context) ([]models.BandwidthUsage, error) {
 	now := time.Now().UTC()
-	const q = `SELECT ` + bandwidthUsageSelectCols + ` FROM bandwidth_usage WHERE throttled = true AND year = $1 AND month = $2`
+	const q = `SELECT ` + bandwidthUsageSelectCols + ` FROM bandwidth_usage WHERE throttled = true AND year = $1 AND month = $2 LIMIT $3`
 
-	usages, err := ScanRows(ctx, r.db, q, []any{now.Year(), int(now.Month())}, func(rows pgx.Rows) (models.BandwidthUsage, error) {
+	usages, err := ScanRows(ctx, r.db, q, []any{now.Year(), int(now.Month()), maxThrottledBatch}, func(rows pgx.Rows) (models.BandwidthUsage, error) {
 		return scanBandwidthUsage(rows)
 	})
 	if err != nil {
@@ -208,7 +216,7 @@ func (r *BandwidthRepository) GetSnapshots(ctx context.Context, vmID string, per
 	case "month":
 		return r.getDailySnapshots(ctx, vmID, now.Add(-30*24*time.Hour), now)
 	default:
-		return r.getHourlySnapshots(ctx, vmID, now.Add(-24*time.Hour), now)
+		return nil, fmt.Errorf("unknown period %q: must be one of hour, day, week, month", period)
 	}
 }
 
@@ -292,6 +300,22 @@ func (r *BandwidthRepository) getAggregatedHourly(ctx context.Context, vmID stri
 	return aggregateSnapshots(snapshots, interval), nil
 }
 
+// sumBucket sums bytes_in and bytes_out across a slice of snapshots and returns
+// a single aggregated snapshot anchored at the given bucket timestamp.
+func sumBucket(items []BandwidthSnapshot, t time.Time) BandwidthSnapshot {
+	var totalIn, totalOut int64
+	for _, item := range items {
+		totalIn += item.BytesIn
+		totalOut += item.BytesOut
+	}
+	return BandwidthSnapshot{
+		VMID:      items[0].VMID,
+		Timestamp: t,
+		BytesIn:   totalIn,
+		BytesOut:  totalOut,
+	}
+}
+
 // aggregateSnapshots groups snapshots into fixed-size intervals.
 func aggregateSnapshots(snapshots []BandwidthSnapshot, interval time.Duration) []BandwidthSnapshot {
 	if len(snapshots) == 0 {
@@ -312,19 +336,8 @@ func aggregateSnapshots(snapshots []BandwidthSnapshot, interval time.Duration) [
 	// Aggregate each bucket
 	var result []BandwidthSnapshot
 	for t := start; !t.After(end); t = t.Add(interval) {
-		bucket := t.Unix()
-		if items, ok := buckets[bucket]; ok {
-			var totalIn, totalOut int64
-			for _, item := range items {
-				totalIn += item.BytesIn
-				totalOut += item.BytesOut
-			}
-			result = append(result, BandwidthSnapshot{
-				VMID:      items[0].VMID,
-				Timestamp: t,
-				BytesIn:   totalIn,
-				BytesOut:  totalOut,
-			})
+		if items, ok := buckets[t.Unix()]; ok {
+			result = append(result, sumBucket(items, t))
 		}
 	}
 

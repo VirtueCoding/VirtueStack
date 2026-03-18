@@ -1,16 +1,38 @@
+-- ===========================================================================
+-- WARNING: DESTRUCTIVE / BREAKING MIGRATION
+-- ===========================================================================
+-- This migration intentionally drops and recreates the webhook tables as part
+-- of a schema redesign. The following data will be PERMANENTLY LOST:
+--
+--   • All rows in customer_webhooks  (webhook endpoint registrations)
+--   • All rows in webhook_deliveries (historical delivery attempt records)
+--
+-- WHY: Migration 001 created customer_webhooks + webhook_deliveries with an
+-- initial schema. This migration replaces them with a fully redesigned webhook
+-- system (renamed table, hashed secrets, GIN-indexed events array, idempotency
+-- keys, auto-updated timestamps, RLS policies, and delivery statistics views).
+--
+-- IRREVERSIBILITY: The schema can be rolled back via the .down.sql file, but
+-- the dropped row data CANNOT be recovered. Ensure a database backup has been
+-- taken before applying this migration to any environment that holds live data.
+-- ===========================================================================
+
 -- VirtueStack Webhook Delivery System Migration
 -- Creates webhooks and webhook_deliveries tables
 -- Reference: Webhook Delivery System specification
 
 BEGIN;
 
--- Drop legacy webhook tables from initial schema (migration 1)
--- Migration 1 created customer_webhooks + webhook_deliveries with a different schema.
--- This migration replaces them with the redesigned webhook system.
+SET lock_timeout = '5s';
+
+-- Drop legacy webhook tables from initial schema (migration 001).
+-- Migration 001 created customer_webhooks + webhook_deliveries with a
+-- different schema. This migration replaces them with the redesigned system.
+-- NOTE: These DROPs are intentional and irreversible with respect to data.
 DROP TABLE IF EXISTS webhook_deliveries CASCADE;
 DROP TABLE IF EXISTS customer_webhooks CASCADE;
 
-CREATE TABLE webhooks (
+CREATE TABLE IF NOT EXISTS webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     url VARCHAR(2048) NOT NULL,
@@ -29,20 +51,20 @@ CREATE TABLE webhooks (
 );
 
 -- Index for looking up webhooks by customer
-CREATE INDEX idx_webhooks_customer ON webhooks(customer_id);
+CREATE INDEX IF NOT EXISTS idx_webhooks_customer ON webhooks(customer_id);
 
 -- Index for finding active webhooks for event dispatch
-CREATE INDEX idx_webhooks_active ON webhooks(active) WHERE active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_webhooks_active ON webhooks(active) WHERE active = TRUE;
 
 -- Index for finding webhooks subscribed to specific events
-CREATE INDEX idx_webhooks_events ON webhooks USING GIN(events);
+CREATE INDEX IF NOT EXISTS idx_webhooks_events ON webhooks USING GIN(events);
 
 -- ============================================================================
 -- WEBHOOK DELIVERIES TABLE
 -- Tracks individual webhook delivery attempts
 -- ============================================================================
 
-CREATE TABLE webhook_deliveries (
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     webhook_id UUID NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
     event VARCHAR(100) NOT NULL,
@@ -64,17 +86,17 @@ CREATE TABLE webhook_deliveries (
 );
 
 -- Index for looking up deliveries by webhook
-CREATE INDEX idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
 
 -- Index for finding pending deliveries to process
-CREATE INDEX idx_webhook_deliveries_pending ON webhook_deliveries(status, next_retry_at) 
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(status, next_retry_at)
     WHERE status IN ('pending', 'retrying');
 
 -- Index for idempotency key lookups
-CREATE INDEX idx_webhook_deliveries_idempotency ON webhook_deliveries(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_idempotency ON webhook_deliveries(idempotency_key);
 
 -- Index for event type filtering
-CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_event ON webhook_deliveries(event);
 
 -- ============================================================================
 -- TRIGGERS
@@ -89,11 +111,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS webhooks_updated_at ON webhooks;
 CREATE TRIGGER webhooks_updated_at
     BEFORE UPDATE ON webhooks
     FOR EACH ROW
     EXECUTE FUNCTION update_webhook_updated_at();
 
+DROP TRIGGER IF EXISTS webhook_deliveries_updated_at ON webhook_deliveries;
 CREATE TRIGGER webhook_deliveries_updated_at
     BEFORE UPDATE ON webhook_deliveries
     FOR EACH ROW
@@ -104,7 +128,7 @@ CREATE TRIGGER webhook_deliveries_updated_at
 -- ============================================================================
 
 -- Active webhooks with customer info
-CREATE VIEW v_active_webhooks AS
+CREATE OR REPLACE VIEW v_active_webhooks AS
 SELECT 
     w.id,
     w.customer_id,
@@ -120,7 +144,7 @@ JOIN customers c ON w.customer_id = c.id
 WHERE w.active = TRUE;
 
 -- Recent delivery statistics per webhook
-CREATE VIEW v_webhook_delivery_stats AS
+CREATE OR REPLACE VIEW v_webhook_delivery_stats AS
 SELECT 
     w.id as webhook_id,
     w.url,
@@ -143,17 +167,21 @@ ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
 
 -- App user can see all (for internal operations)
+DROP POLICY IF EXISTS webhooks_app_all ON webhooks;
 CREATE POLICY webhooks_app_all ON webhooks
     FOR ALL TO app_user USING (true);
 
+DROP POLICY IF EXISTS webhook_deliveries_app_all ON webhook_deliveries;
 CREATE POLICY webhook_deliveries_app_all ON webhook_deliveries
     FOR ALL TO app_user USING (true);
 
 -- Customer isolation: customers can only see their own webhooks
+DROP POLICY IF EXISTS webhooks_customer_isolation ON webhooks;
 CREATE POLICY webhooks_customer_isolation ON webhooks
     FOR ALL TO app_customer
     USING (customer_id = current_setting('app.current_customer_id')::UUID);
 
+DROP POLICY IF EXISTS webhook_deliveries_customer_isolation ON webhook_deliveries;
 CREATE POLICY webhook_deliveries_customer_isolation ON webhook_deliveries
     FOR SELECT TO app_customer
     USING (webhook_id IN (
@@ -183,6 +211,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger to enforce webhook limit
+DROP TRIGGER IF EXISTS enforce_webhook_limit ON webhooks;
 CREATE TRIGGER enforce_webhook_limit
     BEFORE INSERT ON webhooks
     FOR EACH ROW

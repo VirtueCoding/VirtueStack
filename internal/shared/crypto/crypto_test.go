@@ -300,7 +300,8 @@ func TestGenerateUUID(t *testing.T) {
 
 func TestGenerateRandomDigits(t *testing.T) {
 	t.Run("correct length", func(t *testing.T) {
-		d := GenerateRandomDigits(8)
+		d, err := GenerateRandomDigits(8)
+		assert.NoError(t, err)
 		assert.Len(t, d, 8)
 		for _, c := range d {
 			assert.True(t, c >= '0' && c <= '9', "expected digit, got %c", c)

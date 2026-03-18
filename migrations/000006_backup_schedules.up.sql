@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS backup_schedules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     vm_id UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
@@ -30,5 +32,13 @@ CREATE INDEX IF NOT EXISTS idx_backups_expires_at
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_vm_created
     ON snapshots(vm_id, created_at DESC);
+
+-- ============================================================================
+-- PERMISSIONS
+-- ============================================================================
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON backup_schedules TO app_user;
+
+GRANT SELECT, INSERT, UPDATE ON backup_schedules TO app_customer;
 
 COMMIT;

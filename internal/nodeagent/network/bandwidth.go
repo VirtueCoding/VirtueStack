@@ -386,7 +386,9 @@ func (m *NodeBandwidthManager) isThrottled(ifaceName string) (bool, error) {
 	}
 
 	// tc qdisc show dev vnet0
-	cmd := exec.Command("tc", "qdisc", "show", "dev", ifaceName)
+	// context.TODO() is used because isThrottled is an internal helper that does not
+	// yet accept a context; callers should pass a context in a future refactor.
+	cmd := exec.CommandContext(context.TODO(), "tc", "qdisc", "show", "dev", ifaceName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("checking tc qdisc: %w, output: %s", err, string(output))
@@ -404,7 +406,9 @@ func (m *NodeBandwidthManager) removeThrottleFromInterface(ifaceName string) err
 	}
 
 	// tc qdisc del dev vnet0 root
-	cmd := exec.Command("tc", "qdisc", "del", "dev", ifaceName, "root")
+	// context.TODO() is used because removeThrottleFromInterface is an internal helper
+	// that does not yet accept a context; callers should pass a context in a future refactor.
+	cmd := exec.CommandContext(context.TODO(), "tc", "qdisc", "del", "dev", ifaceName, "root")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Ignore error if qdisc doesn't exist

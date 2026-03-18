@@ -179,33 +179,33 @@ func (s *Server) InitializeServices() error {
 		customerRepo,
 		adminRepo,
 		auditRepo,
-		s.config.JWTSecret,
+		s.config.JWTSecret.Value(),
 		"virtuestack", // issuer
-		s.config.EncryptionKey,
+		s.config.EncryptionKey.Value(),
 		s.logger,
 	)
 
 	s.ipamService = services.NewIPAMService(ipRepo, nodeRepo, s.logger)
 
-	s.vmService = services.NewVMService(
-		vmRepo,
-		nodeRepo,
-		ipRepo,
-		planRepo,
-		templateRepo,
-		taskRepo,
-		taskPublisher,
-		nodeAgentClient,
-		s.ipamService,
-		s.config.EncryptionKey,
-		s.logger,
-	)
+	s.vmService = services.NewVMService(services.VMServiceConfig{
+		VMRepo:        vmRepo,
+		NodeRepo:      nodeRepo,
+		IPRepo:        ipRepo,
+		PlanRepo:      planRepo,
+		TemplateRepo:  templateRepo,
+		TaskRepo:      taskRepo,
+		TaskPublisher: taskPublisher,
+		NodeAgent:     nodeAgentClient,
+		IPAMService:   s.ipamService,
+		EncryptionKey: s.config.EncryptionKey.Value(),
+		Logger:        s.logger,
+	})
 
 	s.nodeService = services.NewNodeServiceWithDefaults(
 		nodeRepo,
 		vmRepo,
 		nodeAgentClient,
-		s.config.EncryptionKey,
+		s.config.EncryptionKey.Value(),
 		s.logger,
 	)
 
@@ -219,15 +219,14 @@ func (s *Server) InitializeServices() error {
 
 	s.customerService = services.NewCustomerService(customerRepo, auditRepo, s.logger)
 
-	s.backupService = services.NewBackupService(
-		backupRepo,
-		backupRepo, // Same repo handles snapshots
-		vmRepo,
-		backupNodeAgentClient,
-		taskPublisher,
-		"", // Use default backup path
-		s.logger,
-	)
+	s.backupService = services.NewBackupService(services.BackupServiceConfig{
+		BackupRepo:    backupRepo,
+		SnapshotRepo:  backupRepo, // Same repo handles snapshots
+		VMRepo:        vmRepo,
+		NodeAgent:     backupNodeAgentClient,
+		TaskPublisher: taskPublisher,
+		Logger:        s.logger,
+	})
 
 	s.migrationService = services.NewMigrationService(
 		vmRepo,
@@ -245,7 +244,7 @@ func (s *Server) InitializeServices() error {
 		nodeAgentClient,
 		auditRepo,
 		failoverRepo,
-		s.config.EncryptionKey,
+		s.config.EncryptionKey.Value(),
 		s.logger,
 	)
 
@@ -263,7 +262,7 @@ func (s *Server) InitializeServices() error {
 		webhookRepo,
 		taskPublisher,
 		s.logger,
-		s.config.EncryptionKey,
+		s.config.EncryptionKey.Value(),
 	)
 
 	// Initialize PowerDNS rDNS service if MySQL connection is configured
@@ -279,69 +278,69 @@ func (s *Server) InitializeServices() error {
 	}
 
 	// Initialize handlers
-	s.provisioningHandler = provisioning.NewProvisioningHandler(
-		s.vmService,
-		s.authService,
-		taskRepo,
-		vmRepo,
-		ipRepo,
-		s.config.JWTSecret,
-		"virtuestack", // issuer
-		s.config.EncryptionKey,
-		s.logger,
-	)
+	s.provisioningHandler = provisioning.NewProvisioningHandler(provisioning.ProvisioningHandlerConfig{
+		VMService:     s.vmService,
+		AuthService:   s.authService,
+		TaskRepo:      taskRepo,
+		VMRepo:        vmRepo,
+		IPRepo:        ipRepo,
+		JWTSecret:     s.config.JWTSecret.Value(),
+		Issuer:        "virtuestack",
+		EncryptionKey: s.config.EncryptionKey.Value(),
+		Logger:        s.logger,
+	})
 
 	isoStoragePath := s.config.FileStorage.ISOStoragePath
 	if isoStoragePath == "" {
 		isoStoragePath = defaultISOStoragePath
 	}
 
-	s.customerHandler = customer.NewCustomerHandler(
-		s.vmService,
-		s.backupService,
-		s.authService,
-		s.templateService,
-		webhookService,
-		s.customerService,
-		vmRepo,
-		nodeRepo,
-		backupRepo,
-		templateRepo,
-		customerRepo,
-		apiKeyRepo,
-		auditRepo,
-		bandwidthRepo,
-		ipRepo,
-		planRepo,
-		s.rdnsService,
-		s.nodeClient,
-		s.config.JWTSecret,
-		"virtuestack",
-		s.config.EncryptionKey,
-		s.config.ConsoleBaseURL,
-		isoStoragePath,
-		s.logger,
-	)
+	s.customerHandler = customer.NewCustomerHandler(customer.CustomerHandlerConfig{
+		VMService:       s.vmService,
+		BackupService:   s.backupService,
+		AuthService:     s.authService,
+		TemplateService: s.templateService,
+		WebhookService:  webhookService,
+		CustomerService: s.customerService,
+		VMRepo:          vmRepo,
+		NodeRepo:        nodeRepo,
+		BackupRepo:      backupRepo,
+		TemplateRepo:    templateRepo,
+		CustomerRepo:    customerRepo,
+		APIKeyRepo:      apiKeyRepo,
+		AuditRepo:       auditRepo,
+		BandwidthRepo:   bandwidthRepo,
+		IPRepo:          ipRepo,
+		PlanRepo:        planRepo,
+		RDNSService:     s.rdnsService,
+		NodeAgent:       s.nodeClient,
+		JWTSecret:       s.config.JWTSecret.Value(),
+		Issuer:          "virtuestack",
+		EncryptionKey:   s.config.EncryptionKey.Value(),
+		ConsoleBaseURL:  s.config.ConsoleBaseURL,
+		ISOStoragePath:  isoStoragePath,
+		Logger:          s.logger,
+	})
 
-	s.adminHandler = admin.NewAdminHandler(
-		s.nodeService,
-		s.vmService,
-		s.migrationService,
-		s.planService,
-		s.templateService,
-		s.ipamService,
-		s.customerService,
-		s.backupService,
-		s.authService,
-		auditRepo,
-		ipRepo,
-		settingsRepo,
-		failoverRepo,
-		s.rdnsService,
-		s.config.JWTSecret,
-		"virtuestack", // issuer
-		s.logger,
-	)
+	s.adminHandler = admin.NewAdminHandler(admin.AdminHandlerConfig{
+		NodeService:      s.nodeService,
+		VMService:        s.vmService,
+		MigrationService: s.migrationService,
+		PlanService:      s.planService,
+		TemplateService:  s.templateService,
+		IPAMService:      s.ipamService,
+		CustomerService:  s.customerService,
+		BackupService:    s.backupService,
+		AuthService:      s.authService,
+		AuditRepo:        auditRepo,
+		IPRepo:           ipRepo,
+		SettingsRepo:     settingsRepo,
+		FailoverRepo:     failoverRepo,
+		RDNSService:      s.rdnsService,
+		JWTSecret:        s.config.JWTSecret.Value(),
+		Issuer:           "virtuestack",
+		Logger:           s.logger,
+	})
 
 	notificationPreferenceRepo := repository.NewNotificationPreferenceRepository(s.dbPool)
 	notificationEventRepo := repository.NewNotificationEventRepository(s.dbPool)

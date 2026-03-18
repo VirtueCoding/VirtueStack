@@ -11,11 +11,17 @@ import (
 func Metrics() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
 		method := c.Request.Method
 
 		c.Next()
 
+		// Use c.FullPath() (route template, e.g. "/vms/:id") instead of
+		// c.Request.URL.Path (resolved path with UUIDs) to avoid unbounded
+		// Prometheus label cardinality.
+		path := c.FullPath()
+		if path == "" {
+			path = "unknown"
+		}
 		duration := time.Since(start).Seconds()
 		status := strconv.Itoa(c.Writer.Status())
 

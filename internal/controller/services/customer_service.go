@@ -10,6 +10,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // CustomerService provides business logic for managing customer accounts.
@@ -95,7 +96,7 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 
 	s.logger.Info("customer updated",
 		"customer_id", customer.ID,
-		"email", customer.Email,
+		"email", util.MaskEmail(customer.Email),
 		"name", customer.Name)
 
 	return nil
@@ -103,6 +104,8 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 
 // logAudit creates an audit log entry for customer operations.
 func (s *CustomerService) logAudit(ctx context.Context, actorID, actorIP, action, resourceID string, changes map[string]any, success bool, errMsg string) {
+	// json.Marshal error intentionally ignored: input is map[string]any with only
+	// string values; marshalling cannot fail for this type.
 	changesJSON, _ := json.Marshal(changes)
 	errMsgPtr := (*string)(nil)
 	if errMsg != "" {
@@ -157,7 +160,7 @@ func (s *CustomerService) Suspend(ctx context.Context, id string) error {
 
 	s.logger.Info("customer suspended",
 		"customer_id", id,
-		"email", customer.Email)
+		"email", util.MaskEmail(customer.Email))
 
 	return nil
 }
@@ -185,7 +188,7 @@ func (s *CustomerService) Unsuspend(ctx context.Context, id string) error {
 
 	s.logger.Info("customer unsuspended",
 		"customer_id", id,
-		"email", customer.Email)
+		"email", util.MaskEmail(customer.Email))
 
 	return nil
 }
@@ -210,7 +213,7 @@ func (s *CustomerService) Delete(ctx context.Context, id string) error {
 
 	s.logger.Info("customer deleted",
 		"customer_id", id,
-		"email", customer.Email)
+		"email", util.MaskEmail(customer.Email))
 
 	return nil
 }
@@ -278,7 +281,7 @@ func (s *CustomerService) UpdateProfile(ctx context.Context, customerID, actorIP
 
 	s.logger.Info("customer profile updated",
 		"customer_id", customerID,
-		"email", updated.Email)
+		"email", util.MaskEmail(updated.Email))
 
 	return updated, nil
 }

@@ -16,30 +16,30 @@ import (
 func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Get the VM
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		h.logger.Error("failed to get VM for suspend",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Check if VM is already deleted
 	if vm.IsDeleted() {
 		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
 		return
 	}
 
-	// Check if VM is already suspended
 	if vm.Status == models.VMStatusSuspended {
 		c.JSON(http.StatusOK, models.Response{
 			Data: gin.H{
@@ -50,7 +50,7 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 		return
 	}
 
-	// Stop the VM if it's running
+	// Force-stop before suspending so QEMU releases the vCPUs and memory.
 	if vm.Status == models.VMStatusRunning {
 		if err := h.vmService.StopVM(c.Request.Context(), vmID, vm.CustomerID, true, true); err != nil {
 			h.logger.Warn("failed to stop VM during suspend",
@@ -61,7 +61,6 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 		}
 	}
 
-	// Update status to suspended
 	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusSuspended); err != nil {
 		h.logger.Error("failed to update VM status to suspended",
 			"vm_id", vmID,
@@ -90,30 +89,30 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 func (h *ProvisioningHandler) UnsuspendVM(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Get the VM
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		h.logger.Error("failed to get VM for unsuspend",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Check if VM is already deleted
 	if vm.IsDeleted() {
 		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
 		return
 	}
 
-	// Check if VM is not suspended
 	if vm.Status != models.VMStatusSuspended {
 		c.JSON(http.StatusOK, models.Response{
 			Data: gin.H{
@@ -125,7 +124,7 @@ func (h *ProvisioningHandler) UnsuspendVM(c *gin.Context) {
 		return
 	}
 
-	// Update status to stopped (VM remains stopped, customer can start it)
+	// Restore to stopped rather than running; customer decides when to restart.
 	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusStopped); err != nil {
 		h.logger.Error("failed to update VM status to stopped during unsuspend",
 			"vm_id", vmID,

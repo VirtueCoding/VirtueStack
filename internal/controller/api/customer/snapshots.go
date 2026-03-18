@@ -133,7 +133,7 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -242,7 +242,7 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

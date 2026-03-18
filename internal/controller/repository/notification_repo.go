@@ -239,4 +239,3 @@ type NotificationEventFilter struct {
 	models.PaginationParams
 }
 
-// notificationRepoSentinel is unused, keeps the declaration section clean.

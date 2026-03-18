@@ -29,14 +29,20 @@ jobs:
         ports:
           - 4222:4222
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
 
       - name: Go Vet
         run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@55c2c1448f86e01f267a5f60b6756a5e4a05adf4 # v6.5.2
+        with:
+          version: v1.64.8
+          args: --timeout=5m
 
       - name: Go Test
         run: go test -race -count=1 ./...
@@ -51,9 +57,9 @@ jobs:
       run:
         working-directory: webui/admin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -71,9 +77,9 @@ jobs:
       run:
         working-directory: webui/customer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -89,34 +95,64 @@ jobs:
     runs-on: ubuntu-latest
     needs: [go-lint-test, frontend-admin, frontend-customer]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Build Controller image
-        run: docker build -f Dockerfile.controller -t virtuestack/controller:${{ github.sha }} .
+        run: docker build -f Dockerfile.controller -t virtuestack/controller:${{ github.sha }} -t virtuestack-controller:latest .
+
+      - name: Scan controller image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-controller:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
       - name: Build Admin WebUI image
-        run: docker build -f Dockerfile.admin-webui -t virtuestack/admin-webui:${{ github.sha }} .
+        run: docker build -f Dockerfile.admin-webui -t virtuestack/admin-webui:${{ github.sha }} -t virtuestack-admin-webui:latest .
+
+      - name: Scan admin-webui image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-admin-webui:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
       - name: Build Customer WebUI image
-        run: docker build -f Dockerfile.customer-webui -t virtuestack/customer-webui:${{ github.sha }} .
+        run: docker build -f Dockerfile.customer-webui -t virtuestack/customer-webui:${{ github.sha }} -t virtuestack-customer-webui:latest .
+
+      - name: Scan customer-webui image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-customer-webui:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
 
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
           govulncheck ./...
 
       - name: NPM Audit (Admin)
-        run: cd webui/admin && npm audit --audit-level=high || true
+        run: cd webui/admin && npm audit --audit-level=high
 
       - name: NPM Audit (Customer)
-        run: cd webui/customer && npm audit --audit-level=high || true
+        run: cd webui/customer && npm audit --audit-level=high

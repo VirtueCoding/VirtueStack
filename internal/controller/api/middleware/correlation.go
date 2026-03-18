@@ -18,18 +18,20 @@ const CorrelationIDContextKey = "correlation_id"
 // The correlation ID is stored in the Gin context and added to response headers.
 func CorrelationID() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check if correlation ID already exists in request headers
+		// Propagate caller-supplied correlation ID so distributed traces remain
+		// joinable across service boundaries; generate one when absent so every
+		// request carries a traceable identity regardless of the caller.
 		correlationID := c.GetHeader(CorrelationIDHeader)
-
-		// Generate a new correlation ID if not present
 		if correlationID == "" {
 			correlationID = uuid.New().String()
 		}
 
-		// Set in Gin context for use in handlers
+		// Store in context so handlers and middleware can attach it to logs
+		// and outbound requests without coupling to the HTTP layer.
 		c.Set(CorrelationIDContextKey, correlationID)
 
-		// Add to response headers
+		// Echo back in the response so clients can correlate their request
+		// with server-side log entries.
 		c.Header(CorrelationIDHeader, correlationID)
 
 		c.Next()

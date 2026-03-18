@@ -53,24 +53,29 @@ type NodeService struct {
 	logger         *slog.Logger
 }
 
-func NewNodeService(
-	nodeRepo *repository.NodeRepository,
-	vmRepo *repository.VMRepository,
-	auditRepo *repository.AuditRepository,
-	nodeAgent NodeAgentClient,
-	notification *AlertService,
-	encryptionKey string,
-	logger *slog.Logger,
-) *NodeService {
+// NodeServiceConfig holds all dependencies for NodeService construction.
+// Using a config struct keeps NewNodeService compliant with the ≤4-parameter
+// constructor rule (QG-01) and makes future dependency additions non-breaking.
+type NodeServiceConfig struct {
+	NodeRepo      *repository.NodeRepository
+	VMRepo        *repository.VMRepository
+	AuditRepo     *repository.AuditRepository
+	NodeAgent     NodeAgentClient
+	Notification  *AlertService
+	EncryptionKey string
+	Logger        *slog.Logger
+}
+
+func NewNodeService(cfg NodeServiceConfig) *NodeService {
 	return &NodeService{
-		nodeRepo:       nodeRepo,
-		vmRepo:         vmRepo,
-		auditRepo:      auditRepo,
-		nodeAgent:      nodeAgent,
-		notification:   notification,
+		nodeRepo:       cfg.NodeRepo,
+		vmRepo:         cfg.VMRepo,
+		auditRepo:      cfg.AuditRepo,
+		nodeAgent:      cfg.NodeAgent,
+		notification:   cfg.Notification,
 		circuitBreaker: NewFailoverCircuitBreaker(),
-		encryptionKey:  encryptionKey,
-		logger:         logger.With("component", "node-service"),
+		encryptionKey:  cfg.EncryptionKey,
+		logger:         cfg.Logger.With("component", "node-service"),
 	}
 }
 
@@ -427,6 +432,8 @@ func (s *NodeService) logAudit(ctx context.Context, action, resourceID string, d
 		return
 	}
 
+	// json.Marshal error intentionally ignored: input is map[string]interface{} with
+	// only primitive values; marshalling cannot fail for this type.
 	changesJSON, _ := json.Marshal(details)
 	errMsgPtr := (*string)(nil)
 	if errMsg != "" {

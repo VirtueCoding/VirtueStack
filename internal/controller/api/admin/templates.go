@@ -37,6 +37,9 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 			isActive = true
 		} else if isActiveStr == "false" {
 			isActive = false
+		} else {
+			respondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
+			return
 		}
 		filter.IsActive = &isActive
 	}
@@ -92,7 +95,7 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 			"name", req.Name,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -170,7 +173,7 @@ func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 			"template_id", templateID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusBadRequest, "TEMPLATE_UPDATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -204,7 +207,7 @@ func (h *AdminHandler) DeleteTemplate(c *gin.Context) {
 			"template_id", templateID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -215,7 +218,7 @@ func (h *AdminHandler) DeleteTemplate(c *gin.Context) {
 		"template_id", templateID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"deleted": true}})
+	c.Status(http.StatusNoContent)
 }
 
 // ImportTemplate handles POST /templates/:id/import - imports an OS image.
@@ -247,7 +250,7 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 			"source_path", req.SourcePath,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_IMPORT_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_IMPORT_FAILED", "Internal server error")
 		return
 	}
 

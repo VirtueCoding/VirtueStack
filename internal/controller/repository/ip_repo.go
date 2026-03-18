@@ -12,6 +12,11 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
 
+// IPCooldownDuration is the period an IP address is held in cooldown after being
+// released from a VM before it can be reassigned.  This prevents stale ARP/DNS
+// entries from causing connectivity issues for the next customer.
+const IPCooldownDuration = 5 * time.Minute
+
 // IPRepository provides database operations for IP address management.
 type IPRepository struct {
 	db DB
@@ -265,6 +270,36 @@ func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressList
 	return ips, total, nil
 }
 
+// CountIPsByStatus returns a map of IP status to count for a given IP set.
+// This is more efficient than listing all IPs for large sets like /16 (65K IPs).
+func (r *IPRepository) CountIPsByStatus(ctx context.Context, ipSetID string) (map[string]int, error) {
+	const q = `
+		SELECT status, COUNT(*) AS cnt
+		FROM ip_addresses
+		WHERE ip_set_id = $1
+		GROUP BY status`
+
+	rows, err := r.db.Query(ctx, q, ipSetID)
+	if err != nil {
+		return nil, fmt.Errorf("counting IPs by status for set %s: %w", ipSetID, err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var cnt int
+		if scanErr := rows.Scan(&status, &cnt); scanErr != nil {
+			return nil, fmt.Errorf("scanning IP status count: %w", scanErr)
+		}
+		counts[status] = cnt
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating IP status counts: %w", err)
+	}
+	return counts, nil
+}
+
 // AllocateIPv4 atomically allocates an available IPv4 address from an IP set.
 // This operation uses a transaction with SELECT FOR UPDATE to prevent race conditions.
 // Returns the allocated IP address or an error if no addresses are available.
@@ -332,9 +367,9 @@ func (r *IPRepository) ReleaseIPv4(ctx context.Context, ipID string) error {
 	// If Commit fails, the original error is already being returned and is more important.
 	// This is standard Go idiom for transaction defer - rollback is a safety net.
 
-	// Get current time and calculate cooldown end (typically 5 minutes)
+	// Get current time and calculate cooldown end.
 	now := time.Now().UTC()
-	cooldownEnd := now.Add(5 * time.Minute)
+	cooldownEnd := now.Add(IPCooldownDuration)
 
 	const q = `
 		UPDATE ip_addresses SET

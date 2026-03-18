@@ -103,7 +103,7 @@ type NodeAgentClient interface {
 	// DeleteQCOWBackupFile deletes a QCOW backup file from the backup storage.
 	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
 	// GetQCOWDiskInfo returns information about a QCOW disk including size.
-	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error)
+	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (*QCOWDiskInfo, error)
 	// ResizeVM modifies the resource allocation (vCPU, memory, disk) for a VM on the specified node.
 	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
 	// TransferDisk transfers a disk from a source node to a target node via streaming gRPC.
@@ -147,6 +147,13 @@ type SnapshotResponse struct {
 	SnapshotID      string
 	RBDSnapshotName string
 	SizeBytes       int64
+}
+
+// QCOWDiskInfo holds information about a QCOW disk returned by GetQCOWDiskInfo.
+type QCOWDiskInfo struct {
+	DiskPath    string
+	TotalDiskGB uint64
+	UsedDiskGB  uint64
 }
 
 // CloudInitConfig contains parameters for cloud-init ISO generation.
@@ -498,8 +505,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		logger.Warn("failed to update VM status", "error", err)
 	}
 
-	// Update VM with template ID
-	// Note: In production, you'd have an Update method for other fields
+	// TODO(#xxx): Persist template_id and mac_address onto the VM record via a dedicated VMRepository.Update method.
 
 	// Update task progress: Complete
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "VM provisioned successfully"); err != nil {
@@ -515,6 +521,8 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		"ipv6_subnet":     ipv6Addr,
 		"cloud_init_path": cloudInitPath,
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -559,8 +567,14 @@ func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	vm, err := deps.VMRepo.GetByID(ctx, payload.VMID)
 	if err != nil {
 		logger.Error("failed to get VM record", "error", err)
-		// If VM doesn't exist, consider deletion successful (idempotent)
-		if err := deps.TaskRepo.SetCompleted(ctx, task.ID, []byte(`{"vm_id":"`+payload.VMID+`","status":"deleted"}`)); err != nil {
+		// If VM doesn't exist, consider deletion successful (idempotent).
+		// json.Marshal error is intentionally suppressed: the map contains only
+		// primitive types (string, int, bool) whose marshaling cannot fail.
+		idempotentResult, _ := json.Marshal(map[string]any{
+			"vm_id":  payload.VMID,
+			"status": "deleted",
+		})
+		if err := deps.TaskRepo.SetCompleted(ctx, task.ID, idempotentResult); err != nil {
 			logger.Warn("failed to set task completed", "error", err)
 		}
 		return nil
@@ -577,11 +591,8 @@ func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 		// Stop VM if running
 		if vm.Status == models.VMStatusRunning {
-			if err := deps.NodeClient.StopVM(ctx, nodeID, payload.VMID, 60); err != nil {
-				logger.Warn("failed to stop VM gracefully, forcing", "error", err)
-				if err := deps.NodeClient.ForceStopVM(ctx, nodeID, payload.VMID); err != nil {
-					logger.Warn("failed to force stop VM", "error", err)
-				}
+			if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 60, logger); err != nil {
+				logger.Warn("failed to stop VM during deletion, continuing", "error", err)
 			}
 		}
 
@@ -640,6 +651,8 @@ func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		"vm_id":  payload.VMID,
 		"status": "deleted",
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -702,12 +715,9 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 
 	// Stop VM
 	if vm.Status == models.VMStatusRunning {
-		if err := deps.NodeClient.StopVM(ctx, nodeID, payload.VMID, 120); err != nil {
-			logger.Warn("failed to stop VM gracefully, forcing", "error", err)
-			if err := deps.NodeClient.ForceStopVM(ctx, nodeID, payload.VMID); err != nil {
-				logger.Error("failed to force stop VM", "error", err)
-				return fmt.Errorf("stopping VM %s: %w", payload.VMID, err)
-			}
+		if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 120, logger); err != nil {
+			logger.Error("failed to stop VM for backup restore", "error", err)
+			return fmt.Errorf("stopping VM %s: %w", payload.VMID, err)
 		}
 	}
 
@@ -769,6 +779,8 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 		"vm_id":     payload.VMID,
 		"status":    "restored",
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
@@ -1005,11 +1017,39 @@ func verifyPassword(password, hash string) (bool, error) {
 	return match, nil
 }
 
+// stopVMGracefully attempts a graceful shutdown of a VM, falling back to a
+// force-stop when the graceful attempt fails. The timeoutSeconds argument
+// controls how long the node agent waits for the guest to shut down cleanly.
+//
+// This helper centralises the stop-then-force-stop pattern that is required in
+// every task handler that must quiesce a VM before performing destructive
+// operations (delete, resize, reinstall, revert, migrate).
+//
+// Return value: the first error that could not be recovered from, or nil if the
+// VM was stopped (whether gracefully or by force).
+func stopVMGracefully(ctx context.Context, nodeClient NodeAgentClient, nodeID, vmID string, timeoutSeconds int, logger *slog.Logger) error {
+	if err := nodeClient.StopVM(ctx, nodeID, vmID, timeoutSeconds); err != nil {
+		logger.Warn("graceful stop failed, attempting force stop", "vm_id", vmID, "error", err)
+		if forceErr := nodeClient.ForceStopVM(ctx, nodeID, vmID); forceErr != nil {
+			return fmt.Errorf("force stopping VM %s: %w", vmID, forceErr)
+		}
+	}
+	return nil
+}
+
+// shortID returns the first 8 characters of id, or the full id if it is shorter than 8 characters.
+func shortID(id string) string {
+	if len(id) < 8 {
+		return id
+	}
+	return id[:8]
+}
+
 // validatePasswordStrength validates that a password meets minimum security requirements.
-// Minimum 8 characters with at least one uppercase, one lowercase, one digit, and one special character.
+// Minimum 12 characters with at least one uppercase, one lowercase, one digit, and one special character.
 func validatePasswordStrength(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters long")
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters long")
 	}
 
 	hasUpper := false

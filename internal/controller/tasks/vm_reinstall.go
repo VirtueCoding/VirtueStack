@@ -76,7 +76,9 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 			"template_id": payload.TemplateID,
 			"status":      "already_reinstalled",
 		}
-		resultJSON, _ := json.Marshal(result)
+		// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
+	resultJSON, _ := json.Marshal(result)
 		if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 			logger.Warn("failed to set task completed", "error", err)
 		}
@@ -102,16 +104,10 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 	// ============================================================
 	if vm.Status == models.VMStatusRunning || vm.Status == models.VMStatusSuspended {
 		logger.Info("stopping VM for reinstallation")
-
-		// Try graceful stop with timeout
-		if err := deps.NodeClient.StopVM(ctx, nodeID, payload.VMID, 30); err != nil {
-			logger.Warn("graceful stop failed, attempting force stop", "error", err)
-			// Force stop if graceful fails
-			if err := deps.NodeClient.ForceStopVM(ctx, nodeID, payload.VMID); err != nil {
-				// Check if error indicates VM is already stopped
-				logger.Warn("force stop returned error, continuing with reinstallation", "error", err)
-				// Continue anyway - the VM might already be stopped
-			}
+		if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 30, logger); err != nil {
+			// Force stop failure is non-fatal during reinstall: the VM might
+			// already be stopped. Log and continue.
+			logger.Warn("stop attempt returned error, continuing with reinstallation", "error", err)
 		}
 	} else {
 		logger.Info("VM already stopped, skipping stop step (idempotent)")
@@ -243,6 +239,8 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		"hostname":    vm.Hostname,
 		"status":      "running",
 	}
+	// json.Marshal error is intentionally suppressed: the map contains only
+	// primitive types (string, int, bool) whose marshaling cannot fail.
 	resultJSON, _ := json.Marshal(result)
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)

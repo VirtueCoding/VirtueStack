@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,6 +47,9 @@ func NewWebhookService(
 		encryptionKey: encryptionKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("webhook delivery does not follow redirects")
+			},
 		},
 	}
 }
@@ -117,7 +121,7 @@ type WebhookPayload struct {
 // ============================================================================
 
 // Create creates a new webhook endpoint for a customer.
-func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (*repository.Webhook, error) {
+func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (*models.CustomerWebhook, error) {
 	// Validate URL
 	if err := s.validateWebhookURL(req.URL); err != nil {
 		return nil, err
@@ -154,29 +158,34 @@ func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (
 	}
 
 	// Create webhook
-	webhook := &repository.Webhook{
+	webhook := &models.CustomerWebhook{
 		CustomerID: req.CustomerID,
 		URL:        req.URL,
 		SecretHash: encryptedSecret, // Store encrypted secret (field name kept for compatibility)
 		Events:     req.Events,
-		Active:     true,
+		IsActive:   true,
 	}
 
 	if err := s.webhookRepo.Create(ctx, webhook); err != nil {
 		return nil, fmt.Errorf("creating webhook: %w", err)
 	}
 
+	parsedURL, _ := url.Parse(req.URL)
+	safeURL := ""
+	if parsedURL != nil {
+		safeURL = parsedURL.Scheme + "://" + parsedURL.Host
+	}
 	s.logger.Info("webhook created",
 		"webhook_id", webhook.ID,
 		"customer_id", req.CustomerID,
-		"url", req.URL,
+		"url_domain", safeURL,
 		"events", req.Events)
 
 	return webhook, nil
 }
 
 // Get retrieves a webhook by ID for a specific customer.
-func (s *WebhookService) Get(ctx context.Context, id, customerID string) (*repository.Webhook, error) {
+func (s *WebhookService) Get(ctx context.Context, id, customerID string) (*models.CustomerWebhook, error) {
 	webhook, err := s.webhookRepo.GetByIDAndCustomer(ctx, id, customerID)
 	if err != nil {
 		return nil, ErrWebhookNotFound
@@ -185,12 +194,12 @@ func (s *WebhookService) Get(ctx context.Context, id, customerID string) (*repos
 }
 
 // List retrieves all webhooks for a customer.
-func (s *WebhookService) List(ctx context.Context, customerID string) ([]repository.Webhook, error) {
+func (s *WebhookService) List(ctx context.Context, customerID string) ([]models.CustomerWebhook, error) {
 	return s.webhookRepo.ListByCustomer(ctx, customerID)
 }
 
 // Update updates a webhook endpoint.
-func (s *WebhookService) Update(ctx context.Context, id, customerID string, req UpdateWebhookRequest) (*repository.Webhook, error) {
+func (s *WebhookService) Update(ctx context.Context, id, customerID string, req UpdateWebhookRequest) (*models.CustomerWebhook, error) {
 	// Verify webhook exists and belongs to customer
 	_, err := s.webhookRepo.GetByIDAndCustomer(ctx, id, customerID)
 	if err != nil {
@@ -298,9 +307,9 @@ func (s *WebhookService) DeliverForCustomer(ctx context.Context, customerID, eve
 	}
 
 	// Filter to active webhooks subscribed to this event
-	var activeWebhooks []repository.Webhook
+	var activeWebhooks []models.CustomerWebhook
 	for _, w := range webhooks {
-		if !w.Active {
+		if !w.IsActive {
 			continue
 		}
 		for _, e := range w.Events {
@@ -334,7 +343,7 @@ func (s *WebhookService) DeliverForCustomer(ctx context.Context, customerID, eve
 }
 
 // queueDelivery creates a delivery record and queues it for processing.
-func (s *WebhookService) queueDelivery(ctx context.Context, webhook *repository.Webhook, event string, data json.RawMessage) error {
+func (s *WebhookService) queueDelivery(ctx context.Context, webhook *models.CustomerWebhook, event string, data json.RawMessage) error {
 	// Generate idempotency key
 	idempotencyKey := uuid.New().String()
 
@@ -352,7 +361,7 @@ func (s *WebhookService) queueDelivery(ctx context.Context, webhook *repository.
 	}
 
 	// Create delivery record
-	delivery := &repository.WebhookDelivery{
+	delivery := &models.WebhookDelivery{
 		WebhookID:      webhook.ID,
 		Event:          event,
 		IdempotencyKey: idempotencyKey,
@@ -387,7 +396,7 @@ func (s *WebhookService) queueDelivery(ctx context.Context, webhook *repository.
 }
 
 // ListDeliveries retrieves delivery history for a webhook.
-func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customerID string, page, perPage int) ([]repository.WebhookDelivery, int, error) {
+func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customerID string, page, perPage int) ([]models.WebhookDelivery, int, error) {
 	// Verify webhook exists and belongs to customer
 	_, err := s.webhookRepo.GetByIDAndCustomer(ctx, webhookID, customerID)
 	if err != nil {
@@ -410,7 +419,8 @@ func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customer
 // Helper Methods
 // ============================================================================
 
-// validateWebhookURL validates that a webhook URL is properly formatted and uses HTTPS.
+// validateWebhookURL validates that a webhook URL is properly formatted, uses HTTPS,
+// and does not resolve to a private/internal IP address (SSRF protection).
 func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 	// Parse URL
 	parsed, err := url.Parse(webhookURL)
@@ -428,7 +438,52 @@ func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 		return fmt.Errorf("%w: missing host", ErrInvalidURL)
 	}
 
+	// Resolve hostname to prevent SSRF
+	addrs, err := net.LookupHost(parsed.Hostname())
+	if err != nil {
+		return fmt.Errorf("cannot resolve webhook URL hostname: %w", err)
+	}
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if isPrivateIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private/internal IP address")
+		}
+	}
+
 	return nil
+}
+
+// isPrivateIP checks if an IP address is in a private/reserved range
+// to prevent SSRF attacks.
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16", // link-local / cloud metadata
+		"100.64.0.0/10",  // CGNAT
+		"::1/128",
+		"fc00::/7",  // IPv6 private
+		"fe80::/10", // IPv6 link-local
+	}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	// Also block the metadata IP explicitly
+	metadataIPs := []string{"169.254.169.254", "fd00:ec2::254"}
+	for _, mip := range metadataIPs {
+		if ip.Equal(net.ParseIP(mip)) {
+			return true
+		}
+	}
+	return false
 }
 
 // encryptSecret encrypts the webhook secret for storage using AES-256-GCM.
@@ -462,12 +517,12 @@ func VerifySignature(secret string, payload []byte, signature string) bool {
 }
 
 // ToResponse converts a webhook to an API response format.
-func ToResponse(webhook *repository.Webhook) WebhookResponse {
+func ToResponse(webhook *models.CustomerWebhook) WebhookResponse {
 	return WebhookResponse{
 		ID:            webhook.ID,
 		URL:           webhook.URL,
 		Events:        webhook.Events,
-		Active:        webhook.Active,
+		Active:        webhook.IsActive,
 		FailCount:     webhook.FailCount,
 		LastSuccessAt: webhook.LastSuccessAt,
 		LastFailureAt: webhook.LastFailureAt,
@@ -545,11 +600,11 @@ func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerW
 	return secret, nil
 }
 
-func (s *WebhookService) ListByCustomer(ctx context.Context, customerID string) ([]repository.Webhook, error) {
+func (s *WebhookService) ListByCustomer(ctx context.Context, customerID string) ([]models.CustomerWebhook, error) {
 	return s.List(ctx, customerID)
 }
 
-func (s *WebhookService) GetPendingRetries(ctx context.Context, before time.Time) ([]repository.WebhookDelivery, error) {
+func (s *WebhookService) GetPendingRetries(ctx context.Context, before time.Time) ([]models.WebhookDelivery, error) {
 	return s.webhookRepo.GetPendingRetries(ctx, before)
 }
 
@@ -570,7 +625,7 @@ func (s *WebhookService) VerifySignature(payload []byte, signature, secret strin
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, event string) ([]repository.Webhook, error) {
+func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, event string) ([]models.CustomerWebhook, error) {
 	if customerID == "" {
 		return s.webhookRepo.ListActiveForEvent(ctx, event)
 	}
@@ -580,9 +635,9 @@ func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, ev
 		return nil, fmt.Errorf("listing customer webhooks: %w", err)
 	}
 
-	filtered := make([]repository.Webhook, 0, len(webhooks))
+	filtered := make([]models.CustomerWebhook, 0, len(webhooks))
 	for _, w := range webhooks {
-		if !w.Active {
+		if !w.IsActive {
 			continue
 		}
 		for _, e := range w.Events {
@@ -597,12 +652,9 @@ func (s *WebhookService) GetWebhooksForEvent(ctx context.Context, customerID, ev
 }
 
 func (s *WebhookService) GetDeliveryStats(ctx context.Context, webhookID string) (*DeliveryStats, error) {
-	filter := repository.DeliveryListFilter{}
-	filter.WebhookID = &webhookID
-	filter.PaginationParams = repository.PaginationParams{Page: 1, PerPage: 1000}
-	deliveries, total, err := s.webhookRepo.ListDeliveries(ctx, filter)
+	total, counts, err := s.webhookRepo.CountDeliveriesByStatus(ctx, webhookID)
 	if err != nil {
-		return nil, fmt.Errorf("listing deliveries: %w", err)
+		return nil, fmt.Errorf("counting deliveries by status: %w", err)
 	}
 
 	if total == 0 {
@@ -610,9 +662,10 @@ func (s *WebhookService) GetDeliveryStats(ctx context.Context, webhookID string)
 	}
 
 	successCount := 0
-	for _, d := range deliveries {
-		if d.Status == repository.DeliveryStatusDelivered {
-			successCount++
+	for _, sc := range counts {
+		if sc.Status == repository.DeliveryStatusDelivered {
+			successCount = sc.Count
+			break
 		}
 	}
 
@@ -644,7 +697,7 @@ func (s *WebhookService) RetryDelivery(ctx context.Context, deliveryID string) e
 	return nil
 }
 
-func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, page, perPage int) ([]repository.WebhookDelivery, int, error) {
+func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, page, perPage int) ([]models.WebhookDelivery, int, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -656,7 +709,7 @@ func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, 
 	}
 
 	filter := repository.DeliveryListFilter{
-		PaginationParams: repository.PaginationParams{Page: page, PerPage: perPage},
+		PaginationParams: models.PaginationParams{Page: page, PerPage: perPage},
 	}
 	if webhookID != "" {
 		filter.WebhookID = &webhookID

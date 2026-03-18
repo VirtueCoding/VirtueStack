@@ -27,6 +27,9 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 			isActive = true
 		} else if isActiveStr == "false" {
 			isActive = false
+		} else {
+			respondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
+			return
 		}
 		filter.IsActive = &isActive
 	}
@@ -65,7 +68,7 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 			"slug", req.Slug,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PLAN_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "PLAN_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -171,7 +174,7 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 			"plan_id", planID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PLAN_UPDATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "PLAN_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -212,7 +215,7 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 			respondWithError(c, http.StatusConflict, "PLAN_IN_USE", "Cannot delete plan with existing VMs")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "PLAN_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "PLAN_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -223,5 +226,5 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 		"plan_id", planID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"deleted": true}})
+	c.Status(http.StatusNoContent)
 }

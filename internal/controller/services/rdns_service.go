@@ -138,11 +138,14 @@ func (s *RDNSService) GetReverseDNS(ctx context.Context, ipAddress string) (stri
 	return content, nil
 }
 
-func (s *RDNSService) IsConnected() bool {
+// IsConnected reports whether the PowerDNS database connection is reachable.
+// The provided ctx is forwarded to the underlying ping operation so the caller
+// can control timeout and cancellation.
+func (s *RDNSService) IsConnected(ctx context.Context) bool {
 	if s.db == nil {
 		return false
 	}
-	return s.db.PingContext(context.Background()) == nil
+	return s.db.PingContext(ctx) == nil
 }
 
 // getZoneID retrieves the zone ID from PowerDNS domains table.

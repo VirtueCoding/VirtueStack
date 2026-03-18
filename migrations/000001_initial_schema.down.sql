@@ -47,10 +47,8 @@ DROP TABLE IF EXISTS admins;
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS locations;
 
--- Partitioned table (drop partitions first)
-DROP TABLE IF EXISTS audit_logs_2026_04;
-DROP TABLE IF EXISTS audit_logs_2026_03;
-DROP TABLE IF EXISTS audit_logs;
+-- Partitioned table (CASCADE drops all partitions automatically)
+DROP TABLE IF EXISTS audit_logs CASCADE;
 
 -- ============================================================================
 -- DROP ROLES

@@ -125,6 +125,11 @@ func WithError(logger *slog.Logger, err error) *slog.Logger {
 
 // WithFields returns a logger with multiple attributes.
 // This provides a convenient way to add multiple fields at once.
+//
+// The map[string]any parameter type is intentional: it mirrors the slog API's
+// variadic any args and allows callers to pass heterogeneous log field values
+// without defining a concrete struct. This is an accepted exception to the
+// project's general preference for typed parameters.
 func WithFields(logger *slog.Logger, fields map[string]any) *slog.Logger {
 	if logger == nil {
 		logger = slog.Default()

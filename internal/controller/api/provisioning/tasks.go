@@ -17,13 +17,11 @@ import (
 func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 	taskID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(taskID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_TASK_ID", "Task ID must be a valid UUID")
 		return
 	}
 
-	// Get the task from repository
 	task, err := h.taskRepo.GetByID(c.Request.Context(), taskID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -34,11 +32,10 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 			"task_id", taskID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Build the response
 	resp := TaskStatusResponse{
 		ID:        task.ID,
 		Type:      task.Type,
@@ -48,7 +45,6 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 		CreatedAt: task.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
-	// Include result if task is completed
 	if task.Status == models.TaskStatusCompleted && task.Result != nil {
 		var result any
 		if err := json.Unmarshal(task.Result, &result); err == nil {
@@ -56,7 +52,6 @@ func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 		}
 	}
 
-	// Include error message if task failed
 	if task.Status == models.TaskStatusFailed && task.ErrorMessage != "" {
 		resp.Message = task.ErrorMessage
 	}

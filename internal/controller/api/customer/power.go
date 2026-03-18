@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,9 +44,7 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "VM started successfully",
-	})
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM started successfully"}})
 }
 
 // StopVM handles POST /vms/:id/stop - gracefully stops a running VM.
@@ -82,9 +81,7 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "VM stopped successfully",
-	})
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM stopped successfully"}})
 }
 
 // RestartVM handles POST /vms/:id/restart - restarts a running VM.
@@ -121,9 +118,7 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "VM restarted successfully",
-	})
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM restarted successfully"}})
 }
 
 // ForceStopVM handles POST /vms/:id/force-stop - forcefully powers off a VM.
@@ -160,7 +155,5 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "VM force stopped successfully",
-	})
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM force stopped successfully"}})
 }

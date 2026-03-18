@@ -1,11 +1,13 @@
 package provisioning
 
 import (
+	cryptorand "crypto/rand"
+	"math/big"
+	mathrand "math/rand"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
-	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -56,7 +58,7 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -81,37 +83,39 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Get the VM to verify it exists
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		h.logger.Error("failed to get VM for delete",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Check if VM is already deleted
+	// Reject early to avoid queueing a delete task for an already-gone resource.
 	if vm.IsDeleted() {
 		respondWithError(c, http.StatusGone, "VM_ALREADY_DELETED", "VM has already been terminated")
 		return
 	}
 
-	// Delete VM through service layer (admin=true to bypass ownership checks)
+	// admin=true bypasses ownership checks; WHMCS acts on behalf of any customer.
 	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, vm.CustomerID, true)
 	if err != nil {
 		h.logger.Error("failed to delete VM",
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -128,26 +132,67 @@ func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
 	})
 }
 
-// generateRandomPassword creates a cryptographically secure random password.
+// generateRandomPassword creates a cryptographically secure random password
+// that always satisfies strength requirements: at least 1 uppercase letter,
+// 1 lowercase letter, 1 digit, 1 special character, and 12+ characters total.
 func generateRandomPassword() string {
-	// Generate a 16-character password using crypto
-	token, err := crypto.GenerateRandomToken(16)
-	if err != nil {
-		// Fallback to UUID-based password
-		return "Vs" + uuid.New().String()[:16]
+	const (
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		digitChars   = "0123456789"
+		specialChars = "!@#$%^&*"
+		allChars     = upperChars + lowerChars + digitChars + specialChars
+		totalLen     = 16
+	)
+
+	randChar := func(charset string) byte {
+		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			// Fallback: use math/rand seeded by time (acceptable only here as last resort)
+			return charset[mathrand.Intn(len(charset))]
+		}
+		return charset[n.Int64()]
 	}
-	return "Vs" + token[:14] // Prefix with "Vs" to ensure it starts with a letter
+
+	// Guarantee at least one character from each required class
+	required := []byte{
+		randChar(upperChars),
+		randChar(lowerChars),
+		randChar(digitChars),
+		randChar(specialChars),
+	}
+
+	// Fill remaining characters from the full set
+	rest := make([]byte, totalLen-len(required))
+	for i := range rest {
+		rest[i] = randChar(allChars)
+	}
+
+	combined := append(required, rest...)
+
+	// Shuffle using crypto/rand to avoid predictable placement of required chars
+	for i := len(combined) - 1; i > 0; i-- {
+		jBig, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(i+1)))
+		j := i // fallback: no swap on error
+		if err == nil {
+			j = int(jBig.Int64())
+		}
+		combined[i], combined[j] = combined[j], combined[i]
+	}
+
+	return string(combined)
 }
 
-// respondWithError sends a standardized error response.
+// respondWithError sends a standardized error response using the typed ErrorResponse
+// shape shared across all middleware (recovery, rate-limit, auth).
 func respondWithError(c *gin.Context, status int, code, message string) {
 	correlationID := middleware.GetCorrelationID(c)
 
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":           code,
-			"message":        message,
-			"correlation_id": correlationID,
+	c.JSON(status, middleware.ErrorResponse{
+		Error: middleware.ErrorDetail{
+			Code:          code,
+			Message:       message,
+			CorrelationID: correlationID,
 		},
 	})
 }

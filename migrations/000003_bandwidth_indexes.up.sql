@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE INDEX IF NOT EXISTS idx_bandwidth_usage_period
     ON bandwidth_usage(year DESC, month DESC);
 

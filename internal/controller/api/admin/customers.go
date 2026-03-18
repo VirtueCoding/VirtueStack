@@ -35,12 +35,23 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	}
 
 	// Optional status filter
+	validCustomerStatuses := map[string]bool{
+		"active": true, "suspended": true, "deleted": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validCustomerStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 
 	// Optional search filter (email or name)
 	if search := c.Query("search"); search != "" {
+		if len(search) > 100 {
+			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			return
+		}
 		filter.Search = &search
 	}
 
@@ -107,7 +118,12 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 			PerPage: 1,
 		},
 	}
-	_, activeVMs, _ := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
+	_, activeVMs, err := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
+	if err != nil {
+		h.logger.Warn("failed to get active VM count for customer",
+			"customer_id", customerID,
+			"error", err)
+	}
 
 	detail := CustomerDetail{
 		Customer:    *customer,
@@ -167,7 +183,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 				"status", *req.Status,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", err.Error())
+			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -182,7 +198,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 				"customer_id", customerID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", err.Error())
+			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -195,7 +211,15 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	// Return updated customer
-	updatedCustomer, _ := h.customerService.GetByID(c.Request.Context(), customerID)
+	updatedCustomer, err := h.customerService.GetByID(c.Request.Context(), customerID)
+	if err != nil {
+		h.logger.Error("failed to fetch updated customer after update",
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve updated customer")
+		return
+	}
 	c.JSON(http.StatusOK, models.Response{Data: updatedCustomer})
 }
 
@@ -233,7 +257,7 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -244,7 +268,7 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"deleted": true}})
+	c.Status(http.StatusNoContent)
 }
 
 // GetCustomerAuditLogs handles GET /customers/:id/audit-logs - retrieves audit trail for a customer.
@@ -259,7 +283,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 
 	pagination := models.ParsePagination(c)
 
-	filter := repository.AuditLogFilter{
+	filter := models.AuditLogFilter{
 		PaginationParams: pagination,
 		ActorID:          &customerID,
 		ActorType:        util.StringPtr("customer"),

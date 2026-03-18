@@ -46,14 +46,15 @@ const (
 	ResourceIPAddress = "ip_address"
 )
 
-// DestructiveActions lists operations that require re-authentication.
+// DestructiveActions maps operations that require re-authentication.
 // These actions have significant or irreversible impact on resources.
-var DestructiveActions = []string{
-	ActionDelete,
-	ActionForceStop,
-	ActionReinstall,
-	ActionMigrate,
-	ActionFailover,
+// A map is used for O(1) lookup instead of linear scan.
+var DestructiveActions = map[string]bool{
+	ActionDelete:    true,
+	ActionForceStop: true,
+	ActionReinstall: true,
+	ActionMigrate:   true,
+	ActionFailover:  true,
 }
 
 // ReAuthWindow is the time window within which a re-authentication is considered valid.
@@ -158,17 +159,8 @@ func (s *RBACService) logDeniedAndReturn(ctx context.Context, userID, userRole, 
 // Returns true if re-authentication is required, false if the action can proceed.
 // For destructive actions, checks if last_reauth_at is within the 5-minute window.
 func (s *RBACService) RequireReauthForDestructive(ctx context.Context, sessionID, action string) (bool, error) {
-	// Check if this is a destructive action
-	isDestructive := false
-	for _, destructiveAction := range DestructiveActions {
-		if action == destructiveAction {
-			isDestructive = true
-			break
-		}
-	}
-
 	// Non-destructive actions don't require re-auth
-	if !isDestructive {
+	if !DestructiveActions[action] {
 		return false, nil
 	}
 
@@ -466,12 +458,7 @@ func (s *RBACService) CanViewAuditLogs(ctx context.Context, userID, userRole str
 
 // IsDestructiveAction returns true if the given action is considered destructive.
 func IsDestructiveAction(action string) bool {
-	for _, destructiveAction := range DestructiveActions {
-		if action == destructiveAction {
-			return true
-		}
-	}
-	return false
+	return DestructiveActions[action]
 }
 
 // IsAdmin checks if the user has admin or super_admin role.

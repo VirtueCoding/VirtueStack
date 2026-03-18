@@ -56,6 +56,9 @@ var (
 
 	// Account lockout error
 	ErrAccountLocked = stderrors.New("account locked due to too many failed attempts")
+
+	// ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
+	ErrNoRowsAffected = stderrors.New("no rows affected")
 )
 
 // ValidationDetail represents a single validation error detail.
@@ -140,8 +143,9 @@ func (e *APIError) Error() string {
 func (e *APIError) ToJSON() []byte {
 	data, err := json.Marshal(e)
 	if err != nil {
-		// Fallback to a simple error message if marshaling fails
-		return []byte(fmt.Sprintf(`{"code":"INTERNAL_ERROR","message":"%s"}`, err.Error()))
+		// Use a static fallback to avoid exposing internal error details or
+		// introducing JSON injection via err.Error().
+		return []byte(`{"code":"INTERNAL_ERROR","message":"An internal error occurred"}`)
 	}
 	return data
 }

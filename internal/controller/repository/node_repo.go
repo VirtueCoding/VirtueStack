@@ -125,6 +125,9 @@ func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter)
 }
 
 // ListByStatus returns all nodes matching the given status.
+// Pagination is intentionally omitted: this is an internal method used by the
+// scheduler and provisioning logic that must consider every eligible node.
+// The total number of nodes is bounded by infrastructure capacity.
 func (r *NodeRepository) ListByStatus(ctx context.Context, status string) ([]models.Node, error) {
 	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE status = $1 ORDER BY hostname ASC`
 	nodes, err := ScanRows(ctx, r.db, q, []any{status}, func(rows pgx.Rows) (models.Node, error) {

@@ -26,27 +26,30 @@ type ProvisioningHandler struct {
 	logger        *slog.Logger
 }
 
+// ProvisioningHandlerConfig holds all dependencies required to construct a ProvisioningHandler.
+type ProvisioningHandlerConfig struct {
+	VMService     *services.VMService
+	AuthService   *services.AuthService
+	TaskRepo      *repository.TaskRepository
+	VMRepo        *repository.VMRepository
+	IPRepo        *repository.IPRepository
+	JWTSecret     string
+	Issuer        string
+	EncryptionKey string
+	Logger        *slog.Logger
+}
+
 // NewProvisioningHandler creates a new ProvisioningHandler with the given dependencies.
-func NewProvisioningHandler(
-	vmService *services.VMService,
-	authService *services.AuthService,
-	taskRepo *repository.TaskRepository,
-	vmRepo *repository.VMRepository,
-	ipRepo *repository.IPRepository,
-	jwtSecret string,
-	issuer string,
-	encryptionKey string,
-	logger *slog.Logger,
-) *ProvisioningHandler {
+func NewProvisioningHandler(cfg ProvisioningHandlerConfig) *ProvisioningHandler {
 	return &ProvisioningHandler{
-		vmService:     vmService,
-		authService:   authService,
-		taskRepo:      taskRepo,
-		vmRepo:        vmRepo,
-		ipRepo:        ipRepo,
-		authConfig:    middleware.AuthConfig{JWTSecret: jwtSecret, Issuer: issuer},
-		encryptionKey: encryptionKey,
-		logger:        logger.With("component", "provisioning-handler"),
+		vmService:     cfg.VMService,
+		authService:   cfg.AuthService,
+		taskRepo:      cfg.TaskRepo,
+		vmRepo:        cfg.VMRepo,
+		ipRepo:        cfg.IPRepo,
+		authConfig:    middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
+		encryptionKey: cfg.EncryptionKey,
+		logger:        cfg.Logger.With("component", "provisioning-handler"),
 	}
 }
 
@@ -70,6 +73,9 @@ type TaskStatusResponse struct {
 	Status    models.TaskStatus `json:"status"`
 	Progress  int               `json:"progress"`
 	Message   string            `json:"message,omitempty"`
+	// Result holds task-type-specific output (e.g. CreateVMResponse for vm.create tasks).
+	// It is populated only when Status == TaskStatusCompleted and the task produced output.
+	// Callers should type-assert or unmarshal based on the Type field.
 	Result    any               `json:"result,omitempty"`
 	CreatedAt string            `json:"created_at"`
 }
@@ -82,14 +88,14 @@ type VMStatusResponse struct {
 
 // ResizeRequest represents the request body for VM resize operations.
 type ResizeRequest struct {
-	VCPU     *int `json:"vcpu,omitempty"`
-	MemoryMB *int `json:"memory_mb,omitempty"`
-	DiskGB   *int `json:"disk_gb,omitempty"`
+	VCPU     *int `json:"vcpu,omitempty" validate:"omitempty,gt=0"`
+	MemoryMB *int `json:"memory_mb,omitempty" validate:"omitempty,gt=0"`
+	DiskGB   *int `json:"disk_gb,omitempty" validate:"omitempty,gt=0"`
 }
 
 // PasswordRequest represents the request body for password operations.
 type PasswordRequest struct {
-	Password string `json:"password" validate:"required,min=8,max=128"`
+	Password string `json:"password" validate:"required,min=12,max=128"`
 }
 
 // ProvisioningCreateVMRequest represents the WHMCS provisioning create VM request.

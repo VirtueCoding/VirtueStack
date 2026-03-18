@@ -83,7 +83,9 @@ func (m *FailoverMonitor) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Run immediately on start
-	m.checkNodes(ctx)
+	if err := m.checkNodes(ctx); err != nil {
+		m.logger.Warn("failover node check failed", "error", err)
+	}
 
 	for {
 		select {
@@ -91,7 +93,9 @@ func (m *FailoverMonitor) Start(ctx context.Context) {
 			m.logger.Info("failover monitor stopped", "reason", ctx.Err())
 			return
 		case <-ticker.C:
-			m.checkNodes(ctx)
+			if err := m.checkNodes(ctx); err != nil {
+				m.logger.Warn("failover node check failed", "error", err)
+			}
 		}
 	}
 }

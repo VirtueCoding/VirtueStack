@@ -22,8 +22,15 @@ import (
 // Default configuration values.
 const (
 	defaultNumWorkers = 4
-	shutdownTimeout   = 10 * time.Second
+	shutdownTimeout   = 30 * time.Second
 )
+
+// infrastructure holds the initialized external dependencies.
+type infrastructure struct {
+	dbPool *pgxpool.Pool
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+}
 
 func main() {
 	// Load configuration
@@ -34,6 +41,7 @@ func main() {
 	}
 
 	// Setup logging
+	logging.Setup(cfg.LogLevel)
 	logger := logging.NewLogger(cfg.LogLevel)
 	logger.Info("VirtueStack Controller starting")
 
@@ -41,69 +49,100 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Connect to PostgreSQL
+	// Initialize infrastructure (database, NATS)
+	infra, err := initializeInfrastructure(ctx, cfg, logger)
+	if err != nil {
+		logger.Error("Failed to initialize infrastructure", "error", err)
+		os.Exit(1)
+	}
+	defer closeDBPool(infra.dbPool, logger)
+	defer closeNATS(infra.nc, logger)
+
+	// Initialize server, services, task worker, and routes
+	srv, worker, err := initializeServer(ctx, cfg, infra, logger)
+	if err != nil {
+		logger.Error("Failed to initialize server", "error", err)
+		os.Exit(1)
+	}
+
+	// Start task worker
+	if err := worker.Start(ctx, defaultNumWorkers); err != nil {
+		logger.Error("Failed to start task worker", "error", err)
+		os.Exit(1)
+	}
+
+	// Start background schedulers (backup scheduler)
+	srv.StartSchedulers(ctx)
+
+	// Start HTTP server in a goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.Start(ctx); err != nil {
+			serverErr <- err
+		}
+	}()
+
+	logger.Info("VirtueStack Controller started",
+		"address", cfg.ListenAddr,
+		"workers", defaultNumWorkers,
+	)
+
+	// Wait for shutdown signal or server error, then shut down gracefully
+	runShutdown(logger, serverErr, worker, srv)
+
+	logger.Info("VirtueStack Controller stopped")
+}
+
+// initializeInfrastructure connects to PostgreSQL and NATS.
+func initializeInfrastructure(ctx context.Context, cfg *controller.Config, logger *slog.Logger) (*infrastructure, error) {
 	dbPool, err := connectDatabase(ctx, cfg.DatabaseURL, logger)
 	if err != nil {
-		logger.Error("Failed to connect to database", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
-	defer closeDBPool(dbPool, logger)
 
-	// Connect to NATS
-	nc, js, err := connectNATS(cfg.NatsURL, logger)
+	nc, js, err := connectNATS(cfg.NATS.URL, logger)
 	if err != nil {
-		logger.Error("Failed to connect to NATS", "error", err)
-		os.Exit(1)
+		dbPool.Close()
+		return nil, fmt.Errorf("connecting to NATS: %w", err)
 	}
-	defer closeNATS(nc, logger)
 
-	// Create task worker
-	worker, err := tasks.NewWorker(js, dbPool, logger)
+	return &infrastructure{dbPool: dbPool, nc: nc, js: js}, nil
+}
+
+// initializeServer creates and wires up the HTTP server, node client, services,
+// task handlers, and API routes. It returns the server and task worker, ready to start.
+func initializeServer(ctx context.Context, cfg *controller.Config, infra *infrastructure, logger *slog.Logger) (*controller.Server, *tasks.Worker, error) {
+	worker, err := tasks.NewWorker(infra.js, infra.dbPool, logger)
 	if err != nil {
-		logger.Error("Failed to create task worker", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("creating task worker: %w", err)
 	}
 
-	// Create HTTP server
-	server, err := controller.NewServer(cfg.ControllerConfig, dbPool, js, logger)
+	server, err := controller.NewServer(cfg.ControllerConfig, infra.dbPool, infra.js, logger)
 	if err != nil {
-		logger.Error("Failed to create server", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("creating server: %w", err)
 	}
 
-	var nodeClient *controller.NodeClient
-	if tlsCAFile := os.Getenv("TLS_CA_FILE"); tlsCAFile != "" {
-		nodeClient, err = controller.NewNodeClient(tlsCAFile, logger)
-		if err != nil {
-			logger.Error("Failed to create node client", "error", err, "tls_ca_file", tlsCAFile)
-			os.Exit(1)
-		}
-		logger.Info("Configured secure node client", "tls_ca_file", tlsCAFile)
-	} else {
-		logger.Warn("TLS_CA_FILE is not set, using insecure node client")
-		nodeClient = controller.InsecureNodeClient(logger)
+	nodeClient, err := buildNodeClient(cfg, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building node client: %w", err)
 	}
 	server.SetNodeClient(nodeClient)
-
 	server.SetTaskWorker(worker)
-	server.SetNATSConnection(nc)
+	server.SetNATSConnection(infra.nc)
 
-	// Initialize services
 	if err := server.InitializeServices(); err != nil {
-		logger.Error("Failed to initialize services", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("initializing services: %w", err)
 	}
 
-	// Register task handlers
 	handlerDeps := &tasks.HandlerDeps{
-		VMRepo:       repository.NewVMRepository(dbPool),
-		NodeRepo:     repository.NewNodeRepository(dbPool),
-		IPRepo:       repository.NewIPRepository(dbPool),
-		BackupRepo:   repository.NewBackupRepository(dbPool),
-		TaskRepo:     repository.NewTaskRepository(dbPool),
-		TemplateRepo: repository.NewTemplateRepository(dbPool),
+		VMRepo:       repository.NewVMRepository(infra.dbPool),
+		NodeRepo:     repository.NewNodeRepository(infra.dbPool),
+		IPRepo:       repository.NewIPRepository(infra.dbPool),
+		BackupRepo:   repository.NewBackupRepository(infra.dbPool),
+		TaskRepo:     repository.NewTaskRepository(infra.dbPool),
+		TemplateRepo: repository.NewTemplateRepository(infra.dbPool),
 		IPAMService:  server.GetIPAMService(),
-		NodeClient: services.NewNodeAgentGRPCClient(repository.NewNodeRepository(dbPool), repository.NewVMRepository(dbPool), nodeClient, &services.CephConfig{
+		NodeClient: services.NewNodeAgentGRPCClient(repository.NewNodeRepository(infra.dbPool), repository.NewVMRepository(infra.dbPool), nodeClient, &services.CephConfig{
 			Monitors:   cfg.CephMonitors,
 			User:       cfg.CephUser,
 			SecretUUID: cfg.CephSecretUUID,
@@ -116,32 +155,34 @@ func main() {
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)
 
-	// Register API routes after services are initialized
 	server.RegisterAPIRoutes()
 
-	// Start task worker
-	if err := worker.Start(ctx, defaultNumWorkers); err != nil {
-		logger.Error("Failed to start task worker", "error", err)
-		os.Exit(1)
+	return server, worker, nil
+}
+
+// buildNodeClient creates a node client using TLS if TLS_CA_FILE is set,
+// or an insecure client for non-production environments.
+func buildNodeClient(cfg *controller.Config, logger *slog.Logger) (*controller.NodeClient, error) {
+	if tlsCAFile := os.Getenv("TLS_CA_FILE"); tlsCAFile != "" {
+		client, err := controller.NewNodeClient(tlsCAFile, logger)
+		if err != nil {
+			return nil, fmt.Errorf("creating secure node client (tls_ca_file=%s): %w", tlsCAFile, err)
+		}
+		logger.Info("Configured secure node client", "tls_ca_file", tlsCAFile)
+		return client, nil
 	}
 
-	// Start background schedulers (backup scheduler)
-	server.StartSchedulers(ctx)
+	if cfg.Environment == "production" {
+		return nil, fmt.Errorf("TLS_CA_FILE must be set in production; refusing to start with insecure node client")
+	}
 
-	// Start HTTP server in a goroutine
-	serverErr := make(chan error, 1)
-	go func() {
-		if err := server.Start(ctx); err != nil {
-			serverErr <- err
-		}
-	}()
+	logger.Warn("TLS_CA_FILE is not set, using insecure node client")
+	return controller.InsecureNodeClient(logger), nil
+}
 
-	logger.Info("VirtueStack Controller started",
-		"address", cfg.ListenAddr,
-		"workers", defaultNumWorkers,
-	)
-
-	// Wait for shutdown signal or server error
+// runShutdown blocks until a SIGINT/SIGTERM is received or the server reports
+// an error, then performs a graceful shutdown within shutdownTimeout.
+func runShutdown(logger *slog.Logger, serverErr <-chan error, worker *tasks.Worker, server *controller.Server) {
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -152,20 +193,15 @@ func main() {
 		logger.Error("Server error", "error", err)
 	}
 
-	// Initiate graceful shutdown
 	logger.Info("Initiating graceful shutdown")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
-	// Stop task worker
 	worker.Stop()
 
-	// Stop HTTP server
 	if err := server.Stop(shutdownCtx); err != nil {
 		logger.Error("Error stopping HTTP server", "error", err)
 	}
-
-	logger.Info("VirtueStack Controller stopped")
 }
 
 // connectDatabase creates a connection pool to PostgreSQL.
@@ -202,7 +238,7 @@ func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStrea
 	nc, err := nats.Connect(natsURL,
 		nats.Name("VirtueStack-Controller"),
 		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(10),
+		nats.MaxReconnects(-1),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
 				logger.Warn("NATS disconnected", "error", err)

@@ -64,8 +64,20 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// Generate console token
 	// In a production system, this would call the node agent via gRPC
 	// to generate a ticket for the VNC websocket proxy
-	token := generateConsoleToken(vm.ID, customerID)
+	token, err := generateConsoleToken(vm.ID, customerID)
+	if err != nil {
+		h.logger.Error("failed to generate console token",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Internal server error")
+		return
+	}
 	expiresAt := time.Now().Add(ConsoleTokenDuration)
+
+	// Store the token so the WebSocket handler can validate and invalidate it on use.
+	h.tokenStore.Store(token, vm.ID, customerID, ConsoleTokenDuration)
 
 	// Construct the NoVNC URL
 	// In production, this would include the actual websocket proxy URL
@@ -128,8 +140,20 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	}
 
 	// Generate serial console token
-	token := generateConsoleToken(vm.ID, customerID)
+	token, err := generateConsoleToken(vm.ID, customerID)
+	if err != nil {
+		h.logger.Error("failed to generate serial console token",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Internal server error")
+		return
+	}
 	expiresAt := time.Now().Add(ConsoleTokenDuration)
+
+	// Store the token so the WebSocket handler can validate and invalidate it on use.
+	h.tokenStore.Store(token, vm.ID, customerID, ConsoleTokenDuration)
 
 	// Construct the serial console URL
 	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
@@ -152,10 +176,11 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 
 // generateConsoleToken generates a secure token for console access.
 // In production, this would integrate with the node agent's ticketing system.
-func generateConsoleToken(vmID, customerID string) string {
+// Returns an error if the system's cryptographic random source is unavailable.
+func generateConsoleToken(vmID, customerID string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return uuid.New().String()
+		return "", fmt.Errorf("crypto/rand unavailable: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

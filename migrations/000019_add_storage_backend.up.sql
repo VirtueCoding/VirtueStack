@@ -27,7 +27,7 @@ BEGIN
 END $$;
 
 -- Add index on storage_backend for efficient filtering
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_plans_storage_backend 
+CREATE INDEX IF NOT EXISTS idx_plans_storage_backend
 ON plans(storage_backend);
 
 -- Add comment for documentation
@@ -59,7 +59,7 @@ BEGIN
 END $$;
 
 -- Add index on storage_backend
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vms_storage_backend 
+CREATE INDEX IF NOT EXISTS idx_vms_storage_backend
 ON vms(storage_backend);
 
 -- Add comments

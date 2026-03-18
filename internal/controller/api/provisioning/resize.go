@@ -17,13 +17,11 @@ import (
 func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 	vmID := c.Param("id")
 
-	// Validate UUID format
 	if _, err := uuid.Parse(vmID); err != nil {
 		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
-	// Parse request body
 	var req ResizeRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
@@ -40,18 +38,20 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 		return
 	}
 
-	// Get the VM
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", err.Error())
+		h.logger.Error("failed to get VM for resize",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
-	// Check if VM is already deleted
 	if vm.IsDeleted() {
 		respondWithError(c, http.StatusGone, "VM_DELETED", "VM has been deleted")
 		return
@@ -63,7 +63,7 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 		return
 	}
 
-	// Use current values for unspecified parameters
+	// Unspecified fields keep their current values so partial resize is safe.
 	newVCPU := vm.VCPU
 	newMemoryMB := vm.MemoryMB
 	newDiskGB := vm.DiskGB
@@ -85,7 +85,7 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 		return
 	}
 
-	// Perform resize (admin=true to bypass plan limits)
+	// admin=true bypasses per-plan limits; WHMCS manages billing separately.
 	taskID, err := h.vmService.ResizeVM(c.Request.Context(), vmID, vm.CustomerID, newVCPU, newMemoryMB, newDiskGB, true)
 	if err != nil {
 		h.logger.Error("failed to resize VM",
@@ -95,7 +95,7 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 			"disk_gb", newDiskGB,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RESIZE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "RESIZE_FAILED", "Internal server error")
 		return
 	}
 

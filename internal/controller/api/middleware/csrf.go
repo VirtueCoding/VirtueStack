@@ -20,6 +20,11 @@ const (
 
 	// csrfTokenLength is the length of the CSRF token in bytes.
 	csrfTokenLength = 32
+
+	// defaultCSRFMaxAge is the CSRF cookie lifetime in seconds (24 hours).
+	// 24 hours balances security (limits token reuse window) with usability
+	// (avoids requiring users to refresh the page within a short session).
+	defaultCSRFMaxAge = 86400
 )
 
 // CSRFConfig holds configuration for CSRF protection.
@@ -49,7 +54,7 @@ func DefaultCSRFConfig() CSRFConfig {
 		CookieName: defaultCSRFCookieName,
 		HeaderName: defaultCSRFHeaderName,
 		Secure:     true,
-		MaxAge:     86400, // 24 hours
+		MaxAge:     defaultCSRFMaxAge,
 		CookiePath: "/",
 	}
 }
@@ -74,7 +79,7 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 		config.HeaderName = defaultCSRFHeaderName
 	}
 	if config.MaxAge == 0 {
-		config.MaxAge = 86400
+		config.MaxAge = defaultCSRFMaxAge
 	}
 	if config.CookiePath == "" {
 		config.CookiePath = "/"
@@ -88,22 +93,24 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 			// Generate new token for GET requests
 			token, err := generateToken()
 			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"error": "Failed to generate CSRF token",
+				c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{
+					Error: ErrorDetail{Code: "CSRF_TOKEN_ERROR", Message: "Failed to generate CSRF token"},
 				})
 				return
 			}
 
-			// Set HttpOnly cookie
-			c.SetCookie(
-				config.CookieName,
-				token,
-				config.MaxAge,
-				config.CookiePath,
-				config.CookieDomain,
-				config.Secure,
-				true, // HttpOnly
-			)
+			// Set cookie with HttpOnly=false so JavaScript can read it for the double-submit pattern.
+			// The CSRF token is not secret; its security relies on Same-Origin Policy.
+			http.SetCookie(c.Writer, &http.Cookie{
+				Name:     config.CookieName,
+				Value:    token,
+				Path:     config.CookiePath,
+				Domain:   config.CookieDomain,
+				MaxAge:   config.MaxAge,
+				Secure:   config.Secure,
+				HttpOnly: false,
+				SameSite: http.SameSiteStrictMode,
+			})
 
 			// Set in header for SPA consumption
 			c.Header(config.HeaderName, token)
@@ -118,16 +125,16 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 
 		// Reject if cookie is missing
 		if cookieErr != nil {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "CSRF cookie missing",
+			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{
+				Error: ErrorDetail{Code: "CSRF_COOKIE_MISSING", Message: "CSRF cookie missing"},
 			})
 			return
 		}
 
 		// Reject if header is missing
 		if headerToken == "" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "CSRF token header missing",
+			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{
+				Error: ErrorDetail{Code: "CSRF_HEADER_MISSING", Message: "CSRF token header missing"},
 			})
 			return
 		}
@@ -136,8 +143,8 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 		cookieValid := subtle.ConstantTimeCompare([]byte(cookieToken), []byte(headerToken)) == 1
 
 		if !cookieValid {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "CSRF token mismatch",
+			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{
+				Error: ErrorDetail{Code: "CSRF_TOKEN_MISMATCH", Message: "CSRF token mismatch"},
 			})
 			return
 		}
@@ -145,22 +152,24 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 		// Token is valid, regenerate for this request
 		token, err := generateToken()
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Failed to generate CSRF token",
+			c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{
+				Error: ErrorDetail{Code: "CSRF_TOKEN_ERROR", Message: "Failed to generate CSRF token"},
 			})
 			return
 		}
 
-		// Set new HttpOnly cookie
-		c.SetCookie(
-			config.CookieName,
-			token,
-			config.MaxAge,
-			config.CookiePath,
-			config.CookieDomain,
-			config.Secure,
-			true, // HttpOnly
-		)
+		// Set new cookie with HttpOnly=false so JavaScript can read it for the double-submit pattern.
+		// The CSRF token is not secret; its security relies on Same-Origin Policy.
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     config.CookieName,
+			Value:    token,
+			Path:     config.CookiePath,
+			Domain:   config.CookieDomain,
+			MaxAge:   config.MaxAge,
+			Secure:   config.Secure,
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
+		})
 
 		// Set new token in header for subsequent requests
 		c.Header(config.HeaderName, token)

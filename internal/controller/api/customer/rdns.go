@@ -1,7 +1,6 @@
 package customer
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -67,6 +66,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ips,
+		Meta: models.NewPaginationMeta(1, len(ips), len(ips)),
 	})
 }
 
@@ -235,23 +235,9 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 		}
 	}
 
-	// Write audit log
-	if h.auditRepo != nil {
-		changes, _ := json.Marshal(map[string]interface{}{"rdns_hostname": req.Hostname})
-		correlationID := middleware.GetCorrelationID(c)
-		clientIP := c.ClientIP()
-		_ = h.auditRepo.Append(c.Request.Context(), &models.AuditLog{
-			ActorID:       &customerID,
-			ActorType:     "customer",
-			ActorIP:       &clientIP,
-			Action:        "rdns.update",
-			ResourceType:  "ip_address",
-			ResourceID:    &ipID,
-			Changes:       changes,
-			CorrelationID: &correlationID,
-			Success:       true,
-		})
-	}
+	h.logAudit(c, "rdns.update", "ip_address", ipID, map[string]any{
+		"rdns_hostname": req.Hostname,
+	}, true)
 
 	h.logger.Info("rDNS updated",
 		"ip_id", ipID,
@@ -351,21 +337,7 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 		}
 	}
 
-	// Write audit log
-	if h.auditRepo != nil {
-		correlationID := middleware.GetCorrelationID(c)
-		clientIP := c.ClientIP()
-		_ = h.auditRepo.Append(c.Request.Context(), &models.AuditLog{
-			ActorID:       &customerID,
-			ActorType:     "customer",
-			ActorIP:       &clientIP,
-			Action:        "rdns.delete",
-			ResourceType:  "ip_address",
-			ResourceID:    &ipID,
-			CorrelationID: &correlationID,
-			Success:       true,
-		})
-	}
+	h.logAudit(c, "rdns.delete", "ip_address", ipID, nil, true)
 
 	h.logger.Info("rDNS deleted",
 		"ip_id", ipID,

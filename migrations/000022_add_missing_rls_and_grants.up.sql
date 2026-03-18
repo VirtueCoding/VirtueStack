@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_notification_preferences ON notification_preferences FOR ALL TO app_customer
     USING (customer_id = current_setting('app.current_customer_id')::UUID);

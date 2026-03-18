@@ -7,6 +7,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,7 +22,7 @@ type Verify2FARequest struct {
 }
 
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" validate:"required,min=1"`
 }
 
 type ChangePasswordRequest struct {
@@ -55,7 +56,7 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	tokens, refreshToken, err := h.authService.Login(c.Request.Context(), req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
 		h.logger.Warn("customer login failed",
-			"email", req.Email,
+			"email", util.MaskEmail(req.Email),
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
@@ -64,7 +65,7 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -82,7 +83,7 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	}
 
 	h.logger.Info("customer login successful",
-		"email", req.Email,
+		"email", util.MaskEmail(req.Email),
 		"requires_2fa", tokens.Requires2FA,
 		"correlation_id", middleware.GetCorrelationID(c))
 
@@ -114,7 +115,8 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", err.Error())
+		h.logger.Error("2FA verification internal error", "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -160,7 +162,7 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
 		return
 	}
 
@@ -184,8 +186,15 @@ func (h *CustomerHandler) Logout(c *gin.Context) {
 		if err == nil {
 			userID := middleware.GetUserID(c)
 			if session.UserID == userID {
-				_ = h.authService.Logout(c.Request.Context(), session.ID)
-				h.logger.Info("customer logged out",
+				// Error intentionally ignored: logout clears cookies regardless of session
+			// invalidation failure so the client is always logged out locally.
+			if logoutErr := h.authService.Logout(c.Request.Context(), session.ID); logoutErr != nil {
+				h.logger.Warn("failed to invalidate session on logout",
+					"session_id", session.ID,
+					"error", logoutErr,
+					"correlation_id", middleware.GetCorrelationID(c))
+			}
+			h.logger.Info("customer logged out",
 					"user_id", userID,
 					"session_id", session.ID,
 					"correlation_id", middleware.GetCorrelationID(c))
@@ -254,26 +263,11 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_CHANGE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "PASSWORD_CHANGE_FAILED", "Internal server error")
 		return
 	}
 
-	if h.auditRepo != nil {
-		audit := &models.AuditLog{
-			ActorID:      &userID,
-			ActorType:    models.AuditActorCustomer,
-			Action:       "password.change",
-			ResourceType: "user",
-			ResourceID:   &userID,
-			Success:      true,
-		}
-		if err := h.auditRepo.Append(c.Request.Context(), audit); err != nil {
-			h.logger.Warn("failed to write audit log for password change",
-				"user_id", userID,
-				"error", err,
-				"correlation_id", middleware.GetCorrelationID(c))
-		}
-	}
+	h.logAudit(c, "password.change", "user", userID, nil, true)
 
 	h.logger.Info("customer password changed",
 		"user_id", userID,

@@ -6,6 +6,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -46,7 +47,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	tokens, err := h.authService.AdminLogin(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		h.logger.Warn("admin login failed",
-			"email", req.Email,
+			"email", util.MaskEmail(req.Email),
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
@@ -55,7 +56,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -70,7 +71,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	}
 
 	h.logger.Info("admin login successful",
-		"email", req.Email,
+		"email", util.MaskEmail(req.Email),
 		"requires_2fa", tokens.Requires2FA,
 		"correlation_id", middleware.GetCorrelationID(c))
 
@@ -102,7 +103,7 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -148,7 +149,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
 		return
 	}
 

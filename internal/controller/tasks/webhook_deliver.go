@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -28,8 +30,8 @@ var retryIntervals = []time.Duration{
 	2 * time.Hour,
 }
 
-// MaxConsecutiveFailures is the threshold for auto-disabling a webhook.
-const MaxConsecutiveFailures = 50
+// MaxConsecutiveFailures aliases repository.WebhookMaxFailCount for use within task handlers.
+const MaxConsecutiveFailures = repository.WebhookMaxFailCount
 
 // WebhookDeliveryPayload represents the payload for webhook.deliver tasks.
 type WebhookDeliveryPayload struct {
@@ -106,39 +108,62 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 	}
 
 	// Check if webhook is still active
-	if !webhook.Active {
+	if !webhook.IsActive {
 		logger.Warn("webhook is disabled, skipping delivery")
 		_ = deps.WebhookRepo.MarkDeliveryFailed(ctx, delivery.ID, "webhook disabled")
 		return nil
 	}
 
-	// Perform the HTTP delivery
+	// Perform the HTTP delivery attempt, update records, and handle auto-disable.
+	// The success/failure outcome is logged inside executeDeliveryAttempt.
+	executeDeliveryAttempt(ctx, deps, webhook, delivery, logger)
+
+	return nil
+}
+
+// executeDeliveryAttempt performs a single delivery attempt for the given
+// webhook/delivery pair, then updates the delivery record and webhook status in
+// the database. On failure it increments the webhook's fail counter and
+// auto-disables the webhook if MaxConsecutiveFailures is reached.
+//
+// It is extracted from handleWebhookDeliver and ProcessPendingDeliveries to
+// eliminate the duplicate retry logic that previously existed in both callers.
+//
+// Returns true if the delivery was successful, false otherwise.
+func executeDeliveryAttempt(
+	ctx context.Context,
+	deps *WebhookDeliveryDeps,
+	webhook *models.CustomerWebhook,
+	delivery *models.WebhookDelivery,
+	logger *slog.Logger,
+) bool {
 	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, logger, deps.EncryptionKey)
 
-	// Calculate next retry time if failed
+	// Calculate next retry time if failed.
 	var nextRetryAt *time.Time
 	if !success && delivery.AttemptCount+1 < delivery.MaxAttempts {
 		nextRetry := calculateNextRetry(delivery.AttemptCount)
 		nextRetryAt = &nextRetry
 	}
 
-	// Update delivery record
+	// Persist delivery outcome.
 	if err := deps.WebhookRepo.UpdateDeliveryAttempt(ctx, delivery.ID, success, responseStatus, responseBody, errMsg, nextRetryAt); err != nil {
-		logger.Error("failed to update delivery record", "error", err)
+		logger.Error("failed to update delivery record", "delivery_id", delivery.ID, "error", err)
 	}
 
-	// Update webhook delivery status
+	// Update aggregate delivery status on the parent webhook.
 	if err := deps.WebhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, success); err != nil {
-		logger.Error("failed to update webhook delivery status", "error", err)
+		logger.Error("failed to update webhook delivery status", "webhook_id", webhook.ID, "error", err)
 	}
 
-	// Log result
 	if success {
 		logger.Info("webhook delivered successfully",
+			"delivery_id", delivery.ID,
 			"attempt_count", delivery.AttemptCount+1,
 			"response_status", responseStatus)
 	} else {
 		logger.Warn("webhook delivery failed",
+			"delivery_id", delivery.ID,
 			"attempt_count", delivery.AttemptCount+1,
 			"error", errMsg,
 			"next_retry_at", nextRetryAt)
@@ -157,7 +182,6 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 					"url", webhook.URL,
 					"fail_count", newFailCount)
 
-				// Notify via notification service if available
 				if deps.OnWebhookDisabled != nil {
 					deps.OnWebhookDisabled(webhook.CustomerID, webhook.ID, webhook.URL, newFailCount)
 				}
@@ -165,12 +189,34 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 		}
 	}
 
-	return nil
+	return success
 }
 
 // deliverWebhook performs the actual HTTP delivery of a webhook.
 // Returns success status, HTTP response code, response body, and error message.
-func deliverWebhook(ctx context.Context, client *http.Client, webhook *repository.Webhook, delivery *repository.WebhookDelivery, logger *slog.Logger, encryptionKey string) (bool, int, string, string) {
+func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.CustomerWebhook, delivery *models.WebhookDelivery, logger *slog.Logger, encryptionKey string) (bool, int, string, string) {
+	// Resolve and validate the destination to prevent SSRF attacks.
+	parsedDest, err := url.Parse(webhook.URL)
+	if err != nil {
+		return false, 0, "", fmt.Sprintf("parsing webhook URL: %s", err.Error())
+	}
+	addrs, err := net.LookupHost(parsedDest.Hostname())
+	if err != nil {
+		return false, 0, "", fmt.Sprintf("resolving webhook hostname: %s", err.Error())
+	}
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if isPrivateIPDeliver(ip) {
+			logger.Warn("webhook delivery blocked: destination resolves to private IP",
+				"webhook_id", webhook.ID,
+				"hostname", parsedDest.Hostname())
+			return false, 0, "", "webhook URL resolves to private/internal IP address"
+		}
+	}
+
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, "POST", webhook.URL, bytes.NewReader(delivery.Payload))
 	if err != nil {
@@ -252,7 +298,7 @@ func ProcessPendingDeliveries(ctx context.Context, deps *WebhookDeliveryDeps, ba
 	}
 
 	if len(deliveries) == 0 {
-		logger.Debug("no pending deliveries to process")
+		logger.Info("no pending deliveries to process")
 		return nil
 	}
 
@@ -274,33 +320,14 @@ func ProcessPendingDeliveries(ctx context.Context, deps *WebhookDeliveryDeps, ba
 		}
 
 		// Skip if webhook is disabled
-		if !webhook.Active {
+		if !webhook.IsActive {
 			_ = deps.WebhookRepo.MarkDeliveryFailed(ctx, delivery.ID, "webhook disabled")
 			failCount++
 			continue
 		}
 
-		// Perform delivery
-		success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, &delivery, logger, deps.EncryptionKey)
-
-		// Calculate next retry time if failed
-		var nextRetryAt *time.Time
-		if !success && delivery.AttemptCount+1 < delivery.MaxAttempts {
-			nextRetry := calculateNextRetry(delivery.AttemptCount)
-			nextRetryAt = &nextRetry
-		}
-
-		// Update delivery record
-		if err := deps.WebhookRepo.UpdateDeliveryAttempt(ctx, delivery.ID, success, responseStatus, responseBody, errMsg, nextRetryAt); err != nil {
-			logger.Error("failed to update delivery record", "delivery_id", delivery.ID, "error", err)
-		}
-
-		// Update webhook status
-		if err := deps.WebhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, success); err != nil {
-			logger.Error("failed to update webhook delivery status", "webhook_id", webhook.ID, "error", err)
-		}
-
-		if success {
+		// Perform delivery attempt, update records, and handle auto-disable.
+		if executeDeliveryAttempt(ctx, deps, webhook, &delivery, logger) {
 			successCount++
 		} else {
 			failCount++
@@ -324,5 +351,38 @@ func DefaultHTTPClient() *http.Client {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("webhook delivery does not follow redirects")
+		},
 	}
+}
+
+// isPrivateIPDeliver checks if an IP address is in a private/reserved range
+// to prevent SSRF attacks during webhook delivery.
+func isPrivateIPDeliver(ip net.IP) bool {
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16", // link-local / cloud metadata
+		"100.64.0.0/10",  // CGNAT
+		"::1/128",
+		"fc00::/7",  // IPv6 private
+		"fe80::/10", // IPv6 link-local
+	}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	// Also block the metadata IP explicitly
+	metadataIPs := []string{"169.254.169.254", "fd00:ec2::254"}
+	for _, mip := range metadataIPs {
+		if ip.Equal(net.ParseIP(mip)) {
+			return true
+		}
+	}
+	return false
 }

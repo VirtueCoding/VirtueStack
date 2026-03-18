@@ -103,6 +103,9 @@ func (r *CustomerAPIKeyRepository) GetByHash(ctx context.Context, keyHash string
 }
 
 // ListByCustomer returns all API keys for a customer, optionally including revoked keys.
+// Pagination is intentionally omitted: the per-customer API key count is bounded
+// by application policy (typically ≤20 keys per customer), so an unbounded query
+// is safe and simplifies the caller.
 func (r *CustomerAPIKeyRepository) ListByCustomer(ctx context.Context, customerID string, includeRevoked bool) ([]models.CustomerAPIKey, error) {
 	q := `SELECT ` + customerAPIKeySelectCols + ` FROM customer_api_keys WHERE customer_id = $1`
 	if !includeRevoked {

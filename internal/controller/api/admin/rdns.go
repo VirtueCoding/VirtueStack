@@ -162,10 +162,12 @@ func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 		return
 	}
 
+	pagination := models.ParsePagination(c)
 	filter := repository.IPAddressListFilter{
-		VMID: &vmID,
+		VMID:             &vmID,
+		PaginationParams: pagination,
 	}
-	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	ips, total, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list IPs for VM",
 			"vm_id", vmID,
@@ -177,5 +179,6 @@ func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ips,
+		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
 	})
 }

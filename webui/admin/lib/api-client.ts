@@ -1,5 +1,18 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
+// AdminUser represents the identity of the currently authenticated admin.
+// The id and email fields are populated from sessionStorage (set at login time)
+// and trusted only after server-side session validation via me().
+//
+// TODO: When a dedicated GET /admin/auth/me endpoint is added to the backend,
+// update me() to fetch the user object from the server instead of relying on
+// the cached sessionStorage copy.
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: string;
+}
+
 export interface AuthTokens {
   token_type: string;
   expires_in: number;
@@ -38,10 +51,18 @@ function getCsrfToken(): string | null {
 }
 
 async function fetchCsrfToken(): Promise<void> {
+  // Use a dedicated lightweight endpoint to bootstrap the CSRF cookie.
+  // The server sets the CSRF cookie on any response; we use a cheap endpoint.
   try {
-    await fetch(`${API_BASE_URL}/admin/nodes`, { method: "GET", credentials: "include" });
-  } catch {
-    // CSRF token will be set in cookie
+    await fetch(`${API_BASE_URL}/admin/auth/csrf`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    if (!getCsrfToken()) {
+      console.warn('fetchCsrfToken: CSRF cookie was not set after bootstrap request.');
+    }
+  } catch (err) {
+    console.warn('fetchCsrfToken: Failed to bootstrap CSRF cookie (non-fatal):', err);
   }
 }
 
@@ -89,8 +110,12 @@ export async function apiRequest<T>(
     (options.method || "GET").toUpperCase()
   );
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
   const config: RequestInit = {
     ...options,
+    signal: controller.signal,
     credentials: "include",
     headers: {
       ...buildHeaders(isStateChanging),
@@ -98,19 +123,33 @@ export async function apiRequest<T>(
     },
   };
 
-  const response = await fetch(url, config);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(url, config);
+    } catch (networkErr) {
+      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError";
+      throw new ApiClientError(
+        isAbort ? "Request timed out" : "Network error: unable to reach the server",
+        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
+        0,
+      );
+    }
 
-  if (!response.ok) {
-    const error = await parseError(response);
-    throw error;
+    if (!response.ok) {
+      const error = await parseError(response);
+      throw error;
+    }
+
+    if (response.status === 204) {
+      return undefined as unknown as T;
+    }
+
+    const data = await response.json();
+    return data.data as T;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  if (response.status === 204) {
-    return undefined as unknown as T;
-  }
-
-  const data = await response.json();
-  return data.data as T;
 }
 
 export const apiClient = {
@@ -185,9 +224,40 @@ export const adminAuthApi = {
   async logout(): Promise<void> {
     try {
       await apiClient.post("/admin/auth/logout", {});
-    } catch {
+    } catch (err) {
+      // Logout errors are non-fatal — session may already be invalid.
+      // Log for debugging but don't propagate to prevent UI from hanging.
+      console.warn('Logout request failed (session may already be invalid):', err);
     }
     tokenValidUntil = 0;
+  },
+
+  // me() validates the current session against the server by calling the
+  // refresh endpoint.  If the refresh succeeds the session is live and new
+  // access/refresh cookies are issued.  Returns the user identity sourced
+  // from the cached sessionStorage value (passed as `cachedUser`) because
+  // the refresh endpoint returns token metadata only, not user identity.
+  //
+  // Returns null when the session is invalid (401/403) or no cached user
+  // exists, so callers can clear local state and redirect to login.
+  //
+  // TODO: Replace with a dedicated GET /admin/auth/me endpoint that returns
+  // the authoritative user object from the server, eliminating the reliance
+  // on the sessionStorage-cached AdminUser for identity post-validation.
+  async me(cachedUser: AdminUser | null): Promise<AdminUser | null> {
+    try {
+      // Use the refresh endpoint as a session-validation probe.  A 200 means
+      // the HttpOnly refresh-token cookie is valid; a 401 means it is not.
+      await adminAuthApi.refreshToken();
+      // Session is confirmed live.  Return the cached identity if available.
+      return cachedUser ?? null;
+    } catch (err) {
+      if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
+        return null;
+      }
+      // Re-throw unexpected errors so the caller can handle them.
+      throw err;
+    }
   },
 
   async ensureValidToken(): Promise<boolean> {

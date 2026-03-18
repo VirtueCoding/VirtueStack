@@ -31,13 +31,15 @@ type AuditLog struct {
 }
 
 // AuditLogFilter holds query parameters for filtering and paginating audit log results.
+// StartTime/EndTime filter on the audit_logs.timestamp column using >= and <= respectively.
 type AuditLogFilter struct {
+	PaginationParams
 	ActorID      *string
 	ActorType    *string
 	Action       *string
 	ResourceType *string
 	ResourceID   *string
-	StartDate    *time.Time
-	EndDate      *time.Time
-	PaginationParams
+	Success      *bool
+	StartTime    *time.Time
+	EndTime      *time.Time
 }

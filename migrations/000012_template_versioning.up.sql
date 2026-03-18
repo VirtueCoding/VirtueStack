@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 -- Add version and description columns to templates table for audit trail and metadata
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1 NOT NULL;
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '' NOT NULL;

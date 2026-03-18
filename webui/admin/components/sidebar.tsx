@@ -33,10 +33,11 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const { user, logout } = useAuth();
 
   const userEmail = user?.email || "Admin";
-  const initials = userEmail
-    .split("@")[0]
-    .slice(0, 2)
-    .toUpperCase();
+  const localPart = userEmail.split("@")[0];
+  const initials = localPart?.trim()
+    ? localPart.slice(0, 2).toUpperCase()
+    : "??";
+
 
   return (
     <div

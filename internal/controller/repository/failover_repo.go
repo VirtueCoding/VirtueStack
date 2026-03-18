@@ -81,23 +81,25 @@ func (r *FailoverRepository) GetByNodeID(ctx context.Context, nodeID string) ([]
 }
 
 func (r *FailoverRepository) UpdateStatus(ctx context.Context, id, status string, result any) error {
-	var resultJSON interface{}
+	var resultJSON json.RawMessage
 	if result != nil {
 		b, err := json.Marshal(result)
 		if err != nil {
 			return fmt.Errorf("marshaling failover result for request %s: %w", id, err)
 		}
-		resultJSON = b
+		resultJSON = json.RawMessage(b)
 	}
 
-	var completedAt interface{}
+	var completedAt *time.Time
 	if status == models.FailoverStatusCompleted || status == models.FailoverStatusFailed {
-		completedAt = time.Now()
+		t := time.Now()
+		completedAt = &t
 	}
 
-	var approvedAt interface{}
+	var approvedAt *time.Time
 	if status == models.FailoverStatusApproved {
-		approvedAt = time.Now()
+		t := time.Now()
+		approvedAt = &t
 	}
 
 	const q = `

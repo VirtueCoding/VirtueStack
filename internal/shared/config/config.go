@@ -13,6 +13,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Secret is a string type whose String() and MarshalJSON() methods always return
+// "[REDACTED]" to prevent accidental logging or serialisation of sensitive values.
+// Use Value() to retrieve the underlying secret string.
+type Secret string
+
+// String implements fmt.Stringer and returns a redacted placeholder.
+func (s Secret) String() string { return "[REDACTED]" }
+
+// MarshalJSON returns a JSON-encoded "[REDACTED]" string so the secret is not
+// exposed when a config struct is marshalled to JSON (e.g. for debug endpoints).
+func (s Secret) MarshalJSON() ([]byte, error) { return []byte(`"[REDACTED]"`), nil }
+
+// Value returns the underlying secret string for use in cryptographic operations.
+func (s Secret) Value() string { return string(s) }
+
 // Weak passwords that should be rejected.
 var weakPasswords = map[string]bool{
 	"changeme": true,
@@ -41,6 +56,12 @@ const (
 	DefaultTemplatesDir = "templates"
 	DefaultBackupsDir   = "backups"
 )
+
+// NATSConfig holds NATS connection configuration.
+type NATSConfig struct {
+	URL       string `yaml:"url" env:"NATS_URL"`
+	AuthToken string `yaml:"auth_token" env:"NATS_AUTH_TOKEN"`
+}
 
 // SMTPConfig holds SMTP email configuration.
 type SMTPConfig struct {
@@ -88,9 +109,8 @@ type PowerDNSConfig struct {
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
 	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
-	NatsURL        string   `yaml:"nats_url" env:"NATS_URL"`
-	JWTSecret      string   `yaml:"jwt_secret" env:"JWT_SECRET"`
-	EncryptionKey  string   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
+	JWTSecret      Secret   `yaml:"jwt_secret" env:"JWT_SECRET"`
+	EncryptionKey  Secret   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
 	ListenAddr     string   `yaml:"listen_addr" env:"LISTEN_ADDR"`
 	LogLevel       string   `yaml:"log_level" env:"LOG_LEVEL"`
 	Environment    string   `yaml:"environment" env:"APP_ENV"`
@@ -101,6 +121,9 @@ type ControllerConfig struct {
 	CephSecretUUID string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
 	CephMonitors   []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
 
+	// NATS configuration
+	NATS NATSConfig `yaml:"nats"`
+
 	// Optional configurations
 	SMTP        SMTPConfig        `yaml:"smtp"`
 	Telegram    TelegramConfig    `yaml:"telegram"`
@@ -108,6 +131,7 @@ type ControllerConfig struct {
 	PowerDNS    PowerDNSConfig    `yaml:"powerdns"`
 	FileStorage FileStorageConfig `yaml:"file_storage"`
 }
+
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
 type NodeAgentConfig struct {
@@ -149,7 +173,7 @@ type NodeAgentConfig struct {
 // LoadControllerConfig loads the controller configuration from environment variables
 // and optionally from a YAML file if VS_CONFIG_FILE is set.
 // Environment variables take precedence over YAML values.
-// Required fields: DatabaseURL, NatsURL, JWTSecret, EncryptionKey.
+// Required fields: DatabaseURL, NATS.URL, JWTSecret, EncryptionKey.
 func LoadControllerConfig() (*ControllerConfig, error) {
 	cfg := &ControllerConfig{
 		ListenAddr:     defaultListenAddr,
@@ -224,8 +248,10 @@ func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 	return cfg, nil
 }
 
-// loadYAMLFile reads and unmarshals a YAML configuration file.
-func loadYAMLFile(filename string, cfg any) error {
+// loadYAMLFile reads and unmarshals a YAML configuration file into cfg.
+// The type parameter T constrains callers to the known config struct types,
+// preventing accidental use with arbitrary types.
+func loadYAMLFile[T *ControllerConfig | *NodeAgentConfig](filename string, cfg T) error {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("reading config file %q: %w", filename, err)
@@ -240,18 +266,26 @@ func loadYAMLFile(filename string, cfg any) error {
 
 // applyEnvOverrides applies environment variable values to ControllerConfig.
 // Environment variables take precedence over YAML values.
+// It delegates to focused sub-functions for each configuration domain.
 func applyEnvOverrides(cfg *ControllerConfig) {
+	applyEnvOverridesCore(cfg)
+	applyEnvOverridesNATS(cfg)
+	applyEnvOverridesSMTP(cfg)
+	applyEnvOverridesTelegram(cfg)
+	applyEnvOverridesStorage(cfg)
+}
+
+// applyEnvOverridesCore applies DB, JWT, encryption, listen addr, log level, and
+// other top-level controller environment variables.
+func applyEnvOverridesCore(cfg *ControllerConfig) {
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.DatabaseURL = v
 	}
-	if v := os.Getenv("NATS_URL"); v != "" {
-		cfg.NatsURL = v
-	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
-		cfg.JWTSecret = v
+		cfg.JWTSecret = Secret(v)
 	}
 	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
-		cfg.EncryptionKey = v
+		cfg.EncryptionKey = Secret(v)
 	}
 	if v := os.Getenv("LISTEN_ADDR"); v != "" {
 		cfg.ListenAddr = v
@@ -281,28 +315,6 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 		cfg.CephMonitors = splitAndTrimCSV(v)
 	}
 
-	// SMTP config
-	if v := os.Getenv("SMTP_HOST"); v != "" {
-		cfg.SMTP.Host = v
-	}
-	if v := os.Getenv("SMTP_USER"); v != "" {
-		cfg.SMTP.User = v
-	}
-	if v := os.Getenv("SMTP_PASSWORD"); v != "" {
-		cfg.SMTP.Password = v
-	}
-	if v := os.Getenv("SMTP_FROM"); v != "" {
-		cfg.SMTP.From = v
-	}
-
-	// Telegram config
-	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {
-		cfg.Telegram.BotToken = v
-	}
-	if v := os.Getenv("TELEGRAM_CHAT_ID"); v != "" {
-		cfg.Telegram.ChatID = v
-	}
-
 	// PowerDNS config
 	if v := os.Getenv("POWERDNS_API_URL"); v != "" {
 		cfg.PowerDNS.APIURL = v
@@ -322,19 +334,66 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	if v := os.Getenv("POWERDNS_API_KEY"); v != "" {
 		cfg.PowerDNS.APIKey = v
 	}
+}
 
-	// File storage config
+// applyEnvOverridesNATS applies NATS-related environment variables.
+func applyEnvOverridesNATS(cfg *ControllerConfig) {
+	if v := os.Getenv("NATS_URL"); v != "" {
+		cfg.NATS.URL = v
+	}
+	if v := os.Getenv("NATS_AUTH_TOKEN"); v != "" {
+		cfg.NATS.AuthToken = v
+	}
+}
+
+// applyEnvOverridesSMTP applies all SMTP-related environment variables.
+func applyEnvOverridesSMTP(cfg *ControllerConfig) {
+	if v := os.Getenv("SMTP_HOST"); v != "" {
+		cfg.SMTP.Host = v
+	}
+	if v := os.Getenv("SMTP_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.SMTP.Port = port
+		}
+	}
+	if v := os.Getenv("SMTP_USER"); v != "" {
+		cfg.SMTP.User = v
+	}
+	if v := os.Getenv("SMTP_PASSWORD"); v != "" {
+		cfg.SMTP.Password = v
+	}
+	if v := os.Getenv("SMTP_FROM"); v != "" {
+		cfg.SMTP.From = v
+	}
+}
+
+// applyEnvOverridesTelegram applies all Telegram-related environment variables.
+func applyEnvOverridesTelegram(cfg *ControllerConfig) {
+	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {
+		cfg.Telegram.BotToken = v
+	}
+	if v := os.Getenv("TELEGRAM_CHAT_ID"); v != "" {
+		cfg.Telegram.ChatID = v
+	}
+}
+
+// applyEnvOverridesStorage applies file-storage-related environment variables.
+func applyEnvOverridesStorage(cfg *ControllerConfig) {
 	if v := os.Getenv("TEMPLATE_IMPORT_PATHS"); v != "" {
 		cfg.FileStorage.TemplateImportPaths = splitAndTrimCSV(v)
 	}
 	if v := os.Getenv("BACKUP_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.FileStorage.BackupRetentionDays = n
+		} else {
+			slog.Warn("invalid BACKUP_RETENTION_DAYS value, ignoring", "value", v, "error", err)
 		}
 	}
 	if v := os.Getenv("MAX_TEMPLATE_SIZE_GB"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.FileStorage.MaxTemplateSizeGB = n
+		} else {
+			slog.Warn("invalid MAX_TEMPLATE_SIZE_GB value, ignoring", "value", v, "error", err)
 		}
 	}
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
@@ -344,6 +403,7 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 
 // applyEnvOverridesNodeAgent applies environment variable values to NodeAgentConfig.
 // Environment variables take precedence over YAML values.
+// It delegates storage-related overrides to applyEnvOverridesNodeAgentStorage.
 func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	if v := os.Getenv("CONTROLLER_GRPC_ADDR"); v != "" {
 		cfg.ControllerGRPCAddr = v
@@ -356,21 +416,6 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	}
 	if v := os.Getenv("VNC_HOST"); v != "" {
 		cfg.VNCHost = v
-	}
-	if v := os.Getenv("STORAGE_BACKEND"); v != "" {
-		cfg.StorageBackend = v
-	}
-	if v := os.Getenv("STORAGE_PATH"); v != "" {
-		cfg.StoragePath = v
-	}
-	if v := os.Getenv("CEPH_POOL"); v != "" {
-		cfg.CephPool = v
-	}
-	if v := os.Getenv("CEPH_USER"); v != "" {
-		cfg.CephUser = v
-	}
-	if v := os.Getenv("CEPH_CONF"); v != "" {
-		cfg.CephConf = v
 	}
 	if v := os.Getenv("TLS_CERT_FILE"); v != "" {
 		cfg.TLSCertFile = v
@@ -387,25 +432,48 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	if v := os.Getenv("CLOUDINIT_PATH"); v != "" {
 		cfg.CloudInitPath = v
 	}
-	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
-		cfg.ISOStoragePath = v
-	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 	}
 	if v := os.Getenv("METRICS_ADDR"); v != "" {
 		cfg.MetricsAddr = v
 	}
+
+	applyEnvOverridesNodeAgentStorage(cfg)
+}
+
+// applyEnvOverridesNodeAgentStorage applies storage-related environment variables
+// to NodeAgentConfig (storage backend, paths, and Ceph settings).
+func applyEnvOverridesNodeAgentStorage(cfg *NodeAgentConfig) {
+	if v := os.Getenv("STORAGE_BACKEND"); v != "" {
+		cfg.StorageBackend = v
+	}
+	if v := os.Getenv("STORAGE_PATH"); v != "" {
+		cfg.StoragePath = v
+	}
+	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
+		cfg.ISOStoragePath = v
+	}
+	if v := os.Getenv("CEPH_POOL"); v != "" {
+		cfg.CephPool = v
+	}
+	if v := os.Getenv("CEPH_USER"); v != "" {
+		cfg.CephUser = v
+	}
+	if v := os.Getenv("CEPH_CONF"); v != "" {
+		cfg.CephConf = v
+	}
 }
 
 // validateControllerConfig validates that all required fields are set.
+// For production deployments it additionally calls validateProductionConfig.
 func validateControllerConfig(cfg *ControllerConfig) error {
 	var missing []string
 
 	if cfg.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
-	if cfg.NatsURL == "" {
+	if cfg.NATS.URL == "" {
 		missing = append(missing, "NATS_URL")
 	}
 	if cfg.JWTSecret == "" {
@@ -422,30 +490,51 @@ func validateControllerConfig(cfg *ControllerConfig) error {
 	if len(cfg.JWTSecret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
-	if len(cfg.EncryptionKey) < 32 {
-		return fmt.Errorf("ENCRYPTION_KEY must be at least 32 characters")
-	}
+	// EncryptionKey format and length (must be a valid 64-character hex string encoding
+	// exactly 32 bytes for AES-256) is validated in controller.LoadConfig after hex
+	// decoding. Presence-only check is performed here to keep validation in a single place.
 
 	if cfg.JWTSecret == "dev-jwt-secret-min-32-characters-long" {
 		slog.Warn("using default insecure JWT_SECRET; set a unique JWT_SECRET for production")
 	}
+	if cfg.NATS.AuthToken == natsDevToken {
+		slog.Warn("using default NATS_AUTH_TOKEN 'nats-dev-token'; set a strong token for production")
+	}
 
 	if strings.EqualFold(cfg.Environment, "production") {
-		knownBadDefaults := map[string]bool{
-			"devpassword":                           true,
-			"dev-jwt-secret-min-32-characters-long": true,
-			"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": true,
+		if err := validateProductionConfig(cfg); err != nil {
+			return err
 		}
+	}
 
-		if knownBadDefaults[cfg.JWTSecret] {
-			return fmt.Errorf("JWT_SECRET must not use a known insecure default in production")
-		}
-		if knownBadDefaults[cfg.EncryptionKey] {
-			return fmt.Errorf("ENCRYPTION_KEY must not use a known insecure default in production")
-		}
-		if strings.Contains(cfg.DatabaseURL, "devpassword") {
-			return fmt.Errorf("DATABASE_URL contains a known insecure default password; use a strong password in production")
-		}
+	return nil
+}
+
+// natsDevToken is the hardcoded default NATS auth token used in development.
+// Its use in production is rejected by validateProductionConfig.
+const natsDevToken = "nats-dev-token"
+
+// validateProductionConfig performs additional validation that is only enforced
+// when the application is running in production mode. It rejects known-insecure
+// default values for secrets and database credentials.
+func validateProductionConfig(cfg *ControllerConfig) error {
+	knownBadDefaults := map[string]bool{
+		"devpassword":                           true,
+		"dev-jwt-secret-min-32-characters-long": true,
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": true,
+	}
+
+	if knownBadDefaults[cfg.JWTSecret.Value()] {
+		return fmt.Errorf("JWT_SECRET must not use a known insecure default in production")
+	}
+	if knownBadDefaults[cfg.EncryptionKey.Value()] {
+		return fmt.Errorf("ENCRYPTION_KEY must not use a known insecure default in production")
+	}
+	if strings.Contains(cfg.DatabaseURL, "devpassword") {
+		return fmt.Errorf("DATABASE_URL contains a known insecure default password; use a strong password in production")
+	}
+	if cfg.NATS.AuthToken == natsDevToken {
+		return fmt.Errorf("NATS_AUTH_TOKEN must not use the default development token in production; set a strong NATS_AUTH_TOKEN")
 	}
 
 	return nil

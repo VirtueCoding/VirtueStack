@@ -4,12 +4,14 @@
 
 BEGIN;
 
+SET lock_timeout = '5s';
+
 -- ============================================================================
 -- BANDWIDTH USAGE TABLE
 -- Tracks monthly bandwidth consumption per VM
 -- ============================================================================
 
-CREATE TABLE bandwidth_usage (
+CREATE TABLE IF NOT EXISTS bandwidth_usage (
     vm_id UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
     year INTEGER NOT NULL,
     month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
@@ -26,16 +28,16 @@ CREATE TABLE bandwidth_usage (
 );
 
 -- Index for querying usage by year/month (covers current month lookups)
-CREATE INDEX idx_bandwidth_usage_year_month 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_usage_year_month
     ON bandwidth_usage(year, month);
 
 -- Index for throttled VMs
-CREATE INDEX idx_bandwidth_usage_throttled 
-    ON bandwidth_usage(vm_id) 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_usage_throttled
+    ON bandwidth_usage(vm_id)
     WHERE throttled = TRUE;
 
 -- Index for VM lookup
-CREATE INDEX idx_bandwidth_usage_vm 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_usage_vm
     ON bandwidth_usage(vm_id, year DESC, month DESC);
 
 -- ============================================================================
@@ -43,7 +45,7 @@ CREATE INDEX idx_bandwidth_usage_vm
 -- Tracks currently throttled VMs (for quick lookup)
 -- ============================================================================
 
-CREATE TABLE bandwidth_throttle (
+CREATE TABLE IF NOT EXISTS bandwidth_throttle (
     vm_id UUID PRIMARY KEY REFERENCES vms(id) ON DELETE CASCADE,
     throttled_since TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     throttle_until TIMESTAMPTZ,  -- NULL means until month end
@@ -57,8 +59,8 @@ CREATE TABLE bandwidth_throttle (
 );
 
 -- Index for throttle cleanup (finding expired throttles)
-CREATE INDEX idx_bandwidth_throttle_until 
-    ON bandwidth_throttle(throttle_until) 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_throttle_until
+    ON bandwidth_throttle(throttle_until)
     WHERE throttle_until IS NOT NULL;
 
 -- ============================================================================
@@ -66,7 +68,7 @@ CREATE INDEX idx_bandwidth_throttle_until
 -- Periodic snapshots for detailed tracking (optional, for analytics)
 -- ============================================================================
 
-CREATE TABLE bandwidth_snapshots (
+CREATE TABLE IF NOT EXISTS bandwidth_snapshots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     vm_id UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
     year INTEGER NOT NULL,
@@ -80,12 +82,12 @@ CREATE TABLE bandwidth_snapshots (
 );
 
 -- Index for querying snapshots by VM and time
-CREATE INDEX idx_bandwidth_snapshots_lookup 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_snapshots_lookup
     ON bandwidth_snapshots(vm_id, year DESC, month DESC, day DESC, hour DESC);
 
 -- Partial index for daily snapshots only
-CREATE INDEX idx_bandwidth_snapshots_daily 
-    ON bandwidth_snapshots(vm_id, year DESC, month DESC, day DESC) 
+CREATE INDEX IF NOT EXISTS idx_bandwidth_snapshots_daily
+    ON bandwidth_snapshots(vm_id, year DESC, month DESC, day DESC)
     WHERE snapshot_type = 'daily';
 
 -- ============================================================================
@@ -101,12 +103,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER bandwidth_usage_updated_at
+CREATE OR REPLACE TRIGGER bandwidth_usage_updated_at
     BEFORE UPDATE ON bandwidth_usage
     FOR EACH ROW
     EXECUTE FUNCTION update_bandwidth_updated_at();
 
-CREATE TRIGGER bandwidth_throttle_updated_at
+CREATE OR REPLACE TRIGGER bandwidth_throttle_updated_at
     BEFORE UPDATE ON bandwidth_throttle
     FOR EACH ROW
     EXECUTE FUNCTION update_bandwidth_updated_at();
@@ -116,7 +118,7 @@ CREATE TRIGGER bandwidth_throttle_updated_at
 -- ============================================================================
 
 -- Current month bandwidth usage view
-CREATE VIEW v_bandwidth_current AS
+CREATE OR REPLACE VIEW v_bandwidth_current AS
 SELECT 
     bu.vm_id,
     v.hostname,
@@ -143,7 +145,7 @@ WHERE bu.year = EXTRACT(YEAR FROM CURRENT_DATE)
 AND bu.month = EXTRACT(MONTH FROM CURRENT_DATE);
 
 -- Throttled VMs view
-CREATE VIEW v_bandwidth_throttled AS
+CREATE OR REPLACE VIEW v_bandwidth_throttled AS
 SELECT 
     bt.vm_id,
     v.hostname,
@@ -169,27 +171,47 @@ ALTER TABLE bandwidth_throttle ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bandwidth_snapshots ENABLE ROW LEVEL SECURITY;
 
 -- App user can see all (for internal operations)
-CREATE POLICY bandwidth_usage_app_all ON bandwidth_usage
-    FOR ALL TO app_user USING (true);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'bandwidth_usage' AND policyname = 'bandwidth_usage_app_all') THEN
+        CREATE POLICY bandwidth_usage_app_all ON bandwidth_usage
+            FOR ALL TO app_user USING (true);
+    END IF;
+END $$;
 
-CREATE POLICY bandwidth_throttle_app_all ON bandwidth_throttle
-    FOR ALL TO app_user USING (true);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'bandwidth_throttle' AND policyname = 'bandwidth_throttle_app_all') THEN
+        CREATE POLICY bandwidth_throttle_app_all ON bandwidth_throttle
+            FOR ALL TO app_user USING (true);
+    END IF;
+END $$;
 
-CREATE POLICY bandwidth_snapshots_app_all ON bandwidth_snapshots
-    FOR ALL TO app_user USING (true);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'bandwidth_snapshots' AND policyname = 'bandwidth_snapshots_app_all') THEN
+        CREATE POLICY bandwidth_snapshots_app_all ON bandwidth_snapshots
+            FOR ALL TO app_user USING (true);
+    END IF;
+END $$;
 
 -- Customer isolation: customers can only see their own VMs' bandwidth
-CREATE POLICY bandwidth_usage_customer_isolation ON bandwidth_usage
-    FOR SELECT TO app_customer
-    USING (vm_id IN (
-        SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID
-    ));
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'bandwidth_usage' AND policyname = 'bandwidth_usage_customer_isolation') THEN
+        CREATE POLICY bandwidth_usage_customer_isolation ON bandwidth_usage
+            FOR SELECT TO app_customer
+            USING (vm_id IN (
+                SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID
+            ));
+    END IF;
+END $$;
 
-CREATE POLICY bandwidth_throttle_customer_isolation ON bandwidth_throttle
-    FOR SELECT TO app_customer
-    USING (vm_id IN (
-        SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID
-    ));
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'bandwidth_throttle' AND policyname = 'bandwidth_throttle_customer_isolation') THEN
+        CREATE POLICY bandwidth_throttle_customer_isolation ON bandwidth_throttle
+            FOR SELECT TO app_customer
+            USING (vm_id IN (
+                SELECT id FROM vms WHERE customer_id = current_setting('app.current_customer_id')::UUID
+            ));
+    END IF;
+END $$;
 
 -- ============================================================================
 -- COMMENTS
@@ -207,5 +229,16 @@ COMMENT ON COLUMN bandwidth_usage.throttled IS 'Whether VM is currently throttle
 COMMENT ON COLUMN bandwidth_throttle.throttled_since IS 'When throttling was applied';
 COMMENT ON COLUMN bandwidth_throttle.throttle_until IS 'When throttling expires (NULL = end of month)';
 COMMENT ON COLUMN bandwidth_throttle.bytes_at_throttle IS 'Total bytes consumed when throttled';
+
+-- ============================================================================
+-- PERMISSIONS
+-- ============================================================================
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON bandwidth_usage TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON bandwidth_throttle TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON bandwidth_snapshots TO app_user;
+
+GRANT SELECT ON bandwidth_usage TO app_customer;
+GRANT SELECT ON bandwidth_throttle TO app_customer;
 
 COMMIT;

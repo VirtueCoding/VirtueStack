@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -28,7 +29,7 @@ func ScanRow[T any](ctx context.Context, db DB, query string, args []any, scanne
 	result, err := scanner(row)
 	if err != nil {
 		var zero T
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return zero, apierrors.ErrNotFound
 		}
 		return zero, err
@@ -82,10 +83,15 @@ func SetCustomerContext(ctx context.Context, tx pgx.Tx, customerID string) error
 	return nil
 }
 
+// ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
+// It is defined in internal/shared/errors and re-exported here for use within
+// the repository package.
+var ErrNoRowsAffected = apierrors.ErrNoRowsAffected
+
 // mapNotFound converts pgx.ErrNoRows to apierrors.ErrNotFound.
 // All other errors are returned as-is.
 func mapNotFound(err error) error {
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return apierrors.ErrNotFound
 	}
 	return err

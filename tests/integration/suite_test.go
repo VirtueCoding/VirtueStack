@@ -438,7 +438,11 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 // CreateTestIP creates a test IP address for a VM.
 func CreateTestIP(ctx context.Context, vmID string) (string, error) {
 	ipID := crypto.GenerateUUID()
-	ipAddress := "192.168.1." + crypto.GenerateRandomDigits(3)
+	ipSuffix, err := crypto.GenerateRandomDigits(3)
+	if err != nil {
+		return "", fmt.Errorf("generating IP suffix: %w", err)
+	}
+	ipAddress := "192.168.1." + ipSuffix
 
 	query := `
 		INSERT INTO ip_addresses (id, vm_id, address, type, is_primary, created_at)

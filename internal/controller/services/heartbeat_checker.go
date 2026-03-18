@@ -14,12 +14,17 @@ const (
 	DefaultHeartbeatTimeout       = 5 * time.Minute
 )
 
+// HeartbeatCheckerConfig holds configuration parameters for the HeartbeatChecker.
 type HeartbeatCheckerConfig struct {
+	// CheckInterval is how often to poll node heartbeats.
 	CheckInterval time.Duration
-	Timeout       time.Duration
-	Enabled       bool
+	// Timeout is the maximum age of a heartbeat before a node is considered degraded.
+	Timeout time.Duration
+	// Enabled controls whether the heartbeat checker runs at all.
+	Enabled bool
 }
 
+// DefaultHeartbeatCheckerConfig returns a HeartbeatCheckerConfig with production-safe defaults.
 func DefaultHeartbeatCheckerConfig() HeartbeatCheckerConfig {
 	return HeartbeatCheckerConfig{
 		CheckInterval: DefaultHeartbeatCheckInterval,
@@ -28,12 +33,15 @@ func DefaultHeartbeatCheckerConfig() HeartbeatCheckerConfig {
 	}
 }
 
+// HeartbeatChecker periodically checks node heartbeats and marks unresponsive
+// nodes as degraded or offline to enable automated failover decisions.
 type HeartbeatChecker struct {
 	nodeRepo *repository.NodeRepository
 	logger   *slog.Logger
 	config   HeartbeatCheckerConfig
 }
 
+// NewHeartbeatChecker creates a HeartbeatChecker with the given node repository, logger, and config.
 func NewHeartbeatChecker(nodeRepo *repository.NodeRepository, logger *slog.Logger, config HeartbeatCheckerConfig) *HeartbeatChecker {
 	return &HeartbeatChecker{
 		nodeRepo: nodeRepo,

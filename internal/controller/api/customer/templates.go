@@ -8,6 +8,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// validOSFamilies is the allowlist of accepted os_family query parameter values.
+var validOSFamilies = map[string]bool{
+	"debian":  true,
+	"ubuntu":  true,
+	"centos":  true,
+	"rocky":   true,
+	"almalinux": true,
+	"fedora":  true,
+	"freebsd": true,
+	"windows": true,
+	"other":   true,
+}
+
 // ListTemplates handles GET /templates - lists all available OS templates.
 // Templates are public and can be viewed by all authenticated customers.
 // This endpoint does not require a specific customer context.
@@ -18,8 +31,12 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 	// Parse pagination
 	pagination := models.ParsePagination(c)
 
-	// Optional OS family filter
+	// Optional OS family filter — validated against allowlist to prevent unbounded values.
 	osFamily := c.Query("os_family")
+	if osFamily != "" && !validOSFamilies[osFamily] {
+		respondWithError(c, http.StatusBadRequest, "INVALID_OS_FAMILY", "Invalid os_family value")
+		return
+	}
 
 	// Get active templates
 	if h.templateService == nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
 
@@ -121,6 +122,7 @@ func (c *NodeAgentGRPCClient) GetNodeMetrics(ctx context.Context, nodeID string)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	// Fetch metrics from node agent
 	metrics, err := c.fetchMetricsFromNode(ctx, conn, nodeID)
@@ -155,6 +157,7 @@ func (c *NodeAgentGRPCClient) PingNode(ctx context.Context, nodeID string) error
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	_, err = client.Ping(ctx, &nodeagentpb.Empty{})
@@ -164,7 +167,14 @@ func (c *NodeAgentGRPCClient) PingNode(ctx context.Context, nodeID string) error
 	return nil
 }
 
-// EvacuateNode evacuates all VMs from a node via gRPC.
+// evacuationConcurrencyLimit is the maximum number of VMs migrated in parallel
+// during node evacuation. Bounded concurrency avoids overwhelming destination
+// nodes and the gRPC connection pool.
+const evacuationConcurrencyLimit = 10
+
+// EvacuateNode evacuates all running VMs from a node with bounded concurrency.
+// Up to evacuationConcurrencyLimit VMs are migrated simultaneously; the rest
+// are queued. The function returns after all migration goroutines finish.
 func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) error {
 	c.logger.Info("starting node evacuation", "node_id", nodeID)
 
@@ -172,11 +182,11 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 	if err != nil {
 		return fmt.Errorf("getting node %s: %w", nodeID, err)
 	}
+	// Silence unused variable warning; node is fetched to confirm existence.
+	_ = node
 
-	if node.Status != models.NodeStatusDraining {
-		if err := c.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusDraining); err != nil {
-			return fmt.Errorf("updating node status to draining: %w", err)
-		}
+	if err := c.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusDraining); err != nil {
+		return fmt.Errorf("updating node status to draining: %w", err)
 	}
 
 	vmFilter := models.VMListFilter{
@@ -197,26 +207,18 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 		return nil
 	}
 
+	// Pre-fetch target nodes once to avoid an N+1 query per VM.
+	targetNodes, _, err := c.nodeRepo.List(ctx, models.NodeListFilter{
+		Status: util.StringPtr(models.NodeStatusOnline),
+	})
+	if err != nil {
+		return fmt.Errorf("listing target nodes for evacuation: %w", err)
+	}
+
 	c.logger.Info("evacuating VMs from node", "node_id", nodeID, "vm_count", len(vms))
 
-	for _, vm := range vms {
-		if vm.Status != models.VMStatusRunning {
-			c.logger.Debug("skipping non-running VM during evacuation",
-				"vm_id", vm.ID,
-				"status", vm.Status)
-			continue
-		}
-
-		targetNodes, _, err := c.nodeRepo.List(ctx, models.NodeListFilter{
-			Status: util.StringPtr(models.NodeStatusOnline),
-		})
-		if err != nil {
-			c.logger.Warn("failed to list target nodes for VM migration",
-				"vm_id", vm.ID,
-				"error", err)
-			continue
-		}
-
+	// evacuateVM tries to place a single VM on any eligible target node.
+	evacuateVM := func(vm models.VM) {
 		for _, targetNode := range targetNodes {
 			if targetNode.ID == nodeID {
 				continue
@@ -248,9 +250,31 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 				"vm_id", vm.ID,
 				"old_node_id", nodeID,
 				"new_node_id", targetNode.ID)
-			break
+			return
 		}
+		c.logger.Warn("no eligible target node found for VM during evacuation", "vm_id", vm.ID)
 	}
+
+	// Use errgroup with a concurrency limit to fan-out VM evacuations.
+	eg, _ := errgroup.WithContext(ctx)
+	eg.SetLimit(evacuationConcurrencyLimit)
+
+	for _, vm := range vms {
+		if vm.Status != models.VMStatusRunning {
+			c.logger.Debug("skipping non-running VM during evacuation",
+				"vm_id", vm.ID,
+				"status", vm.Status)
+			continue
+		}
+		vm := vm // capture loop variable
+		eg.Go(func() error {
+			evacuateVM(vm)
+			return nil // individual VM failures are logged, not propagated
+		})
+	}
+
+	// Wait for all goroutines; errors are intentionally non-fatal per VM.
+	_ = eg.Wait()
 
 	c.logger.Info("node evacuation completed", "node_id", nodeID)
 	return nil
@@ -267,6 +291,7 @@ func (c *NodeAgentGRPCClient) GetNodeResources(ctx context.Context, nodeID strin
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetNodeResources(ctx, &nodeagentpb.Empty{})
@@ -357,6 +382,7 @@ func (c *NodeAgentGRPCClient) StartVM(ctx context.Context, nodeID, vmID string) 
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.StartVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -379,6 +405,7 @@ func (c *NodeAgentGRPCClient) StopVM(ctx context.Context, nodeID, vmID string, t
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.StopVM(ctx, &nodeagentpb.StopVMRequest{
@@ -404,6 +431,7 @@ func (c *NodeAgentGRPCClient) ForceStopVM(ctx context.Context, nodeID, vmID stri
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.ForceStopVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -426,6 +454,7 @@ func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string)
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{VmId: vmID})
@@ -448,6 +477,7 @@ func (c *NodeAgentGRPCClient) ResizeVM(ctx context.Context, nodeID, vmID string,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.ResizeVM(ctx, &nodeagentpb.ResizeVMRequest{
@@ -475,6 +505,7 @@ func (c *NodeAgentGRPCClient) GetVMMetrics(ctx context.Context, nodeID, vmID str
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetVMMetrics(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -495,6 +526,7 @@ func (c *NodeAgentGRPCClient) GetVMStatus(ctx context.Context, nodeID, vmID stri
 	if err != nil {
 		return "", fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetVMStatus(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -620,6 +652,7 @@ func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
@@ -664,6 +697,7 @@ func (c *NodeAgentGRPCClient) CreateSnapshot(ctx context.Context, nodeID, vmID, 
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{VmId: vmID, Name: snapshotName})
@@ -688,6 +722,7 @@ func (c *NodeAgentGRPCClient) DeleteSnapshot(ctx context.Context, nodeID, vmID, 
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
@@ -710,6 +745,7 @@ func (c *NodeAgentGRPCClient) RestoreSnapshot(ctx context.Context, nodeID, vmID,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.RevertSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
@@ -826,6 +862,7 @@ func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GuestFreezeFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -848,6 +885,7 @@ func (c *NodeAgentGRPCClient) GuestThawFilesystems(ctx context.Context, nodeID, 
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GuestThawFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -998,6 +1036,12 @@ func (c *NodeAgentGRPCClient) DeleteQCOWSnapshot(ctx context.Context, nodeID, vm
 	return nil
 }
 
+// CreateQCOWBackup creates an internal QCOW disk snapshot via the node agent.
+// NOTE: The node-agent gRPC API (CreateDiskSnapshot) does not yet expose
+// compression or an explicit backup destination path — the `compress` and
+// `backupPath` parameters are accepted to satisfy the BackupNodeAgentClient
+// interface but are not forwarded to the remote call. Compression and
+// destination-path support require a future gRPC API extension.
 func (c *NodeAgentGRPCClient) CreateQCOWBackup(ctx context.Context, nodeID, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error) {
 	node, err := c.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
@@ -1023,11 +1067,17 @@ func (c *NodeAgentGRPCClient) CreateQCOWBackup(ctx context.Context, nodeID, vmID
 	if !resp.GetSuccess() {
 		return 0, fmt.Errorf("failed to create QCOW backup snapshot for VM %s: %s", vmID, resp.GetErrorMessage())
 	}
-	_ = compress
-	_ = backupPath
+	// compress and backupPath are not forwarded — see function doc for details.
 	return 0, nil
 }
 
+// RestoreQCOWBackup restores a VM from a QCOW backup by preparing the node
+// agent with the source backup file (backupPath). The gRPC PrepareMigratedVM
+// call uses backupPath as the disk source; the `targetPath` parameter is
+// accepted to satisfy the BackupNodeAgentClient interface but is not yet
+// forwarded — the node agent derives the final disk placement from its local
+// storage configuration. Full targetPath support requires a future gRPC API
+// extension.
 func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmID, backupPath, targetPath string) error {
 	node, err := c.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
@@ -1064,7 +1114,7 @@ func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmI
 	if !resp.GetSuccess() {
 		return fmt.Errorf("failed to restore QCOW backup for VM %s: %s", vmID, resp.GetErrorMessage())
 	}
-	_ = targetPath
+	// targetPath is not forwarded — see function doc for details.
 	return nil
 }
 
@@ -1094,7 +1144,7 @@ func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, 
 	return nil
 }
 
-func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (map[string]interface{}, error) {
+func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (*tasks.QCOWDiskInfo, error) {
 	node, err := c.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
@@ -1112,10 +1162,10 @@ func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskP
 		return nil, fmt.Errorf("calling GetNodeResources: %w", err)
 	}
 
-	return map[string]interface{}{
-		"disk_path":     diskPath,
-		"total_disk_gb": resp.GetTotalDiskGb(),
-		"used_disk_gb":  resp.GetUsedDiskGb(),
+	return &tasks.QCOWDiskInfo{
+		DiskPath:    diskPath,
+		TotalDiskGB: uint64(resp.GetTotalDiskGb()),
+		UsedDiskGB:  uint64(resp.GetUsedDiskGb()),
 	}, nil
 }
 

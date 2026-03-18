@@ -54,6 +54,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		if templatePath == "" {
 			return nil, status.Error(codes.InvalidArgument, "template_file_path is required for qcow storage backend")
 		}
+		if err := validatePath(templatePath, h.server.config.StoragePath); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid template_file_path: %v", err)
+		}
 
 		templateMgr, ok := h.server.templateMgr.(*storage.QCOWTemplateManager)
 		if !ok {
@@ -185,6 +188,9 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 			diskPath := req.GetDiskPath()
 			if diskPath == "" {
 				diskPath = fmt.Sprintf("%s/vms/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+			}
+			if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
 			}
 			if err := h.server.storageBackend.Resize(ctx, diskPath, int(req.GetNewDiskGb())); err != nil {
 				return nil, status.Errorf(codes.Internal, "resizing QCOW disk: %v", err)
@@ -973,6 +979,9 @@ func (h *grpcHandler) CreateDiskSnapshot(ctx context.Context, req *nodeagentpb.C
 		if diskPath == "" {
 			diskPath = fmt.Sprintf("%s/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
 		}
+		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
+		}
 
 		if err := h.server.storageBackend.CreateSnapshot(ctx, diskPath, req.GetSnapshotName()); err != nil {
 			return nil, status.Errorf(codes.Internal, "creating QCOW snapshot: %v", err)
@@ -1024,6 +1033,9 @@ func (h *grpcHandler) DeleteDiskSnapshot(ctx context.Context, req *nodeagentpb.D
 		diskPath := req.GetDiskPath()
 		if diskPath == "" {
 			diskPath = fmt.Sprintf("%s/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+		}
+		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
 		}
 
 		if err := h.server.storageBackend.DeleteSnapshot(ctx, diskPath, req.GetSnapshotName()); err != nil {
@@ -1143,6 +1155,9 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	if targetPath == "" {
 		return status.Error(codes.InvalidArgument, "target_disk_path is required")
 	}
+	if err := validatePath(targetPath, h.server.config.StoragePath); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid target_disk_path: %v", err)
+	}
 
 	logger := h.server.logger.With("operation", "receive-disk", "target_path", targetPath)
 	logger.Info("receiving disk transfer")
@@ -1213,6 +1228,9 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 	}
 	if req.GetDiskPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "disk_path is required")
+	}
+	if err := validatePath(req.GetDiskPath(), h.server.config.StoragePath); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
 	}
 
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "prepare-migrated-vm")

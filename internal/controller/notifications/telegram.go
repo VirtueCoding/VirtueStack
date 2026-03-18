@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -110,18 +111,18 @@ func (p *TelegramProvider) Send(ctx context.Context, payload *TelegramPayload) e
 	p.logger.Info("sending telegram notification",
 		"chat_count", len(chatIDs))
 
-	var errors []error
+	var errs []error
 	for _, chatID := range chatIDs {
 		if err := p.sendToChat(ctx, chatID, payload.Message, parseMode); err != nil {
 			p.logger.Error("failed to send telegram message",
 				"chat_id", chatID,
 				"error", err)
-			errors = append(errors, fmt.Errorf("chat %s: %w", chatID, err))
+			errs = append(errs, fmt.Errorf("chat %s: %w", chatID, err))
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("failed to send to %d chats: %v", len(errors), errors[0])
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to send to %d chats: %w", len(errs), errors.Join(errs...))
 	}
 
 	return nil
@@ -246,8 +247,10 @@ func FormatItalic(text string) string {
 }
 
 // FormatCode returns text formatted as inline code in Telegram Markdown.
+// Backticks in the input are stripped because Telegram's Markdown parser treats
+// them as code-fence delimiters; leaving them in would break the formatting.
 func FormatCode(text string) string {
-	return fmt.Sprintf("`%s`", text)
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(text, "`", ""))
 }
 
 // FormatCodeBlock returns text formatted as a code block in Telegram Markdown.

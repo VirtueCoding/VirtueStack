@@ -128,6 +128,7 @@ export default function CustomersPage() {
   };
 
   function getInitials(name: string) {
+    if (!name?.trim()) return "??";
     return name
       .split(" ")
       .map((n) => n[0])

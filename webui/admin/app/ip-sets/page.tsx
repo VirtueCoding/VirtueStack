@@ -59,13 +59,13 @@ interface CreateIPSetRequest {
 
 function mapApiIPSet(raw: Record<string, unknown>): IPSet {
   return {
-    id: raw.id as string,
-    name: raw.name as string,
-    type: (raw.ip_version === 6 ? "ipv6" : "ipv4") as "ipv4" | "ipv6",
-    location: (raw.location as string) || "Unassigned",
-    total_ips: (raw.total_ips as number) || 0,
-    available_ips: (raw.available_ips as number) || 0,
-    cidr: (raw.network as string) || "",
+    id: typeof raw.id === 'string' ? raw.id : '',
+    name: typeof raw.name === 'string' ? raw.name : '',
+    type: raw.ip_version === 6 ? "ipv6" : "ipv4",
+    location: typeof raw.location === 'string' ? raw.location : "Unassigned",
+    total_ips: typeof raw.total_ips === 'number' ? raw.total_ips : 0,
+    available_ips: typeof raw.available_ips === 'number' ? raw.available_ips : 0,
+    cidr: typeof raw.network === 'string' ? raw.network : "",
   };
 }
 

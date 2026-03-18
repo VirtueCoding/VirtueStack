@@ -79,6 +79,7 @@ function getBackupStatusBadgeVariant(
 }
 
 function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = bytes;
   let unitIndex = 0;
@@ -150,7 +151,8 @@ function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string
 export default function VMDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const vmId = params.id as string;
+  const rawId = params.id;
+  const vmId = Array.isArray(rawId) ? rawId[0] : (rawId as string);
   const [vm, setVm] = useState<VM | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);

@@ -15,10 +15,18 @@ import (
 	"github.com/ceph/go-ceph/rbd"
 )
 
+// templateStepTimeout is the per-step timeout applied to long-running template
+// operations (qemu-img convert, rbd import). Large templates can be several GiB
+// so a generous timeout is required, but we still want a bound to avoid hanging
+// indefinitely.
+const templateStepTimeout = 5 * time.Minute
+
 const (
-	// TemplatePool is the Ceph pool for template base images.
+	// TemplatePool is the default Ceph pool for template base images.
+	// Override with the CEPH_TEMPLATE_POOL environment variable.
 	TemplatePool = "vs-images"
-	// VMPool is the Ceph pool for VM disk images.
+	// VMPool is the default Ceph pool for VM disk images.
+	// Override with the CEPH_VM_POOL environment variable (maps to NodeAgentConfig.CephPool).
 	VMPool = "vs-vms"
 	// TemplateImageSuffix is the suffix for template base images.
 	TemplateImageSuffix = "-base"
@@ -236,10 +244,15 @@ func (m *TemplateManager) ListTemplates(ctx context.Context) ([]TemplateInfo, er
 // Helper methods
 
 // convertToRaw converts a qcow2 image to raw format using qemu-img.
+// A per-step timeout (templateStepTimeout) is applied independently of the parent
+// context so that large templates do not stall indefinitely.
 func (m *TemplateManager) convertToRaw(ctx context.Context, sourcePath, rawPath string, logger *slog.Logger) error {
 	logger.Info("converting qcow2 to raw", "source", sourcePath, "dest", rawPath)
 
-	cmd := exec.CommandContext(ctx,
+	stepCtx, cancel := context.WithTimeout(ctx, templateStepTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(stepCtx,
 		"qemu-img",
 		"convert",
 		"-f", "qcow2",
@@ -258,10 +271,15 @@ func (m *TemplateManager) convertToRaw(ctx context.Context, sourcePath, rawPath 
 }
 
 // importRawToRBD imports a raw image file into RBD using the rbd CLI.
+// A per-step timeout (templateStepTimeout) is applied independently of the parent
+// context so that large images do not stall indefinitely.
 func (m *TemplateManager) importRawToRBD(ctx context.Context, rawPath, imageName string, logger *slog.Logger) error {
 	logger.Info("importing raw image to RBD", "path", rawPath, "image", imageName)
 
-	cmd := exec.CommandContext(ctx, "rbd", "import", rawPath, TemplatePool+"/"+imageName)
+	stepCtx, cancel := context.WithTimeout(ctx, templateStepTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(stepCtx, "rbd", "import", rawPath, TemplatePool+"/"+imageName)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("importing image %s: %w (output: %s)", imageName, err, string(out))

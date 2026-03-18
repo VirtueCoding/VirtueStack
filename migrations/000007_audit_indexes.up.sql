@@ -1,5 +1,7 @@
 BEGIN;
 
+SET lock_timeout = '5s';
+
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_type_timestamp
     ON audit_logs(actor_type, timestamp DESC);
 

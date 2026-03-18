@@ -98,6 +98,12 @@ func NewTaskWithCreator(id, taskType string, payload json.RawMessage, createdBy 
 	return task
 }
 
+// TaskPayload is a convenience map for constructing ad-hoc task payloads before
+// they are marshalled into the json.RawMessage stored on Task.Payload.  It is
+// intentionally untyped (map[string]any) because each task type carries a
+// different set of fields; per-task typed structs (e.g. WebhookDeliveryPayload
+// in the tasks package) are used when *reading* payloads back from the queue.
+// This type is only used at the write/publish side to avoid boilerplate.
 type TaskPayload map[string]any
 
 func (p TaskPayload) ToJSON() (json.RawMessage, error) {

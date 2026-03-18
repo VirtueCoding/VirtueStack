@@ -40,7 +40,10 @@ export function SerialConsole({
 
   // Build WebSocket URL
   const getWsUrl = useCallback(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Always use wss:// in production. ws:// only allowed in dev.
+    const protocol = process.env.NEXT_PUBLIC_ALLOW_WS === 'true' ?
+      (window.location.protocol === 'https:' ? 'wss:' : 'ws:') :
+      'wss:';
     const host = window.location.host;
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
     return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}${tokenParam}`;

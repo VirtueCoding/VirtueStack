@@ -35,12 +35,25 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	}
 
 	// Optional status filter
+	validVMStatuses := map[string]bool{
+		"provisioning": true, "running": true, "stopped": true, "suspended": true,
+		"migrating": true, "reinstalling": true, "error": true, "deleted": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validVMStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 
 	// Optional search filter
+	const maxSearchLength = 100
 	if search := c.Query("search"); search != "" {
+		if len(search) > maxSearchLength {
+			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			return
+		}
 		filter.Search = &search
 	}
 
@@ -107,7 +120,7 @@ func (h *CustomerHandler) CreateVM(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -180,7 +193,7 @@ func (h *CustomerHandler) DeleteVM(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 

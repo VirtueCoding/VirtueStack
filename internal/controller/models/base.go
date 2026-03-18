@@ -17,14 +17,16 @@ const (
 
 // PaginationMeta holds pagination metadata for list responses.
 type PaginationMeta struct {
-	Page       int `json:"page"`
-	PerPage    int `json:"per_page"`
-	Total      int `json:"total"`
-	TotalPages int `json:"total_pages"`
+	Page       int  `json:"page"`
+	PerPage    int  `json:"per_page"`
+	Total      int  `json:"total"`
+	TotalPages int  `json:"total_pages"`
+	HasMore    bool `json:"has_more"`
 }
 
 // NewPaginationMeta creates pagination metadata from page, perPage, and total.
-// It calculates the total pages based on the per-page value.
+// It calculates the total pages based on the per-page value and whether more
+// pages exist beyond the current page.
 func NewPaginationMeta(page, perPage, total int) PaginationMeta {
 	totalPages := 0
 	if perPage > 0 {
@@ -36,6 +38,7 @@ func NewPaginationMeta(page, perPage, total int) PaginationMeta {
 		PerPage:    perPage,
 		Total:      total,
 		TotalPages: totalPages,
+		HasMore:    page < totalPages,
 	}
 }
 
@@ -116,11 +119,17 @@ func (s *SoftDelete) IsDeleted() bool {
 }
 
 // Response is the standard API response wrapper for single items.
+// Data is typed as any because this generic envelope must accommodate every
+// concrete resource type (VM, plan, customer, etc.) without duplicating the
+// wrapper struct for each one.  Callers always populate Data with a concrete,
+// JSON-serialisable value before writing the response.
 type Response struct {
 	Data any `json:"data"`
 }
 
 // ListResponse is the standard API response wrapper for paginated lists.
+// Data is typed as any for the same reason as Response.Data: a single
+// generic envelope is shared across all resource list endpoints.
 type ListResponse struct {
 	Data any            `json:"data"`
 	Meta PaginationMeta `json:"meta"`

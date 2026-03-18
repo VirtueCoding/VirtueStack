@@ -55,7 +55,9 @@ const (
 	WebhookEventVMStarted   = "vm.started"
 	WebhookEventVMStopped   = "vm.stopped"
 	WebhookEventVMReinstall = "vm.reinstalled"
+	WebhookEventVMMigrated  = "vm.migrated"
 	WebhookEventBackupDone  = "backup.completed"
+	WebhookEventBackupFail  = "backup.failed"
 )
 
 // BackupSchedule represents a scheduled backup configuration.
@@ -72,14 +74,17 @@ type BackupSchedule struct {
 
 // CustomerWebhook represents a webhook endpoint registered by a customer.
 type CustomerWebhook struct {
-	ID         string    `json:"id" db:"id"`
-	CustomerID string    `json:"customer_id" db:"customer_id"`
-	URL        string    `json:"url" db:"url"`
-	SecretHash string    `json:"-" db:"secret_hash"` // Never expose
-	Events     []string  `json:"events" db:"events"`
-	IsActive   bool      `json:"is_active" db:"is_active"`
-	CreatedAt  time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
+	ID            string     `json:"id" db:"id"`
+	CustomerID    string     `json:"customer_id" db:"customer_id"`
+	URL           string     `json:"url" db:"url"`
+	SecretHash    string     `json:"-" db:"secret_hash"` // Never expose in JSON; stores the encrypted secret
+	Events        []string   `json:"events" db:"events"`
+	IsActive      bool       `json:"active" db:"active"`
+	FailCount     int        `json:"fail_count" db:"fail_count"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty" db:"last_success_at"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty" db:"last_failure_at"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // WebhookDelivery represents a single delivery attempt for a webhook event.
@@ -87,14 +92,18 @@ type WebhookDelivery struct {
 	ID             string     `json:"id" db:"id"`
 	WebhookID      string     `json:"webhook_id" db:"webhook_id"`
 	Event          string     `json:"event" db:"event"`
-	Payload        string     `json:"payload" db:"payload"`
+	IdempotencyKey string     `json:"idempotency_key" db:"idempotency_key"`
+	Payload        []byte     `json:"payload" db:"payload"`
+	Status         string     `json:"status" db:"status"`
 	AttemptCount   int        `json:"attempt_count" db:"attempt_count"`
-	ResponseStatus *int       `json:"response_status,omitempty" db:"response_status"`
-	ResponseBody   *string    `json:"response_body,omitempty" db:"response_body"`
-	Success        bool       `json:"success" db:"success"`
+	MaxAttempts    int        `json:"max_attempts" db:"max_attempts"`
 	NextRetryAt    *time.Time `json:"next_retry_at,omitempty" db:"next_retry_at"`
+	ResponseStatus *int       `json:"response_status,omitempty" db:"response_status"`
+	ResponseBody   string     `json:"response_body,omitempty" db:"response_body"`
+	ErrorMessage   string     `json:"error_message,omitempty" db:"error_message"`
 	DeliveredAt    *time.Time `json:"delivered_at,omitempty" db:"delivered_at"`
 	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // SnapshotCreateRequest holds the fields required to create a new VM snapshot.

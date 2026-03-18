@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -73,7 +72,7 @@ func (r *AuditRepository) GetByID(ctx context.Context, id string) (*models.Audit
 }
 
 // List returns a paginated list of audit logs with optional filters and total count.
-func (r *AuditRepository) List(ctx context.Context, filter AuditLogFilter) ([]models.AuditLog, int, error) {
+func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -144,13 +143,13 @@ func (r *AuditRepository) List(ctx context.Context, filter AuditLogFilter) ([]mo
 }
 
 // ListByActor returns audit logs for a specific actor with pagination.
-func (r *AuditRepository) ListByActor(ctx context.Context, actorID string, filter AuditLogFilter) ([]models.AuditLog, int, error) {
+func (r *AuditRepository) ListByActor(ctx context.Context, actorID string, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
 	filter.ActorID = &actorID
 	return r.List(ctx, filter)
 }
 
 // ListByResource returns audit logs for a specific resource type and ID with pagination.
-func (r *AuditRepository) ListByResource(ctx context.Context, resourceType string, resourceID string, filter AuditLogFilter) ([]models.AuditLog, int, error) {
+func (r *AuditRepository) ListByResource(ctx context.Context, resourceType string, resourceID string, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
 	filter.ResourceType = &resourceType
 	filter.ResourceID = &resourceID
 	return r.List(ctx, filter)
@@ -208,19 +207,6 @@ func (r *AuditRepository) GetPartitionStats(ctx context.Context) ([]AuditPartiti
 		return nil, fmt.Errorf("getting audit log partition stats: %w", err)
 	}
 	return stats, nil
-}
-
-// AuditLogFilter holds query parameters for filtering and paginating audit log results.
-type AuditLogFilter struct {
-	models.PaginationParams
-	ActorID      *string
-	ActorType    *string
-	Action       *string
-	ResourceType *string
-	ResourceID   *string
-	Success      *bool
-	StartTime    *time.Time
-	EndTime      *time.Time
 }
 
 // AuditPartitionStats holds statistics about an audit log partition.

@@ -41,6 +41,10 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 
 	// Optional location filter
 	if locationID := c.Query("location_id"); locationID != "" {
+		if _, err := uuid.Parse(locationID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
+			return
+		}
 		filter.LocationID = &locationID
 	}
 
@@ -99,7 +103,7 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 			"network", req.Network,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "IPSET_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -143,33 +147,28 @@ func (h *AdminHandler) GetIPSet(c *gin.Context) {
 		return
 	}
 
-	// Get IP statistics for the set
-	totalIPs, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), repository.IPAddressListFilter{
-		IPSetID: &ipSetID,
-		PaginationParams: models.PaginationParams{
-			Page:    1,
-			PerPage: models.MaxPerPage,
-		},
-	})
+	// Count IPs by status using DB aggregation — efficient for large sets (e.g. /16 = 65K IPs).
+	ipCounts, err := h.ipRepo.CountIPsByStatus(c.Request.Context(), ipSetID)
 	if err != nil {
 		h.logger.Warn("failed to get IP statistics for IP set",
 			"ipset_id", ipSetID,
 			"error", err)
+		// ipCounts will be nil; the fields below will default to 0.
+		ipCounts = map[string]int{}
 	}
 
-	// Count by status
-	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("assigned")}
-	assignedIPs, _, _ := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
-
-	availableFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("available")}
-	availableIPs, _, _ := h.ipRepo.ListIPAddresses(c.Request.Context(), availableFilter)
+	totalIPs := 0
+	for _, cnt := range ipCounts {
+		totalIPs += cnt
+	}
 
 	detail := IPSetDetail{
 		IPSet:        *ipSet,
-		TotalIPs:     len(totalIPs),
-		AssignedIPs:  len(assignedIPs),
-		AvailableIPs: len(availableIPs),
-		ReservedIPs:  len(totalIPs) - len(assignedIPs) - len(availableIPs),
+		TotalIPs:     totalIPs,
+		AssignedIPs:  ipCounts["assigned"],
+		AvailableIPs: ipCounts["available"],
+		ReservedIPs:  ipCounts["reserved"],
+		CooldownIPs:  ipCounts["cooldown"],
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: detail})
@@ -229,7 +228,7 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_UPDATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "IPSET_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -272,7 +271,7 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "IPSET_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -283,7 +282,7 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 		"ipset_id", ipSetID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"deleted": true}})
+	c.Status(http.StatusNoContent)
 }
 
 // ListAvailableIPs handles GET /ip-sets/:id/available - lists available IPs in an IP set.

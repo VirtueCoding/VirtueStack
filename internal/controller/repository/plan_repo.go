@@ -33,7 +33,7 @@ func scanPlan(row pgx.Row) (models.Plan, error) {
 	err := row.Scan(
 		&p.ID, &p.Name, &p.Slug, &p.VCPU, &p.MemoryMB,
 		&p.DiskGB, &p.BandwidthLimitGB, &p.PortSpeedMbps,
-		&p.PriceMonthly, &p.PriceHourly, &p.IsActive,
+		&p.PriceMonthly, &p.PriceHourly, &p.StorageBackend, &p.IsActive,
 		&p.SortOrder, &p.CreatedAt, &p.UpdatedAt,
 		&p.SnapshotLimit, &p.BackupLimit, &p.ISOUploadLimit,
 	)
@@ -43,7 +43,7 @@ func scanPlan(row pgx.Row) (models.Plan, error) {
 const planSelectCols = `
 	id, name, slug, vcpu, memory_mb,
 	disk_gb, bandwidth_limit_gb, port_speed_mbps,
-	price_monthly, price_hourly, is_active,
+	price_monthly, price_hourly, storage_backend, is_active,
 	sort_order, created_at, updated_at,
 	snapshot_limit, backup_limit, iso_upload_limit`
 
@@ -54,15 +54,15 @@ func (r *PlanRepository) Create(ctx context.Context, plan *models.Plan) error {
 		INSERT INTO plans (
 			name, slug, vcpu, memory_mb, disk_gb,
 			bandwidth_limit_gb, port_speed_mbps,
-			price_monthly, price_hourly, is_active, sort_order,
+			price_monthly, price_hourly, storage_backend, is_active, sort_order,
 			snapshot_limit, backup_limit, iso_upload_limit
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING ` + planSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		plan.Name, plan.Slug, plan.VCPU, plan.MemoryMB, plan.DiskGB,
 		plan.BandwidthLimitGB, plan.PortSpeedMbps,
-		plan.PriceMonthly, plan.PriceHourly, plan.IsActive, plan.SortOrder,
+		plan.PriceMonthly, plan.PriceHourly, plan.StorageBackend, plan.IsActive, plan.SortOrder,
 		plan.SnapshotLimit, plan.BackupLimit, plan.ISOUploadLimit,
 	)
 	created, err := scanPlan(row)
@@ -158,16 +158,18 @@ func (r *PlanRepository) Update(ctx context.Context, plan *models.Plan) error {
 		UPDATE plans SET
 			name = $1, slug = $2, vcpu = $3, memory_mb = $4, disk_gb = $5,
 			bandwidth_limit_gb = $6, port_speed_mbps = $7,
-			price_monthly = $8, price_hourly = $9, is_active = $10, sort_order = $11,
-			snapshot_limit = $12, backup_limit = $13, iso_upload_limit = $14,
+			price_monthly = $8, price_hourly = $9, storage_backend = $10,
+			is_active = $11, sort_order = $12,
+			snapshot_limit = $13, backup_limit = $14, iso_upload_limit = $15,
 			updated_at = NOW()
-		WHERE id = $15
+		WHERE id = $16
 		RETURNING ` + planSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		plan.Name, plan.Slug, plan.VCPU, plan.MemoryMB, plan.DiskGB,
 		plan.BandwidthLimitGB, plan.PortSpeedMbps,
-		plan.PriceMonthly, plan.PriceHourly, plan.IsActive, plan.SortOrder,
+		plan.PriceMonthly, plan.PriceHourly, plan.StorageBackend,
+		plan.IsActive, plan.SortOrder,
 		plan.SnapshotLimit, plan.BackupLimit, plan.ISOUploadLimit,
 		plan.ID,
 	)

@@ -13,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/alexedwards/argon2id"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp"
@@ -33,7 +34,7 @@ const (
 	TempTokenDuration = 5 * time.Minute
 
 	// PasswordResetTokenDuration is the lifetime of password reset tokens.
-	PasswordResetTokenDuration = 24 * time.Hour
+	PasswordResetTokenDuration = 1 * time.Hour
 
 	// MaxAdminSessions is the maximum concurrent sessions for admin users.
 	MaxAdminSessions = 3
@@ -96,14 +97,14 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 	}
 
 	if failedCount >= MaxFailedLoginAttempts {
-		s.logger.Warn("login attempt on locked account", "email", email, "attempts", failedCount)
+		s.logger.Warn("login attempt on locked account", "email", util.MaskEmail(email), "attempts", failedCount)
 		return nil, "", sharederrors.ErrAccountLocked
 	}
 
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			s.logger.Warn("login attempt for non-existent email", "email", email)
+			s.logger.Warn("login attempt for non-existent email", "email", util.MaskEmail(email))
 			return nil, "", sharederrors.ErrUnauthorized
 		}
 		return nil, "", fmt.Errorf("getting customer by email: %w", err)
@@ -114,7 +115,7 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 		return nil, "", fmt.Errorf("verifying password: %w", err)
 	}
 	if !match {
-		s.logger.Warn("invalid password attempt", "customer_id", customer.ID, "email", email)
+		s.logger.Warn("invalid password attempt", "customer_id", customer.ID, "email", util.MaskEmail(email))
 		// Audit logging error intentionally ignored - login failure already returned to user
 		_ = s.customerRepo.RecordFailedLogin(ctx, email)
 		return nil, "", sharederrors.ErrUnauthorized
@@ -221,7 +222,7 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 			// Hash the provided TOTP code and compare with stored hashes
 			providedHash := crypto.HashSHA256(totpCode)
 			for i, codeHash := range customer.TOTPBackupCodesHash {
-				if providedHash == codeHash {
+				if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) == 1 {
 					// Remove used backup code
 					codes := customer.TOTPBackupCodesHash
 					codes = append(codes[:i], codes[i+1:]...)
@@ -534,11 +535,26 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword stri
 
 // AdminLogin authenticates an admin user.
 // 2FA is MANDATORY for admin accounts - always returns temp_token with requires_2fa=true.
+// Account lockout is enforced: after MaxFailedLoginAttempts failures within LockoutWindow
+// the account is locked and ErrAccountLocked is returned.
 func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*models.AuthTokens, error) {
+	// Check admin failed-login count using the same customer-repo table that
+	// stores failed attempts for all user types.
+	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, email, LockoutWindow)
+	if err != nil {
+		return nil, fmt.Errorf("checking admin login attempts: %w", err)
+	}
+	if failedCount >= MaxFailedLoginAttempts {
+		s.logger.Warn("admin login attempt on locked account", "email", util.MaskEmail(email), "attempts", failedCount)
+		return nil, sharederrors.ErrAccountLocked
+	}
+
 	admin, err := s.adminRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			s.logger.Warn("admin login attempt for non-existent email", "email", email)
+			s.logger.Warn("admin login attempt for non-existent email", "email", util.MaskEmail(email))
+			// Record a failed attempt to prevent user enumeration via timing.
+			_ = s.customerRepo.RecordFailedLogin(ctx, email)
 			return nil, sharederrors.ErrUnauthorized
 		}
 		return nil, fmt.Errorf("getting admin by email: %w", err)
@@ -551,8 +567,12 @@ func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*
 	}
 	if !match {
 		s.logger.Warn("invalid admin password attempt", "admin_id", admin.ID)
+		_ = s.customerRepo.RecordFailedLogin(ctx, email)
 		return nil, sharederrors.ErrUnauthorized
 	}
+
+	// Clear failed login counter on success.
+	_ = s.customerRepo.ClearFailedLogins(ctx, email)
 
 	// 2FA is MANDATORY for admins - always require verification
 	if !admin.TOTPEnabled {
@@ -619,7 +639,7 @@ func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, i
 			// Hash the provided TOTP code and compare with stored hashes
 			providedHash := crypto.HashSHA256(totpCode)
 			for i, codeHash := range admin.TOTPBackupCodesHash {
-				if providedHash == codeHash {
+				if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) == 1 {
 					// Remove used backup code
 					codes := admin.TOTPBackupCodesHash
 					codes = append(codes[:i], codes[i+1:]...)
@@ -763,7 +783,10 @@ func (s *AuthService) Initiate2FA(ctx context.Context, customerID, email string)
 	backupCodes := make([]string, 10)
 	backupCodesHash := make([]string, 10)
 	for i := range backupCodes {
-		code := crypto.GenerateRandomDigits(8)
+		code, err := crypto.GenerateRandomDigits(8)
+		if err != nil {
+			return nil, fmt.Errorf("generating backup code: %w", err)
+		}
 		backupCodes[i] = code
 		backupCodesHash[i] = crypto.HashSHA256(code)
 	}
@@ -894,7 +917,10 @@ func (s *AuthService) GetBackupCodes(ctx context.Context, customerID string) ([]
 	codes := make([]string, 10)
 	codesHash := make([]string, 10)
 	for i := range codes {
-		code := crypto.GenerateRandomDigits(8)
+		code, err := crypto.GenerateRandomDigits(8)
+		if err != nil {
+			return nil, false, fmt.Errorf("generating backup code: %w", err)
+		}
 		codes[i] = code
 		codesHash[i] = crypto.HashSHA256(code)
 	}
@@ -922,7 +948,10 @@ func (s *AuthService) RegenerateBackupCodes(ctx context.Context, customerID stri
 	codes := make([]string, 10)
 	codesHash := make([]string, 10)
 	for i := range codes {
-		code := crypto.GenerateRandomDigits(8)
+		code, err := crypto.GenerateRandomDigits(8)
+		if err != nil {
+			return nil, fmt.Errorf("generating backup code: %w", err)
+		}
 		codes[i] = code
 		codesHash[i] = crypto.HashSHA256(code)
 	}

@@ -12,15 +12,10 @@ import { useRouter } from "next/navigation";
 import {
   adminAuthApi,
   ApiClientError,
+  type AdminUser,
   type LoginRequest,
   type Verify2FARequest,
 } from "./api-client";
-
-interface AdminUser {
-  id: string;
-  email: string;
-  role: string;
-}
 
 interface AuthState {
   user: AdminUser | null;
@@ -101,33 +96,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") return;
 
     const stored = loadStoredState();
-    if (stored) {
-      try {
-        const { adminNodesApi } = await import("./api-client");
-        await adminNodesApi.getNodes();
-        setState({
-          user: stored.user,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
-        });
-      } catch {
-        sessionStorage.removeItem(AUTH_STATE_KEY);
-        setState((prev) => ({ ...prev, isLoading: false }));
-      }
-      return;
-    }
 
     try {
-      const { adminNodesApi } = await import("./api-client");
-      await adminNodesApi.getNodes();
-      setState((prev) => ({ ...prev, isLoading: false }));
-    } catch (err) {
-      if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
-        setState((prev) => ({ ...prev, isLoading: false }));
+      // Validate the stored session against the server on every page load.
+      // This prevents XSS-injected sessionStorage data from granting access.
+      //
+      // We use POST /admin/auth/refresh as a lightweight session probe: it
+      // validates the HttpOnly refresh-token cookie server-side and reissues
+      // fresh access+refresh cookies.  A 401 means no valid session exists.
+      //
+      // TODO: Add a dedicated GET /admin/auth/me endpoint that returns the
+      // current user's identity (id, email, role) so we can always use the
+      // server as the authoritative source for the user object rather than
+      // trusting sessionStorage-cached data post-validation.
+      const serverUser = await adminAuthApi.me(stored?.user ?? null);
+      if (!serverUser) {
+        sessionStorage.removeItem(AUTH_STATE_KEY);
+        setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
         return;
       }
-      setState((prev) => ({ ...prev, isLoading: false }));
+      setState({
+        user: serverUser,
+        isAuthenticated: true,
+        isLoading: false,
+        requires2FA: false,
+      });
+      sessionStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ user: serverUser, isAuthenticated: true }));
+    } catch {
+      // Network error or unexpected failure — clear stored state so we don't
+      // grant access based on unvalidated cached data.
+      sessionStorage.removeItem(AUTH_STATE_KEY);
+      setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
     }
   }, []);
 
@@ -224,7 +223,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       await adminAuthApi.logout();
-    } catch {
+    } catch (err) {
+      // Logout errors are non-fatal — session may already be invalid.
+      // Log for debugging but don't propagate to prevent UI from hanging.
+      console.warn('Logout request failed (session may already be invalid):', err);
     } finally {
       setState({
         user: null,

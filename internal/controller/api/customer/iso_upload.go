@@ -256,7 +256,7 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		"correlation_id", middleware.GetCorrelationID(c),
 	)
 
-	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "ISO deleted successfully"}})
+	c.Status(http.StatusNoContent)
 }
 
 // AttachISO handles POST /vms/:id/iso/:isoId/attach - attaches an ISO to a VM.
@@ -378,7 +378,8 @@ func sanitizeFileName(name string) string {
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	return base + ext
+	// Always enforce .iso extension regardless of what was provided.
+	return base + ".iso"
 }
 
 func listISODirectory(dir, vmID string) ([]ISORecord, error) {
@@ -408,15 +409,9 @@ func listISODirectory(dir, vmID string) ([]ISORecord, error) {
 		sumData, sumErr := os.ReadFile(filepath.Join(dir, isoID+".sha256"))
 		if sumErr == nil {
 			checksum = strings.TrimSpace(string(sumData))
-		} else {
-			h := sha256.New()
-			if f, openErr := os.Open(filepath.Join(dir, entry.Name())); openErr == nil {
-				if _, copyErr := io.Copy(h, f); copyErr == nil {
-					checksum = hex.EncodeToString(h.Sum(nil))
-				}
-				f.Close()
-			}
 		}
+		// If the sidecar is missing, return an empty checksum.
+		// Computing SHA-256 of multi-GB ISOs on every list request is too expensive.
 
 		records = append(records, ISORecord{
 			ID:        isoID,

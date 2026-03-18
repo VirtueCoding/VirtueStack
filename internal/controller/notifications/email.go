@@ -530,7 +530,7 @@ func (p *EmailProvider) sendWithSTARTTLS(ctx context.Context, addr string, auth 
 		return fmt.Errorf("writing message: %w", err)
 	}
 
-	return nil
+	return conn.Quit()
 }
 
 // sendWithTLS sends email using implicit TLS (port 465).

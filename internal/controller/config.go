@@ -24,7 +24,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Parse encryption key from hex string
-	keyBytes, err := hex.DecodeString(cfg.EncryptionKey)
+	keyBytes, err := hex.DecodeString(cfg.EncryptionKey.Value())
 	if err != nil {
 		return nil, fmt.Errorf("decoding encryption key: %w", err)
 	}

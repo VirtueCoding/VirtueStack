@@ -21,14 +21,22 @@ type SettingUpdateRequest struct {
 	Value string `json:"value" validate:"required"`
 }
 
+// Default values for system settings. These are used when no database override exists.
+// SMTP defaults align with common submission port conventions (RFC 6409).
+const (
+	defaultSMTPPort       = "587"
+	defaultSMTPFrom       = "noreply@virtuestack.com"
+	defaultMaxVMsPerCust  = "10"
+)
+
 var defaultSettings = []Setting{
 	{Key: "maintenance_mode", Value: "false", Description: "When true, no new VMs can be created"},
 	{Key: "default_backup_retention_days", Value: "30", Description: "Default backup retention period in days"},
-	{Key: "max_vms_per_customer", Value: "10", Description: "Maximum number of VMs a customer can create"},
+	{Key: "max_vms_per_customer", Value: defaultMaxVMsPerCust, Description: "Maximum number of VMs a customer can create"},
 	{Key: "bandwidth_overage_rate", Value: "0.05", Description: "Cost per GB for bandwidth overage in USD"},
 	{Key: "smtp_host", Value: "", Description: "SMTP server hostname for email notifications"},
-	{Key: "smtp_port", Value: "587", Description: "SMTP server port"},
-	{Key: "smtp_from", Value: "noreply@virtuestack.com", Description: "From email address for notifications"},
+	{Key: "smtp_port", Value: defaultSMTPPort, Description: "SMTP server port"},
+	{Key: "smtp_from", Value: defaultSMTPFrom, Description: "From email address for notifications"},
 	{Key: "alert_email_recipients", Value: "", Description: "Comma-separated list of alert recipient emails"},
 	{Key: "node_heartbeat_timeout_seconds", Value: "300", Description: "Seconds before a node is marked offline"},
 	{Key: "backup_schedule_hour", Value: "2", Description: "Hour of day for automatic backups (0-23)"},

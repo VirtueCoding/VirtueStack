@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -337,18 +338,29 @@ func (m *QCOWTemplateManager) validateWritable(path string) error {
 	return nil
 }
 
-// copyFile copies a file from src to dst.
-func (m *QCOWTemplateManager) copyFile(src, dst string) error {
-	input, err := os.ReadFile(src)
+// copyFile copies a file from src to dst using streaming io.Copy to avoid
+// loading multi-GB template files entirely into memory.
+func (m *QCOWTemplateManager) copyFile(src, dst string) (err error) {
+	in, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("reading source file: %w", err)
+		return fmt.Errorf("open source: %w", err)
 	}
+	defer in.Close()
 
-	if err := os.WriteFile(dst, input, 0644); err != nil {
-		return fmt.Errorf("writing destination file: %w", err)
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create dest: %w", err)
 	}
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
-	return nil
+	if _, err = io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	return out.Sync()
 }
 
 // verifyImage verifies a qcow2 image using qemu-img check.

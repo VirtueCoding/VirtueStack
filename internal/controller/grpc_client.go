@@ -156,11 +156,15 @@ func (nc *NodeClient) createTLSCredentials() (credentials.TransportCredentials, 
 		return nil, fmt.Errorf("failed to append CA certificate")
 	}
 
-	// Create TLS config
+	// Create TLS config.
+	// MinVersion is set to TLS 1.3 to avoid known weaknesses in TLS 1.2
+	// (BEAST, CRIME, POODLE, LUCKY13, RC4, CBC-mode cipher suites).
+	// If legacy node agents that support only TLS 1.2 must be supported,
+	// temporarily lower this to tls.VersionTLS12 during the transition.
 	tlsConfig := &tls.Config{
 		RootCAs:            certPool,
 		InsecureSkipVerify: false, // Always verify server certificates
-		MinVersion:         tls.VersionTLS12,
+		MinVersion:         tls.VersionTLS13,
 	}
 
 	// Load client certificate if provided

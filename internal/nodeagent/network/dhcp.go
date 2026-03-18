@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +20,12 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
+
+// validBridgeIfaceRegex validates Linux bridge/tap interface names.
+// Interface names must be 1-15 characters, starting with a letter, and
+// containing only alphanumeric characters, underscores, or hyphens.
+// This prevents newline injection into dnsmasq configuration files.
+var validBridgeIfaceRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,14}$`)
 
 // Constants for DHCP management.
 const (
@@ -182,7 +190,10 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 	}
 
 	// Generate config file content
-	configContent := m.GenerateDNSMasqConfigFull(cfg)
+	configContent, err := m.GenerateDNSMasqConfigFull(cfg)
+	if err != nil {
+		return fmt.Errorf("generating DHCP config for VM %s: %w", cfg.VMID, err)
+	}
 	configPath := m.configFilePath(cfg.VMID)
 
 	// Write config file
@@ -268,13 +279,13 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 		pid:       pid,
 	}
 
-	// Start goroutine to wait for process exit and clean up
+	// Start goroutine to wait for process exit and clean up.
+	// A fresh background context with timeout is created so that cancellation of the
+	// caller's ctx does not immediately cancel the monitor. cancel() is called inside
+	// the goroutine after it finishes so the context is properly released.
 	m.wg.Add(1)
-	// Use a derived context with timeout for the monitor goroutine since the parent ctx
-	// may be cancelled after the dnsmasq process exits
 	monitorCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	go m.monitorProcess(monitorCtx, cfg.VMID, cmd, logFile)
+	go m.monitorProcess(monitorCtx, cancel, cfg.VMID, cmd, logFile)
 
 	logger.Info("DHCP started successfully", "pid", pid)
 	return nil
@@ -337,8 +348,22 @@ func (m *DHCPManager) RestartDHCPForVM(ctx context.Context, vmID string) error {
 		logger.Warn("error stopping DHCP during restart", "error", err)
 	}
 
-	// Small delay to ensure cleanup
-	time.Sleep(500 * time.Millisecond)
+	// Poll until the previous dnsmasq process has fully exited (or the caller's
+	// context expires). This is more reliable than a fixed sleep because process
+	// teardown speed varies with system load.
+	const restartPollInterval = 50 * time.Millisecond
+	const restartMaxWait = 3 * time.Second
+	deadline := time.Now().Add(restartMaxWait)
+	for time.Now().Before(deadline) {
+		if pid := m.getPID(vmID); pid == 0 || !m.isProcessRunning(pid) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(restartPollInterval):
+		}
+	}
 
 	// Start new with same config
 	return m.StartDHCPForVM(ctx, vmID, lease.VMName, lease.MACAddress, lease.IPAddress, lease.Gateway)
@@ -349,6 +374,12 @@ func (m *DHCPManager) GetVMLease(ctx context.Context, vmID string) (*DHCPLease, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.getVMLeaseUnlocked(vmID)
+}
+
+// getVMLeaseUnlocked retrieves the current DHCP lease status for a VM
+// without acquiring any lock. The caller must hold at least a read lock.
+func (m *DHCPManager) getVMLeaseUnlocked(vmID string) (*DHCPLease, error) {
 	statusPath := m.statusFilePath(vmID)
 	data, err := os.ReadFile(statusPath)
 	if err != nil {
@@ -396,7 +427,7 @@ func (m *DHCPManager) ListActiveDHCP(ctx context.Context) ([]DHCPLease, error) {
 		}
 
 		vmID := strings.TrimSuffix(entry.Name(), DHCPStatusFileSuffix)
-		lease, err := m.GetVMLease(ctx, vmID)
+		lease, err := m.getVMLeaseUnlocked(vmID)
 		if err != nil {
 			m.logger.Warn("failed to get lease", "vm_id", vmID, "error", err)
 			continue
@@ -412,12 +443,14 @@ func (m *DHCPManager) ListActiveDHCP(ctx context.Context) ([]DHCPLease, error) {
 
 // GenerateDNSMasqConfig generates the dnsmasq configuration content for a VM.
 // The configuration sets up a static DHCP lease for the VM's MAC address.
-func (m *DHCPManager) GenerateDNSMasqConfig(vmName, mac, ip, gateway string) string {
+// Returns an error if any network address or interface name is invalid.
+func (m *DHCPManager) GenerateDNSMasqConfig(vmName, mac, ip, gateway string) (string, error) {
 	return m.GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, DefaultDNS)
 }
 
 // GenerateDNSMasqConfigWithDNS generates dnsmasq config with custom DNS server.
-func (m *DHCPManager) GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, dns string) string {
+// Returns an error if any network address or interface name is invalid.
+func (m *DHCPManager) GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, dns string) (string, error) {
 	return m.GenerateDNSMasqConfigFull(DHCPConfig{
 		VMName:          vmName,
 		MACAddress:      mac,
@@ -429,7 +462,26 @@ func (m *DHCPManager) GenerateDNSMasqConfigWithDNS(vmName, mac, ip, gateway, dns
 }
 
 // GenerateDNSMasqConfigFull generates the full dnsmasq configuration for a VM.
-func (m *DHCPManager) GenerateDNSMasqConfigFull(cfg DHCPConfig) string {
+// It validates all network addresses with net.ParseIP and the bridge interface
+// name against a strict regex to prevent newline injection into the config file.
+func (m *DHCPManager) GenerateDNSMasqConfigFull(cfg DHCPConfig) (string, error) {
+	// Validate bridge interface name to prevent newline/directive injection.
+	if !validBridgeIfaceRegex.MatchString(cfg.BridgeInterface) {
+		return "", fmt.Errorf("invalid bridge interface name %q: must match %s",
+			cfg.BridgeInterface, validBridgeIfaceRegex.String())
+	}
+
+	// Validate IP addresses.
+	if net.ParseIP(cfg.IPAddress) == nil {
+		return "", fmt.Errorf("invalid IP address %q for VM %s", cfg.IPAddress, cfg.VMID)
+	}
+	if net.ParseIP(cfg.Gateway) == nil {
+		return "", fmt.Errorf("invalid gateway address %q for VM %s", cfg.Gateway, cfg.VMID)
+	}
+	if net.ParseIP(cfg.DNS) == nil {
+		return "", fmt.Errorf("invalid DNS address %q for VM %s", cfg.DNS, cfg.VMID)
+	}
+
 	var sb strings.Builder
 
 	// Header comment
@@ -474,7 +526,7 @@ func (m *DHCPManager) GenerateDNSMasqConfigFull(cfg DHCPConfig) string {
 	sb.WriteString(fmt.Sprintf("# PID file\n"))
 	sb.WriteString(fmt.Sprintf("pid-file=%s\n", pidFile))
 
-	return sb.String()
+	return sb.String(), nil
 }
 
 // CheckDNSMasqInstalled checks if dnsmasq is installed and available.
@@ -553,7 +605,8 @@ func (m *DHCPManager) statusFilePath(vmID string) string {
 
 // checkDNSMasqAvailable checks if dnsmasq is installed.
 func (m *DHCPManager) checkDNSMasqAvailable() error {
-	cmd := exec.Command("dnsmasq", "--version")
+	// context.TODO() is used because this helper does not yet accept a context.
+	cmd := exec.CommandContext(context.TODO(), "dnsmasq", "--version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("dnsmasq not found or not executable: %w", err)
 	}
@@ -562,7 +615,8 @@ func (m *DHCPManager) checkDNSMasqAvailable() error {
 
 // testDNSMasqConfig tests a dnsmasq configuration file for validity.
 func (m *DHCPManager) testDNSMasqConfig(configPath string) error {
-	cmd := exec.Command("dnsmasq", "-C", configPath, "--test")
+	// context.TODO() is used because this helper does not yet accept a context.
+	cmd := exec.CommandContext(context.TODO(), "dnsmasq", "-C", configPath, "--test")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("config test failed: %w, output: %s", err, string(output))
@@ -645,8 +699,11 @@ func (m *DHCPManager) saveLeaseStatus(vmID string, lease *DHCPLease) error {
 }
 
 // monitorProcess monitors a dnsmasq process and cleans up when it exits.
-func (m *DHCPManager) monitorProcess(ctx context.Context, vmID string, cmd *exec.Cmd, logFile *os.File) {
+// cancel is the CancelFunc for the monitor context and is called when the goroutine
+// completes to release context resources.
+func (m *DHCPManager) monitorProcess(ctx context.Context, cancel context.CancelFunc, vmID string, cmd *exec.Cmd, logFile *os.File) {
 	defer m.wg.Done()
+	defer cancel()
 	defer logFile.Close()
 
 	err := cmd.Wait()
@@ -660,8 +717,8 @@ func (m *DHCPManager) monitorProcess(ctx context.Context, vmID string, cmd *exec
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Update status file to stopped
-	lease, err := m.GetVMLease(ctx, vmID)
+	// Update status file to stopped using the unlocked variant to avoid re-entrant lock.
+	lease, err := m.getVMLeaseUnlocked(vmID)
 	if err == nil && lease != nil {
 		lease.Status = "stopped"
 		if saveErr := m.saveLeaseStatus(vmID, lease); saveErr != nil {

@@ -49,21 +49,41 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 
 	// Optional customer filter
 	if customerID := c.Query("customer_id"); customerID != "" {
+		if _, err := uuid.Parse(customerID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+			return
+		}
 		filter.CustomerID = &customerID
 	}
 
 	// Optional node filter
 	if nodeID := c.Query("node_id"); nodeID != "" {
+		if _, err := uuid.Parse(nodeID); err != nil {
+			respondWithError(c, http.StatusBadRequest, "INVALID_NODE_ID", "node_id must be a valid UUID")
+			return
+		}
 		filter.NodeID = &nodeID
 	}
 
 	// Optional status filter
+	validVMStatuses := map[string]bool{
+		"provisioning": true, "running": true, "stopped": true, "suspended": true,
+		"migrating": true, "reinstalling": true, "error": true, "deleted": true,
+	}
 	if status := c.Query("status"); status != "" {
+		if !validVMStatuses[status] {
+			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			return
+		}
 		filter.Status = &status
 	}
 
 	// Optional search filter
 	if search := c.Query("search"); search != "" {
+		if len(search) > 100 {
+			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			return
+		}
 		filter.Search = &search
 	}
 
@@ -95,20 +115,6 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 		return
 	}
 
-	// Validate UUIDs
-	if _, err := uuid.Parse(req.CustomerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
-		return
-	}
-	if _, err := uuid.Parse(req.PlanID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
-		return
-	}
-	if _, err := uuid.Parse(req.TemplateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
-		return
-	}
-
 	// Build VM create request
 	vmReq := &models.VMCreateRequest{
 		CustomerID: req.CustomerID,
@@ -128,7 +134,7 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -213,6 +219,40 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 		return
 	}
 
+	// Handle hostname update if specified
+	if req.Hostname != nil {
+		if err := h.vmService.UpdateVMHostname(c.Request.Context(), vmID, *req.Hostname, "", true); err != nil {
+			h.logger.Error("failed to update VM hostname",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
+			return
+		}
+	}
+
+	// Handle network limit update if specified
+	if req.PortSpeedMbps != nil || req.BandwidthLimitGB != nil {
+		// Fetch the current VM state to fill in unchanged values
+		current := vm
+		portSpeed := current.PortSpeedMbps
+		bwLimit := current.BandwidthLimitGB
+		if req.PortSpeedMbps != nil {
+			portSpeed = *req.PortSpeedMbps
+		}
+		if req.BandwidthLimitGB != nil {
+			bwLimit = *req.BandwidthLimitGB
+		}
+		if err := h.vmService.UpdateVMNetworkLimits(c.Request.Context(), vmID, portSpeed, bwLimit); err != nil {
+			h.logger.Error("failed to update VM network limits",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			respondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
+			return
+		}
+	}
+
 	// Handle resource resize if specified
 	if req.VCPU != nil || req.MemoryMB != nil || req.DiskGB != nil {
 		newVCPU := vm.VCPU
@@ -236,7 +276,7 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 				"vm_id", vmID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "VM_RESIZE_FAILED", err.Error())
+			respondWithError(c, http.StatusInternalServerError, "VM_RESIZE_FAILED", "Internal server error")
 			return
 		}
 
@@ -264,7 +304,15 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	// Return updated VM
-	updatedVM, _ := h.vmService.GetVMDetail(c.Request.Context(), vmID, "", true)
+	updatedVM, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, "", true)
+	if err != nil {
+		h.logger.Error("failed to fetch updated VM after update",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve updated VM")
+		return
+	}
 	c.JSON(http.StatusOK, models.Response{Data: updatedVM})
 }
 
@@ -289,7 +337,7 @@ func (h *AdminHandler) DeleteVM(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -376,7 +424,7 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 			"target_node_id", req.TargetNodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "MIGRATION_FAILED", err.Error())
+		respondWithError(c, http.StatusInternalServerError, "MIGRATION_FAILED", "Internal server error")
 		return
 	}
 

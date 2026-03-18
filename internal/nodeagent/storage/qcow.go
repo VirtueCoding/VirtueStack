@@ -529,9 +529,29 @@ func (m *QCOWManager) CreateImage(ctx context.Context, imageName string, sizeGB 
 	return nil
 }
 
+// QCOWImageInfo holds typed information about a QCOW2 image as reported by qemu-img.
+type QCOWImageInfo struct {
+	// Filename is the path to the image file.
+	Filename string `json:"filename"`
+	// Format is the image format (e.g., "qcow2").
+	Format string `json:"format"`
+	// VirtualSize is the virtual size of the image in bytes.
+	VirtualSize int64 `json:"virtual-size"`
+	// ActualSize is the actual disk usage of the image in bytes.
+	ActualSize int64 `json:"actual-size"`
+	// DirtyFlag indicates whether the image has unsaved dirty state.
+	DirtyFlag bool `json:"dirty-flag"`
+	// ClusterSize is the QCOW2 cluster size in bytes.
+	ClusterSize int `json:"cluster-size"`
+	// BackingFile is the path to the backing file, if any.
+	BackingFile string `json:"backing-filename,omitempty"`
+	// BackingFileFormat is the format of the backing file, if any.
+	BackingFileFormat string `json:"backing-filename-format,omitempty"`
+}
+
 // GetImageInfo returns detailed information about a QCOW2 image.
 // This is an additional helper method not part of StorageBackend interface.
-func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (map[string]interface{}, error) {
+func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (*QCOWImageInfo, error) {
 	imagePath := m.imagePath(imageName)
 
 	// Verify image exists
@@ -548,19 +568,20 @@ func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (map[s
 		return nil, fmt.Errorf("getting image info for %s: %w", imageName, err)
 	}
 
-	// Parse JSON into generic map
-	var info map[string]interface{}
+	// Parse JSON into typed struct
+	var info QCOWImageInfo
 	if err := json.Unmarshal(output, &info); err != nil {
 		return nil, fmt.Errorf("parsing image info for %s: %w", imageName, err)
 	}
 
-	return info, nil
+	return &info, nil
 }
 
 // CheckQemuImgAvailable checks if qemu-img is available on the system.
 // Returns an error if qemu-img is not found or not executable.
 func CheckQemuImgAvailable() error {
-	cmd := exec.Command("qemu-img", "--version")
+	// context.TODO() is used because this is a package-level helper with no caller context.
+	cmd := exec.CommandContext(context.TODO(), "qemu-img", "--version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("qemu-img not available: %w", err)
 	}
