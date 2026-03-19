@@ -30,6 +30,7 @@ type CustomerRepo interface {
 	DeleteSessionsByUser(ctx context.Context, userID, userType string) error
 	CountSessionsByUser(ctx context.Context, userID, userType string) (int, error)
 	DeleteOldestSession(ctx context.Context, userID, userType string) error
+	DeleteExpiredSessions(ctx context.Context) error
 	GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error)
 	UpdateSessionLastReauthAt(ctx context.Context, sessionID string, timestamp time.Time) error
 	GetFailedLoginCount(ctx context.Context, email string, window time.Duration) (int, error)
