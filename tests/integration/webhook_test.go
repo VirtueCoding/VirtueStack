@@ -513,7 +513,7 @@ func TestWebhookSecurity(t *testing.T) {
 	t.Run("CustomerCannotAccessOtherWebhooks", func(t *testing.T) {
 		// Create another customer
 		otherCustomerID := "00000000-0000-0000-0000-000000000099"
-		_, err = suite.DBPool.Exec(ctx, `
+		_, err := suite.DBPool.Exec(ctx, `
 			INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 			VALUES ($1, 'other2@example.com', 'hash', 'Other Customer', 'active', NOW(), NOW())
 		`, otherCustomerID)

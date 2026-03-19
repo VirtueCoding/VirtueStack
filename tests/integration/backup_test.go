@@ -171,11 +171,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a backup schedule
 		schedule := &models.BackupSchedule{
-			VMID:      vmID,
-			Type:      "full",
-			CronExpr:  "0 2 * * *", // Daily at 2 AM
-			Retention: 7,
-			Enabled:   true,
+			VMID:           vmID,
+			CustomerID:     TestCustomerID,
+			Frequency:       "daily",
+			RetentionCount: 7,
+			Active:         true,
 		}
 
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
@@ -192,11 +192,11 @@ func TestBackupScheduling(t *testing.T) {
 		// Create multiple schedules
 		for i := 0; i < 2; i++ {
 			schedule := &models.BackupSchedule{
-				VMID:      vmID,
-				Type:      "full",
-				CronExpr:  "0 2 * * *",
-				Retention: 7,
-				Enabled:   true,
+				VMID:           vmID,
+				CustomerID:     TestCustomerID,
+				Frequency:       "daily",
+				RetentionCount: 7,
+				Active:         true,
 			}
 			_, err := suite.BackupService.CreateSchedule(ctx, schedule)
 			require.NoError(t, err)
@@ -216,11 +216,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a schedule
 		schedule := &models.BackupSchedule{
-			VMID:      vmID,
-			Type:      "full",
-			CronExpr:  "0 2 * * *",
-			Retention: 7,
-			Enabled:   true,
+			VMID:           vmID,
+			CustomerID:     TestCustomerID,
+			Frequency:       "daily",
+			RetentionCount: 7,
+			Active:         true,
 		}
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
 		require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestBackupScheduling(t *testing.T) {
 		schedules, _ := suite.BackupService.ListSchedules(ctx, vmID)
 		for _, s := range schedules {
 			if s.ID == scheduleID {
-				assert.False(t, s.Enabled, "Schedule should be disabled")
+				assert.False(t, s.Active, "Schedule should be disabled")
 			}
 		}
 	})
@@ -245,11 +245,11 @@ func TestBackupScheduling(t *testing.T) {
 
 		// Create a schedule
 		schedule := &models.BackupSchedule{
-			VMID:      vmID,
-			Type:      "full",
-			CronExpr:  "0 2 * * *",
-			Retention: 7,
-			Enabled:   true,
+			VMID:           vmID,
+			CustomerID:     TestCustomerID,
+			Frequency:       "daily",
+			RetentionCount: 7,
+			Active:         true,
 		}
 		scheduleID, err := suite.BackupService.CreateSchedule(ctx, schedule)
 		require.NoError(t, err)
@@ -602,7 +602,8 @@ func TestBackupConcurrency(t *testing.T) {
 		require.NoError(t, err)
 
 		// Set backup to restoring
-		require.NoError(t, suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID).Err())
+		_, err = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusRestoring, backupID)
+		require.NoError(t, err)
 
 		// Try to create another backup (behavior depends on business logic)
 		_, err = suite.BackupService.CreateBackup(ctx, vmID, "full")

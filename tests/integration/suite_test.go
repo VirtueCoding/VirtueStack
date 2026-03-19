@@ -277,14 +277,14 @@ func TestMain(m *testing.M) {
 		Logger:        suite.Logger,
 	})
 
-	suite.BackupService = services.NewBackupService(
-		suite.BackupRepo,
-		suite.BackupRepo,
-		suite.VMRepo,
-		nil, // nodeAgent
-		nil, // taskPublisher
-		suite.Logger,
-	)
+	suite.BackupService = services.NewBackupService(services.BackupServiceConfig{
+		BackupRepo:    suite.BackupRepo,
+		SnapshotRepo:  suite.BackupRepo,
+		VMRepo:        suite.VMRepo,
+		NodeAgent:     nil, // nodeAgent
+		TaskPublisher: nil, // taskPublisher
+		Logger:        suite.Logger,
+	})
 
 	suite.WebhookService = services.NewWebhookService(
 		suite.WebhookRepo,
@@ -450,7 +450,7 @@ func CreateTestIP(ctx context.Context, vmID string) (string, error) {
 		RETURNING id
 	`
 
-	err := suite.DBPool.QueryRow(ctx, query, ipID, vmID, ipAddress).Scan(&ipID)
+	err = suite.DBPool.QueryRow(ctx, query, ipID, vmID, ipAddress).Scan(&ipID)
 	if err != nil {
 		return "", fmt.Errorf("creating test ip: %w", err)
 	}
