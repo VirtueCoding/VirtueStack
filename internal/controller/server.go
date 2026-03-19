@@ -561,6 +561,8 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 	if s.bandwidthRepo != nil && s.nodeClient != nil {
 		go s.startBandwidthCollector(ctx)
 	}
+
+	go s.startSessionCleanup(ctx)
 }
 
 func (s *Server) startMetricsCollector(ctx context.Context) {
@@ -648,6 +650,36 @@ func (s *Server) startBandwidthCollector(ctx context.Context) {
 			s.collectBandwidth(ctx)
 		}
 	}
+}
+
+func (s *Server) startSessionCleanup(ctx context.Context) {
+	if s.dbPool == nil {
+		return
+	}
+
+	s.logger.Info("starting session cleanup scheduler")
+
+	customerRepo := repository.NewCustomerRepository(s.dbPool)
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("session cleanup scheduler stopped")
+			return
+		case <-ticker.C:
+			s.cleanupExpiredSessions(ctx, customerRepo)
+		}
+	}
+}
+
+func (s *Server) cleanupExpiredSessions(ctx context.Context, customerRepo *repository.CustomerRepository) {
+	if err := customerRepo.DeleteExpiredSessions(ctx); err != nil {
+		s.logger.Warn("failed to delete expired sessions", "error", err)
+		return
+	}
+	s.logger.Debug("expired sessions cleaned up")
 }
 
 func (s *Server) collectBandwidth(ctx context.Context) {
