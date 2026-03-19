@@ -72,6 +72,10 @@ func (m *mock2FACustomerRepo) DeleteOldestSession(ctx context.Context, userID, u
 	return nil
 }
 
+func (m *mock2FACustomerRepo) DeleteExpiredSessions(ctx context.Context) error {
+	return nil
+}
+
 func (m *mock2FACustomerRepo) GetSessionLastReauthAt(ctx context.Context, sessionID string) (*time.Time, error) {
 	return nil, nil
 }
