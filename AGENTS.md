@@ -93,13 +93,18 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── backup-config.sh                  # Database backup script
 ├── tests/                                  # Test suites
 │   ├── integration/                      # Go integration tests (5 files)
-│   ├── e2e/                             # Playwright tests (4 files)
+│   ├── e2e/                             # Playwright E2E tests (14+ files)
+│   │   ├── admin-*.spec.ts              # Admin portal tests
+│   │   ├── customer-*.spec.ts           # Customer portal tests
+│   │   ├── auth.spec.ts                 # Authentication tests
+│   │   ├── mocks/                       # Wiremock Node Agent mocks
+│   │   └── README.md                    # E2E testing guide
 │   └── load/                            # k6 load tests (1 file)
 │
 ├── docs/                                   # Documentation
 │   ├── ARCHITECTURE.md                  # Architecture specification (2292 lines)
 │   ├── API.md                           # API reference
-│   ├── INSTALL.md                       # Installation guide
+│   ├── INSTALL.md                       # Installation guide (production & test)
 │   └── USAGE.md                         # Usage documentation
 │
 ├── AGENTS.md                              # AI Agent reference (this document)
@@ -1083,6 +1088,7 @@ VirtueStack uses a hybrid testing approach:
 
 - **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `make docker-build && make docker-up`. This replicates the production runtime (multi-stage build, non-root user, network isolation, service wiring).
 - **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent connects to the host's libvirt daemon and is not containerized during testing. It requires KVM/libvirt, mTLS certificates, and direct hardware access.
+- **E2E Testing** — Playwright tests run against the Docker stack with optional Wiremock for mocking Node Agent responses. See `tests/e2e/README.md` for setup instructions and `scripts/setup-e2e.sh` for automated environment setup.
 
 For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. Unit tests (`make test`) may run outside Docker since they test logic in isolation.
 

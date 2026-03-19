@@ -2311,6 +2311,13 @@ All components use `slog` with JSON output:
 | Security hardening review | All |
 | Documentation (INSTALL.md, USAGE.md, API.md) | Docs |
 
+**E2E Testing Infrastructure:**
+- Test setup script: `scripts/setup-e2e.sh` — generates secrets, certs, seed data
+- Test composition: `docker-compose.test.yml` — exposes ports for direct testing
+- Mock Node Agent: `tests/e2e/mocks/` — Wiremock for testing without real KVM
+- Test seed data: `migrations/test_seed.sql` — predictable UUIDs and credentials
+- Full guide: `tests/e2e/README.md`
+
 ---
 
 ## 20. QUALITY GATES MAPPING

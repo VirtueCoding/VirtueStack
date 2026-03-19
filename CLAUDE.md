@@ -56,6 +56,24 @@ docker compose build    # Rebuild images
 docker compose down     # Stop all services
 ```
 
+### E2E Testing
+```bash
+# Automated setup (generates secrets, certs, seed data, starts services)
+./scripts/setup-e2e.sh --start
+
+# Run E2E tests
+cd tests/e2e && npm test
+
+# Run specific test category
+npm run test:admin      # Admin portal tests
+npm run test:customer   # Customer portal tests
+npm run test:auth       # Authentication tests
+
+# Cleanup
+./scripts/setup-e2e.sh --clean
+```
+See `tests/e2e/README.md` for detailed E2E testing guide.
+
 ## CI Pipeline
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to main:
@@ -65,7 +83,16 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to main:
 4. Docker image builds (controller, admin-webui, customer-webui)
 5. Security: `govulncheck` + `npm audit`
 
+E2E tests (`.github/workflows/e2e.yml`) run on push/PR to main affecting WebUI or API code:
+1. Start PostgreSQL + NATS service containers
+2. Build Controller + WebUIs
+3. Run database migrations
+4. Seed test data
+5. Run Playwright E2E tests across browsers
+
 ## Key References
 - `AGENTS.md` - LLM reference: architecture, API endpoints, database schema, gRPC methods, environment variables
 - `CODING_STANDARD.md` - **MANDATORY**: 19 Quality Gates that all generated code MUST pass
+- `docs/INSTALL.md` - Installation guide for production and test environments
+- `tests/e2e/README.md` - E2E testing guide with architecture, credentials, and troubleshooting
 - `proto/virtuestack/node_agent.proto` - gRPC service definition (785 lines)
