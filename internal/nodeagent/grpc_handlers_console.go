@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
@@ -52,7 +53,7 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 	if vncHost == "" {
 		vncHost = "127.0.0.1"
 	}
-	vncAddr := fmt.Sprintf("%s:%d", vncHost, vncPort)
+	vncAddr := net.JoinHostPort(vncHost, strconv.Itoa(int(vncPort)))
 	conn, err := net.DialTimeout("tcp", vncAddr, 5*time.Second)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "connecting to VNC: %v", err)

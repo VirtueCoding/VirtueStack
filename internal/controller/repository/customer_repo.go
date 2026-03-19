@@ -384,7 +384,7 @@ func (r *CustomerRepository) CreateSession(ctx context.Context, session *models.
 func (r *CustomerRepository) GetSession(ctx context.Context, id string) (*models.Session, error) {
 	const q = `
 		SELECT id, user_id, user_type, refresh_token_hash,
-		       ip_address, user_agent, expires_at, last_reauth_at, created_at
+		       ip_address::text, user_agent, expires_at, last_reauth_at, created_at
 		FROM sessions WHERE id = $1`
 	session, err := ScanRow(ctx, r.db, q, []any{id}, scanSession)
 	if err != nil {
@@ -397,7 +397,7 @@ func (r *CustomerRepository) GetSession(ctx context.Context, id string) (*models
 func (r *CustomerRepository) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
 	const q = `
 		SELECT id, user_id, user_type, refresh_token_hash,
-		       ip_address, user_agent, expires_at, last_reauth_at, created_at
+		       ip_address::text, user_agent, expires_at, last_reauth_at, created_at
 		FROM sessions WHERE refresh_token_hash = $1`
 	session, err := ScanRow(ctx, r.db, q, []any{refreshTokenHash}, scanSession)
 	if err != nil {

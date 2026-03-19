@@ -387,11 +387,11 @@ func (h *CustomerHandler) getConsoleConfig(ct consoleType) consoleStreamConfig {
 func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType) (consoleStream, error) {
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	streamCtx, cancel := context.WithTimeout(ctx, webSocketTotalTimeout)
+	defer cancel()
 
 	if ct == consoleTypeVNC {
 		stream, err := client.StreamVNCConsole(streamCtx)
 		if err != nil {
-			cancel()
 			return nil, err
 		}
 		return &vncStream{stream: stream}, nil
@@ -399,7 +399,6 @@ func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.Cl
 
 	stream, err := client.StreamSerialConsole(streamCtx)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	return &serialStream{stream: stream}, nil
