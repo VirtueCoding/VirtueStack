@@ -105,7 +105,13 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   ├── ARCHITECTURE.md                  # Architecture specification (2292 lines)
 │   ├── API.md                           # API reference
 │   ├── INSTALL.md                       # Installation guide (production & test)
-│   └── USAGE.md                         # Usage documentation
+│   ├── USAGE.md                         # Usage documentation
+│   └── CODEMAPS/                        # Token-lean architecture summaries
+│       ├── architecture.md              # System overview (~900 tokens)
+│       ├── backend.md                   # API routes, services, repos (~950 tokens)
+│       ├── frontend.md                  # Page tree, components (~700 tokens)
+│       ├── data.md                      # Database schema (~850 tokens)
+│       └── dependencies.md              # External deps (~600 tokens)
 │
 ├── AGENTS.md                              # AI Agent reference (this document)
 ├── CODING_STANDARD.md                     # Quality gates and coding rules
@@ -1014,9 +1020,10 @@ All planned features are complete. The platform is fully implemented.
 
 ### When Adding Features
 
-1. **Check Architecture Plan:** Reference `docs/ARCHITECTURE.md`
-2. **Follow Coding Standard:** Reference `CODING_STANDARD.md`
-3. **Use Existing Patterns:**
+1. **Quick Context:** Read `docs/CODEMAPS/` (~4K tokens total) for token-efficient architecture overview
+2. **Check Architecture Plan:** Reference `docs/ARCHITECTURE.md` for detailed specs
+3. **Follow Coding Standard:** Reference `CODING_STANDARD.md`
+4. **Use Existing Patterns:**
    - Storage: Add to `StorageBackend` interface, implement for both backends
    - APIs: Add handler in appropriate tier (`api/admin/`, `api/customer/`, `api/provisioning/`)
    - Services: Business logic in `internal/controller/services/`
@@ -1054,6 +1061,7 @@ All planned features are complete. The platform is fully implemented.
 
 | Purpose | File(s) |
 |---------|---------|
+| Architecture Quick Reference | `docs/CODEMAPS/*.md` (~4K tokens total) |
 | Storage Backend | `internal/nodeagent/storage/interface.go`, `rbd.go`, `qcow.go` |
 | VM Lifecycle | `internal/nodeagent/vm/lifecycle.go`, `internal/controller/services/vm_service.go` |
 | Admin API | `internal/controller/api/admin/*.go` |

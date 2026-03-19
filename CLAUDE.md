@@ -92,6 +92,7 @@ E2E tests (`.github/workflows/e2e.yml`) run on push/PR to main affecting WebUI o
 
 ## Key References
 - `AGENTS.md` - LLM reference: architecture, API endpoints, database schema, gRPC methods, environment variables
+- `docs/CODEMAPS/` - Token-lean architecture summaries (~4K tokens total): `architecture.md`, `backend.md`, `frontend.md`, `data.md`, `dependencies.md`
 - `CODING_STANDARD.md` - **MANDATORY**: 19 Quality Gates that all generated code MUST pass
 - `docs/INSTALL.md` - Installation guide for production and test environments
 - `tests/e2e/README.md` - E2E testing guide with architecture, credentials, and troubleshooting

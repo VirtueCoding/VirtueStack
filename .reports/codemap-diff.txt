@@ -1,0 +1,50 @@
+# Codemap Generation Report
+Generated: 2026-03-19
+
+## Summary
+
+Initial codemap generation for VirtueStack project.
+
+## Files Created
+
+| File | Purpose | Token Est. |
+|------|---------|------------|
+| `docs/CODEMAPS/architecture.md` | System overview, service boundaries, data flow | ~900 |
+| `docs/CODEMAPS/backend.md` | API routes, services, repositories, middleware | ~950 |
+| `docs/CODEMAPS/frontend.md` | Page tree, component hierarchy, state management | ~700 |
+| `docs/CODEMAPS/data.md` | Database tables, relationships, RLS policies | ~850 |
+| `docs/CODEMAPS/dependencies.md` | External services, third-party packages | ~600 |
+
+## Files Scanned
+
+### Backend (Go)
+- 112 Go files in `internal/`
+- 2 entry points: `cmd/controller/main.go`, `cmd/node-agent/main.go`
+- 33 database migrations
+- 1 protobuf definition
+
+### Frontend (TypeScript)
+- 13 admin pages
+- 22 admin components
+- 8 customer pages
+- 34 customer components
+
+## Architecture Highlights
+
+1. **Three-tier API**: Provisioning (WHMCS), Customer (JWT), Admin (JWT+2FA)
+2. **Dual storage backend**: Ceph RBD or QCOW2 per VM
+3. **Async task queue**: NATS JetStream with durable messages
+4. **Row-level security**: Customer isolation at PostgreSQL level
+5. **gRPC Node Agent**: Runs on bare metal, not containerized
+
+## No Previous Codemaps
+
+This is the first codemap generation. No diff analysis performed.
+
+## Recommendations
+
+1. Run `/update-codemaps` after major feature additions
+2. Update `architecture.md` when adding new services
+3. Update `backend.md` when adding API routes
+4. Update `data.md` when adding migrations
+5. Keep each codemap under 1000 tokens for efficient context loading
