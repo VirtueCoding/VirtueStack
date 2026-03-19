@@ -41,7 +41,8 @@ async function fetchCsrfToken(): Promise<void> {
   try {
     await fetch(`${API_BASE_URL}/customer/profile`, { method: "GET", credentials: "include" });
   } catch (err) {
-    console.warn('Logout/CSRF fetch failed (non-fatal):', err);
+    // Log for debugging - non-fatal, the request may fail if server is unreachable
+    console.warn('fetchCsrfToken: Failed (non-fatal):', err);
   }
 }
 
@@ -205,7 +206,9 @@ export const customerAuthApi = {
     try {
       await apiClient.post("/customer/auth/logout", {});
     } catch (err) {
-      console.warn('Logout/CSRF fetch failed (non-fatal):', err);
+      // Logout errors are non-fatal — session may already be invalid.
+      // Log for debugging but always clear local state regardless.
+      console.warn('Logout request failed (session may already be invalid):', err);
     }
     tokenValidUntil = 0;
   },

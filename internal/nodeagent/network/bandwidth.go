@@ -191,14 +191,14 @@ func (m *NodeBandwidthManager) ApplyThrottle(ctx context.Context, vmName string,
 	logger = logger.With("interface", ifaceName)
 
 	// Check if already throttled
-	throttled, err := m.isThrottled(ifaceName)
+	throttled, err := m.isThrottled(ctx, ifaceName)
 	if err != nil {
 		logger.Warn("failed to check throttle status", "error", err)
 	}
 
 	if throttled {
 		// Remove existing throttle first
-		if err := m.removeThrottleFromInterface(ifaceName); err != nil {
+		if err := m.removeThrottleFromInterface(ctx, ifaceName); err != nil {
 			logger.Warn("failed to remove existing throttle", "error", err)
 		}
 	}
@@ -242,7 +242,7 @@ func (m *NodeBandwidthManager) RemoveThrottle(ctx context.Context, vmName string
 	logger = logger.With("interface", ifaceName)
 
 	// Check if throttled
-	throttled, err := m.isThrottled(ifaceName)
+	throttled, err := m.isThrottled(ctx, ifaceName)
 	if err != nil {
 		logger.Warn("failed to check throttle status", "error", err)
 	}
@@ -253,7 +253,7 @@ func (m *NodeBandwidthManager) RemoveThrottle(ctx context.Context, vmName string
 	}
 
 	// Remove throttle
-	if err := m.removeThrottleFromInterface(ifaceName); err != nil {
+	if err := m.removeThrottleFromInterface(ctx, ifaceName); err != nil {
 		return err
 	}
 
@@ -285,7 +285,7 @@ func (m *NodeBandwidthManager) ListThrottledVMs(ctx context.Context) ([]string, 
 			continue
 		}
 
-		throttled, err := m.isThrottled(ifaceName)
+		throttled, err := m.isThrottled(ctx, ifaceName)
 		if err != nil {
 			m.logger.Warn("failed to check throttle status", "vm_name", name, "error", err)
 		}
@@ -352,16 +352,14 @@ func (m *NodeBandwidthManager) getInterfaceNames(domain *libvirt.Domain) ([]stri
 }
 
 // isThrottled checks if an interface has a tc tbf qdisc configured.
-func (m *NodeBandwidthManager) isThrottled(ifaceName string) (bool, error) {
+func (m *NodeBandwidthManager) isThrottled(ctx context.Context, ifaceName string) (bool, error) {
 	// Validate interface name to prevent command injection
 	if !validIfaceRegex.MatchString(ifaceName) {
 		return false, fmt.Errorf("invalid interface name for throttling: %s", ifaceName)
 	}
 
 	// tc qdisc show dev vnet0
-	// context.TODO() is used because isThrottled is an internal helper that does not
-	// yet accept a context; callers should pass a context in a future refactor.
-	cmd := exec.CommandContext(context.TODO(), "tc", "qdisc", "show", "dev", ifaceName)
+	cmd := exec.CommandContext(ctx, "tc", "qdisc", "show", "dev", ifaceName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("checking tc qdisc: %w, output: %s", err, string(output))
@@ -372,16 +370,14 @@ func (m *NodeBandwidthManager) isThrottled(ifaceName string) (bool, error) {
 }
 
 // removeThrottleFromInterface removes the tc qdisc from an interface.
-func (m *NodeBandwidthManager) removeThrottleFromInterface(ifaceName string) error {
+func (m *NodeBandwidthManager) removeThrottleFromInterface(ctx context.Context, ifaceName string) error {
 	// Validate interface name to prevent command injection
 	if !validIfaceRegex.MatchString(ifaceName) {
 		return fmt.Errorf("invalid interface name for throttling: %s", ifaceName)
 	}
 
 	// tc qdisc del dev vnet0 root
-	// context.TODO() is used because removeThrottleFromInterface is an internal helper
-	// that does not yet accept a context; callers should pass a context in a future refactor.
-	cmd := exec.CommandContext(context.TODO(), "tc", "qdisc", "del", "dev", ifaceName, "root")
+	cmd := exec.CommandContext(ctx, "tc", "qdisc", "del", "dev", ifaceName, "root")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Ignore error if qdisc doesn't exist
@@ -420,7 +416,7 @@ func (m *NodeBandwidthManager) GetThrottleStatus(ctx context.Context, vmName str
 	}
 
 	// Check if throttled
-	throttled, err := m.isThrottled(ifaceName)
+	throttled, err := m.isThrottled(ctx, ifaceName)
 	if err != nil {
 		return nil, err
 	}

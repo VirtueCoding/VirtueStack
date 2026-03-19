@@ -97,7 +97,7 @@ func (m *DHCPManager) startDNSMasqProcess(
 	logger *slog.Logger,
 ) (*exec.Cmd, *os.File, int, error) {
 	// Test config before starting
-	if err := m.testDNSMasqConfig(files.configPath); err != nil {
+	if err := m.testDNSMasqConfig(ctx, files.configPath); err != nil {
 		os.Remove(files.configPath)
 		os.Remove(files.leasePath)
 		return nil, nil, 0, fmt.Errorf("invalid dnsmasq config: %w", err)

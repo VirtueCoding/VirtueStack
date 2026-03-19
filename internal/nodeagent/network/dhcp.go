@@ -153,7 +153,7 @@ func (m *DHCPManager) StartDHCPForVMWithConfig(ctx context.Context, cfg DHCPConf
 	logger.Info("starting DHCP for VM", "mac", cfg.MACAddress, "ip", cfg.IPAddress, "gateway", cfg.Gateway)
 
 	// Check if dnsmasq is available
-	if err := m.checkDNSMasqAvailable(); err != nil {
+	if err := m.checkDNSMasqAvailable(ctx); err != nil {
 		return fmt.Errorf("dnsmasq not available: %w", err)
 	}
 
@@ -433,8 +433,8 @@ func (m *DHCPManager) GenerateDNSMasqConfigFull(cfg DHCPConfig) (string, error) 
 }
 
 // CheckDNSMasqInstalled checks if dnsmasq is installed and available.
-func (m *DHCPManager) CheckDNSMasqInstalled() error {
-	return m.checkDNSMasqAvailable()
+func (m *DHCPManager) CheckDNSMasqInstalled(ctx context.Context) error {
+	return m.checkDNSMasqAvailable(ctx)
 }
 
 // CleanupStaleProcesses cleans up any stale dnsmasq processes.
@@ -507,9 +507,8 @@ func (m *DHCPManager) statusFilePath(vmID string) string {
 }
 
 // checkDNSMasqAvailable checks if dnsmasq is installed.
-func (m *DHCPManager) checkDNSMasqAvailable() error {
-	// context.TODO() is used because this helper does not yet accept a context.
-	cmd := exec.CommandContext(context.TODO(), "dnsmasq", "--version")
+func (m *DHCPManager) checkDNSMasqAvailable(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "dnsmasq", "--version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("dnsmasq not found or not executable: %w", err)
 	}
@@ -517,9 +516,8 @@ func (m *DHCPManager) checkDNSMasqAvailable() error {
 }
 
 // testDNSMasqConfig tests a dnsmasq configuration file for validity.
-func (m *DHCPManager) testDNSMasqConfig(configPath string) error {
-	// context.TODO() is used because this helper does not yet accept a context.
-	cmd := exec.CommandContext(context.TODO(), "dnsmasq", "-C", configPath, "--test")
+func (m *DHCPManager) testDNSMasqConfig(ctx context.Context, configPath string) error {
+	cmd := exec.CommandContext(ctx, "dnsmasq", "-C", configPath, "--test")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("config test failed: %w, output: %s", err, string(output))

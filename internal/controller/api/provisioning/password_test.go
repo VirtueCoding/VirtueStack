@@ -1,5 +1,8 @@
 package provisioning
 
+// Test credentials in this file are for testing purposes only.
+// DO NOT use these credentials in production environments.
+
 import (
 	"errors"
 	"testing"

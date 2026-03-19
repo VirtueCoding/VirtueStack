@@ -277,6 +277,20 @@ func (r *VMRepository) UpdateTemplateID(ctx context.Context, vmID, templateID st
 	return nil
 }
 
+// UpdateMACAddress updates the mac_address of a VM.
+// This is used after VM creation to persist the generated MAC address.
+func (r *VMRepository) UpdateMACAddress(ctx context.Context, vmID, macAddress string) error {
+	const q = `UPDATE vms SET mac_address = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, macAddress, vmID)
+	if err != nil {
+		return fmt.Errorf("updating VM %s mac_address: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating VM %s mac_address: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // UpdatePassword updates the root_password_encrypted field of a VM.
 // The encryptedPassword should already be hashed/encrypted before calling this method.
 // Returns ErrNoRowsAffected if the VM does not exist or is already deleted.

@@ -102,6 +102,7 @@ export default function AuditLogsPage() {
       URL.revokeObjectURL(url);
       toast({ title: "Export Complete", description: `Exported ${filteredLogs.length} log entries.` });
     } catch (err) {
+      // Log export failure for debugging - this is a legitimate error that should be tracked
       console.error("CSV export failed:", err);
       toast({ title: "Export Failed", description: "Failed to generate CSV export.", variant: "destructive" });
     }

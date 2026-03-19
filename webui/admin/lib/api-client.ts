@@ -55,9 +55,11 @@ async function fetchCsrfToken(): Promise<void> {
       credentials: 'include',
     });
     if (!getCsrfToken()) {
+      // Log for debugging CSRF issues - this indicates the server didn't set the expected cookie
       console.warn('fetchCsrfToken: CSRF cookie was not set after bootstrap request.');
     }
   } catch (err) {
+    // Log for debugging - non-fatal, the request may fail if server is unreachable
     console.warn('fetchCsrfToken: Failed to bootstrap CSRF cookie (non-fatal):', err);
   }
 }

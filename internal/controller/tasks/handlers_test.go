@@ -1,5 +1,8 @@
 package tasks
 
+// Test credentials in this file are for testing purposes only.
+// DO NOT use these credentials in production environments.
+
 import (
 	"strings"
 	"testing"
