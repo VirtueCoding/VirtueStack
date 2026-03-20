@@ -588,6 +588,36 @@ Customer API keys use a simplified permission system with 7 scopes:
 - Missing permission returns HTTP 403 Forbidden
 - Account management endpoints are JWT-only (no API key access)
 
+### 6.6 Error Response Handling
+
+**File:** `internal/controller/api/middleware/recovery.go`
+
+All API handlers use a canonical error response function for consistency:
+
+```go
+// Canonical error response function (USE THIS)
+func RespondWithError(c *gin.Context, status int, code, message string)
+
+// Example usage
+middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid hostname")
+```
+
+**Error Response Format:**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid hostname format",
+    "correlation_id": "req_abc123"
+  }
+}
+```
+
+**Key points:**
+- All handlers in `admin/`, `customer/`, and `provisioning/` packages use `middleware.RespondWithError`
+- The function automatically includes correlation ID from request context
+- Response uses `c.AbortWithStatusJSON` to prevent further handler execution
+
 ---
 
 ## 7. STORAGE LAYER (DUAL BACKEND)
