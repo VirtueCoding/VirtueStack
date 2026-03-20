@@ -442,7 +442,7 @@ function virtuestack_ClientArea(array $params): array
         $credentials = VirtueStackHelper::getCustomerCredentials($clientId);
         $webuiUrl = virtuestack_getWebuiUrl($params);
 
-        // Generate SSO token
+        // Generate SSO token with short expiry (5 minutes) for security
         $ssoToken = '';
         if (!empty($credentials) && !empty($vmId)) {
             try {
@@ -450,6 +450,7 @@ function virtuestack_ClientArea(array $params): array
                 $issuer = virtuestack_getApiUrl($params);
                 $customerId = virtuestack_getServiceField($serviceId, 'virtuestack_customer_id');
 
+                // Generate SSO token
                 $ssoToken = VirtueStackHelper::generateSSOToken(
                     $customerId,
                     $credentials['api_id'],

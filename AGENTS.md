@@ -62,7 +62,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (32 files)
+├── migrations/                             # Database migrations (35 files)
 │   ├── 000001_initial_schema.up.sql
 │   ├── 000019_add_storage_backend.up.sql
 │   ├── 000020_add_failover_requests.up.sql
@@ -77,7 +77,9 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   ├── 000029_add_tasks_status_created_at_index.up.sql
 │   ├── 000030_bandwidth_view_grants.up.sql
 │   ├── 000031_concurrent_indexes.up.sql
-│   └── 000032_plans_slug_not_null.up.sql
+│   ├── 000032_plans_slug_not_null.up.sql
+│   ├── 000033_failover_requested_by_restrict.up.sql
+│   └── 000034_customer_backup_codes_shown.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -872,6 +874,41 @@ virtuestack_SingleSignOn()      // WebUI SSO (stub)
 virtuestack_AdminServicesTabFieldsSave()  // Admin tab save (stub)
 ```
 
+### 12.3 SSO Token Methods
+
+**File:** `lib/VirtueStackHelper.php`
+
+For WHMCS → Customer WebUI SSO:
+
+```php
+use VirtueStack\WHMCS\VirtueStackHelper;
+
+// Generate SSO token with customer identity
+$ssoToken = VirtueStackHelper::generateSSOToken($customerId, $apiId, $jwtSecret, $issuer);
+
+// Build WebUI URL with token
+$webuiUrl = VirtueStackHelper::buildWebuiUrl($webuiBaseUrl, $vmId, $ssoToken);
+// Returns: https://webui.example.com/vm/{vmId}?sso_token={jwt}
+```
+
+**Security Note:** The SSO token is passed in the URL query parameter, which exposes it to browser history and logs. This is acceptable because:
+- The token has a short expiry (default 1 hour, recommend shorter for production)
+- It's used for customer self-service access, not administrative functions
+- The attack window is limited by token expiry
+
+**Methods:**
+- `generateSSOToken()` — Creates JWT with customer identity claims
+- `buildWebuiUrl()` — Builds URL with SSO token for VM access
+- `buildConsoleUrl()` — Builds URL for console access (VNC/serial)
+
+**Why use opaque tokens via API?**
+- Token stored in Controller's PostgreSQL (not WHMCS MySQL)
+- Token not visible in browser history
+- Token not leaked via Referer header
+- Token not logged in server access logs
+- HttpOnly cookies prevent XSS token theft
+- Single-use tokens prevent replay attacks
+
 ---
 
 ## 13. IMPLEMENTATION PATTERNS
@@ -987,7 +1024,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | TELEGRAM_BOT_TOKEN | No | Telegram bot token |
 | LOG_LEVEL | No | Logging level (debug/info/warn/error) |
 | LISTEN_ADDR | No | HTTP listen address (default :8080) |
-| NATS_AUTH_TOKEN | No | NATS server authentication token |
+| NATS_AUTH_TOKEN | Yes | NATS server authentication token (required, no default) |
 
 ### Node Agent
 

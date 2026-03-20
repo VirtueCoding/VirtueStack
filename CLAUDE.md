@@ -90,6 +90,31 @@ E2E tests (`.github/workflows/e2e.yml`) run on push/PR to main affecting WebUI o
 4. Seed test data
 5. Run Playwright E2E tests across browsers
 
+## Test Coverage
+
+### Go Backend Unit Tests
+
+| Package | Test Files | Coverage Focus |
+|---------|------------|----------------|
+| `internal/controller/api/admin` | `auth_test.go`, `customers_test.go`, `nodes_test.go` | HTTP handler validation (37 tests) |
+| `internal/controller/api/customer` | `auth_test.go` | Password change, auth validation |
+| `internal/controller/api/middleware` | Multiple | Rate limiting, auth, CSRF |
+| `internal/controller/services` | Multiple | Business logic, auth flows, 2FA |
+| `internal/controller/repository` | Multiple | Database operations |
+| `internal/shared/*` | Multiple | Crypto, config, utilities |
+
+Run coverage report:
+```bash
+make test-coverage   # Opens HTML report in browser
+```
+
+### Test Categories
+
+- **Validation Tests**: Input sanitization, boundary testing, error format consistency
+- **Service Tests**: Business logic with mocked repositories
+- **Integration Tests**: Database operations with test containers
+- **E2E Tests**: Full user flows via Playwright
+
 ## Key References
 - `AGENTS.md` - LLM reference: architecture, API endpoints, database schema, gRPC methods, environment variables
 - `docs/CODEMAPS/` - Token-lean architecture summaries (~4K tokens total): `architecture.md`, `backend.md`, `frontend.md`, `data.md`, `dependencies.md`

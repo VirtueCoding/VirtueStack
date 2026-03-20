@@ -79,6 +79,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 	// how this group was assembled. This is a secondary check; primary auth is
 	// the APIKeyAuth middleware applied by RegisterProvisioningRoutes.
 	group.Use(requireProvisioningAuth)
+
 	vms := group.Group("/vms")
 	{
 		vms.POST("", handler.CreateVM)

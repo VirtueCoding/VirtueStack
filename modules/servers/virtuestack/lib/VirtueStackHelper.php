@@ -424,21 +424,14 @@ final class VirtueStackHelper
     /**
      * Build the Customer WebUI URL with SSO token.
      *
-     * SECURITY WARNING: SSO token is passed via query parameter for backward compatibility.
-     * This exposes the token in browser history, referrer headers, and server logs.
-     * The JWT expiry is short (1 hour) to limit the exposure window.
-     *
-     * RECOMMENDED: Implement a POST-based token exchange flow instead:
-     *   1. WHMCS module stores a short-lived opaque token server-side (WHMCS DB or file)
-     *   2. Customer is redirected to WebUI with the opaque token in the URL (not the JWT)
-     *   3. WebUI POSTs the opaque token to /api/v1/customer/auth/sso-exchange
-     *   4. Controller validates the opaque token and returns a Set-Cookie with an HttpOnly session
-     *   5. WebUI reads the session cookie and redirects to /vm/{vmId}
-     *   6. The opaque token is single-use and expires within minutes
+     * SECURITY NOTE: The SSO token is passed via query parameter which exposes it
+     * in browser history, referrer headers, and server logs. To minimize risk:
+     * - Use a short token expiry (recommend 5 minutes)
+     * - Tokens should be single-use where possible
      *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID
-     * @param string $ssoToken   SSO JWT token
+     * @param string $ssoToken   SSO JWT token (use short expiry)
      *
      * @return string Full URL with token
      */
@@ -451,12 +444,11 @@ final class VirtueStackHelper
     /**
      * Build the Console WebUI URL with SSO token.
      *
-     * SECURITY WARNING: Same concern as buildWebuiUrl(). Token is exposed in URL.
-     * See buildWebuiUrl() for the recommended POST-based token exchange flow.
+     * SECURITY NOTE: Same concern as buildWebuiUrl(). Use short token expiry.
      *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID
-     * @param string $ssoToken   SSO JWT token
+     * @param string $ssoToken   SSO JWT token (use short expiry)
      * @param string $type       Console type: vnc or serial
      *
      * @return string Full URL with token

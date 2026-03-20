@@ -695,6 +695,32 @@ The E2E seed script creates predictable test data:
 | TLS_CA_FILE | Yes | - | CA certificate |
 | LOG_LEVEL | No | info | Logging level |
 
+### Security Considerations
+
+#### Rate Limiting for Distributed Deployments
+
+**IMPORTANT:** The default in-memory rate limiting does NOT protect multi-instance deployments.
+
+| Deployment | Recommended Rate Limiter | Why |
+|------------|-------------------------|-----|
+| Single controller instance | In-memory (default) | Simplicity, no external dependencies |
+| Multiple controller instances (load balanced) | **Redis-backed** | Shared state across all instances |
+
+**Why Redis is required for multi-instance:**
+- Each controller instance maintains its own in-memory rate limit counters
+- Attackers can bypass limits by distributing requests across instances
+- Redis provides shared state so all instances see the same request counts
+
+**Configuration:**
+To use Redis-backed rate limiting, configure a Redis instance and use the `RedisRateLimit` middleware instead of `RateLimit`. See `internal/controller/api/middleware/ratelimit.go` for implementation details.
+
+#### NATS Authentication
+
+`NATS_AUTH_TOKEN` is **required** and must be:
+- At least 32 characters in production
+- Different from the default development token
+- Kept secret and rotated periodically
+
 ---
 
 ## 5. Verification

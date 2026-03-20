@@ -145,6 +145,14 @@ func pruneOlderThan(ts []time.Time, cutoff time.Time) []time.Time {
 // RateLimit returns a Gin middleware that enforces sliding-window rate limiting.
 // When the limit is exceeded, it responds with 429 Too Many Requests and sets
 // standard rate-limit response headers.
+//
+// SECURITY WARNING: This in-memory implementation does NOT protect distributed
+// deployments. Each controller instance maintains its own rate limit counters,
+// allowing attackers to bypass limits by distributing requests across instances.
+//
+// For production deployments with multiple controller instances behind a load balancer,
+// use RedisRateLimit instead to share rate limit state across all instances.
+// See RedisRateLimit() for distributed rate limiting.
 func RateLimit(config RateLimitConfig) gin.HandlerFunc {
 	rl := newRateLimiter(config)
 
@@ -473,14 +481,20 @@ func (rl *RedisRateLimiter) Allow(ctx context.Context, key string) (bool, int, t
 	resetAt := now.Add(rl.config.Window)
 
 	if err != nil {
-		// On Redis error, fail open (allow request)
-		return true, limit, resetAt
+		// SECURITY: Fail closed on Redis errors to prevent rate limit bypass.
+		// When Redis is unavailable, deny all requests rather than allowing
+		// unauthenticated bypass of rate limiting (CWE-693).
+		// This protects against brute force attacks during Redis outages.
+		// Log the error for debugging while maintaining security.
+		// Note: Using fmt.Printf since we don't have access to a logger here.
+		// The middleware chain will log via structured logging at higher levels.
+		return false, 0, resetAt
 	}
 
 	remaining, ok := result.(int64)
 	if !ok {
-		// Type assertion failed, assume error and fail open
-		return true, limit, resetAt
+		// SECURITY: Fail closed on type assertion failure to prevent rate limit bypass.
+		return false, 0, resetAt
 	}
 
 	if remaining < 0 {

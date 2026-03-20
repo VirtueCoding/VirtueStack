@@ -2,8 +2,8 @@ package provisioning
 
 import (
 	cryptorand "crypto/rand"
+	"fmt"
 	"math/big"
-	mathrand "math/rand"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -99,8 +99,10 @@ func generateRandomPassword() string {
 	randChar := func(charset string) byte {
 		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
-			// Fallback: use math/rand seeded by time (acceptable only here as last resort)
-			return charset[mathrand.Intn(len(charset))]
+			// SECURITY: crypto/rand failure indicates system entropy exhaustion or
+			// serious system issue. Fail immediately rather than generating predictable
+			// passwords with math/rand (CWE-1241).
+			panic(fmt.Sprintf("crypto/rand failure during password generation: %v", err))
 		}
 		return charset[n.Int64()]
 	}
@@ -124,10 +126,11 @@ func generateRandomPassword() string {
 	// Shuffle using crypto/rand to avoid predictable placement of required chars
 	for i := len(combined) - 1; i > 0; i-- {
 		jBig, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(i+1)))
-		j := i // fallback: no swap on error
-		if err == nil {
-			j = int(jBig.Int64())
+		if err != nil {
+			// SECURITY: Consistent with randChar - panic on crypto/rand failure.
+			panic(fmt.Sprintf("crypto/rand failure during password shuffle: %v", err))
 		}
+		j := int(jBig.Int64())
 		combined[i], combined[j] = combined[j], combined[i]
 	}
 

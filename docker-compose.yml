@@ -51,8 +51,9 @@ services:
     image: nats:2.10-alpine
     container_name: virtuestack-nats
     restart: unless-stopped
-    # NATS_AUTH_TOKEN must be set in .env; the fallback below is for local dev only - not for production
-    command: ["nats-server", "-js", "-sd", "/data", "--auth", "${NATS_AUTH_TOKEN:-changeme}"]
+    # SECURITY: NATS_AUTH_TOKEN must be set in .env - no default fallback.
+    # Failing to set this will cause the service to fail to start.
+    command: ["nats-server", "-js", "-sd", "/data", "--auth", "${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env}"]
     volumes:
       - nats_data:/data
     networks:
@@ -89,7 +90,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=prefer
-      NATS_URL: nats://${NATS_AUTH_TOKEN:-changeme}@nats:4222
+      # SECURITY: NATS_AUTH_TOKEN must be set in .env - no default fallback.
+      NATS_URL: nats://${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env}@nats:4222
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       LISTEN_ADDR: :8080

@@ -298,6 +298,13 @@ func ValidateTempToken(config AuthConfig, tokenString string) (*JWTClaims, error
 	return claims, nil
 }
 
+// ValidateJWT validates a JWT token and returns its claims.
+// This is the exported version of parseAndValidateJWT for use by services
+// that need to validate tokens outside of the middleware context (e.g., SSO exchange).
+func ValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, error) {
+	return parseAndValidateJWT(config, tokenString)
+}
+
 // GetUserID extracts the user_id set by JWTAuth from gin.Context.
 // Returns an empty string if not present.
 func GetUserID(c *gin.Context) string {

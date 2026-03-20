@@ -1,0 +1,7 @@
+id	severity	category	location	title	recommended_fix	status
+FINDING-001	medium	logic	internal/controller/api/middleware/ratelimit.go:476	Redis rate limiter fails open on error	Add circuit breaker pattern; deny requests when rate limit backend is unavailable; consider fallback to local rate limiting	fixed
+FINDING-002	low	config	docker-compose.yml:55	Weak default NATS auth token in compose file	Remove default fallback; require NATS_AUTH_TOKEN to be set explicitly in all environments; validate token strength at startup	fixed
+FINDING-003	info	config	internal/controller/api/middleware/ratelimit.go:148	In-memory rate limiting doesn't protect distributed deployments	Deploy with Redis-backed rate limiting in multi-instance production environments; document this in deployment guide	fixed
+FINDING-004	low	crypto	internal/controller/api/provisioning/vms.go:102-103	Password generation falls back to math/rand on crypto/rand failure	Panic or fail securely instead of falling back to non-cryptographic RNG; crypto/rand failure indicates system entropy exhaustion which should halt operations	fixed
+FINDING-005	info	config	modules/servers/virtuestack/lib/VirtueStackHelper.php:445-448	SSO token passed via URL query parameter for WebUI access	Document security considerations; use short token expiry (5 minutes recommended); accept trade-off for simplicity	fixed
+IMPROVEMENT-001	info	testing	internal/controller/api/admin/*.go	Missing unit tests for admin API handlers	Add unit tests for input validation, error handling, and response format	fixed

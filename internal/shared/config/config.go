@@ -544,6 +544,9 @@ func validateProductionConfig(cfg *ControllerConfig) error {
 	if cfg.NATS.AuthToken == natsDevToken {
 		return fmt.Errorf("NATS_AUTH_TOKEN must not use the default development token in production; set a strong NATS_AUTH_TOKEN")
 	}
+	if len(cfg.NATS.AuthToken) < 32 {
+		return fmt.Errorf("NATS_AUTH_TOKEN must be at least 32 characters in production; current length: %d", len(cfg.NATS.AuthToken))
+	}
 
 	return nil
 }
