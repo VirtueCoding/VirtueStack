@@ -6,6 +6,7 @@ declare module "@novnc/novnc/lib/rfb" {
       target?: string
     }
     wsProtocols?: string[]
+    shared?: boolean
   }
 
   export interface RFBEvents {
@@ -25,7 +26,7 @@ declare module "@novnc/novnc/lib/rfb" {
     )
 
     disconnect(): void
-    sendCredentials(credentials: { password?: string; username?: string }): void
+    sendCredentials(credentials: { password?: string; username?: string; target?: string }): void
     clipboardPasteFrom(text: string): void
     sendCtrlAltDel(): void
     scaleViewport: boolean
