@@ -28,11 +28,12 @@ import (
 
 // WebhookService provides business logic for managing webhook endpoints and deliveries.
 type WebhookService struct {
-	webhookRepo   *repository.WebhookRepository
-	taskPublisher TaskPublisher
-	logger        *slog.Logger
-	encryptionKey string
-	httpClient    *http.Client
+	webhookRepo       *repository.WebhookRepository
+	taskPublisher     TaskPublisher
+	logger            *slog.Logger
+	encryptionKey     string
+	httpClient        *http.Client
+	skipURLValidation bool // For testing only
 }
 
 // NewWebhookService creates a new WebhookService with the given dependencies.
@@ -52,6 +53,23 @@ func NewWebhookService(
 		// same IP-range enforcement as async task deliveries.
 		httpClient: tasks.DefaultHTTPClient(),
 	}
+}
+
+// SetHTTPClient sets a custom HTTP client for the webhook service.
+// This is primarily intended for testing with mock servers.
+// If client is nil, resets to the default SSRF-safe HTTP client.
+func (s *WebhookService) SetHTTPClient(client *http.Client) {
+	if client == nil {
+		s.httpClient = tasks.DefaultHTTPClient()
+		return
+	}
+	s.httpClient = client
+}
+
+// SetSkipURLValidation enables or disables URL validation for testing.
+// When true, private IP checks are skipped (use with caution - test only).
+func (s *WebhookService) SetSkipURLValidation(skip bool) {
+	s.skipURLValidation = skip
 }
 
 // Valid webhook events that can be subscribed to.
@@ -436,6 +454,11 @@ func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 	// Must have a host
 	if parsed.Host == "" {
 		return fmt.Errorf("%w: missing host", ErrInvalidURL)
+	}
+
+	// Skip private IP check for testing
+	if s.skipURLValidation {
+		return nil
 	}
 
 	// Defense-in-depth: resolve the hostname at registration time and reject

@@ -301,6 +301,12 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 	// Clear the uptime data since VM is deleted
 	m.clearVMStartTime(vmID)
 
+	// Clear CPU usage cache entry to prevent memory leak
+	domainName := DomainNameFromID(vmID)
+	cpuUsageCacheMu.Lock()
+	delete(cpuUsageCache, domainName)
+	cpuUsageCacheMu.Unlock()
+
 	logger.Info("VM deleted successfully")
 	return nil
 }

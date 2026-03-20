@@ -487,7 +487,7 @@ func CreateTestWebhook(ctx context.Context, customerID string) (string, error) {
 	secretHash := crypto.HashSHA256(TestWebhookSecret)
 
 	query := `
-		INSERT INTO webhooks (id, customer_id, url, secret_hash, events, is_active, created_at, updated_at)
+		INSERT INTO webhooks (id, customer_id, url, secret_hash, events, active, created_at, updated_at)
 		VALUES ($1, $2, 'https://example.com/webhook', $3, ARRAY['vm.created', 'vm.deleted'], true, NOW(), NOW())
 		RETURNING id
 	`

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,10 +31,25 @@ func TestWebhookRegistration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("RegisterWebhook", func(t *testing.T) {
-		// Register a new webhook
+		// Create a test HTTPS server that accepts webhook pings
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		// Use the test server's client which trusts its self-signed certificate
+		// and skip URL validation since test server runs on localhost
+		suite.WebhookService.SetHTTPClient(server.Client())
+		suite.WebhookService.SetSkipURLValidation(true)
+		defer func() {
+			suite.WebhookService.SetHTTPClient(nil) // Reset to default
+			suite.WebhookService.SetSkipURLValidation(false)
+		}()
+
+		// Register a new webhook with the test server URL
 		webhook := &models.CustomerWebhook{
 			CustomerID: TestCustomerID,
-			URL:        "https://example.com/webhook",
+			URL:        server.URL + "/webhook",
 			SecretHash: "test-secret-hash",
 			Events:     []string{models.WebhookEventVMCreated, models.WebhookEventVMDeleted},
 			IsActive:   true,
@@ -43,6 +59,9 @@ func TestWebhookRegistration(t *testing.T) {
 
 		require.NoError(t, err, "Webhook registration should succeed")
 		assert.NotEmpty(t, webhookID, "Webhook ID should be generated")
+
+		// Cleanup
+		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID)
 	})
 
 	t.Run("ListWebhooks", func(t *testing.T) {
@@ -57,6 +76,9 @@ func TestWebhookRegistration(t *testing.T) {
 
 		require.NoError(t, err, "Listing webhooks should succeed")
 		assert.GreaterOrEqual(t, len(webhooks), 3, "Should have at least 3 webhooks")
+
+		// Cleanup: remove webhooks to avoid hitting limit in other tests
+		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID)
 	})
 
 	t.Run("UpdateWebhook", func(t *testing.T) {
@@ -80,6 +102,9 @@ func TestWebhookRegistration(t *testing.T) {
 		webhook, err := suite.WebhookRepo.GetByID(ctx, webhookID)
 		require.NoError(t, err)
 		assert.Equal(t, "https://example.com/updated", webhook.URL, "URL should be updated")
+
+		// Cleanup
+		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID)
 	})
 
 	t.Run("DeleteWebhook", func(t *testing.T) {
@@ -121,9 +146,9 @@ func TestWebhookDelivery(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("SuccessfulDelivery", func(t *testing.T) {
-		// Create a test HTTP server
+		// Create a test HTTPS server
 		received := make(chan *http.Request, 1)
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			received <- r
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -161,9 +186,9 @@ func TestWebhookDelivery(t *testing.T) {
 	})
 
 	t.Run("FailedDeliveryWithRetry", func(t *testing.T) {
-		// Create a test HTTP server that always fails
+		// Create a test HTTPS server that always fails
 		attempts := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts++
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
@@ -183,8 +208,8 @@ func TestWebhookDelivery(t *testing.T) {
 	})
 
 	t.Run("DeliveryTimeout", func(t *testing.T) {
-		// Create a slow test HTTP server
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Create a slow test HTTPS server
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(10 * time.Second) // Exceed typical timeout
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -236,13 +261,13 @@ func TestWebhookRetryLogic(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a failed delivery
-		deliveryID := "delivery-retry-test"
+		deliveryID := "00000000-0000-0000-0002-000000000001"
 		now := time.Now()
 		nextRetry := now.Add(1 * time.Minute)
 
 		_, _ = suite.DBPool.Exec(ctx, `
-			INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, next_retry_at, created_at)
-			VALUES ($1, $2, $3, $4, 5, false, $5, NOW())
+			INSERT INTO webhook_deliveries (id, webhook_id, event, idempotency_key, payload, status, attempt_count, max_attempts, next_retry_at, response_status, response_body, error_message, created_at, updated_at)
+			VALUES ($1, $2, $3, gen_random_uuid(), $4, 'retrying', 5, 5, $5, 0, '', '', NOW(), NOW())
 		`, deliveryID, webhookID, models.WebhookEventVMCreated, "{}", nextRetry)
 
 		// Get pending retries
@@ -266,10 +291,10 @@ func TestWebhookRetryLogic(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a delivery that has exceeded max attempts
-		deliveryID := "delivery-max-attempts"
+		deliveryID := "00000000-0000-0000-0002-000000000002"
 		_, _ = suite.DBPool.Exec(ctx, `
-			INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, created_at)
-			VALUES ($1, $2, $3, $4, 10, false, NOW())
+			INSERT INTO webhook_deliveries (id, webhook_id, event, idempotency_key, payload, status, attempt_count, max_attempts, response_status, response_body, error_message, created_at, updated_at)
+			VALUES ($1, $2, $3, gen_random_uuid(), $4, 'failed', 10, 5, 0, '', '', NOW(), NOW())
 		`, deliveryID, webhookID, models.WebhookEventVMCreated, "{}")
 
 		// Should not be in pending retries (exceeded max attempts)
@@ -465,10 +490,15 @@ func TestWebhookDeliveryHistory(t *testing.T) {
 
 		// Create some delivery records
 		for i := 0; i < 5; i++ {
+			status := "failed"
+			if i%2 == 0 {
+				status = "delivered"
+			}
+			deliveryID := fmt.Sprintf("00000000-0000-0000-0003-%012d", i)
 			_, err := suite.DBPool.Exec(ctx, `
-				INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, created_at)
-				VALUES ($1, $2, $3, $4, 1, $5, NOW() - INTERVAL '1 day' * $6)
-			`, "delivery-"+string(rune('a'+i)), webhookID, models.WebhookEventVMCreated, "{}", i%2 == 0, i)
+				INSERT INTO webhook_deliveries (id, webhook_id, event, idempotency_key, payload, status, attempt_count, max_attempts, response_status, response_body, error_message, created_at, updated_at)
+				VALUES ($1, $2, $3, gen_random_uuid(), $4, $5, 1, 5, 0, '', '', NOW() - INTERVAL '1 day' * $6, NOW())
+			`, deliveryID, webhookID, models.WebhookEventVMCreated, "{}", status, i)
 			require.NoError(t, err)
 		}
 
@@ -483,12 +513,17 @@ func TestWebhookDeliveryHistory(t *testing.T) {
 		webhookID, err := CreateTestWebhook(ctx, TestCustomerID)
 		require.NoError(t, err)
 
-		// Create deliveries with known success/failure
+		// Create deliveries with known success/failure (7 delivered, 3 failed)
 		for i := 0; i < 10; i++ {
+			status := "failed"
+			if i < 7 {
+				status = "delivered"
+			}
+			deliveryID := fmt.Sprintf("00000000-0000-0000-0004-%012d", i)
 			_, err := suite.DBPool.Exec(ctx, `
-				INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempt_count, success, created_at)
-				VALUES ($1, $2, $3, $4, 1, $5, NOW())
-			`, "stats-delivery-"+string(rune('0'+i)), webhookID, models.WebhookEventVMCreated, "{}", i < 7) // 7 success, 3 failure
+				INSERT INTO webhook_deliveries (id, webhook_id, event, idempotency_key, payload, status, attempt_count, max_attempts, response_status, response_body, error_message, created_at, updated_at)
+				VALUES ($1, $2, $3, gen_random_uuid(), $4, $5, 1, 5, 0, '', '', NOW(), NOW())
+			`, deliveryID, webhookID, models.WebhookEventVMCreated, "{}", status)
 			require.NoError(t, err)
 		}
 
@@ -513,6 +548,11 @@ func TestWebhookSecurity(t *testing.T) {
 	t.Run("CustomerCannotAccessOtherWebhooks", func(t *testing.T) {
 		// Create another customer
 		otherCustomerID := "00000000-0000-0000-0000-000000000099"
+
+		// Clean up any existing customer first
+		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", otherCustomerID)
+		_, _ = suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", otherCustomerID)
+
 		_, err := suite.DBPool.Exec(ctx, `
 			INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 			VALUES ($1, 'other2@example.com', 'hash', 'Other Customer', 'active', NOW(), NOW())
