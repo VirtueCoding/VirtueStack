@@ -35,6 +35,9 @@ const (
 	// actorTypeContextKey is the gin context key for the actor type.
 	actorTypeContextKey = "actor_type"
 
+	// permissionsContextKey is the gin context key for API key permissions.
+	permissionsContextKey = "permissions"
+
 	// tempTokenPurposeClaim is the custom claim key for temp token purpose.
 	tempTokenPurposeClaim = "purpose"
 
@@ -75,6 +78,18 @@ type JWTClaims struct {
 // Returns the key's database ID and the set of IPs allowed to use it.
 // Returns an error if the key is not found or inactive.
 type APIKeyValidator func(ctx context.Context, keyHash string) (keyID string, allowedIPs []string, err error)
+
+// CustomerAPIKeyInfo contains the information returned by CustomerAPIKeyValidator.
+type CustomerAPIKeyInfo struct {
+	KeyID       string
+	CustomerID  string
+	Permissions []string
+}
+
+// CustomerAPIKeyValidator looks up a customer API key by its SHA-256 hash.
+// Returns the key's ID, the customer ID that owns it, and its permissions.
+// Returns an error if the key is not found, revoked, or expired.
+type CustomerAPIKeyValidator func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error)
 
 // JWTAuth returns a Gin middleware that validates JWT tokens from HttpOnly cookies.
 // Falls back to Authorization header for API clients that don't use cookies.
@@ -215,6 +230,133 @@ func RequireUserType(userTypes ...string) gin.HandlerFunc {
 		if _, ok := allowed[ut]; !ok {
 			abortWithAuthError(c, http.StatusForbidden, "INSUFFICIENT_PERMISSIONS",
 				"your account type is not permitted for this endpoint")
+			return
+		}
+		c.Next()
+	}
+}
+
+// CustomerAPIKeyAuth returns a Gin middleware that validates customer API keys.
+// The key is read from the X-API-Key request header.
+// The raw key is hashed with SHA-256 before database lookup via validator.
+// On success it sets "user_id" (customer_id), "user_type"="customer", "api_key_id", and "permissions".
+// This middleware is for programmatic API access by customers.
+func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rawKey := c.GetHeader("X-API-Key")
+		if rawKey == "" {
+			abortWithAuthError(c, http.StatusUnauthorized, "MISSING_API_KEY", "X-API-Key header is required")
+			return
+		}
+
+		keyHash := hashAPIKey(rawKey)
+		info, err := validator(c.Request.Context(), keyHash)
+		if err != nil {
+			slog.Warn("customer api key validation failed",
+				"error", err,
+				"correlation_id", GetCorrelationID(c),
+			)
+			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY", "API key is invalid, revoked, or expired")
+			return
+		}
+
+		// Set the standard auth context keys for customer API key auth.
+		// This allows downstream handlers to use GetUserID() consistently.
+		c.Set(userIDContextKey, info.CustomerID)
+		c.Set(userTypeContextKey, "customer")
+		c.Set(apiKeyIDContextKey, info.KeyID)
+		c.Set(actorTypeContextKey, "customer_api_key")
+		c.Set(permissionsContextKey, info.Permissions)
+		c.Next()
+	}
+}
+
+// JWTOrCustomerAPIKeyAuth returns a middleware that accepts either JWT or customer API key auth.
+// JWT authentication is attempted first (from cookie or Authorization header).
+// If no JWT is present, falls back to X-API-Key header for API key authentication.
+// This allows customers to use either browser sessions (JWT) or programmatic access (API keys).
+func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyValidator) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Try JWT authentication first
+		tokenString := GetAccessTokenFromCookie(c)
+		if tokenString != "" {
+			claims, err := parseAndValidateJWT(jwtConfig, tokenString)
+			if err == nil && claims.Purpose != tempTokenPurposeValue {
+				setAuthContext(c, claims)
+				c.Next()
+				return
+			}
+			// JWT was present but invalid - log and continue to try API key
+			slog.Debug("jwt validation failed, trying api key",
+				"fingerprint", tokenFingerprint(tokenString),
+				"error", err,
+				"correlation_id", GetCorrelationID(c),
+			)
+		}
+
+		// Fall back to API key authentication
+		rawKey := c.GetHeader("X-API-Key")
+		if rawKey == "" {
+			abortWithAuthError(c, http.StatusUnauthorized, "MISSING_AUTH",
+				"either authentication cookie or X-API-Key header is required")
+			return
+		}
+
+		keyHash := hashAPIKey(rawKey)
+		info, err := keyValidator(c.Request.Context(), keyHash)
+		if err != nil {
+			slog.Warn("customer api key validation failed",
+				"error", err,
+				"correlation_id", GetCorrelationID(c),
+			)
+			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY",
+				"API key is invalid, revoked, or expired")
+			return
+		}
+
+		// Set the standard auth context keys for customer API key auth.
+		c.Set(userIDContextKey, info.CustomerID)
+		c.Set(userTypeContextKey, "customer")
+		c.Set(apiKeyIDContextKey, info.KeyID)
+		c.Set(actorTypeContextKey, "customer_api_key")
+		c.Set(permissionsContextKey, info.Permissions)
+		c.Next()
+	}
+}
+
+// GetPermissions extracts the permissions set by CustomerAPIKeyAuth from gin.Context.
+// Returns nil if not present (i.e., JWT auth was used instead).
+func GetPermissions(c *gin.Context) []string {
+	v, _ := c.Get(permissionsContextKey)
+	perms, _ := v.([]string)
+	return perms
+}
+
+// HasPermission checks if the authenticated request has a specific permission.
+// For JWT auth, returns true (JWT auth has full permissions).
+// For API key auth, checks if the permission is in the key's permission list.
+func HasPermission(c *gin.Context, permission string) bool {
+	perms := GetPermissions(c)
+	if perms == nil {
+		// JWT auth has full permissions
+		return true
+	}
+	for _, p := range perms {
+		if p == permission {
+			return true
+		}
+	}
+	return false
+}
+
+// RequirePermission returns a middleware that checks for a specific API key permission.
+// For JWT-authenticated requests, all permissions are granted.
+// For API key requests, the permission must be in the key's permission list.
+func RequirePermission(permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !HasPermission(c, permission) {
+			abortWithAuthError(c, http.StatusForbidden, "INSUFFICIENT_PERMISSIONS",
+				fmt.Sprintf("API key lacks required permission: %s", permission))
 			return
 		}
 		c.Next()

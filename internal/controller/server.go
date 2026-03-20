@@ -84,6 +84,8 @@ type Server struct {
 	heartbeatChecker *services.HeartbeatChecker
 	rdnsService      *services.RDNSService
 	bandwidthRepo    *repository.BandwidthRepository
+	// Repositories needed for route registration
+	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
 	provisioningHandler *provisioning.ProvisioningHandler
 	customerHandler     *customer.CustomerHandler
@@ -155,6 +157,7 @@ func (s *Server) InitializeServices() error {
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 
 	s.bandwidthRepo = bandwidthRepo
+	s.customerAPIKeyRepo = apiKeyRepo
 
 	// Create task publisher using the worker
 	var taskPublisher services.TaskPublisher
@@ -421,7 +424,7 @@ func (s *Server) RegisterAPIRoutes() {
 
 	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo(), auditRepo)
 
-	customer.RegisterCustomerRoutes(v1, s.customerHandler, s.notifyHandler)
+	customer.RegisterCustomerRoutes(v1, s.customerHandler, s.notifyHandler, s.customerAPIKeyRepo)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
 

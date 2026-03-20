@@ -2,32 +2,69 @@ package customer
 
 import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/gin-gonic/gin"
+)
+
+// Permission constants for customer API key authorization.
+const (
+	PermissionVMRead       = "vm:read"
+	PermissionVMWrite      = "vm:write"
+	PermissionVMPower      = "vm:power"
+	PermissionBackupRead   = "backup:read"
+	PermissionBackupWrite  = "backup:write"
+	PermissionSnapshotRead = "snapshot:read"
+	PermissionSnapshotWrite = "snapshot:write"
 )
 
 // RegisterCustomerRoutes registers all customer API routes.
 // These routes are for customer self-service operations.
 //
 // Base path: /api/v1/customer
-// Authentication: JWT Bearer token (validated via middleware.JWTAuth)
+// Authentication: JWT Bearer token OR X-API-Key header (when apiKeyRepo is provided)
 //
 // All endpoints enforce customer isolation - users can only access their own resources.
-func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, notifyHandler *NotificationsHandler) {
+//
+// When apiKeyRepo is provided, routes support dual authentication:
+//   - JWT tokens (browser sessions via cookies or Authorization header)
+//   - Customer API keys (programmatic access via X-API-Key header)
+//
+// Permission enforcement:
+//   - JWT authentication: Full access to all endpoints
+//   - API key authentication: Limited to granted permissions (vm:read, vm:write, etc.)
+//
+// Account management endpoints (profile, 2FA, webhooks, API keys) require JWT authentication.
+// CSRF protection is applied only for JWT-authenticated requests; API key requests are exempt.
+func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, notifyHandler *NotificationsHandler, apiKeyRepo *repository.CustomerAPIKeyRepository) {
 	customer := router.Group("/customer")
 
 	registerAuthRoutes(customer, handler)
 
+	// Account management routes - JWT only, no API key access
+	// These handle sensitive account-level operations that should require browser session.
+	accountGroup := customer.Group("")
+	accountGroup.Use(middleware.JWTAuth(handler.authConfig))
+	accountGroup.Use(middleware.RequireUserType("customer"))
+	accountGroup.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	registerAccountRoutes(accountGroup, handler)
+	registerAPIKeyRoutes(accountGroup, handler)
+	registerWebhookRoutes(accountGroup, handler)
+	register2FARoutes(accountGroup, handler)
+
+	// VM/backup/snapshot routes - support both JWT and API key authentication
 	protected := customer.Group("")
-	protected.Use(middleware.JWTAuth(handler.authConfig))
+	if apiKeyRepo != nil {
+		keyValidator := CustomerAPIKeyValidator(apiKeyRepo)
+		protected.Use(middleware.JWTOrCustomerAPIKeyAuth(handler.authConfig, keyValidator))
+	} else {
+		protected.Use(middleware.JWTAuth(handler.authConfig))
+	}
 	protected.Use(middleware.RequireUserType("customer"))
-	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	protected.Use(middleware.SkipCSRFForAPIKey(middleware.DefaultCSRFConfig()))
 
 	registerVMRoutes(protected, handler)
 	registerBackupRoutes(protected, handler)
 	registerSnapshotRoutes(protected, handler)
-	registerAPIKeyRoutes(protected, handler)
-	registerWebhookRoutes(protected, handler)
-	register2FARoutes(protected, handler)
 
 	protected.GET("/templates", handler.ListTemplates)
 	protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
@@ -38,7 +75,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	}
 }
 
-// registerAuthRoutes registers authentication endpoints (no JWT required).
+// registerAuthRoutes registers authentication endpoints (no auth required).
 func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 	auth := customer.Group("/auth")
 	{
@@ -48,88 +85,122 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 	}
 }
 
-// registerVMRoutes registers VM-related endpoints.
-func registerVMRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+// registerAccountRoutes registers account management endpoints (JWT-only, no API key).
+func registerAccountRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	protected.POST("/auth/logout", handler.Logout)
 	protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
 	protected.GET("/profile", handler.GetProfile)
 	protected.PUT("/profile", handler.UpdateProfile)
+}
 
+// registerVMRoutes registers VM-related endpoints with permission enforcement.
+func registerVMRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	vms := protected.Group("/vms")
-	{
-		vms.GET("", handler.ListVMs)
-		vms.GET("/:id", handler.GetVM)
 
-		registerPowerRoutes(vms, handler)
-		registerConsoleRoutes(vms, handler)
-		registerMonitoringRoutes(vms, handler)
-		registerRDNSRoutes(vms, handler)
-		registerISORoutes(vms, handler)
+	// Read operations require vm:read
+	vms.GET("", middleware.RequirePermission(PermissionVMRead), handler.ListVMs)
+	vms.GET("/:id", middleware.RequirePermission(PermissionVMRead), handler.GetVM)
+
+	registerPowerRoutes(vms, handler)
+	registerConsoleRoutes(vms, handler)
+	registerMonitoringRoutes(vms, handler)
+	registerRDNSRoutes(vms, handler)
+	registerISORoutes(vms, handler)
+}
+
+// registerPowerRoutes registers VM power control endpoints (requires vm:power).
+func registerPowerRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
+	power := vms.Group("")
+	power.Use(middleware.RequirePermission(PermissionVMPower))
+	{
+		power.POST("/:id/start", handler.StartVM)
+		power.POST("/:id/stop", handler.StopVM)
+		power.POST("/:id/restart", handler.RestartVM)
+		power.POST("/:id/force-stop", handler.ForceStopVM)
 	}
 }
 
-// registerPowerRoutes registers VM power control endpoints.
-func registerPowerRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
-	vms.POST("/:id/start", handler.StartVM)
-	vms.POST("/:id/stop", handler.StopVM)
-	vms.POST("/:id/restart", handler.RestartVM)
-	vms.POST("/:id/force-stop", handler.ForceStopVM)
-}
-
-// registerConsoleRoutes registers console token endpoints.
+// registerConsoleRoutes registers console token endpoints (requires vm:power).
+// Console access is considered a power operation as it gives interactive control.
 func registerConsoleRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
-	vms.POST("/:id/console-token", handler.GetConsoleToken)
-	vms.POST("/:id/serial-token", handler.GetSerialToken)
+	console := vms.Group("")
+	console.Use(middleware.RequirePermission(PermissionVMPower))
+	{
+		console.POST("/:id/console-token", handler.GetConsoleToken)
+		console.POST("/:id/serial-token", handler.GetSerialToken)
+	}
 }
 
-// registerMonitoringRoutes registers VM monitoring endpoints.
+// registerMonitoringRoutes registers VM monitoring endpoints (requires vm:read).
 func registerMonitoringRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
-	vms.GET("/:id/metrics", handler.GetMetrics)
-	vms.GET("/:id/bandwidth", handler.GetBandwidth)
-	vms.GET("/:id/network", handler.GetNetworkHistory)
+	monitoring := vms.Group("")
+	monitoring.Use(middleware.RequirePermission(PermissionVMRead))
+	{
+		monitoring.GET("/:id/metrics", handler.GetMetrics)
+		monitoring.GET("/:id/bandwidth", handler.GetBandwidth)
+		monitoring.GET("/:id/network", handler.GetNetworkHistory)
+	}
 }
 
 // registerRDNSRoutes registers rDNS management endpoints.
 func registerRDNSRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
-	vms.GET("/:id/ips", handler.ListVMIPs)
-	vms.GET("/:id/ips/:ipId/rdns", handler.GetRDNS)
-	vms.PUT("/:id/ips/:ipId/rdns", middleware.RDNSUpdateRateLimit(), handler.UpdateRDNS)
-	vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteRDNS)
+	rdns := vms.Group("")
+	// Read operations require vm:read
+	rdns.GET("/:id/ips", middleware.RequirePermission(PermissionVMRead), handler.ListVMIPs)
+	rdns.GET("/:id/ips/:ipId/rdns", middleware.RequirePermission(PermissionVMRead), handler.GetRDNS)
+
+	// Write operations require vm:write
+	rdns.PUT("/:id/ips/:ipId/rdns",
+		middleware.RequirePermission(PermissionVMWrite),
+		middleware.RDNSUpdateRateLimit(),
+		handler.UpdateRDNS)
+	rdns.DELETE("/:id/ips/:ipId/rdns",
+		middleware.RequirePermission(PermissionVMWrite),
+		handler.DeleteRDNS)
 }
 
-// registerISORoutes registers ISO management endpoints.
+// registerISORoutes registers ISO management endpoints (requires vm:write).
 func registerISORoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
-	vms.POST("/:id/iso/upload", handler.UploadISO)
-	vms.GET("/:id/iso", handler.ListISOs)
-	vms.DELETE("/:id/iso/:isoId", handler.DeleteISO)
-	vms.POST("/:id/iso/:isoId/attach", handler.AttachISO)
-	vms.POST("/:id/iso/:isoId/detach", handler.DetachISO)
+	iso := vms.Group("")
+	iso.Use(middleware.RequirePermission(PermissionVMWrite))
+	{
+		iso.POST("/:id/iso/upload", handler.UploadISO)
+		iso.GET("/:id/iso", handler.ListISOs) // Also requires vm:write as it's VM modification context
+		iso.DELETE("/:id/iso/:isoId", handler.DeleteISO)
+		iso.POST("/:id/iso/:isoId/attach", handler.AttachISO)
+		iso.POST("/:id/iso/:isoId/detach", handler.DetachISO)
+	}
 }
 
-// registerBackupRoutes registers backup management endpoints.
+// registerBackupRoutes registers backup management endpoints with permission enforcement.
 func registerBackupRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	backups := protected.Group("/backups")
-	{
-		backups.GET("", handler.ListBackups)
-		backups.POST("", handler.CreateBackup)
-		backups.GET("/:id", handler.GetBackup)
-		backups.DELETE("/:id", handler.DeleteBackup)
-		backups.POST("/:id/restore", handler.RestoreBackup)
-	}
+
+	// Read operations require backup:read
+	backups.GET("", middleware.RequirePermission(PermissionBackupRead), handler.ListBackups)
+	backups.GET("/:id", middleware.RequirePermission(PermissionBackupRead), handler.GetBackup)
+
+	// Write operations require backup:write
+	backups.POST("", middleware.RequirePermission(PermissionBackupWrite), handler.CreateBackup)
+	backups.DELETE("/:id", middleware.RequirePermission(PermissionBackupWrite), handler.DeleteBackup)
+	backups.POST("/:id/restore", middleware.RequirePermission(PermissionBackupWrite), handler.RestoreBackup)
 }
 
-// registerSnapshotRoutes registers snapshot management endpoints.
+// registerSnapshotRoutes registers snapshot management endpoints with permission enforcement.
 func registerSnapshotRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	snapshots := protected.Group("/snapshots")
-	{
-		snapshots.GET("", handler.ListSnapshots)
-		snapshots.POST("", handler.CreateSnapshot)
-		snapshots.DELETE("/:id", handler.DeleteSnapshot)
-		snapshots.POST("/:id/restore", handler.RestoreSnapshot)
-	}
+
+	// Read operations require snapshot:read
+	snapshots.GET("", middleware.RequirePermission(PermissionSnapshotRead), handler.ListSnapshots)
+
+	// Write operations require snapshot:write
+	snapshots.POST("", middleware.RequirePermission(PermissionSnapshotWrite), handler.CreateSnapshot)
+	snapshots.DELETE("/:id", middleware.RequirePermission(PermissionSnapshotWrite), handler.DeleteSnapshot)
+	snapshots.POST("/:id/restore", middleware.RequirePermission(PermissionSnapshotWrite), handler.RestoreSnapshot)
 }
 
-// registerAPIKeyRoutes registers API key management endpoints.
+// registerAPIKeyRoutes registers API key management endpoints (JWT-only).
+// API keys cannot be used to manage other API keys - this requires browser session.
 func registerAPIKeyRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	apiKeys := protected.Group("/api-keys")
 	{
@@ -140,7 +211,8 @@ func registerAPIKeyRoutes(protected *gin.RouterGroup, handler *CustomerHandler) 
 	}
 }
 
-// registerWebhookRoutes registers webhook management endpoints.
+// registerWebhookRoutes registers webhook management endpoints (JWT-only).
+// Webhooks are account-level configuration requiring browser session.
 func registerWebhookRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	webhooks := protected.Group("/webhooks")
 	{
@@ -153,7 +225,8 @@ func registerWebhookRoutes(protected *gin.RouterGroup, handler *CustomerHandler)
 	}
 }
 
-// register2FARoutes registers two-factor authentication endpoints.
+// register2FARoutes registers two-factor authentication endpoints (JWT-only).
+// 2FA management requires browser session for security.
 func register2FARoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 	twofa := protected.Group("/2fa")
 	{

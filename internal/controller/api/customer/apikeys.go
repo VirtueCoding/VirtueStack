@@ -359,12 +359,24 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 }
 
 // CustomerAPIKeyValidator returns a function that validates customer API keys.
-func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middleware.APIKeyValidator {
-	return func(ctx context.Context, keyHash string) (string, []string, error) {
+// It returns the key ID, customer ID, and permissions for valid keys.
+// Returns an error if the key is not found, revoked, or expired.
+func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middleware.CustomerAPIKeyValidator {
+	return func(ctx context.Context, keyHash string) (middleware.CustomerAPIKeyInfo, error) {
 		key, err := repo.GetByHash(ctx, keyHash)
 		if err != nil {
-			return "", nil, err
+			return middleware.CustomerAPIKeyInfo{}, err
 		}
-		return key.ID, nil, nil
+
+		// Check expiration if set
+		if key.ExpiresAt != nil && key.ExpiresAt.Before(time.Now()) {
+			return middleware.CustomerAPIKeyInfo{}, errors.New("API key has expired")
+		}
+
+		return middleware.CustomerAPIKeyInfo{
+			KeyID:       key.ID,
+			CustomerID:  key.CustomerID,
+			Permissions: key.Permissions,
+		}, nil
 	}
 }

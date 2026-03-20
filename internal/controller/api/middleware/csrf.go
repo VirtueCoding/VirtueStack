@@ -186,3 +186,23 @@ func generateToken() (string, error) {
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
 }
+
+// SkipCSRFForAPIKey returns middleware that applies CSRF protection only for non-API-key requests.
+// When an API key is present in the context (set by CustomerAPIKeyAuth), CSRF validation is skipped.
+// This allows programmatic API access while still protecting browser-based JWT sessions.
+func SkipCSRFForAPIKey(config CSRFConfig) gin.HandlerFunc {
+	csrfHandler := CSRF(config)
+
+	return func(c *gin.Context) {
+		// Check if API key authentication was used
+		apiKeyID, hasAPIKey := c.Get("api_key_id")
+		if hasAPIKey && apiKeyID != "" {
+			// Skip CSRF for API key authenticated requests
+			c.Next()
+			return
+		}
+
+		// Apply CSRF for JWT authenticated requests
+		csrfHandler(c)
+	}
+}

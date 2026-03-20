@@ -14,6 +14,7 @@
 - [Authentication](#authentication)
   - [Admin Authentication (JWT + 2FA)](#admin-authentication-jwt--2fa)
   - [Customer Authentication (JWT)](#customer-authentication-jwt)
+  - [Customer API Key Authentication](#customer-api-key-authentication)
   - [Provisioning Authentication (API Key)](#provisioning-authentication-api-key)
   - [CSRF Protection](#csrf-protection)
   - [Rate Limiting](#rate-limiting)
@@ -73,10 +74,16 @@ VirtueStack exposes a three-tier RESTful API designed for different consumers:
 | Tier | Base Path | Audience | Authentication | Primary Use Case |
 |------|-----------|----------|----------------|------------------|
 | **Admin** | `/api/v1/admin` | System administrators | JWT + mandatory 2FA | Full platform management |
-| **Customer** | `/api/v1/customer` | VPS customers | JWT + optional 2FA | Self-service VM management |
+| **Customer** | `/api/v1/customer` | VPS customers | JWT + optional 2FA, or API Key | Self-service VM management |
 | **Provisioning** | `/api/v1/provisioning` | Billing systems (WHMCS) | API Key (X-API-Key) | Automated VM provisioning (payment-gated by billing system) |
 
 All requests and responses use JSON. The API is stateless — all necessary state is carried in JWT tokens or API keys.
+
+**Customer API dual authentication:**
+
+The Customer API supports two authentication methods:
+- **JWT (Browser sessions):** Full access to all endpoints, including account management. Requires CSRF protection for write operations.
+- **API Key (Programmatic access):** Access to VM, backup, and snapshot operations only. Permission-scoped. No CSRF required.
 
 ---
 
@@ -295,6 +302,101 @@ POST /api/v1/customer/auth/logout
   "exp": 1700000000
 }
 ```
+
+---
+
+### Customer API Key Authentication
+
+Customer API keys provide programmatic access to the Customer API for automation, CI/CD pipelines, and integrations. Unlike JWT tokens (browser sessions), API keys are long-lived credentials that can be scoped to specific permissions.
+
+**Key format:** `vs_<uuid>` (e.g., `vs_a1b2c3d4-e5f6-7890-abcd-ef1234567890`)
+
+**Authentication header:**
+
+```http
+GET /api/v1/customer/vms
+X-API-Key: vs_a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Key properties:**
+- Keys are tied to a specific customer account
+- Keys can be scoped to specific permissions (e.g., `vm:read`, `backup:write`)
+- Keys can have an optional expiration date
+- Keys can be rotated or revoked at any time
+- Only the SHA-256 hash is stored; the plaintext key is shown only once at creation
+
+**Creating API keys:**
+
+API keys can **only** be created via JWT-authenticated requests (browser session). This is a security measure to prevent API keys from creating other API keys.
+
+```http
+POST /api/v1/customer/api-keys
+Cookie: vs_access_token=<jwt_token>
+X-CSRF-Token: <csrf_token>
+Content-Type: application/json
+
+{
+  "name": "CI/CD Pipeline",
+  "permissions": ["vm:read", "vm:power"],
+  "expires_at": "2027-03-15T00:00:00Z"
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "name": "CI/CD Pipeline",
+    "permissions": ["vm:read", "vm:power"],
+    "key": "vs_a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "is_active": true,
+    "expires_at": "2027-03-15T00:00:00Z",
+    "created_at": "2026-03-15T10:00:00Z"
+  }
+}
+```
+
+> **Important:** The `key` field is only returned once during creation. Store it securely.
+
+**Available permissions:**
+
+| Permission | Description | Endpoints |
+|------------|-------------|-----------|
+| `vm:read` | Read VM information | List VMs, Get VM, Metrics, Bandwidth, Network, List IPs, Get rDNS |
+| `vm:write` | Modify VM configuration | Update/Delete rDNS, ISO operations |
+| `vm:power` | Control VM power state | Start/Stop/Restart/Force-stop, Console tokens |
+| `backup:read` | View backups | List backups, Get backup |
+| `backup:write` | Manage backups | Create/Delete/Restore backup |
+| `snapshot:read` | View snapshots | List snapshots |
+| `snapshot:write` | Manage snapshots | Create/Delete/Restore snapshot |
+
+**Endpoints NOT accessible via API key (JWT-only):**
+
+The following endpoints require browser session authentication (JWT + CSRF) and cannot be accessed with API keys:
+
+| Endpoint | Reason |
+|----------|--------|
+| `/customer/profile` | Account management |
+| `/customer/password` | Password changes |
+| `/customer/2fa/*` | Two-factor authentication management |
+| `/customer/api-keys/*` | API key management (prevent key escalation) |
+| `/customer/webhooks/*` | Webhook configuration |
+| `/customer/auth/logout` | Session management |
+
+This separation ensures that sensitive account-level operations require interactive authentication.
+
+**Validation process:**
+1. The raw key is SHA-256 hashed
+2. The hash is looked up in the `customer_api_keys` table
+3. The key must be active (not revoked) and not expired
+4. The customer's `user_id` is set in the request context
+5. The key's permissions are checked against the endpoint's requirements
+
+**Customer isolation:**
+
+API keys enforce the same customer isolation as JWT tokens. An API key can only access resources owned by the customer who created it.
 
 ---
 
@@ -1472,12 +1574,27 @@ Delete a backup schedule.
 
 ## Customer API
 
-**Base Path:** `/api/v1/customer`  
-**Authentication:** JWT (Bearer) with role `customer` (2FA optional)  
-**CSRF:** Required for all write operations  
+**Base Path:** `/api/v1/customer`
+**Authentication:** JWT (Bearer) with role `customer` (2FA optional) OR Customer API Key (`X-API-Key` header)
+**CSRF:** Required for JWT write operations, not required for API key requests
 **Rate Limit:** 100 read/min, 30 write/min (plus per-action limits)
 
 All endpoints enforce customer isolation — customers can only access their own resources.
+
+**Authentication by endpoint category:**
+
+| Category | JWT | API Key | Notes |
+|----------|-----|---------|-------|
+| Authentication (`/auth/*`) | No | No | Public endpoints |
+| Profile & Password | Yes only | No | Account management |
+| Two-Factor Auth | Yes only | No | Security-sensitive |
+| API Keys | Yes only | No | Prevents key escalation |
+| Webhooks | Yes only | No | Account-level config |
+| Virtual Machines | Yes | Yes | Permission: `vm:read`, `vm:write`, `vm:power` |
+| Backups | Yes | Yes | Permission: `backup:read`, `backup:write` |
+| Snapshots | Yes | Yes | Permission: `snapshot:read`, `snapshot:write` |
+| Templates | Yes | Yes | Read-only, no permission required |
+| WebSocket Consoles | Yes | Yes | Permission: `vm:power` |
 
 ---
 
@@ -1532,9 +1649,13 @@ Invalidate session and clear cookies.
 
 ### Customer API Profile
 
+> **JWT-only endpoints:** Profile management requires browser session authentication (JWT). API keys cannot access these endpoints.
+
 #### `GET /customer/profile`
 
 Get the authenticated customer's profile.
+
+**Authentication:** JWT only (no API key access)
 
 **Response (`200 OK`):** Returns `Customer` object.
 
@@ -1543,6 +1664,9 @@ Get the authenticated customer's profile.
 #### `PUT /customer/profile`
 
 Update the authenticated customer's profile.
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
 
 **Request Body:**
 
@@ -1557,9 +1681,14 @@ Update the authenticated customer's profile.
 
 ### Customer API Password Management
 
+> **JWT-only endpoints:** Password changes require browser session authentication (JWT). API keys cannot access these endpoints.
+
 #### `PUT /customer/password`
 
 Change the authenticated customer's password.
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
 
 **Request Body:**
 
@@ -1584,6 +1713,8 @@ Change the authenticated customer's password.
 ---
 
 ### Customer API Two-Factor Authentication
+
+> **JWT-only endpoints:** 2FA management requires browser session authentication (JWT). API keys cannot access these endpoints.
 
 #### `POST /customer/2fa/initiate`
 
@@ -1693,6 +1824,9 @@ Generate new backup recovery codes. Invalidates all previous codes.
 
 List VMs owned by the authenticated customer.
 
+**Authentication:** JWT or API Key
+**Permission:** `vm:read` (API key only; JWT has full access)
+
 **Query Parameters:**
 
 | Parameter | Type | Required | Description |
@@ -1764,9 +1898,14 @@ Delete a VM (async operation). Enforces ownership check.
 
 ### Customer API VM Power Control
 
+> **Permission:** Requires `vm:power` when using API key. JWT authentication has full access.
+
 #### `POST /customer/vms/:id/start`
 
 Start a stopped VM.
+
+**Authentication:** JWT or API Key
+**Permission:** `vm:power` (API key only)
 
 **Response (`200 OK`):** Returns VM status confirmation.
 
@@ -1981,9 +2120,14 @@ Delete an uploaded ISO file. Cannot delete a mounted ISO.
 
 ### Customer API Backups
 
+> **Permissions:** `backup:read` for listing/viewing, `backup:write` for create/delete/restore. JWT authentication has full access.
+
 #### `GET /customer/backups`
 
 List backups for the customer's VMs.
+
+**Authentication:** JWT or API Key
+**Permission:** `backup:read` (API key only)
 
 **Query Parameters:**
 
@@ -2039,9 +2183,14 @@ Restore a VM from a backup. The VM will be stopped during restore. Async operati
 
 ### Customer API Snapshots
 
+> **Permissions:** `snapshot:read` for listing, `snapshot:write` for create/delete/restore. JWT authentication has full access.
+
 #### `GET /customer/snapshots`
 
 List snapshots for the customer's VMs.
+
+**Authentication:** JWT or API Key
+**Permission:** `snapshot:read` (API key only)
 
 **Query Parameters:**
 
@@ -2088,9 +2237,13 @@ Restore a VM to a snapshot. The VM will be stopped during restore.
 
 ### Customer API API Keys
 
+> **JWT-only endpoints:** These endpoints require browser session authentication (JWT). API keys cannot be used to manage other API keys.
+
 #### `GET /customer/api-keys`
 
 List all API keys for the authenticated customer.
+
+**Authentication:** JWT only (no API key access)
 
 **Response (`200 OK`):** Returns array of `APIKeyResponse` objects. Note: the `key` field is only included when creating or rotating a key.
 
@@ -2099,6 +2252,9 @@ List all API keys for the authenticated customer.
 #### `POST /customer/api-keys`
 
 Create a new API key. **The raw key is only returned once.**
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
 
 **Request Body:**
 
@@ -2142,6 +2298,9 @@ Create a new API key. **The raw key is only returned once.**
 
 Rotate an API key. The old key is invalidated and a new key is generated.
 
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
+
 **Response (`200 OK`):** Returns `APIKeyResponse` with the new `key`.
 
 **Error Responses:**
@@ -2153,6 +2312,9 @@ Rotate an API key. The old key is invalidated and a new key is generated.
 #### `DELETE /customer/api-keys/:id`
 
 Revoke an API key.
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
 
 **Response (`200 OK`):**
 
@@ -2166,9 +2328,13 @@ Revoke an API key.
 
 ### Customer API Webhooks
 
+> **JWT-only endpoints:** Webhook management requires browser session authentication (JWT). API keys cannot access these endpoints.
+
 #### `GET /customer/webhooks`
 
 List all webhook endpoints for the customer.
+
+**Authentication:** JWT only (no API key access)
 
 **Response (`200 OK`):** Returns array of `CustomerWebhook` objects.
 
@@ -2177,6 +2343,9 @@ List all webhook endpoints for the customer.
 #### `POST /customer/webhooks`
 
 Register a new webhook endpoint.
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
 
 **Request Body:**
 

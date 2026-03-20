@@ -368,59 +368,37 @@ DELETE /backup-schedules/:id
 
 **File:** `internal/controller/api/customer/routes.go`
 
+> **Authentication:** Customer API supports dual authentication:
+> - **JWT Bearer token** (browser sessions via cookies or Authorization header) - Full access to all endpoints
+> - **Customer API Key** (programmatic access via X-API-Key header) - Limited to granted permissions
+>
+> **JWT-only endpoints:** Account management (profile, password, 2FA, webhooks, API keys) require browser session authentication. API keys cannot access these endpoints.
+>
+> **Permission enforcement:** API key requests are limited to granted permissions. JWT requests have full access.
+
 > **Security:** VM creation and deletion are restricted to Admin and Provisioning APIs only.
 > Customers cannot create or delete VMs through the Customer API to prevent abuse
 > (e.g., a customer buying one VPS then creating additional VMs for free).
 
 ```go
-// Auth
+// Auth (no authentication required)
 POST /auth/login
 POST /auth/verify-2fa
 POST /auth/refresh
+
+// Account Management (JWT-only, no API key access)
 POST /auth/logout
 PUT  /password
-
-// Profile
 GET  /profile
 PUT  /profile
 
-// VMs (read-only — create/delete via Admin and Provisioning APIs only)
-GET    /vms
-GET    /vms/:id
-POST   /vms/:id/start
-POST   /vms/:id/stop
-POST   /vms/:id/restart
-POST   /vms/:id/force-stop
-
-// Console
-POST /vms/:id/console-token
-POST /vms/:id/serial-token
-
-// Monitoring
-GET /vms/:id/metrics
-GET /vms/:id/bandwidth
-GET /vms/:id/network
-
-// Backups
-GET    /backups
-POST   /backups
-GET    /backups/:id
-DELETE /backups/:id
-POST   /backups/:id/restore
-
-// Snapshots
-GET    /snapshots
-POST   /snapshots
-DELETE /snapshots/:id
-POST   /snapshots/:id/restore
-
-// API Keys
+// API Keys (JWT-only - API keys cannot manage other API keys)
 GET    /api-keys
 POST   /api-keys
 POST   /api-keys/:id/rotate
 DELETE /api-keys/:id
 
-// Webhooks
+// Webhooks (JWT-only - account-level configuration)
 GET    /webhooks
 POST   /webhooks
 GET    /webhooks/:id
@@ -428,12 +406,7 @@ PUT    /webhooks/:id
 DELETE /webhooks/:id
 GET    /webhooks/:id/deliveries
 
-// Templates & Notifications
-GET /templates
-GET /notifications/preferences
-PUT /notifications/preferences
-
-// 2FA
+// 2FA (JWT-only - security-sensitive operations)
 POST /2fa/initiate
 POST /2fa/enable
 POST /2fa/disable
@@ -441,7 +414,57 @@ GET  /2fa/status
 GET  /2fa/backup-codes
 POST /2fa/backup-codes/regenerate
 
-// WebSocket
+// VMs (JWT or API Key with vm:read/vm:write/vm:power)
+GET    /vms                    // vm:read
+GET    /vms/:id                // vm:read
+POST   /vms/:id/start          // vm:power
+POST   /vms/:id/stop           // vm:power
+POST   /vms/:id/restart        // vm:power
+POST   /vms/:id/force-stop     // vm:power
+
+// Console (vm:power required)
+POST /vms/:id/console-token
+POST /vms/:id/serial-token
+
+// Monitoring (vm:read required)
+GET /vms/:id/metrics
+GET /vms/:id/bandwidth
+GET /vms/:id/network
+
+// rDNS (vm:read for GET, vm:write for PUT/DELETE)
+GET    /vms/:id/ips
+GET    /vms/:id/ips/:ipId/rdns
+PUT    /vms/:id/ips/:ipId/rdns
+DELETE /vms/:id/ips/:ipId/rdns
+
+// ISO Management (vm:write required)
+POST   /vms/:id/iso/upload
+GET    /vms/:id/iso
+DELETE /vms/:id/iso/:isoId
+POST   /vms/:id/iso/:isoId/attach
+POST   /vms/:id/iso/:isoId/detach
+
+// Backups (backup:read for GET, backup:write for mutations)
+GET    /backups                // backup:read
+POST   /backups                // backup:write
+GET    /backups/:id            // backup:read
+DELETE /backups/:id            // backup:write
+POST   /backups/:id/restore    // backup:write
+
+// Snapshots (snapshot:read for GET, snapshot:write for mutations)
+GET    /snapshots              // snapshot:read
+POST   /snapshots              // snapshot:write
+DELETE /snapshots/:id          // snapshot:write
+POST   /snapshots/:id/restore  // snapshot:write
+
+// Templates (vm:read required)
+GET /templates
+
+// Notifications (JWT-only)
+GET /notifications/preferences
+PUT /notifications/preferences
+
+// WebSocket (vm:power for VNC, vm:read for serial)
 GET /ws/vnc/:vmId
 GET /ws/serial/:vmId
 ```
@@ -481,8 +504,21 @@ GET /tasks/:id
 | Method | Purpose | Implementation |
 |--------|---------|----------------|
 | JWT Auth | Customer/Admin sessions | `middleware.JWTAuth()` - Validates Bearer token, extracts claims |
+| Customer API Key Auth | Customer programmatic access | `middleware.JWTOrCustomerAPIKeyAuth()` - Validates X-API-Key header, checks permissions |
 | API Key Auth | Provisioning API | `middleware.APIKeyAuth()` - Validates X-API-Key header |
 | 2FA/TOTP | Admin access | `middleware.Require2FA()` - TOTP verification with ±1 step tolerance |
+
+**Customer API Key Authentication:**
+
+Customer API keys enable programmatic access to the Customer API with scoped permissions.
+
+| Feature | JWT Auth | Customer API Key |
+|---------|----------|------------------|
+| Access | Full access to all endpoints | Limited to granted permissions |
+| Account management | Yes (profile, 2FA, webhooks) | No (JWT-only endpoints) |
+| CSRF protection | Required | Skipped |
+| Storage | Token hash in PostgreSQL | Key hash in PostgreSQL |
+| Creation | Via login flow | Via JWT-authenticated POST /api-keys |
 
 ### 6.2 JWT Token Configuration
 
@@ -529,6 +565,28 @@ PermNodeManage, PermNodeFailover, PermIPManage, PermPlanManage
 PermTemplateManage, PermCustomerManage, PermBackupManage
 PermSettingsManage, PermAuditView
 ```
+
+### 6.5 Customer API Key Permissions
+
+**File:** `internal/controller/api/customer/routes.go`
+
+Customer API keys use a simplified permission system with 7 scopes:
+
+| Permission | Description | Endpoints |
+|------------|-------------|-----------|
+| `vm:read` | View VM details, metrics, bandwidth | GET /vms, GET /vms/:id, metrics, bandwidth |
+| `vm:write` | Modify VM configuration | PUT /vms/:id/ips/:ipId/rdns, ISO management |
+| `vm:power` | Power control operations | POST /vms/:id/start, stop, restart, force-stop, console tokens |
+| `backup:read` | View backups | GET /backups, GET /backups/:id |
+| `backup:write` | Create/delete/restore backups | POST /backups, DELETE /backups/:id, POST /backups/:id/restore |
+| `snapshot:read` | View snapshots | GET /snapshots |
+| `snapshot:write` | Create/delete/restore snapshots | POST /snapshots, DELETE /snapshots/:id, POST /snapshots/:id/restore |
+
+**Permission enforcement:**
+- JWT-authenticated requests have full access (permissions = nil)
+- API key requests are limited to granted permissions
+- Missing permission returns HTTP 403 Forbidden
+- Account management endpoints are JWT-only (no API key access)
 
 ---
 

@@ -451,3 +451,410 @@ func TestGenerateRefreshToken(t *testing.T) {
 		assert.NotEqual(t, t1, t2)
 	})
 }
+
+func TestCustomerAPIKeyAuth(t *testing.T) {
+	tests := []struct {
+		name             string
+		validator        CustomerAPIKeyValidator
+		setupRequest     func(req *http.Request)
+		wantStatus       int
+		wantBodyContains string
+		wantUserID       string
+		wantPermissions  []string
+	}{
+		{
+			name: "valid key sets context",
+			validator: func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+				return CustomerAPIKeyInfo{
+					KeyID:       "key-1",
+					CustomerID:  "customer-123",
+					Permissions: []string{"vm:read", "vm:write"},
+				}, nil
+			},
+			setupRequest: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "my-customer-key")
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "customer-123",
+			wantPermissions: []string{"vm:read", "vm:write"},
+		},
+		{
+			name: "invalid key returns error",
+			validator: func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+				return CustomerAPIKeyInfo{}, fmt.Errorf("key not found")
+			},
+			setupRequest: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "bad-key")
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_API_KEY",
+		},
+		{
+			name: "missing key returns error",
+			validator: func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+				return CustomerAPIKeyInfo{}, nil
+			},
+			setupRequest: func(req *http.Request) {
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "MISSING_API_KEY",
+		},
+		{
+			name: "expired key returns error",
+			validator: func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+				return CustomerAPIKeyInfo{}, fmt.Errorf("API key has expired")
+			},
+			setupRequest: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "expired-key")
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_API_KEY",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(CustomerAPIKeyAuth(tt.validator))
+			r.GET("/protected", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{
+					"user_id":     GetUserID(c),
+					"user_type":   GetUserType(c),
+					"api_key_id":  c.GetString("api_key_id"),
+					"permissions": GetPermissions(c),
+				})
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			tt.setupRequest(req)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantBodyContains != "" {
+				var body ErrorResponse
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Contains(t, body.Error.Code, tt.wantBodyContains)
+			}
+			if tt.wantStatus == http.StatusOK {
+				var body map[string]any
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantUserID, body["user_id"])
+				assert.Equal(t, "customer", body["user_type"])
+			}
+		})
+	}
+}
+
+func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
+	config := testAuthConfig()
+	validKeyValidator := func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+		return CustomerAPIKeyInfo{
+			KeyID:       "key-1",
+			CustomerID:  "customer-api",
+			Permissions: []string{"vm:read"},
+		}, nil
+	}
+	invalidKeyValidator := func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error) {
+		return CustomerAPIKeyInfo{}, fmt.Errorf("not found")
+	}
+
+	tests := []struct {
+		name             string
+		keyValidator     CustomerAPIKeyValidator
+		setupRequest     func(t *testing.T, req *http.Request)
+		wantStatus       int
+		wantBodyContains string
+		wantUserID       string
+		wantPermissions  any
+	}{
+		{
+			name:         "JWT token accepted",
+			keyValidator: invalidKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				token := testAccessToken(t, config, "user-jwt", "customer", "", 15*time.Minute)
+				req.Header.Set("Authorization", "Bearer "+token)
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "user-jwt",
+			wantPermissions: nil, // JWT has full permissions (nil)
+		},
+		{
+			name:         "API key accepted when no JWT",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				req.Header.Set("X-API-Key", "my-api-key")
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "customer-api",
+			wantPermissions: []any{"vm:read"},
+		},
+		{
+			name:         "JWT preferred over API key",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				token := testAccessToken(t, config, "user-jwt-pref", "customer", "", 15*time.Minute)
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("X-API-Key", "my-api-key")
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "user-jwt-pref", // JWT user, not API key customer
+			wantPermissions: nil,
+		},
+		{
+			name:         "no auth returns error",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "MISSING_AUTH",
+		},
+		{
+			name:         "invalid JWT falls back to valid API key",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				req.Header.Set("Authorization", "Bearer invalid.token")
+				req.Header.Set("X-API-Key", "my-api-key")
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "customer-api",
+			wantPermissions: []any{"vm:read"},
+		},
+		{
+			name:         "invalid JWT and invalid API key returns error",
+			keyValidator: invalidKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				req.Header.Set("Authorization", "Bearer invalid.token")
+				req.Header.Set("X-API-Key", "bad-key")
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_API_KEY",
+		},
+		{
+			name:         "temp token rejected, falls back to API key",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				token, err := GenerateTempToken(config, "temp-user", "customer")
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("X-API-Key", "my-api-key")
+			},
+			wantStatus:      http.StatusOK,
+			wantUserID:      "customer-api",
+			wantPermissions: []any{"vm:read"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(JWTOrCustomerAPIKeyAuth(config, tt.keyValidator))
+			r.GET("/protected", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{
+					"user_id":     GetUserID(c),
+					"user_type":   GetUserType(c),
+					"permissions": GetPermissions(c),
+				})
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			tt.setupRequest(t, req)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantBodyContains != "" {
+				var body ErrorResponse
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Contains(t, body.Error.Code, tt.wantBodyContains)
+			}
+			if tt.wantStatus == http.StatusOK {
+				var body map[string]any
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantUserID, body["user_id"])
+				assert.Equal(t, "customer", body["user_type"])
+			}
+		})
+	}
+}
+
+func TestPermissions(t *testing.T) {
+	t.Run("GetPermissions returns nil for JWT auth", func(t *testing.T) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(userIDContextKey, "user-1")
+			c.Set(userTypeContextKey, "customer")
+			c.Next()
+		})
+		r.GET("/test", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"permissions": GetPermissions(c)})
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		var body map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Nil(t, body["permissions"])
+	})
+
+	t.Run("GetPermissions returns permissions for API key auth", func(t *testing.T) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(userIDContextKey, "customer-1")
+			c.Set(permissionsContextKey, []string{"vm:read", "vm:write"})
+			c.Next()
+		})
+		r.GET("/test", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"permissions": GetPermissions(c)})
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		var body map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, []any{"vm:read", "vm:write"}, body["permissions"])
+	})
+}
+
+func TestHasPermission(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupContext func(c *gin.Context)
+		permission   string
+		wantResult   bool
+	}{
+		{
+			name: "JWT auth has all permissions",
+			setupContext: func(c *gin.Context) {
+				c.Set(userIDContextKey, "user-1")
+			},
+			permission: "vm:read",
+			wantResult: true,
+		},
+		{
+			name: "API key has matching permission",
+			setupContext: func(c *gin.Context) {
+				c.Set(permissionsContextKey, []string{"vm:read", "vm:write"})
+			},
+			permission: "vm:read",
+			wantResult: true,
+		},
+		{
+			name: "API key lacks permission",
+			setupContext: func(c *gin.Context) {
+				c.Set(permissionsContextKey, []string{"vm:read"})
+			},
+			permission: "vm:write",
+			wantResult: false,
+		},
+		{
+			name: "empty permissions denies all",
+			setupContext: func(c *gin.Context) {
+				c.Set(permissionsContextKey, []string{})
+			},
+			permission: "vm:read",
+			wantResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				tt.setupContext(c)
+				c.Next()
+			})
+			r.GET("/test", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"has_permission": HasPermission(c, tt.permission)})
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			var body map[string]any
+			err := json.Unmarshal(w.Body.Bytes(), &body)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantResult, body["has_permission"])
+		})
+	}
+}
+
+func TestRequirePermission(t *testing.T) {
+	tests := []struct {
+		name             string
+		setupContext     func(c *gin.Context)
+		permission       string
+		wantStatus       int
+		wantBodyContains string
+	}{
+		{
+			name: "JWT auth passes permission check",
+			setupContext: func(c *gin.Context) {
+				c.Set(userIDContextKey, "user-1")
+				c.Set(userTypeContextKey, "customer")
+			},
+			permission: "vm:write",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "API key with permission passes",
+			setupContext: func(c *gin.Context) {
+				c.Set(userIDContextKey, "customer-1")
+				c.Set(userTypeContextKey, "customer")
+				c.Set(permissionsContextKey, []string{"vm:read", "vm:write"})
+			},
+			permission: "vm:write",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "API key without permission fails",
+			setupContext: func(c *gin.Context) {
+				c.Set(userIDContextKey, "customer-1")
+				c.Set(userTypeContextKey, "customer")
+				c.Set(permissionsContextKey, []string{"vm:read"})
+			},
+			permission:       "vm:write",
+			wantStatus:       http.StatusForbidden,
+			wantBodyContains: "INSUFFICIENT_PERMISSIONS",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				tt.setupContext(c)
+				c.Next()
+			})
+			r.Use(RequirePermission(tt.permission))
+			r.GET("/test", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantBodyContains != "" {
+				var body ErrorResponse
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Contains(t, body.Error.Code, tt.wantBodyContains)
+			}
+		})
+	}
+}
