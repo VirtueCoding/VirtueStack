@@ -231,7 +231,7 @@ func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.Cu
 	}
 
 	signature := crypto.GenerateHMACSignature(decryptedSecret, delivery.Payload)
-	req.Header.Set("X-Signature-SHA256", signature)
+	req.Header.Set("X-Webhook-Signature", signature)
 
 	// Send request
 	resp, err := client.Do(req)

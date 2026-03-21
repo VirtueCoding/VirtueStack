@@ -68,7 +68,7 @@ func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list API keys")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list API keys")
 		return
 	}
 
@@ -109,16 +109,16 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 	var req CreateAPIKeyRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	for _, perm := range req.Permissions {
 		if !validPermissions[perm] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_PERMISSION", "Invalid permission: "+perm)
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PERMISSION", "Invalid permission: "+perm)
 			return
 		}
 	}
@@ -127,11 +127,11 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 	if req.ExpiresAt != nil {
 		parsed, err := time.Parse(time.RFC3339, *req.ExpiresAt)
 		if err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_EXPIRATION", "Invalid expiration timestamp format")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EXPIRATION", "Invalid expiration timestamp format")
 			return
 		}
 		if parsed.Before(time.Now()) {
-			respondWithError(c, http.StatusBadRequest, "INVALID_EXPIRATION", "Expiration must be in the future")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EXPIRATION", "Expiration must be in the future")
 			return
 		}
 		expiresAt = &parsed
@@ -155,7 +155,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create API key")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create API key")
 		return
 	}
 
@@ -196,14 +196,14 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 	correlationID := middleware.GetCorrelationID(c)
 
 	if _, err := uuid.Parse(keyID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_KEY_ID", "API Key ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_KEY_ID", "API Key ID must be a valid UUID")
 		return
 	}
 
 	existingKey, err := h.apiKeyRepo.GetByIDAndCustomer(c.Request.Context(), keyID, customerID)
 	if err != nil {
 		if errors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
 			return
 		}
 		h.logger.Error("failed to get API key for rotation",
@@ -211,17 +211,17 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rotate API key")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rotate API key")
 		return
 	}
 
 	if !existingKey.IsActive {
-		respondWithError(c, http.StatusBadRequest, "KEY_REVOKED", "Cannot rotate a revoked API key")
+		middleware.RespondWithError(c, http.StatusBadRequest, "KEY_REVOKED", "Cannot rotate a revoked API key")
 		return
 	}
 
 	if existingKey.ExpiresAt != nil && existingKey.ExpiresAt.Before(time.Now()) {
-		respondWithError(c, http.StatusBadRequest, "KEY_EXPIRED", "Cannot rotate an expired API key")
+		middleware.RespondWithError(c, http.StatusBadRequest, "KEY_EXPIRED", "Cannot rotate an expired API key")
 		return
 	}
 
@@ -234,7 +234,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rotate API key")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rotate API key")
 		return
 	}
 
@@ -273,14 +273,14 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 	correlationID := middleware.GetCorrelationID(c)
 
 	if _, err := uuid.Parse(keyID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_KEY_ID", "API Key ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_KEY_ID", "API Key ID must be a valid UUID")
 		return
 	}
 
 	existingKey, err := h.apiKeyRepo.GetByIDAndCustomer(c.Request.Context(), keyID, customerID)
 	if err != nil {
 		if errors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "API key not found")
 			return
 		}
 		h.logger.Error("failed to get API key for revocation",
@@ -288,12 +288,12 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
 		return
 	}
 
 	if !existingKey.IsActive {
-		respondWithError(c, http.StatusBadRequest, "KEY_REVOKED", "API key is already revoked")
+		middleware.RespondWithError(c, http.StatusBadRequest, "KEY_REVOKED", "API key is already revoked")
 		return
 	}
 
@@ -303,7 +303,7 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
 		return
 	}
 

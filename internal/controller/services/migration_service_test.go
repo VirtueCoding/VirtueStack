@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// strPtr is a helper to create string pointers for test data.
+func strPtr(s string) *string { return &s }
+
 func testMigrationLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -201,13 +204,13 @@ func TestGetVMDiskPath(t *testing.T) {
 	}{
 		{
 			name:     "explicit disk path",
-			vm:       &models.VM{ID: "vm-123", DiskPath: "/custom/path/disk.qcow2"},
+			vm:       &models.VM{ID: "vm-123", DiskPath: strPtr("/custom/path/disk.qcow2")},
 			node:     &models.Node{ID: "node-1"},
 			expected: "/custom/path/disk.qcow2",
 		},
 		{
 			name:     "ceph with rbd image",
-			vm:       &models.VM{ID: "vm-123", StorageBackend: models.StorageBackendCeph, RBDImage: "vm-123-disk0"},
+			vm:       &models.VM{ID: "vm-123", StorageBackend: models.StorageBackendCeph, RBDImage: strPtr("vm-123-disk0")},
 			node:     &models.Node{ID: "node-1"},
 			expected: "vm-123-disk0",
 		},

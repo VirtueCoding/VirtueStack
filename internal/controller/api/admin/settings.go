@@ -55,7 +55,7 @@ func (h *AdminHandler) GetSettings(c *gin.Context) {
 			h.logger.Error("failed to list settings",
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "SETTINGS_LIST_FAILED", "Failed to retrieve settings")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "SETTINGS_LIST_FAILED", "Failed to retrieve settings")
 			return
 		}
 
@@ -82,10 +82,10 @@ func (h *AdminHandler) UpdateSetting(c *gin.Context) {
 	var req SettingUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *AdminHandler) UpdateSetting(c *gin.Context) {
 	}
 
 	if !validKey {
-		respondWithError(c, http.StatusNotFound, "SETTING_NOT_FOUND", "Setting key not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "SETTING_NOT_FOUND", "Setting key not found")
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *AdminHandler) UpdateSetting(c *gin.Context) {
 				"key", key,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "SETTING_UPDATE_FAILED", "Failed to persist setting")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "SETTING_UPDATE_FAILED", "Failed to persist setting")
 			return
 		}
 	}

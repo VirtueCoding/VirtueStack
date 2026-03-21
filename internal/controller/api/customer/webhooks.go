@@ -102,7 +102,7 @@ func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list webhooks")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list webhooks")
 		return
 	}
 
@@ -126,17 +126,17 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 	var req CreateWebhookRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	// Validate events
 	for _, event := range req.Events {
 		if !services.ValidWebhookEvents[event] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event: "+event)
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event: "+event)
 			return
 		}
 	}
@@ -151,21 +151,21 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidURL):
-			respondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
 		case errors.Is(err, services.ErrInvalidEvent):
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
 		case errors.Is(err, services.ErrTooManyWebhooks):
-			respondWithError(c, http.StatusBadRequest, "LIMIT_EXCEEDED", "Maximum webhook limit reached (5)")
+			middleware.RespondWithError(c, http.StatusBadRequest, "LIMIT_EXCEEDED", "Maximum webhook limit reached (5)")
 		case errors.Is(err, services.ErrSecretTooShort):
-			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
 		case errors.Is(err, services.ErrSecretTooLong):
-			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
 		default:
 			h.logger.Error("failed to create webhook",
 				"customer_id", customerID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create webhook")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create webhook")
 		}
 		return
 	}
@@ -187,14 +187,14 @@ func (h *CustomerHandler) GetWebhook(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(webhookID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
 		return
 	}
 
 	webhook, err := h.webhookService.Get(c.Request.Context(), webhookID, customerID)
 	if err != nil {
 		if errors.Is(err, services.ErrWebhookNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}
 		h.logger.Error("failed to get webhook",
@@ -202,7 +202,7 @@ func (h *CustomerHandler) GetWebhook(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get webhook")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get webhook")
 		return
 	}
 
@@ -216,17 +216,17 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(webhookID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
 		return
 	}
 
 	var req UpdateWebhookRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -234,7 +234,7 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 	if req.Events != nil {
 		for _, event := range req.Events {
 			if !services.ValidWebhookEvents[event] {
-				respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event: "+event)
+				middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event: "+event)
 				return
 			}
 		}
@@ -254,22 +254,22 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrWebhookNotFound):
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 		case errors.Is(err, services.ErrInvalidURL):
-			respondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_URL", "Webhook URL must be HTTPS")
 		case errors.Is(err, services.ErrInvalidEvent):
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid webhook event")
 		case errors.Is(err, services.ErrSecretTooShort):
-			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at least 16 characters")
 		case errors.Is(err, services.ErrSecretTooLong):
-			respondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SECRET", "Secret must be at most 128 characters")
 		default:
 			h.logger.Error("failed to update webhook",
 				"webhook_id", webhookID,
 				"customer_id", customerID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update webhook")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update webhook")
 		}
 		return
 	}
@@ -289,14 +289,14 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(webhookID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
 		return
 	}
 
 	err := h.webhookService.Delete(c.Request.Context(), webhookID, customerID)
 	if err != nil {
 		if errors.Is(err, services.ErrWebhookNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}
 		h.logger.Error("failed to delete webhook",
@@ -304,7 +304,7 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete webhook")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete webhook")
 		return
 	}
 
@@ -323,7 +323,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(webhookID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
 		return
 	}
 
@@ -333,7 +333,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 	deliveries, total, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination.Page, pagination.PerPage)
 	if err != nil {
 		if errors.Is(err, services.ErrWebhookNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
 			return
 		}
 		h.logger.Error("failed to list webhook deliveries",
@@ -341,7 +341,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list deliveries")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list deliveries")
 		return
 	}
 
@@ -354,5 +354,64 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+	})
+}
+
+// TestWebhookResponse represents the response for a webhook test.
+type TestWebhookResponse struct {
+	Success      bool   `json:"success"`
+	Message      string `json:"message,omitempty"`
+	StatusCode   int    `json:"status_code,omitempty"`
+	ResponseBody string `json:"response_body,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// TestWebhook handles POST /webhooks/:id/test - sends a test payload to the webhook endpoint.
+func (h *CustomerHandler) TestWebhook(c *gin.Context) {
+	customerID := middleware.GetUserID(c)
+	webhookID := c.Param("id")
+
+	// Validate UUID
+	if _, err := uuid.Parse(webhookID); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_WEBHOOK_ID", "Webhook ID must be a valid UUID")
+		return
+	}
+
+	// Verify webhook exists and belongs to customer
+	_, err := h.webhookService.Get(c.Request.Context(), webhookID, customerID)
+	if err != nil {
+		if errors.Is(err, services.ErrWebhookNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+			return
+		}
+		h.logger.Error("failed to get webhook for test",
+			"webhook_id", webhookID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get webhook")
+		return
+	}
+
+	// Queue a test delivery
+	if err := h.webhookService.TestWebhook(c.Request.Context(), webhookID); err != nil {
+		h.logger.Error("failed to queue webhook test",
+			"webhook_id", webhookID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to queue webhook test")
+		return
+	}
+
+	h.logger.Info("webhook test queued",
+		"webhook_id", webhookID,
+		"customer_id", customerID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	// Return success - the actual delivery happens asynchronously
+	c.JSON(http.StatusOK, TestWebhookResponse{
+		Success: true,
+		Message: "Test webhook queued for delivery",
 	})
 }

@@ -107,7 +107,7 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 	customer, err := h.customerRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("failed to get customer for 2FA initiation", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "GET_CUSTOMER_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "GET_CUSTOMER_FAILED", "Internal server error")
 		return
 	}
 
@@ -116,11 +116,11 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 		h.logger.Warn("2FA initiation failed", "user_id", userID, "error", err)
 
 		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
-			respondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
+			middleware.RespondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "INITIATION_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INITIATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -139,10 +139,10 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	var req Enable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	ipAddress := c.ClientIP()
 
 	if !check2FARateLimit(userID + ":" + ipAddress) {
-		respondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many verification attempts. Please try again later.")
+		middleware.RespondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many verification attempts. Please try again later.")
 		return
 	}
 
@@ -159,21 +159,21 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 		h.logger.Warn("2FA enable failed", "user_id", userID, "error", err)
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusBadRequest, "INVALID_CODE", "Invalid TOTP code")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CODE", "Invalid TOTP code")
 			return
 		}
 
 		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
-			respondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
+			middleware.RespondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
 
 		if errors.Is(err, sharederrors.Err2FASetupNotInitiated) {
-			respondWithError(c, http.StatusBadRequest, "NOT_INITIATED", "Please initiate 2FA setup first")
+			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_INITIATED", "Please initiate 2FA setup first")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "ENABLE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ENABLE_FAILED", "Internal server error")
 		return
 	}
 
@@ -189,10 +189,10 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 	var req Disable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -203,16 +203,16 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 		h.logger.Warn("2FA disable failed", "user_id", userID, "error", err)
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusBadRequest, "INVALID_PASSWORD", "Invalid password")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PASSWORD", "Invalid password")
 			return
 		}
 
 		if errors.Is(err, sharederrors.Err2FANotEnabled) {
-			respondWithError(c, http.StatusBadRequest, "NOT_ENABLED", "2FA is not enabled for this account")
+			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_ENABLED", "2FA is not enabled for this account")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "DISABLE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "DISABLE_FAILED", "Internal server error")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("2FA status check failed", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
@@ -245,12 +245,12 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("failed to get 2FA status for backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
 	if !enabled {
-		respondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
+		middleware.RespondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
 		return
 	}
 
@@ -258,13 +258,13 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 	codes, alreadyShown, err := h.authService.GetBackupCodes(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("failed to get backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "GET_BACKUP_CODES_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "GET_BACKUP_CODES_FAILED", "Internal server error")
 		return
 	}
 
 	// If codes have already been shown once, return error
 	if alreadyShown {
-		respondWithError(c, http.StatusBadRequest, "BACKUP_CODES_ALREADY_SHOWN", "Backup codes have already been displayed. Please regenerate to see new codes.")
+		middleware.RespondWithError(c, http.StatusBadRequest, "BACKUP_CODES_ALREADY_SHOWN", "Backup codes have already been displayed. Please regenerate to see new codes.")
 		return
 	}
 
@@ -283,7 +283,7 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 
 	// Check rate limit for regeneration
 	if !check2FARateLimit("regen:" + userID + ":" + ipAddress) {
-		respondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many regeneration attempts. Please try again later.")
+		middleware.RespondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many regeneration attempts. Please try again later.")
 		return
 	}
 
@@ -291,12 +291,12 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("failed to get 2FA status for backup codes regeneration", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
 	}
 
 	if !enabled {
-		respondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
+		middleware.RespondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
 		return
 	}
 
@@ -304,7 +304,7 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	codes, err := h.authService.RegenerateBackupCodes(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("failed to regenerate backup codes", "user_id", userID, "error", err)
-		respondWithError(c, http.StatusInternalServerError, "REGENERATE_BACKUP_CODES_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "REGENERATE_BACKUP_CODES_FAILED", "Internal server error")
 		return
 	}
 

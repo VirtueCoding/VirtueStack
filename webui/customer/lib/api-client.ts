@@ -341,7 +341,7 @@ export interface Backup {
   id: string;
   vm_id: string;
   name: string;
-  type: "full" | "incremental";
+  type: "full";
   size_bytes: number;
   status: "pending" | "creating" | "completed" | "failed" | "restoring";
   created_at: string;
@@ -500,6 +500,7 @@ export interface UpdateWebhookRequest {
 
 export interface TestWebhookResponse {
   success: boolean;
+  message?: string;
   status_code?: number;
   response_body?: string;
   error?: string;

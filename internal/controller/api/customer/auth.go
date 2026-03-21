@@ -43,10 +43,10 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -61,11 +61,11 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -94,10 +94,10 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -111,12 +111,12 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
 			return
 		}
 
 		h.logger.Error("2FA verification internal error", "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 	}
 
 	if refreshToken == "" {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
 		return
 	}
 
@@ -158,11 +158,11 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
 			middleware.ClearAuthCookies(c, customerRefreshCookiePath)
-			respondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
 		return
 	}
 
@@ -206,42 +206,30 @@ func (h *CustomerHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
 
-func respondWithError(c *gin.Context, status int, code, message string) {
-	correlationID := middleware.GetCorrelationID(c)
-
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":           code,
-			"message":        message,
-			"correlation_id": correlationID,
-		},
-	})
-}
-
 func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	if len(req.CurrentPassword) < 12 {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "current_password must be at least 12 characters")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "current_password must be at least 12 characters")
 		return
 	}
 
 	if len(req.NewPassword) < 12 {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "new_password must be at least 12 characters")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "new_password must be at least 12 characters")
 		return
 	}
 
 	userID := middleware.GetUserID(c)
 	if userID == "" {
-		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
 		return
 	}
 
@@ -259,11 +247,11 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusUnauthorized, "INVALID_CURRENT_PASSWORD", "Current password is incorrect")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_CURRENT_PASSWORD", "Current password is incorrect")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_CHANGE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_CHANGE_FAILED", "Internal server error")
 		return
 	}
 

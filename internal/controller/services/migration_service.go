@@ -259,8 +259,8 @@ func (s *MigrationService) validateStorageBackend(storageBackend string) error {
 
 // getVMDiskPath returns the disk path for a VM on its current node.
 func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) string {
-	if vm.DiskPath != "" {
-		return vm.DiskPath
+	if vm.DiskPath != nil && *vm.DiskPath != "" {
+		return *vm.DiskPath
 	}
 
 	storageBackend := s.getNodeStorageBackend(vm)
@@ -271,8 +271,8 @@ func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) strin
 		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 	}
 
-	if vm.RBDImage != "" {
-		return vm.RBDImage
+	if vm.RBDImage != nil && *vm.RBDImage != "" {
+		return *vm.RBDImage
 	}
 	return fmt.Sprintf("vm-%s-disk0", vm.ID)
 }
@@ -288,8 +288,8 @@ func (s *MigrationService) getVMDiskPathForTarget(vm *models.VM, targetNode *mod
 		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 	}
 
-	if vm.RBDImage != "" {
-		return vm.RBDImage
+	if vm.RBDImage != nil && *vm.RBDImage != "" {
+		return *vm.RBDImage
 	}
 	return fmt.Sprintf("vm-%s-disk0", vm.ID)
 }

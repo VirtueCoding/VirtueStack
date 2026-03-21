@@ -239,7 +239,10 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 
 func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
 	nodeID := *vm.NodeID
-	diskPath := vm.DiskPath
+	diskPath := ""
+	if vm.DiskPath != nil {
+		diskPath = *vm.DiskPath
+	}
 	if diskPath == "" {
 		diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 	}
@@ -383,7 +386,10 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 			return fmt.Errorf("backup has no file path for QCOW restore")
 		}
 
-		diskPath := vm.DiskPath
+		diskPath := ""
+		if vm.DiskPath != nil {
+			diskPath = *vm.DiskPath
+		}
 		if diskPath == "" {
 			diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 		}
@@ -444,7 +450,10 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 						"error", err)
 				}
 				if backup.SnapshotName != nil {
-					diskPath := vm.DiskPath
+					diskPath := ""
+					if vm.DiskPath != nil {
+						diskPath = *vm.DiskPath
+					}
 					if diskPath == "" {
 						diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 					}
@@ -513,7 +522,10 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 			"snapshot_id", snapshotID)
 	} else {
 		if storageBackend == storageBackendQCOW {
-			diskPath := vm.DiskPath
+			diskPath := ""
+			if vm.DiskPath != nil {
+				diskPath = *vm.DiskPath
+			}
 			if diskPath == "" {
 				diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vmID)
 			}
@@ -535,7 +547,10 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
 		if s.nodeAgent != nil {
 			if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
-				diskPath := vm.DiskPath
+				diskPath := ""
+				if vm.DiskPath != nil {
+					diskPath = *vm.DiskPath
+				}
 				if diskPath == "" {
 					diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vmID)
 				}
@@ -588,7 +603,10 @@ func (s *BackupService) DeleteSnapshot(ctx context.Context, snapshotID string) e
 		}
 
 		if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
-			diskPath := vm.DiskPath
+			diskPath := ""
+			if vm.DiskPath != nil {
+				diskPath = *vm.DiskPath
+			}
 			if diskPath == "" {
 				diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 			}
@@ -988,7 +1006,12 @@ func (s *BackupService) CreateSchedule(ctx context.Context, schedule *models.Bac
 }
 
 func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*models.BackupSchedule, error) {
-	filter := repository.BackupScheduleListFilter{}
+	filter := repository.BackupScheduleListFilter{
+		PaginationParams: models.PaginationParams{
+			Page:    1,
+			PerPage: 100, // Default limit for non-paginated list
+		},
+	}
 	if vmID != "" {
 		filter.VMID = &vmID
 	}

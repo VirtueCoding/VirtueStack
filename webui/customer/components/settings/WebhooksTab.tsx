@@ -43,6 +43,8 @@ const AVAILABLE_EVENTS = [
   "vm.started",
   "vm.stopped",
   "vm.deleted",
+  "vm.reinstalled",
+  "vm.migrated",
   "backup.completed",
   "backup.failed",
   "snapshot.created",
@@ -138,7 +140,7 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
       if (data.success) {
         toast({
           title: "Success",
-          description: `Webhook test successful (Status: ${data.status_code})`,
+          description: data.message || "Webhook test queued for delivery",
         });
       } else {
         toast({

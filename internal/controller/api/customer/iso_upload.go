@@ -88,29 +88,29 @@ func (h *CustomerHandler) validateISOUploadAccess(c *gin.Context) (*isoUploadCon
 	vmID := c.Param("id")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return nil, false
 	}
 
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return nil, false
 		}
-		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to verify VM")
 		return nil, false
 	}
 
 	if vm.Status == models.VMStatusDeleted {
-		respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 		return nil, false
 	}
 
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxISOSizeBytes+1024)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		respondWithError(c, http.StatusBadRequest, "MISSING_FILE", "No file provided in 'file' form field")
+		middleware.RespondWithError(c, http.StatusBadRequest, "MISSING_FILE", "No file provided in 'file' form field")
 		return nil, false
 	}
 
@@ -126,12 +126,12 @@ func (h *CustomerHandler) validateISOUploadAccess(c *gin.Context) (*isoUploadCon
 // validateISOFile validates the uploaded file extension and size.
 func (h *CustomerHandler) validateISOFile(c *gin.Context, header *multipart.FileHeader) bool {
 	if !strings.EqualFold(filepath.Ext(header.Filename), ".iso") {
-		respondWithError(c, http.StatusBadRequest, "INVALID_FILE_TYPE", "Only .iso files are allowed")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_FILE_TYPE", "Only .iso files are allowed")
 		return false
 	}
 
 	if header.Size > maxISOSizeBytes {
-		respondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
+		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
 		return false
 	}
 
@@ -145,7 +145,7 @@ func (h *CustomerHandler) checkISOLimit(c *gin.Context, vm *models.VM, customerI
 		h.logger.Error("failed to create ISO directory",
 			"path", isoDir, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to prepare upload directory")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to prepare upload directory")
 		return false
 	}
 
@@ -154,7 +154,7 @@ func (h *CustomerHandler) checkISOLimit(c *gin.Context, vm *models.VM, customerI
 
 	planLimit := h.getISOPlanLimit(c.Request.Context(), vm.PlanID)
 	if isoCount >= planLimit {
-		respondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
+		middleware.RespondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
 			fmt.Sprintf("ISO upload limit reached for this VM (%d/%d). Delete existing ISOs first.", isoCount, planLimit))
 		return false
 	}
@@ -194,7 +194,7 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 		h.logger.Error("failed to create ISO file",
 			"path", destPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to create file on disk")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to create file on disk")
 		return nil, false
 	}
 	defer dst.Close()
@@ -204,13 +204,13 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 		h.logger.Error("failed to write ISO file",
 			"path", destPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to write file")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to write file")
 		return nil, false
 	}
 
 	if written > maxISOSizeBytes {
 		os.Remove(destPath)
-		respondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
+		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
 		return nil, false
 	}
 
@@ -256,16 +256,16 @@ func (h *CustomerHandler) ListISOs(c *gin.Context) {
 	vmID := c.Param("id")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "ISO_LIST_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_LIST_FAILED", "Failed to verify VM")
 		return
 	}
 
@@ -275,7 +275,7 @@ func (h *CustomerHandler) ListISOs(c *gin.Context) {
 		h.logger.Error("failed to list ISOs",
 			"vm_id", vmID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_LIST_FAILED", "Failed to list ISOs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_LIST_FAILED", "Failed to list ISOs")
 		return
 	}
 
@@ -289,39 +289,39 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 	isoID := c.Param("isoId")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(isoID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_ISO_ID", "ISO ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ISO_ID", "ISO ID must be a valid UUID")
 		return
 	}
 
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to verify VM")
 		return
 	}
 
 	if vm.AttachedISO != nil && *vm.AttachedISO == isoID {
-		respondWithError(c, http.StatusConflict, "ISO_ATTACHED", "Cannot delete an ISO that is currently attached to the VM")
+		middleware.RespondWithError(c, http.StatusConflict, "ISO_ATTACHED", "Cannot delete an ISO that is currently attached to the VM")
 		return
 	}
 
 	isoPath := filepath.Join(h.isoStoragePath, customerID, vmID, isoID+".iso")
 	if err := os.Remove(isoPath); err != nil {
 		if os.IsNotExist(err) {
-			respondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
 			return
 		}
 		h.logger.Error("failed to delete ISO",
 			"path", isoPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
 		return
 	}
 	os.Remove(isoPath + ".sha256")
@@ -343,38 +343,38 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 	isoID := c.Param("isoId")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(isoID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_ISO_ID", "ISO ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ISO_ID", "ISO ID must be a valid UUID")
 		return
 	}
 
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "ISO_ATTACH_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_ATTACH_FAILED", "Failed to verify VM")
 		return
 	}
 
 	if vm.NodeID == nil {
-		respondWithError(c, http.StatusBadRequest, "VM_NOT_ASSIGNED", "VM is not assigned to a node")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VM_NOT_ASSIGNED", "VM is not assigned to a node")
 		return
 	}
 
 	if vm.Status != models.VMStatusRunning && vm.Status != models.VMStatusStopped {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_STATE",
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_STATE",
 			"VM must be running or stopped to attach an ISO")
 		return
 	}
 
 	isoPath := filepath.Join(h.isoStoragePath, customerID, vmID, isoID+".iso")
 	if _, err := os.Stat(isoPath); os.IsNotExist(err) {
-		respondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO file not found on disk")
+		middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO file not found on disk")
 		return
 	}
 
@@ -382,7 +382,7 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 		h.logger.Error("failed to attach ISO",
 			"vm_id", vmID, "iso_id", isoID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_ATTACH_FAILED", "Failed to attach ISO")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_ATTACH_FAILED", "Failed to attach ISO")
 		return
 	}
 
@@ -406,22 +406,22 @@ func (h *CustomerHandler) DetachISO(c *gin.Context) {
 	isoID := c.Param("isoId")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "ISO_DETACH_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DETACH_FAILED", "Failed to verify VM")
 		return
 	}
 
 	if vm.AttachedISO == nil || *vm.AttachedISO != isoID {
-		respondWithError(c, http.StatusBadRequest, "ISO_NOT_ATTACHED", "This ISO is not attached to the VM")
+		middleware.RespondWithError(c, http.StatusBadRequest, "ISO_NOT_ATTACHED", "This ISO is not attached to the VM")
 		return
 	}
 
@@ -429,7 +429,7 @@ func (h *CustomerHandler) DetachISO(c *gin.Context) {
 		h.logger.Error("failed to detach ISO",
 			"vm_id", vmID, "iso_id", isoID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "ISO_DETACH_FAILED", "Failed to detach ISO")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DETACH_FAILED", "Failed to detach ISO")
 		return
 	}
 

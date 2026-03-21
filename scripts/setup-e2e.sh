@@ -440,7 +440,7 @@ VALUES (
 INSERT INTO backups (id, vm_id, type, status, storage_path, size_bytes, created_at)
 VALUES
     ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01', '99999999-9999-9999-9999-999999999001', 'full', 'completed', 'vs-backups/backup-01', 10737418240, NOW() - INTERVAL '1 day'),
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02', '99999999-9999-9999-9999-999999999001', 'incremental', 'completed', 'vs-backups/backup-02', 1073741824, NOW() - INTERVAL '12 hours'),
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02', '99999999-9999-9999-9999-999999999001', 'full', 'completed', 'vs-backups/backup-02', 1073741824, NOW() - INTERVAL '12 hours'),
     ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa03', '99999999-9999-9999-9999-999999999001', 'full', 'creating', NULL, NULL, NOW());
 
 -- =============================================================================

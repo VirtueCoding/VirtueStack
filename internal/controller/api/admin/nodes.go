@@ -45,7 +45,7 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validNodeStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -54,7 +54,7 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 	// Optional location filter
 	if locationID := c.Query("location_id"); locationID != "" {
 		if _, err := uuid.Parse(locationID); err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
 			return
 		}
 		filter.LocationID = &locationID
@@ -65,7 +65,7 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 		h.logger.Error("failed to list nodes",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_LIST_FAILED", "Failed to retrieve nodes")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_LIST_FAILED", "Failed to retrieve nodes")
 		return
 	}
 
@@ -80,15 +80,15 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 	var req models.NodeCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	if err := validateStorageConfig(req.StorageBackend, req.StoragePath); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_REGISTER_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_REGISTER_FAILED", "Internal server error")
 		return
 	}
 
@@ -133,7 +133,7 @@ func (h *AdminHandler) GetNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve node")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve node")
 		return
 	}
 
@@ -160,10 +160,10 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 	var req NodeUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve node")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve node")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 			currentPath = *req.StoragePath
 		}
 		if err := validateStorageConfig(currentBackend, currentPath); err != nil {
-			respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 			return
 		}
 	}
@@ -199,13 +199,13 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_UPDATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
 	updatedNode, err := h.nodeService.GetNode(c.Request.Context(), nodeID)
 	if err != nil {
-		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve updated node")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve updated node")
 		return
 	}
 
@@ -230,7 +230,7 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -260,7 +260,7 @@ func (h *AdminHandler) DrainNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_DRAIN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_DRAIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *AdminHandler) FailoverNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_FAILOVER_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_FAILOVER_FAILED", "Internal server error")
 		return
 	}
 
@@ -319,7 +319,7 @@ func (h *AdminHandler) UndrainNode(c *gin.Context) {
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NODE_UNDRAIN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_UNDRAIN_FAILED", "Internal server error")
 		return
 	}
 

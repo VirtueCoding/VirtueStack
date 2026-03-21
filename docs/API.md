@@ -3056,7 +3056,7 @@ Extends `VM` with:
 |-------|------|-------------|
 | `id` | string (UUID) | Unique identifier |
 | `vm_id` | string (UUID) | Source VM |
-| `type` | string | `full` or `incremental` |
+| `type` | string | `full` |
 | `storage_backend` | string | `ceph` or `qcow` |
 | `rbd_snapshot` | string | Ceph snapshot name |
 | `file_path` | string | QCOW backup file path |

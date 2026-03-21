@@ -35,12 +35,12 @@ func scanNode(row pgx.Row) (models.Node, error) {
 }
 
 const nodeSelectCols = `
-	id, hostname, grpc_address, management_ip,
+	id, hostname, grpc_address, management_ip::text,
 	location_id, status, total_vcpu, total_memory_mb,
 	allocated_vcpu, allocated_memory_mb, ceph_pool,
-	ipmi_address, ipmi_username_encrypted, ipmi_password_encrypted,
+	ipmi_address::text, ipmi_username_encrypted, ipmi_password_encrypted,
 	last_heartbeat_at, consecutive_heartbeat_misses, created_at,
-	storage_backend, storage_path, ceph_monitors, ceph_user`
+	storage_backend, COALESCE(storage_path, ''), ceph_monitors, ceph_user`
 
 // Create inserts a new node record into the database.
 func (r *NodeRepository) Create(ctx context.Context, node *models.Node) error {

@@ -40,7 +40,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validCustomerStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -49,7 +49,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	// Optional search filter (email or name)
 	if search := c.Query("search"); search != "" {
 		if len(search) > 100 {
-			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
 			return
 		}
 		filter.Search = &search
@@ -60,7 +60,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 		h.logger.Error("failed to list customers",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_LIST_FAILED", "Failed to retrieve customers")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_LIST_FAILED", "Failed to retrieve customers")
 		return
 	}
 
@@ -76,21 +76,21 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(customerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
 		return
 	}
 
 	customer, err := h.customerService.GetByID(c.Request.Context(), customerID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
 			return
 		}
 		h.logger.Error("failed to get customer",
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve customer")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve customer")
 		return
 	}
 
@@ -141,17 +141,17 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(customerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
 		return
 	}
 
 	var req CustomerUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -159,10 +159,10 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	customer, err := h.customerService.GetByID(c.Request.Context(), customerID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve customer")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve customer")
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 		case models.CustomerStatusSuspended:
 			err = h.customerService.Suspend(c.Request.Context(), customerID)
 		default:
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		if err != nil {
@@ -183,7 +183,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 				"status", *req.Status,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -198,7 +198,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 				"customer_id", customerID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -217,7 +217,7 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve updated customer")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_GET_FAILED", "Failed to retrieve updated customer")
 		return
 	}
 	c.JSON(http.StatusOK, models.Response{Data: updatedCustomer})
@@ -229,7 +229,7 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(customerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
 		return
 	}
 
@@ -243,21 +243,21 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 	}
 	_, vmCount, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
 	if err == nil && vmCount > 0 {
-		respondWithError(c, http.StatusConflict, "CUSTOMER_HAS_VMS", "Cannot delete customer with existing VMs. Delete VMs first.")
+		middleware.RespondWithError(c, http.StatusConflict, "CUSTOMER_HAS_VMS", "Cannot delete customer with existing VMs. Delete VMs first.")
 		return
 	}
 
 	err = h.customerService.Delete(c.Request.Context(), customerID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
 			return
 		}
 		h.logger.Error("failed to delete customer",
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CUSTOMER_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -277,7 +277,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(customerID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "Customer ID must be a valid UUID")
 		return
 	}
 
@@ -300,7 +300,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "AUDIT_LOG_FAILED", "Failed to retrieve audit logs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "AUDIT_LOG_FAILED", "Failed to retrieve audit logs")
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
@@ -125,7 +126,7 @@ func parseAuditLogFilter(c *gin.Context, pagination models.PaginationParams) (*m
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		startDate, err := time.Parse(time.RFC3339, startDateStr)
 		if err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
 			return nil, false
 		}
 		filter.StartTime = &startDate
@@ -134,7 +135,7 @@ func parseAuditLogFilter(c *gin.Context, pagination models.PaginationParams) (*m
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
 		endDate, err := time.Parse(time.RFC3339, endDateStr)
 		if err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_DATE_FORMAT", "Invalid date format, use RFC3339")
 			return nil, false
 		}
 		filter.EndTime = &endDate
@@ -148,7 +149,7 @@ func parseAuditLogFilter(c *gin.Context, pagination models.PaginationParams) (*m
 func validateUUIDParam(c *gin.Context, param, errorCode, errorMsg string) (string, bool) {
 	id := c.Param(param)
 	if _, err := uuid.Parse(id); err != nil {
-		respondWithError(c, http.StatusBadRequest, errorCode, errorMsg)
+		middleware.RespondWithError(c, http.StatusBadRequest, errorCode, errorMsg)
 		return "", false
 	}
 	return id, true
@@ -158,7 +159,7 @@ func validateUUIDParam(c *gin.Context, param, errorCode, errorMsg string) (strin
 // Returns true if the error was handled (response sent), false otherwise.
 func handleNotFoundError(c *gin.Context, err error, notFoundCode, notFoundMsg string) bool {
 	if sharederrors.Is(err, sharederrors.ErrNotFound) {
-		respondWithError(c, http.StatusNotFound, notFoundCode, notFoundMsg)
+		middleware.RespondWithError(c, http.StatusNotFound, notFoundCode, notFoundMsg)
 		return true
 	}
 	return false

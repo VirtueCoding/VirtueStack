@@ -30,10 +30,10 @@ type Node struct {
 	StoragePath string `json:"storage_path,omitempty" db:"storage_path"`
 	// CephPool: Ceph pool name for backward compatibility.
 	CephPool string `json:"ceph_pool" db:"ceph_pool"`
-	// CephMonitors: comma-separated Ceph monitor addresses.
-	CephMonitors string `json:"ceph_monitors" db:"ceph_monitors"`
-	// CephUser: Ceph authentication user.
-	CephUser                   string     `json:"ceph_user" db:"ceph_user"`
+	// CephMonitors: comma-separated Ceph monitor addresses. nil means use global config.
+	CephMonitors *string `json:"ceph_monitors,omitempty" db:"ceph_monitors"`
+	// CephUser: Ceph authentication user. nil means use global config.
+	CephUser                   *string    `json:"ceph_user,omitempty" db:"ceph_user"`
 	IPMIAddress                *string    `json:"-" db:"ipmi_address"`            // Sensitive
 	IPMIUsernameEncrypted      *string    `json:"-" db:"ipmi_username_encrypted"` // Sensitive
 	IPMIPasswordEncrypted      *string    `json:"-" db:"ipmi_password_encrypted"` // Sensitive

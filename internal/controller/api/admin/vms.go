@@ -63,7 +63,7 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validVMStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -72,7 +72,7 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 	// Optional search filter (bounded to 100 chars per QG-05)
 	if search := c.Query("search"); search != "" {
 		if len(search) > 100 {
-			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
 			return
 		}
 		filter.Search = &search
@@ -84,7 +84,7 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 		h.logger.Error("failed to list VMs",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LIST_FAILED", "Failed to retrieve VMs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_LIST_FAILED", "Failed to retrieve VMs")
 		return
 	}
 
@@ -99,10 +99,10 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 	var req AdminVMCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -125,7 +125,7 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -161,14 +161,14 @@ func (h *AdminHandler) GetVM(c *gin.Context) {
 	vm, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, "", true)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM",
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
 		return
 	}
 
@@ -186,10 +186,10 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 	var req AdminVMUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -199,7 +199,7 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 		if handleNotFoundError(c, err, "VM_NOT_FOUND", "VM not found") {
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
 		return
 	}
 
@@ -210,7 +210,7 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 				"vm_id", vmID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -230,7 +230,7 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 				"vm_id", vmID,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
-			respondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "VM_UPDATE_FAILED", "Internal server error")
 			return
 		}
 	}
@@ -263,7 +263,7 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve updated VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve updated VM")
 		return
 	}
 	c.JSON(http.StatusOK, models.Response{Data: updatedVM})
@@ -297,7 +297,7 @@ func (h *AdminHandler) handleVMResize(c *gin.Context, vmID string, vm *models.VM
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_RESIZE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_RESIZE_FAILED", "Internal server error")
 		return "", true // handled via error response
 	}
 
@@ -318,14 +318,14 @@ func (h *AdminHandler) DeleteVM(c *gin.Context) {
 	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, "", true)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to delete VM",
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -351,10 +351,10 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 	var req VMMigrateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -364,7 +364,7 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 		if handleNotFoundError(c, err, "VM_NOT_FOUND", "VM not found") {
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
 		return
 	}
 
@@ -374,7 +374,7 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Target node not found") {
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve target node")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NODE_GET_FAILED", "Failed to retrieve target node")
 		return
 	}
 
@@ -400,7 +400,7 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 			"target_node_id", req.TargetNodeID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "MIGRATION_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "MIGRATION_FAILED", "Internal server error")
 		return
 	}
 

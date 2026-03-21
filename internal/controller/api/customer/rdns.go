@@ -30,14 +30,14 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	// Verify VM ownership
 	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for IP list",
@@ -45,7 +45,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_IP_LIST_FAILED", "Failed to retrieve VM IPs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_IP_LIST_FAILED", "Failed to retrieve VM IPs")
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
 		return
 	}
 
@@ -79,18 +79,18 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 
 	// Validate UUIDs
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
 	// Verify VM ownership
 	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for rDNS",
@@ -98,7 +98,7 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
 		h.logger.Error("failed to get IP address",
@@ -114,19 +114,19 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
 		return
 	}
 
 	// Verify the IP belongs to the VM
 	if ip.VMID == nil || *ip.VMID != vmID {
-		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
 		return
 	}
 
 	// Verify the IP is assigned to the customer
 	if ip.CustomerID == nil || *ip.CustomerID != customerID {
-		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		middleware.RespondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
 		return
 	}
 
@@ -148,11 +148,11 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 
 	// Validate UUIDs
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
@@ -160,17 +160,17 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 	var req RDNSRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	// Verify VM ownership
 	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for rDNS update",
@@ -178,7 +178,7 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}
 
@@ -186,7 +186,7 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
 		h.logger.Error("failed to get IP address for rDNS update",
@@ -194,19 +194,19 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}
 
 	// Verify the IP belongs to the VM
 	if ip.VMID == nil || *ip.VMID != vmID {
-		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
 		return
 	}
 
 	// Verify the IP is assigned to the customer
 	if ip.CustomerID == nil || *ip.CustomerID != customerID {
-		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		middleware.RespondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
 		return
 	}
 
@@ -218,7 +218,7 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}
 
@@ -263,18 +263,18 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 
 	// Validate UUIDs
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
 	// Verify VM ownership
 	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for rDNS delete",
@@ -282,7 +282,7 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
 		h.logger.Error("failed to get IP address for rDNS delete",
@@ -298,19 +298,19 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
 		return
 	}
 
 	// Verify the IP belongs to the VM
 	if ip.VMID == nil || *ip.VMID != vmID {
-		respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
+		middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found for this VM")
 		return
 	}
 
 	// Verify the IP is assigned to the customer
 	if ip.CustomerID == nil || *ip.CustomerID != customerID {
-		respondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
+		middleware.RespondWithError(c, http.StatusForbidden, "IP_NOT_OWNED", "You do not own this IP address")
 		return
 	}
 
@@ -321,7 +321,7 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
 		return
 	}
 

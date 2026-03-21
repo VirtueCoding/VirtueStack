@@ -122,10 +122,10 @@ func getValidVMWithChecks(ctx context.Context, vmRepo *repository.VMRepository, 
 // respondWithValidationError sends a vmValidationError as an HTTP response.
 func respondWithValidationError(c *gin.Context, err error) {
 	if ve, ok := err.(vmValidationError); ok {
-		respondWithError(c, ve.status, ve.errCode, ve.errMsg)
+		middleware.RespondWithError(c, ve.status, ve.errCode, ve.errMsg)
 		return
 	}
-	respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
+	middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
 }
 
 // calculateResizeValues computes the new resource values for a resize operation.
@@ -215,7 +215,7 @@ func bindAndValidateResizeRequest(c *gin.Context) (*ResizeRequest, error) {
 // handleResizeError logs and responds to a resize error.
 func handleResizeError(c *gin.Context, logger interface{ Error(string, ...any) }, vmID string, err error) {
 	logger.Error("failed to resize VM", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-	respondWithError(c, http.StatusInternalServerError, "RESIZE_FAILED", "Internal server error")
+	middleware.RespondWithError(c, http.StatusInternalServerError, "RESIZE_FAILED", "Internal server error")
 }
 
 // logResize logs a successful resize operation.

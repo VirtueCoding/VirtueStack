@@ -45,7 +45,7 @@ func (h *NotificationsHandler) GetNotificationPreferences(c *gin.Context) {
 
 	prefs, err := h.preferenceRepo.GetOrCreate(c.Request.Context(), customerID)
 	if err != nil {
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get notification preferences")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get notification preferences")
 		return
 	}
 
@@ -60,10 +60,10 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 	var req UpdateNotificationPreferencesRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 	if req.Events != nil {
 		for _, event := range req.Events {
 			if !services.IsValidEventType(event) {
-				respondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid event type: "+event)
+				middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT", "Invalid event type: "+event)
 				return
 			}
 		}
@@ -80,7 +80,7 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 	// Get existing preferences or create new ones
 	prefs, err := h.preferenceRepo.GetOrCreate(c.Request.Context(), customerID)
 	if err != nil {
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get notification preferences")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get notification preferences")
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 
 	// Save changes
 	if err := h.preferenceRepo.Update(c.Request.Context(), prefs); err != nil {
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update notification preferences")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update notification preferences")
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 	// Optional filters
 	if eventType := c.Query("event_type"); eventType != "" {
 		if !services.IsValidEventType(eventType) {
-			respondWithError(c, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Invalid event_type value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_EVENT_TYPE", "Invalid event_type value")
 			return
 		}
 		filter.EventType = &eventType
@@ -128,7 +128,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validNotificationStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -136,7 +136,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 
 	events, total, err := h.eventRepo.ListByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list notification events")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list notification events")
 		return
 	}
 

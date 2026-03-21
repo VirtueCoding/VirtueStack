@@ -34,7 +34,7 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 	// Optional OS family filter — validated against allowlist to prevent unbounded values.
 	osFamily := c.Query("os_family")
 	if osFamily != "" && !validOSFamilies[osFamily] {
-		respondWithError(c, http.StatusBadRequest, "INVALID_OS_FAMILY", "Invalid os_family value")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_OS_FAMILY", "Invalid os_family value")
 		return
 	}
 
@@ -55,7 +55,7 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 		h.logger.Error("failed to list templates",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_LIST_FAILED", "Failed to retrieve templates")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_LIST_FAILED", "Failed to retrieve templates")
 		return
 	}
 

@@ -33,24 +33,24 @@ type ProfileResponse struct {
 func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
-		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return
 	}
 
 	var req UpdateProfileRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	sanitizeRequest(&req)
 
 	if req.Name == nil && req.Email == nil && req.Phone == nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "at least one field must be provided")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "at least one field must be provided")
 		return
 	}
 
@@ -68,16 +68,16 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if validationErr, ok := err.(*sharederrors.ValidationError); ok {
-			respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", validationErr.Error())
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", validationErr.Error())
 			return
 		}
 
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "UPDATE_FAILED", "failed to update profile")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "UPDATE_FAILED", "failed to update profile")
 		return
 	}
 
@@ -100,17 +100,17 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 func (h *CustomerHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
-		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return
 	}
 
 	customer, err := h.customerRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "FETCH_FAILED", "failed to get profile")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "FETCH_FAILED", "failed to get profile")
 		return
 	}
 

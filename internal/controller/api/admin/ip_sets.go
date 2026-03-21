@@ -42,7 +42,7 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 	// Optional location filter
 	if locationID := c.Query("location_id"); locationID != "" {
 		if _, err := uuid.Parse(locationID); err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_LOCATION_ID", "location_id must be a valid UUID")
 			return
 		}
 		filter.LocationID = &locationID
@@ -64,7 +64,7 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 		h.logger.Error("failed to list IP sets",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_LIST_FAILED", "Failed to retrieve IP sets")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_LIST_FAILED", "Failed to retrieve IP sets")
 		return
 	}
 
@@ -79,10 +79,10 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 	var req models.IPSetCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 			"network", req.Network,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -129,21 +129,21 @@ func (h *AdminHandler) GetIPSet(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(ipSetID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
 		return
 	}
 
 	ipSet, err := h.ipRepo.GetIPSetByID(c.Request.Context(), ipSetID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
 			return
 		}
 		h.logger.Error("failed to get IP set",
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
 		return
 	}
 
@@ -180,17 +180,17 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(ipSetID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
 		return
 	}
 
 	var req IPSetUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -198,10 +198,10 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 	ipSet, err := h.ipRepo.GetIPSetByID(c.Request.Context(), ipSetID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_UPDATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(ipSetID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
 		return
 	}
 
@@ -257,21 +257,21 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("assigned")}
 	assignedIPs, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
 	if err == nil && len(assignedIPs) > 0 {
-		respondWithError(c, http.StatusConflict, "IPSET_IN_USE", "Cannot delete IP set with assigned IPs")
+		middleware.RespondWithError(c, http.StatusConflict, "IPSET_IN_USE", "Cannot delete IP set with assigned IPs")
 		return
 	}
 
 	err = h.ipRepo.DeleteIPSet(c.Request.Context(), ipSetID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
 			return
 		}
 		h.logger.Error("failed to delete IP set",
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IPSET_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -291,7 +291,7 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(ipSetID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IPSET_ID", "IP Set ID must be a valid UUID")
 		return
 	}
 
@@ -301,10 +301,10 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 	_, err := h.ipRepo.GetIPSetByID(c.Request.Context(), ipSetID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IPSET_NOT_FOUND", "IP Set not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IPSET_GET_FAILED", "Failed to retrieve IP set")
 		return
 	}
 
@@ -321,7 +321,7 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 			"ipset_id", ipSetID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve available IPs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve available IPs")
 		return
 	}
 

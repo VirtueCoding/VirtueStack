@@ -18,10 +18,10 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	var req ProvisioningCreateVMRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -32,7 +32,7 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, req.CustomerID)
 	if err != nil {
 		h.logger.Error("failed to create VM", "customer_id", req.CustomerID, "hostname", req.Hostname, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
 	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, vm.CustomerID, true)
 	if err != nil {
 		h.logger.Error("failed to delete VM", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -135,18 +135,4 @@ func generateRandomPassword() string {
 	}
 
 	return string(combined)
-}
-
-// respondWithError sends a standardized error response using the typed ErrorResponse
-// shape shared across all middleware (recovery, rate-limit, auth).
-func respondWithError(c *gin.Context, status int, code, message string) {
-	correlationID := middleware.GetCorrelationID(c)
-
-	c.JSON(status, middleware.ErrorResponse{
-		Error: middleware.ErrorDetail{
-			Code:          code,
-			Message:       message,
-			CorrelationID: correlationID,
-		},
-	})
 }

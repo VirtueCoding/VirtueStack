@@ -33,7 +33,7 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -41,7 +41,7 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 	metrics, err := h.vmService.GetVMMetrics(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 
@@ -51,7 +51,7 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 			"customer_id", customerID,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "METRICS_FAILED", "Failed to retrieve VM metrics")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "METRICS_FAILED", "Failed to retrieve VM metrics")
 		return
 	}
 
@@ -66,7 +66,7 @@ func (h *CustomerHandler) GetBandwidth(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -74,10 +74,10 @@ func (h *CustomerHandler) GetBandwidth(c *gin.Context) {
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "BANDWIDTH_FAILED", "Failed to get VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BANDWIDTH_FAILED", "Failed to get VM")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *CustomerHandler) GetNetworkHistory(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -124,17 +124,17 @@ func (h *CustomerHandler) GetNetworkHistory(c *gin.Context) {
 	_, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "NETWORK_HISTORY_FAILED", "Failed to get VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NETWORK_HISTORY_FAILED", "Failed to get VM")
 		return
 	}
 
 	// Get period from query (default to "day")
 	period := c.DefaultQuery("period", "day")
 	if !isValidPeriod(period) {
-		respondWithError(c, http.StatusBadRequest, "INVALID_PERIOD", "Period must be one of: hour, day, week, month")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PERIOD", "Period must be one of: hour, day, week, month")
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *CustomerHandler) GetNetworkHistory(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "NETWORK_HISTORY_FAILED", "Failed to retrieve network history")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "NETWORK_HISTORY_FAILED", "Failed to retrieve network history")
 		return
 	}
 

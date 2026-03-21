@@ -27,21 +27,21 @@ func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
 		h.logger.Error("failed to get IP address",
 			"ip_id", ipID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_GET_FAILED", "Failed to retrieve rDNS")
 		return
 	}
 
@@ -58,27 +58,27 @@ func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
 	var req AdminRDNSRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to retrieve IP address")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to retrieve IP address")
 		return
 	}
 
@@ -87,7 +87,7 @@ func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 			"ip_id", ipID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}
 
@@ -119,17 +119,17 @@ func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
 	if _, err := uuid.Parse(ipID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IP_ID", "IP ID must be a valid UUID")
 		return
 	}
 
 	ip, err := h.ipRepo.GetIPAddressByID(c.Request.Context(), ipID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "IP_NOT_FOUND", "IP address not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to retrieve IP address")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to retrieve IP address")
 		return
 	}
 
@@ -138,7 +138,7 @@ func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 			"ip_id", ipID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 	vmID := c.Param("id")
 
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -179,7 +179,7 @@ func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 			"vm_id", vmID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve IP addresses")
 		return
 	}
 

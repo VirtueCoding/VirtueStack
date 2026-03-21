@@ -194,7 +194,10 @@ func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	diskPath := vm.DiskPath
+	diskPath := ""
+	if vm.DiskPath != nil {
+		diskPath = *vm.DiskPath
+	}
 	if diskPath == "" {
 		diskPath = fmt.Sprintf(defaultVMDiskPathTemplate, vm.ID)
 	}

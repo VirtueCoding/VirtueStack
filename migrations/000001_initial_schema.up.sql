@@ -312,9 +312,8 @@ CREATE TABLE vm_ipv6_subnets (
 CREATE TABLE backups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     vm_id UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
-    type VARCHAR(20) CHECK (type IN ('full', 'incremental')),
+    type VARCHAR(20) DEFAULT 'full' CHECK (type IN ('full')),
     rbd_snapshot VARCHAR(100),
-    diff_from_snapshot VARCHAR(100),
     storage_path TEXT,
     size_bytes BIGINT,
     status VARCHAR(20) DEFAULT 'creating' CHECK (status IN ('creating', 'completed', 'failed', 'restoring', 'deleted')),

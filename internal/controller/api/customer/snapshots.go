@@ -51,10 +51,10 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		// Verify VM belongs to customer
 		if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 			if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-				respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+				middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 				return
 			}
-			respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_LIST_FAILED", "Failed to verify VM")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_LIST_FAILED", "Failed to verify VM")
 			return
 		}
 		filter.VMID = &vmID
@@ -66,7 +66,7 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_LIST_FAILED", "Failed to retrieve snapshots")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_LIST_FAILED", "Failed to retrieve snapshots")
 		return
 	}
 
@@ -84,16 +84,16 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	var req CreateSnapshotRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	// Validate UUID
 	if _, err := uuid.Parse(req.VMID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -101,10 +101,10 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	vm, err := h.vmService.GetVM(c.Request.Context(), req.VMID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Failed to verify VM")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 
 	snapshotCount, countErr := h.backupRepo.CountSnapshotsByVM(c.Request.Context(), vm.ID)
 	if countErr == nil && snapshotCount >= planLimit {
-		respondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
+		middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
 			fmt.Sprintf("Snapshot limit reached for this VM (%d/%d). Delete existing snapshots first.", snapshotCount, planLimit))
 		return
 	}
@@ -125,7 +125,7 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
 	if err != nil {
 		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
-			respondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED", err.Error())
+			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED", err.Error())
 			return
 		}
 		h.logger.Error("failed to create snapshot",
@@ -133,7 +133,7 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -158,7 +158,7 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(snapshotID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_SNAPSHOT_ID", "Snapshot ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SNAPSHOT_ID", "Snapshot ID must be a valid UUID")
 		return
 	}
 
@@ -166,16 +166,16 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 	snapshot, err := h.backupRepo.GetSnapshotByID(c.Request.Context(), snapshotID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Failed to retrieve snapshot")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Failed to retrieve snapshot")
 		return
 	}
 
 	// Verify snapshot belongs to a VM owned by the customer
 	if !h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID) {
-		respondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -212,7 +212,7 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(snapshotID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_SNAPSHOT_ID", "Snapshot ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SNAPSHOT_ID", "Snapshot ID must be a valid UUID")
 		return
 	}
 
@@ -220,16 +220,16 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 	snapshot, err := h.backupRepo.GetSnapshotByID(c.Request.Context(), snapshotID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Failed to retrieve snapshot")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Failed to retrieve snapshot")
 		return
 	}
 
 	// Verify snapshot belongs to a VM owned by the customer
 	if !h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID) {
-		respondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
 		return
 	}
 
@@ -242,7 +242,7 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

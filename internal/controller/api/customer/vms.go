@@ -41,7 +41,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validVMStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -51,7 +51,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	const maxSearchLength = 100
 	if search := c.Query("search"); search != "" {
 		if len(search) > maxSearchLength {
-			respondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SEARCH", "search parameter must not exceed 100 characters")
 			return
 		}
 		filter.Search = &search
@@ -63,7 +63,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LIST_FAILED", "Failed to retrieve VMs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_LIST_FAILED", "Failed to retrieve VMs")
 		return
 	}
 
@@ -81,20 +81,20 @@ func (h *CustomerHandler) CreateVM(c *gin.Context) {
 	var req CreateVMRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	// Validate UUIDs
 	if _, err := uuid.Parse(req.PlanID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
 		return
 	}
 	if _, err := uuid.Parse(req.TemplateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *CustomerHandler) CreateVM(c *gin.Context) {
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *CustomerHandler) GetVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -154,7 +154,7 @@ func (h *CustomerHandler) GetVM(c *gin.Context) {
 	vm, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM",
@@ -162,7 +162,7 @@ func (h *CustomerHandler) GetVM(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_GET_FAILED", "Failed to retrieve VM")
 		return
 	}
 
@@ -177,7 +177,7 @@ func (h *CustomerHandler) DeleteVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -185,7 +185,7 @@ func (h *CustomerHandler) DeleteVM(c *gin.Context) {
 	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to delete VM",
@@ -193,7 +193,7 @@ func (h *CustomerHandler) DeleteVM(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
 		return
 	}
 

@@ -23,7 +23,7 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 		h.logger.Error("failed to list audit logs",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "AUDIT_LOG_LIST_FAILED", "Failed to retrieve audit logs")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "AUDIT_LOG_LIST_FAILED", "Failed to retrieve audit logs")
 		return
 	}
 

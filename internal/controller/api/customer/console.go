@@ -29,7 +29,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -37,7 +37,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for console token",
@@ -45,19 +45,19 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Failed to get VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Failed to get VM")
 		return
 	}
 
 	// Check if VM is running (console requires running VM)
 	if vm.Status != models.VMStatusRunning {
-		respondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access console")
+		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
-		respondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
+		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Internal server error")
 		return
 	}
 	expiresAt := time.Now().Add(ConsoleTokenDuration)
@@ -107,7 +107,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM for serial token",
@@ -123,19 +123,19 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Failed to get VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Failed to get VM")
 		return
 	}
 
 	// Check if VM is running
 	if vm.Status != models.VMStatusRunning {
-		respondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access serial console")
+		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access serial console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
-		respondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
+		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
 
@@ -147,7 +147,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Internal server error")
 		return
 	}
 	expiresAt := time.Now().Add(ConsoleTokenDuration)

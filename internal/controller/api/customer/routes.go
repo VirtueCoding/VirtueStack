@@ -221,6 +221,7 @@ func registerWebhookRoutes(protected *gin.RouterGroup, handler *CustomerHandler)
 		webhooks.GET("/:id", handler.GetWebhook)
 		webhooks.PUT("/:id", handler.UpdateWebhook)
 		webhooks.DELETE("/:id", handler.DeleteWebhook)
+		webhooks.POST("/:id/test", handler.TestWebhook)
 		webhooks.GET("/:id/deliveries", handler.ListWebhookDeliveries)
 	}
 }

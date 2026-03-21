@@ -169,7 +169,11 @@ type NodeAgentConfig struct {
 	LogLevel string `yaml:"log_level" env:"LOG_LEVEL"`
 
 	// Metrics
-	MetricsAddr string `yaml:"metrics_addr" env:"METRICS_ADDR"`
+	MetricsAddr            string `yaml:"metrics_addr" env:"METRICS_ADDR"`
+	MetricsCollectInterval string `yaml:"metrics_collect_interval" env:"METRICS_COLLECT_INTERVAL"` // e.g., "60s", "5m"
+
+	// Shutdown timeout for graceful termination (e.g., "30s", "1m")
+	ShutdownTimeout string `yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT"`
 }
 
 // LoadControllerConfig loads the controller configuration from environment variables
@@ -445,6 +449,12 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	}
 	if v := os.Getenv("METRICS_ADDR"); v != "" {
 		cfg.MetricsAddr = v
+	}
+	if v := os.Getenv("METRICS_COLLECT_INTERVAL"); v != "" {
+		cfg.MetricsCollectInterval = v
+	}
+	if v := os.Getenv("SHUTDOWN_TIMEOUT"); v != "" {
+		cfg.ShutdownTimeout = v
 	}
 
 	applyEnvOverridesNodeAgentStorage(cfg)

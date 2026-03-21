@@ -27,7 +27,7 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 		} else if isActiveStr == "false" {
 			isActive = false
 		} else {
-			respondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
 			return
 		}
 		filter.IsActive = &isActive
@@ -38,7 +38,7 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 		h.logger.Error("failed to list plans",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PLAN_LIST_FAILED", "Failed to retrieve plans")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_LIST_FAILED", "Failed to retrieve plans")
 		return
 	}
 
@@ -53,10 +53,10 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	var req models.PlanCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -67,7 +67,7 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 			"slug", req.Slug,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PLAN_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -99,10 +99,10 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	var req models.PlanUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 		if handleNotFoundError(c, err, "PLAN_NOT_FOUND", "Plan not found") {
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "PLAN_GET_FAILED", "Failed to retrieve plan")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_GET_FAILED", "Failed to retrieve plan")
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 			"plan_id", planID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PLAN_UPDATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -157,10 +157,10 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 		// Check if it's a FK constraint error
 		if errors.Is(err, sharederrors.ErrPlanHasExistingVMs) {
-			respondWithError(c, http.StatusConflict, "PLAN_IN_USE", "Cannot delete plan with existing VMs")
+			middleware.RespondWithError(c, http.StatusConflict, "PLAN_IN_USE", "Cannot delete plan with existing VMs")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "PLAN_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_DELETE_FAILED", "Internal server error")
 		return
 	}
 

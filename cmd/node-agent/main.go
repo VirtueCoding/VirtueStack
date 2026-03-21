@@ -15,8 +15,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
 )
 
-// Shutdown timeout for graceful termination.
-const shutdownTimeout = 30 * time.Second
+// Default shutdown timeout for graceful termination (can be overridden via config).
+const defaultShutdownTimeout = 30 * time.Second
 
 func main() {
 	// Load configuration
@@ -24,6 +24,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Parse shutdown timeout from config (default to 30s)
+	shutdownTimeout := defaultShutdownTimeout
+	if cfg.ShutdownTimeout != "" {
+		if parsed, err := time.ParseDuration(cfg.ShutdownTimeout); err == nil {
+			shutdownTimeout = parsed
+		}
 	}
 
 	// Setup logging

@@ -44,11 +44,11 @@ func validateTaskID(taskID string) (string, error) {
 // handleTaskGetError handles errors from task repository GetByID calls.
 func (h *ProvisioningHandler) handleTaskGetError(c *gin.Context, err error, taskID string) {
 	if sharederrors.Is(err, sharederrors.ErrNotFound) {
-		respondWithError(c, http.StatusNotFound, "TASK_NOT_FOUND", "Task not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "TASK_NOT_FOUND", "Task not found")
 		return
 	}
 	h.logger.Error("failed to get task", "task_id", taskID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-	respondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", "Internal server error")
+	middleware.RespondWithError(c, http.StatusInternalServerError, "TASK_LOOKUP_FAILED", "Internal server error")
 }
 
 // buildTaskStatusResponse builds a TaskStatusResponse from a Task.

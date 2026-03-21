@@ -18,14 +18,14 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	// Start VM with ownership verification (isAdmin=false)
 	if err := h.vmService.StartVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 
@@ -35,7 +35,7 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 			"customer_id", customerID,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "VM_START_FAILED", "Failed to start VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_START_FAILED", "Failed to start VM")
 		return
 	}
 
@@ -55,14 +55,14 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	// Stop VM gracefully with ownership verification (isAdmin=false)
 	if err := h.vmService.StopVM(c.Request.Context(), vmID, customerID, false, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 
@@ -72,7 +72,7 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 			"customer_id", customerID,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "VM_STOP_FAILED", "Failed to stop VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_STOP_FAILED", "Failed to stop VM")
 		return
 	}
 
@@ -92,14 +92,14 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	// Restart VM with ownership verification (isAdmin=false)
 	if err := h.vmService.RestartVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 
@@ -109,7 +109,7 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 			"customer_id", customerID,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "VM_RESTART_FAILED", "Failed to restart VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_RESTART_FAILED", "Failed to restart VM")
 		return
 	}
 
@@ -129,14 +129,14 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(vmID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
 	// Force stop VM with ownership verification (isAdmin=false)
 	if err := h.vmService.StopVM(c.Request.Context(), vmID, customerID, true, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 
@@ -146,7 +146,7 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 			"customer_id", customerID,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "VM_FORCE_STOP_FAILED", "Failed to force stop VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_FORCE_STOP_FAILED", "Failed to force stop VM")
 		return
 	}
 

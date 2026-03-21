@@ -139,7 +139,7 @@ func (s *TemplateService) Create(ctx context.Context, template *models.Template)
 			return fmt.Errorf("rbd_image and rbd_snapshot are required for ceph storage")
 		}
 	} else if storageBackend == StorageBackendQcow {
-		if template.FilePath == "" {
+		if template.FilePath == nil || *template.FilePath == "" {
 			return fmt.Errorf("file_path is required for qcow storage")
 		}
 	}
@@ -234,7 +234,7 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 		template.RBDImage = templateRef
 		template.RBDSnapshot = snapshotRef
 	} else {
-		template.FilePath = templateRef
+		template.FilePath = &templateRef
 	}
 
 	if err := s.templateRepo.Create(ctx, template); err != nil {
@@ -284,7 +284,9 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 			templateRef = template.RBDImage
 			snapshotRef = template.RBDSnapshot
 		} else {
-			templateRef = template.FilePath
+			if template.FilePath != nil {
+				templateRef = *template.FilePath
+			}
 			snapshotRef = ""
 		}
 
@@ -370,7 +372,7 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 		template.StorageBackend = *req.StorageBackend
 	}
 	if req.FilePath != nil {
-		template.FilePath = *req.FilePath
+		template.FilePath = req.FilePath
 	}
 
 	if err := s.templateRepo.Update(ctx, template); err != nil {

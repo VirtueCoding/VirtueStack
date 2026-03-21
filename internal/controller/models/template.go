@@ -19,8 +19,8 @@ type Template struct {
 	Description       string `json:"description,omitempty" db:"description"` // Optional description of the template
 	// StorageBackend specifies the storage type: "ceph" or "qcow". Defaults to "ceph" for backward compatibility.
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
-	// FilePath is the path to the template file for QCOW storage. Empty for Ceph.
-	FilePath  string    `json:"file_path,omitempty" db:"file_path"`
+	// FilePath is the path to the template file for QCOW storage. Nil for Ceph.
+	FilePath  *string   `json:"file_path,omitempty" db:"file_path"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }

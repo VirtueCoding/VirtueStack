@@ -67,6 +67,7 @@ const (
 	TestTemplateID = "00000000-0000-0000-0000-000000000004"
 	TestNodeID     = "00000000-0000-0000-0000-000000000005"
 	TestVMID       = "00000000-0000-0000-0000-000000000006"
+	TestIPSetID    = "00000000-0000-0000-0000-000000000007"
 )
 
 // Test credentials - can be overridden via environment variables
@@ -162,8 +163,8 @@ func TestMain(m *testing.M) {
 		if err := migrator.Force(31); err != nil {
 			logger.Error("failed to force version 31", "error", err)
 		}
-		// Continue with remaining migrations (32, 33, 34)
-		if err := migrator.Steps(3); err != nil && err != migrate.ErrNoChange {
+		// Continue with remaining migrations (32+)
+		if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
 			logger.Warn("failed to run remaining migrations", "error", err)
 		}
 	}
@@ -275,7 +276,7 @@ func TestMain(m *testing.M) {
 		PlanRepo:      suite.PlanRepo,
 		TemplateRepo:  suite.TemplateRepo,
 		TaskRepo:      suite.TaskRepo,
-		TaskPublisher: nil, // taskPublisher
+		TaskPublisher: services.NewDefaultTaskPublisher(suite.TaskRepo, suite.Logger),
 		NodeAgent:     nil, // nodeAgentClient
 		IPAMService:   nil, // ipamService
 		EncryptionKey: suite.EncryptionKey,
@@ -315,7 +316,10 @@ func SetupTest(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 
-	// Clean existing test data
+	// Clean existing test data in correct order (respecting foreign keys)
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM webhook_deliveries WHERE webhook_id IN (SELECT id FROM webhooks WHERE customer_id = $1)", TestCustomerID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM webhooks WHERE customer_id = $1", TestCustomerID); err != nil {
 		t.Logf("setup cleanup warning: %v", err)
 	}
@@ -351,24 +355,36 @@ func SetupTest(t *testing.T) {
 	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO plans (id, name, slug, vcpu, memory_mb, disk_gb, port_speed_mbps, bandwidth_limit_gb, is_active, created_at)
 		VALUES ($1, 'Test Plan', 'test-plan', 2, 4096, 50, 1000, 1000, true, NOW())
+		ON CONFLICT (id) DO NOTHING
 	`, TestPlanID); err != nil {
-		t.Logf("setup cleanup warning: %v", err)
+		t.Logf("setup plan warning: %v", err)
 	}
 
 	// Create test template
 	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO templates (id, name, os_family, os_version, rbd_image, rbd_snapshot, min_disk_gb, is_active, created_at)
 		VALUES ($1, 'Ubuntu 22.04', 'linux', 'ubuntu-22.04', 'vs-templates/ubuntu-22.04', 'snap-init', 10, true, NOW())
+		ON CONFLICT (id) DO NOTHING
 	`, TestTemplateID); err != nil {
-		t.Logf("setup cleanup warning: %v", err)
+		t.Logf("setup template warning: %v", err)
 	}
 
 	// Create test node
 	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO nodes (id, hostname, grpc_address, management_ip, status, total_vcpu, total_memory_mb, created_at)
 		VALUES ($1, 'test-node-1', '192.168.1.100:50051', '192.168.1.100', 'online', 16, 65536, NOW())
+		ON CONFLICT (id) DO NOTHING
 	`, TestNodeID); err != nil {
-		t.Logf("setup cleanup warning: %v", err)
+		t.Logf("setup node warning: %v", err)
+	}
+
+	// Create test IP set for IP address tests
+	if _, err := suite.DBPool.Exec(ctx, `
+		INSERT INTO ip_sets (id, name, network, gateway, ip_version, created_at)
+		VALUES ($1, 'test-ip-set', '192.168.1.0/24', '192.168.1.1', 4, NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, TestIPSetID); err != nil {
+		t.Logf("setup ip_set warning: %v", err)
 	}
 
 	// Create test customer with hashed password
@@ -376,8 +392,9 @@ func SetupTest(t *testing.T) {
 	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)
 		VALUES ($1, 'test@example.com', $2, 'Test Customer', 'active', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
 	`, TestCustomerID, passwordHash); err != nil {
-		t.Logf("setup cleanup warning: %v", err)
+		t.Logf("setup customer warning: %v", err)
 	}
 
 	// Create test admin with hashed password
@@ -386,8 +403,9 @@ func SetupTest(t *testing.T) {
 	if _, err := suite.DBPool.Exec(ctx, `
 		INSERT INTO admins (id, email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)
 		VALUES ($1, 'admin@example.com', $2, 'Test Admin', 'admin', true, $3, NOW())
+		ON CONFLICT (id) DO NOTHING
 	`, TestAdminID, adminPasswordHash, encryptedTOTP); err != nil {
-		t.Logf("setup cleanup warning: %v", err)
+		t.Logf("setup admin warning: %v", err)
 	}
 }
 
@@ -423,16 +441,26 @@ func TeardownTest(t *testing.T) {
 // CreateTestVM creates a test VM and returns its ID.
 func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (string, error) {
 	vmID := crypto.GenerateUUID()
-	macAddr := "52:54:00:" + crypto.GenerateRandomHex(6)
+	// Generate MAC address in proper format: 52:54:00:XX:XX:XX (QEMU default prefix + random suffix)
+	macSuffix := crypto.GenerateRandomHex(6)
+	macAddr := fmt.Sprintf("52:54:00:%s:%s:%s", macSuffix[0:2], macSuffix[2:4], macSuffix[4:6])
+
+	// Handle nullable node_id - pass NULL if empty string
+	var nodeIDArg interface{}
+	if nodeID == "" {
+		nodeIDArg = nil
+	} else {
+		nodeIDArg = nodeID
+	}
 
 	query := `
-		INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, vcpu, memory_mb, disk_gb, 
+		INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, vcpu, memory_mb, disk_gb,
 			port_speed_mbps, bandwidth_limit_gb, mac_address, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, 'test-vm', 'provisioning', 2, 4096, 50, 1000, 1000, $5, NOW(), NOW())
 		RETURNING id
 	`
 
-	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeID, planID, macAddr).Scan(&vmID)
+	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeIDArg, planID, macAddr).Scan(&vmID)
 	if err != nil {
 		return "", fmt.Errorf("creating test vm: %w", err)
 	}
@@ -443,19 +471,19 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 // CreateTestIP creates a test IP address for a VM.
 func CreateTestIP(ctx context.Context, vmID string) (string, error) {
 	ipID := crypto.GenerateUUID()
-	ipSuffix, err := crypto.GenerateRandomDigits(3)
-	if err != nil {
-		return "", fmt.Errorf("generating IP suffix: %w", err)
-	}
-	ipAddress := "192.168.1." + ipSuffix
+	// Use timestamp-based unique IP to avoid collisions
+	// Last two octets are derived from current nanoseconds
+	now := time.Now().UnixNano()
+	lastOctet := int(now%253 + 2) // Range 2-254, ensures uniqueness within test run
+	ipAddress := fmt.Sprintf("192.168.1.%d", lastOctet)
 
 	query := `
-		INSERT INTO ip_addresses (id, vm_id, address, type, is_primary, created_at)
-		VALUES ($1, $2, $3, 'ipv4', true, NOW())
+		INSERT INTO ip_addresses (id, ip_set_id, vm_id, address, ip_version, is_primary, status, created_at)
+		VALUES ($1, $2, $3, $4, 4, true, 'assigned', NOW())
 		RETURNING id
 	`
 
-	err = suite.DBPool.QueryRow(ctx, query, ipID, vmID, ipAddress).Scan(&ipID)
+	err := suite.DBPool.QueryRow(ctx, query, ipID, TestIPSetID, vmID, ipAddress).Scan(&ipID)
 	if err != nil {
 		return "", fmt.Errorf("creating test ip: %w", err)
 	}
@@ -484,7 +512,11 @@ func CreateTestBackup(ctx context.Context, vmID string) (string, error) {
 // CreateTestWebhook creates a test webhook for a customer.
 func CreateTestWebhook(ctx context.Context, customerID string) (string, error) {
 	webhookID := crypto.GenerateUUID()
-	secretHash := crypto.HashSHA256(TestWebhookSecret)
+	// Encrypt the secret like the real service does (secret_hash stores encrypted secret)
+	encryptedSecret, err := crypto.Encrypt(TestWebhookSecret, suite.EncryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("encrypting webhook secret: %w", err)
+	}
 
 	query := `
 		INSERT INTO webhooks (id, customer_id, url, secret_hash, events, active, created_at, updated_at)
@@ -492,7 +524,7 @@ func CreateTestWebhook(ctx context.Context, customerID string) (string, error) {
 		RETURNING id
 	`
 
-	err := suite.DBPool.QueryRow(ctx, query, webhookID, customerID, secretHash).Scan(&webhookID)
+	err = suite.DBPool.QueryRow(ctx, query, webhookID, customerID, encryptedSecret).Scan(&webhookID)
 	if err != nil {
 		return "", fmt.Errorf("creating test webhook: %w", err)
 	}

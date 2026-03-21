@@ -37,10 +37,10 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -52,11 +52,11 @@ func (h *AdminHandler) Login(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
 		return
 	}
 
@@ -82,10 +82,10 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -99,11 +99,11 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c))
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
-			respondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	}
 
 	if refreshToken == "" {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
 		return
 	}
 
@@ -145,11 +145,11 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
 			middleware.ClearAuthCookies(c, adminRefreshCookiePath)
-			respondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid or expired refresh token")
 			return
 		}
 
-		respondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "REFRESH_FAILED", "Internal server error")
 		return
 	}
 
@@ -184,7 +184,7 @@ type MeResponse struct {
 func (h *AdminHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
-		respondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated")
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated")
 		return
 	}
 
@@ -195,7 +195,7 @@ func (h *AdminHandler) Me(c *gin.Context) {
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		respondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve user identity")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve user identity")
 		return
 	}
 

@@ -38,7 +38,7 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 		} else if isActiveStr == "false" {
 			isActive = false
 		} else {
-			respondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
 			return
 		}
 		filter.IsActive = &isActive
@@ -54,7 +54,7 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 		h.logger.Error("failed to list templates",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_LIST_FAILED", "Failed to retrieve templates")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_LIST_FAILED", "Failed to retrieve templates")
 		return
 	}
 
@@ -69,10 +69,10 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 	var req models.TemplateCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 			"name", req.Name,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -122,21 +122,21 @@ func (h *AdminHandler) GetTemplate(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(templateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
 		return
 	}
 
 	template, err := h.templateService.GetByID(c.Request.Context(), templateID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
 			return
 		}
 		h.logger.Error("failed to get template",
 			"template_id", templateID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_GET_FAILED", "Failed to retrieve template")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_GET_FAILED", "Failed to retrieve template")
 		return
 	}
 
@@ -149,31 +149,31 @@ func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(templateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
 		return
 	}
 
 	var req models.TemplateUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	template, err := h.templateService.Update(c.Request.Context(), templateID, &req)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
 			return
 		}
 		h.logger.Error("failed to update template",
 			"template_id", templateID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_UPDATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_UPDATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -193,21 +193,21 @@ func (h *AdminHandler) DeleteTemplate(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(templateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
 		return
 	}
 
 	err := h.templateService.Delete(c.Request.Context(), templateID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "Template not found")
 			return
 		}
 		h.logger.Error("failed to delete template",
 			"template_id", templateID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -228,17 +228,17 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(templateID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "Template ID must be a valid UUID")
 		return
 	}
 
 	var req TemplateImportRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
@@ -250,7 +250,7 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 			"source_path", req.SourcePath,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "TEMPLATE_IMPORT_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_IMPORT_FAILED", "Internal server error")
 		return
 	}
 

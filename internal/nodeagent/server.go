@@ -278,11 +278,20 @@ func (s *Server) Stop() {
 	s.logger.Info("node agent server stopped")
 }
 
-const metricsCollectInterval = 60 * time.Second
+// Default metrics collection interval (can be overridden via config).
+const defaultMetricsCollectInterval = 60 * time.Second
 
 func (s *Server) startMetricsCollector(ctx context.Context) {
+	// Parse metrics collect interval from config (default to 60s)
+	collectInterval := defaultMetricsCollectInterval
+	if s.config.MetricsCollectInterval != "" {
+		if parsed, err := time.ParseDuration(s.config.MetricsCollectInterval); err == nil {
+			collectInterval = parsed
+		}
+	}
+
 	s.trackBackgroundGoroutine(func() {
-		ticker := time.NewTicker(metricsCollectInterval)
+		ticker := time.NewTicker(collectInterval)
 		defer ticker.Stop()
 
 		for {

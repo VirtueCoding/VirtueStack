@@ -56,11 +56,11 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 	detail, err := h.vmService.GetVMDetail(c.Request.Context(), vmID, "", true)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
 		h.logger.Error("failed to get VM details", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
@@ -75,21 +75,21 @@ func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
 	// strconv.Atoi rejects non-digit suffixes (e.g. "123abc") that Sscanf would silently accept.
 	serviceID, err := strconv.Atoi(serviceIDStr)
 	if err != nil || serviceID <= 0 {
-		respondWithError(c, http.StatusBadRequest, "INVALID_SERVICE_ID", "Service ID must be a positive integer")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SERVICE_ID", "Service ID must be a positive integer")
 		return
 	}
 
 	vm, err := h.vmRepo.GetByWHMCSServiceID(c.Request.Context(), serviceID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "No VM found with the specified WHMCS service ID")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "No VM found with the specified WHMCS service ID")
 			return
 		}
 		h.logger.Error("failed to get VM by WHMCS service ID",
 			"service_id", serviceID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_LOOKUP_FAILED", "Internal server error")
 		return
 	}
 
@@ -117,10 +117,10 @@ func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 	var req PowerOperationRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 

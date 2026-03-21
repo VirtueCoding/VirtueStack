@@ -82,6 +82,8 @@ var ValidWebhookEvents = map[string]bool{
 	"vm.migrated":      true,
 	"backup.completed": true,
 	"backup.failed":    true,
+	"snapshot.created":    true,
+	"bandwidth.threshold": true,
 }
 
 // MaxWebhooksPerCustomer is the maximum number of webhooks a customer can have.
@@ -533,6 +535,18 @@ func ToResponse(webhook *models.CustomerWebhook) WebhookResponse {
 type DeliveryStats struct {
 	TotalDeliveries int
 	SuccessRate     float64
+}
+
+// ProcessPendingDeliveriesSync processes pending webhook deliveries synchronously.
+// This is primarily intended for testing without a task queue.
+func (s *WebhookService) ProcessPendingDeliveriesSync(ctx context.Context, batchSize int) error {
+	deps := &tasks.WebhookDeliveryDeps{
+		WebhookRepo:   s.webhookRepo,
+		HTTPClient:    s.httpClient,
+		Logger:        s.logger,
+		EncryptionKey: s.encryptionKey,
+	}
+	return tasks.ProcessPendingDeliveries(ctx, deps, batchSize)
 }
 
 // Register validates a webhook URL, sends a test ping, and creates the webhook.

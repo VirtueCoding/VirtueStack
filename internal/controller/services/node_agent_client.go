@@ -802,10 +802,14 @@ func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID strin
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	var diskPath string
+	if vm.DiskPath != nil {
+		diskPath = *vm.DiskPath
+	}
 	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
 		VmId:           vmID,
 		StorageBackend: vm.StorageBackend,
-		DiskPath:       vm.DiskPath,
+		DiskPath:       diskPath,
 	})
 	if err != nil {
 		return fmt.Errorf("calling DeleteVM: %w", err)

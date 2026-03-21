@@ -35,12 +35,26 @@ type TaskListFilter struct {
 // scanTask scans a single task row into a models.Task struct.
 func scanTask(row pgx.Row) (models.Task, error) {
 	var t models.Task
+	var result, errorMessage []byte
+	var idempotencyKey, createdBy *string
 	err := row.Scan(
 		&t.ID, &t.Type, &t.Status, &t.Payload,
-		&t.Result, &t.ErrorMessage, &t.Progress,
-		&t.IdempotencyKey, &t.CreatedBy,
+		&result, &errorMessage, &t.Progress,
+		&idempotencyKey, &createdBy,
 		&t.CreatedAt, &t.StartedAt, &t.CompletedAt,
 	)
+	if result != nil {
+		t.Result = result
+	}
+	if errorMessage != nil {
+		t.ErrorMessage = string(errorMessage)
+	}
+	if idempotencyKey != nil {
+		t.IdempotencyKey = *idempotencyKey
+	}
+	if createdBy != nil {
+		t.CreatedBy = *createdBy
+	}
 	return t, err
 }
 
@@ -60,9 +74,18 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 		) VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING ` + taskSelectCols
 
+	// Handle nullable UUID columns - empty string must be converted to NULL
+	var idempotencyKey, createdBy any
+	if task.IdempotencyKey != "" {
+		idempotencyKey = task.IdempotencyKey
+	}
+	if task.CreatedBy != "" {
+		createdBy = task.CreatedBy
+	}
+
 	row := r.db.QueryRow(ctx, q,
 		task.ID, task.Type, task.Status, task.Payload, task.Progress,
-		task.IdempotencyKey, task.CreatedBy,
+		idempotencyKey, createdBy,
 	)
 	created, err := scanTask(row)
 	if err != nil {

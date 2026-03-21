@@ -37,10 +37,10 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		// Verify VM belongs to customer
 		if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 			if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-				respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+				middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 				return
 			}
-			respondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to verify VM")
+			middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to verify VM")
 			return
 		}
 		filter.VMID = &vmID
@@ -52,7 +52,7 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		if !validBackupStatuses[status] {
-			respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 			return
 		}
 		filter.Status = &status
@@ -64,7 +64,7 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to retrieve backups")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to retrieve backups")
 		return
 	}
 
@@ -82,16 +82,16 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	var req CreateBackupRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	// Validate UUID
 	if _, err := uuid.Parse(req.VMID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -99,10 +99,10 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	vm, err := h.vmService.GetVM(c.Request.Context(), req.VMID, customerID, false)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Failed to verify VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Failed to verify VM")
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 
 	backupCount, countErr := h.backupRepo.CountBackupsByVM(c.Request.Context(), vm.ID)
 	if countErr == nil && backupCount >= planLimit {
-		respondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
+		middleware.RespondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
 			fmt.Sprintf("Backup limit reached for this VM (%d/%d). Delete existing backups first.", backupCount, planLimit))
 		return
 	}
@@ -127,7 +127,7 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_CREATE_FAILED", "Internal server error")
 		return
 	}
 
@@ -148,7 +148,7 @@ func (h *CustomerHandler) GetBackup(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(backupID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
 		return
 	}
 
@@ -156,16 +156,16 @@ func (h *CustomerHandler) GetBackup(c *gin.Context) {
 	backup, err := h.backupRepo.GetBackupByID(c.Request.Context(), backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_GET_FAILED", "Failed to retrieve backup")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_GET_FAILED", "Failed to retrieve backup")
 		return
 	}
 
 	// Verify backup belongs to a VM owned by the customer
 	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
-		respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
 
@@ -180,7 +180,7 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(backupID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
 		return
 	}
 
@@ -188,16 +188,16 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 	backup, err := h.backupRepo.GetBackupByID(c.Request.Context(), backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Failed to retrieve backup")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Failed to retrieve backup")
 		return
 	}
 
 	// Verify backup belongs to a VM owned by the customer
 	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
-		respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
 
@@ -208,7 +208,7 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(backupID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
 		return
 	}
 
@@ -236,16 +236,16 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 	backup, err := h.backupRepo.GetBackupByID(c.Request.Context(), backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 			return
 		}
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Failed to retrieve backup")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Failed to retrieve backup")
 		return
 	}
 
 	// Verify backup belongs to a VM owned by the customer
 	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
-		respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
 
@@ -256,7 +256,7 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

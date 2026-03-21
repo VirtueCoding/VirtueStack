@@ -349,6 +349,48 @@ func (r *VMRepository) ListAllActive(ctx context.Context) ([]models.VM, error) {
 	return vms, nil
 }
 
+// ListAllActiveBatch returns a batch of active VMs for pagination.
+// Use this for large-scale deployments where loading all VMs at once would be memory-intensive.
+// Pass offset=0, limit=N for the first batch, then increment offset by limit for subsequent batches.
+// Returns an empty slice when no more results are available.
+//
+// Note: For better performance with large offsets, consider using ListAllActiveCursor instead.
+func (r *VMRepository) ListAllActiveBatch(ctx context.Context, offset, limit int) ([]models.VM, error) {
+	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL ORDER BY id LIMIT $1 OFFSET $2`
+	vms, err := ScanRows(ctx, r.db, q, []any{limit, offset}, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing active VMs batch: %w", err)
+	}
+	return vms, nil
+}
+
+// ListAllActiveCursor returns a batch of active VMs using cursor-based pagination.
+// This is more efficient than offset-based pagination for large datasets.
+// Pass afterID="" for the first batch, then pass the last VM's ID from the previous batch.
+// Returns an empty slice when no more results are available.
+func (r *VMRepository) ListAllActiveCursor(ctx context.Context, afterID string, limit int) ([]models.VM, error) {
+	var q string
+	var args []any
+
+	if afterID == "" {
+		q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL ORDER BY id LIMIT $1`
+		args = []any{limit}
+	} else {
+		q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL AND id > $1 ORDER BY id LIMIT $2`
+		args = []any{afterID, limit}
+	}
+
+	vms, err := ScanRows(ctx, r.db, q, args, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing active VMs cursor: %w", err)
+	}
+	return vms, nil
+}
+
 // UpdateAttachedISO sets or clears the attached ISO for a VM.
 func (r *VMRepository) UpdateAttachedISO(ctx context.Context, vmID string, isoID *string) error {
 	const q = `UPDATE vms SET attached_iso = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`

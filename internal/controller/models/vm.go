@@ -38,11 +38,11 @@ type VM struct {
 	// StorageBackend: "ceph" or "qcow". Defaults to "ceph" for backward compatibility.
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// DiskPath: path to disk file for qcow2 storage. Empty for ceph (uses CephPool/RBDImage).
-	DiskPath string `json:"disk_path,omitempty" db:"disk_path"`
+	DiskPath *string `json:"disk_path,omitempty" db:"disk_path"`
 	// CephPool: Ceph pool name for backward compatibility.
-	CephPool string `json:"ceph_pool" db:"ceph_pool"`
+	CephPool *string `json:"ceph_pool,omitempty" db:"ceph_pool"`
 	// RBDImage: RBD image name for ceph storage.
-	RBDImage string `json:"rbd_image" db:"rbd_image"`
+	RBDImage *string `json:"rbd_image,omitempty" db:"rbd_image"`
 	// AttachedISO: UUID of the currently attached ISO, nil if none.
 	AttachedISO *string `json:"attached_iso,omitempty" db:"attached_iso"`
 	Timestamps

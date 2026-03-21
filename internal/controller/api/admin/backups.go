@@ -30,13 +30,13 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	// Validate UUID query parameters
 	if customerID != "" {
 		if _, err := uuid.Parse(customerID); err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
 			return
 		}
 	}
 	if vmID != "" {
 		if _, err := uuid.Parse(vmID); err != nil {
-			respondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
 			return
 		}
 	}
@@ -46,7 +46,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		"creating": true, "completed": true, "failed": true, "restoring": true, "deleted": true,
 	}
 	if status != "" && !validBackupStatuses[status] {
-		respondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		h.logger.Error("failed to list backups",
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to retrieve backups")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_LIST_FAILED", "Failed to retrieve backups")
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 
 	// Validate UUID
 	if _, err := uuid.Parse(backupID); err != nil {
-		respondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_BACKUP_ID", "Backup ID must be a valid UUID")
 		return
 	}
 
@@ -105,14 +105,14 @@ func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 	err := h.backupService.RestoreBackup(c.Request.Context(), backupID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			respondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
+			middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 			return
 		}
 		h.logger.Error("failed to restore backup",
 			"backup_id", backupID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_RESTORE_FAILED", "Internal server error")
 		return
 	}
 

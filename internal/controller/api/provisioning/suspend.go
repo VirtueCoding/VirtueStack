@@ -33,7 +33,7 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 
 	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusSuspended); err != nil {
 		h.logger.Error("failed to update VM status to suspended", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "SUSPEND_FAILED", "Failed to suspend VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SUSPEND_FAILED", "Failed to suspend VM")
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *ProvisioningHandler) UnsuspendVM(c *gin.Context) {
 
 	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusStopped); err != nil {
 		h.logger.Error("failed to update VM status to stopped during unsuspend", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "UNSUSPEND_FAILED", "Failed to unsuspend VM")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "UNSUSPEND_FAILED", "Failed to unsuspend VM")
 		return
 	}
 

@@ -12,11 +12,11 @@ const (
 	BackupStatusDeleted   = "deleted"
 )
 
-// Backup represents a full or incremental backup of a VM's disk.
+// Backup represents a full backup of a VM's disk.
 type Backup struct {
 	ID   string `json:"id" db:"id"`
 	VMID string `json:"vm_id" db:"vm_id"`
-	Type string `json:"type" db:"type"` // "full" or "incremental"
+	Type string `json:"type" db:"type"` // "full"
 	// StorageBackend indicates the storage type: "ceph" or "qcow"
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// RBDSnapshot is the RBD snapshot name for Ceph backups (backward compatibility)
@@ -24,13 +24,12 @@ type Backup struct {
 	// FilePath is the path to the backup file for QCOW backups
 	FilePath *string `json:"file_path,omitempty" db:"file_path"`
 	// SnapshotName is the internal QCOW snapshot name for QCOW backups
-	SnapshotName     *string    `json:"snapshot_name,omitempty" db:"snapshot_name"`
-	DiffFromSnapshot *string    `json:"diff_from_snapshot,omitempty" db:"diff_from_snapshot"`
-	StoragePath      *string    `json:"storage_path,omitempty" db:"storage_path"`
-	SizeBytes        *int64     `json:"size_bytes,omitempty" db:"size_bytes"`
-	Status           string     `json:"status" db:"status"`
-	CreatedAt        time.Time  `json:"created_at" db:"created_at"`
-	ExpiresAt        *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+	SnapshotName *string    `json:"snapshot_name,omitempty" db:"snapshot_name"`
+	StoragePath  *string    `json:"storage_path,omitempty" db:"storage_path"`
+	SizeBytes    *int64     `json:"size_bytes,omitempty" db:"size_bytes"`
+	Status       string     `json:"status" db:"status"`
+	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 }
 
 // Snapshot represents a point-in-time snapshot of a VM's disk.
@@ -50,14 +49,16 @@ type Snapshot struct {
 
 // WebhookEvent constants define the event types that can trigger a webhook delivery.
 const (
-	WebhookEventVMCreated   = "vm.created"
-	WebhookEventVMDeleted   = "vm.deleted"
-	WebhookEventVMStarted   = "vm.started"
-	WebhookEventVMStopped   = "vm.stopped"
-	WebhookEventVMReinstall = "vm.reinstalled"
-	WebhookEventVMMigrated  = "vm.migrated"
-	WebhookEventBackupDone  = "backup.completed"
-	WebhookEventBackupFail  = "backup.failed"
+	WebhookEventVMCreated     = "vm.created"
+	WebhookEventVMDeleted     = "vm.deleted"
+	WebhookEventVMStarted     = "vm.started"
+	WebhookEventVMStopped     = "vm.stopped"
+	WebhookEventVMReinstall   = "vm.reinstalled"
+	WebhookEventVMMigrated    = "vm.migrated"
+	WebhookEventBackupDone    = "backup.completed"
+	WebhookEventBackupFail    = "backup.failed"
+	WebhookEventSnapshotDone  = "snapshot.created"
+	WebhookEventBandwidthThresh = "bandwidth.threshold"
 )
 
 // BackupSchedule represents a scheduled backup configuration.
@@ -99,8 +100,8 @@ type WebhookDelivery struct {
 	MaxAttempts    int        `json:"max_attempts" db:"max_attempts"`
 	NextRetryAt    *time.Time `json:"next_retry_at,omitempty" db:"next_retry_at"`
 	ResponseStatus *int       `json:"response_status,omitempty" db:"response_status"`
-	ResponseBody   string     `json:"response_body,omitempty" db:"response_body"`
-	ErrorMessage   string     `json:"error_message,omitempty" db:"error_message"`
+	ResponseBody   *string    `json:"response_body,omitempty" db:"response_body"`
+	ErrorMessage   *string    `json:"error_message,omitempty" db:"error_message"`
 	DeliveredAt    *time.Time `json:"delivered_at,omitempty" db:"delivered_at"`
 	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at" db:"updated_at"`

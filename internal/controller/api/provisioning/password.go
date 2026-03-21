@@ -26,28 +26,28 @@ func (h *ProvisioningHandler) SetPassword(c *gin.Context) {
 	var req PasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		if apiErr, ok := err.(*sharederrors.APIError); ok {
-			respondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
 
 	if err := validatePasswordStrength(req.Password); err != nil {
-		respondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
 
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
 		h.logger.Error("failed to hash password", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
 		return
 	}
 
 	if err := h.vmRepo.UpdatePassword(ctx, vmID, hashedPassword); err != nil {
 		h.logger.Error("failed to update password in database", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
 		return
 	}
 
@@ -71,13 +71,13 @@ func (h *ProvisioningHandler) ResetPassword(c *gin.Context) {
 	hashedPassword, err := hashPassword(newPassword)
 	if err != nil {
 		h.logger.Error("failed to hash password during reset", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_HASHING_FAILED", "Failed to hash password")
 		return
 	}
 
 	if err := h.vmRepo.UpdatePassword(ctx, vmID, hashedPassword); err != nil {
 		h.logger.Error("failed to update password in database", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
-		respondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_UPDATE_FAILED", "Failed to update password")
 		return
 	}
 

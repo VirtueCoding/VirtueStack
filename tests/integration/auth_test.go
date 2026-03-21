@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -457,15 +458,16 @@ func TestSessionManagement(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify session metadata
-		var ipAddress, userAgent string
+		var ipAddress netip.Addr
+		var userAgent string
 		err = suite.DBPool.QueryRow(ctx, `
-			SELECT ip_address, user_agent FROM sessions 
-			WHERE user_id = $1 AND user_type = 'customer' 
+			SELECT ip_address, user_agent FROM sessions
+			WHERE user_id = $1 AND user_type = 'customer'
 			ORDER BY created_at DESC LIMIT 1
 		`, TestCustomerID).Scan(&ipAddress, &userAgent)
 		require.NoError(t, err)
 
-		assert.Equal(t, "192.168.1.100", ipAddress, "IP address should be stored")
+		assert.Equal(t, "192.168.1.100", ipAddress.String(), "IP address should be stored")
 		assert.Equal(t, "Mozilla/5.0 Test Browser", userAgent, "User agent should be stored")
 	})
 
@@ -549,9 +551,8 @@ func TestPermissionVerification(t *testing.T) {
 		otherVMID, err := CreateTestVM(ctx, otherCustomerID, TestPlanID, TestNodeID)
 		require.NoError(t, err)
 
-		// Try to get other customer's VM (should fail with proper RLS/auth)
-		_, _ = suite.DBPool.Exec(ctx, "SET LOCAL app.current_customer_id = '"+TestCustomerID+"'")
-		_, err = suite.VMRepo.GetByID(ctx, otherVMID)
+		// Try to get other customer's VM via service layer (which checks ownership)
+		_, err = suite.VMService.GetVM(ctx, otherVMID, TestCustomerID, false)
 		// Access to other customer's VM should be denied
 		assert.Error(t, err, "Should not access other customer's VM")
 

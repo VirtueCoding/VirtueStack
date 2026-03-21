@@ -14,7 +14,6 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
-	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // TaskPublisher abstracts NATS task publishing for async operations.
@@ -136,7 +135,7 @@ func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*mo
 		return node, nil
 	}
 
-	nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{Status: util.StringPtr(models.NodeStatusOnline)})
+	nodes, err := s.nodeRepo.ListByStatus(ctx, models.NodeStatusOnline)
 	if err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)
 	}

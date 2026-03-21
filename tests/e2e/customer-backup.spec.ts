@@ -76,10 +76,6 @@ class CustomerBackupCreateModal {
     await this.page.click(`text="${vmName}"`);
   }
 
-  async selectType(type: 'full' | 'incremental') {
-    await this.page.click(`[data-testid="type-${type}"], input[value="${type}"]`);
-  }
-
   async setName(name: string) {
     await this.page.fill('input[name="name"]', name);
   }
@@ -203,10 +199,6 @@ class CustomerBackupSchedulePage {
     await this.page.fill('input[name="retention"]', count.toString());
   }
 
-  async setScheduleType(type: 'full' | 'incremental') {
-    await this.page.click(`[data-testid="type-${type}"], input[value="${type}"]`);
-  }
-
   async toggleSchedule(scheduleId: string, enabled: boolean) {
     const toggle = this.page.locator(`[data-testid="schedule-toggle-${scheduleId}"]`);
     if (enabled) {
@@ -261,8 +253,8 @@ test.describe('Customer Backup List', () => {
       // Should show VM name
       await expect(firstItem.locator('[data-testid="vm-name"], td:has-text("vm")')).toBeVisible();
       
-      // Should show backup type
-      await expect(firstItem.locator('[data-testid="backup-type"], td:has-text("full"), td:has-text("incremental")')).toBeVisible();
+      // Should show backup type (full only)
+      await expect(firstItem.locator('[data-testid="backup-type"], td:has-text("full")')).toBeVisible();
       
       // Should show status
       await expect(firstItem.locator('[data-testid="status"], td:has-text("completed"), td:has-text("creating")')).toBeVisible();
@@ -342,28 +334,15 @@ test.describe('Customer Backup Creation', () => {
   test('should create full backup', async ({ page }) => {
     await backupListPage.clickCreateBackup();
     await createModal.expectVisible();
-    
-    await createModal.selectType('full');
+
     await createModal.setName(`test-backup-${Date.now()}`);
     await createModal.submit();
-    
+
     // Modal should close
     await expect(page.locator('[role="dialog"]')).not.toBeVisible();
-    
+
     // Should show success message
     await expect(page.locator('text=/backup created|success/i')).toBeVisible();
-  });
-
-  test('should create incremental backup', async ({ page }) => {
-    // This requires an existing full backup
-    await backupListPage.clickCreateBackup();
-    await createModal.expectVisible();
-    
-    await createModal.selectType('incremental');
-    await createModal.setName(`incremental-backup-${Date.now()}`);
-    await createModal.submit();
-    
-    // Should succeed or show appropriate message
   });
 
   test('should show validation error for empty name', async ({ page }) => {
@@ -587,8 +566,7 @@ test.describe('Customer Backup Scheduling', () => {
     await schedulePage.setScheduleFrequency('daily');
     await schedulePage.setScheduleTime('02', '00');
     await schedulePage.setScheduleRetention(7);
-    await schedulePage.setScheduleType('full');
-    
+
     await page.click('button[type="submit"]');
     
     await expect(page.locator('text=/schedule created|success/i')).toBeVisible();
@@ -627,7 +605,7 @@ test.describe('Customer Backup Scheduling', () => {
     
     if (count > 0) {
       // Get first schedule's delete button
-      await page.click('[data-testid^="delete-schedule-"]').first();
+      await page.locator('[data-testid^="delete-schedule-"]').first().click();
       await page.click('button:has-text("Confirm")');
       
       await expect(page.locator('text=/deleted|removed/i')).toBeVisible();

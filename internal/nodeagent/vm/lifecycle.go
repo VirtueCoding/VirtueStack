@@ -27,8 +27,10 @@ type cpuUsageCacheEntry struct {
 }
 
 var (
-	cpuUsageCacheMu sync.RWMutex
-	cpuUsageCache   = make(map[string]cpuUsageCacheEntry)
+	cpuUsageCacheMu   sync.RWMutex
+	cpuUsageCache     = make(map[string]cpuUsageCacheEntry)
+	samplerCancelMu   sync.Mutex
+	samplerCancelFuncs = make(map[string]context.CancelFunc)
 )
 
 // Constants for VM lifecycle operations.
@@ -301,8 +303,11 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 	// Clear the uptime data since VM is deleted
 	m.clearVMStartTime(vmID)
 
-	// Clear CPU usage cache entry to prevent memory leak
+	// Stop CPU sampler goroutine to prevent resource leak
 	domainName := DomainNameFromID(vmID)
+	stopCPUSampler(domainName)
+
+	// Clear CPU usage cache entry to prevent memory leak
 	cpuUsageCacheMu.Lock()
 	delete(cpuUsageCache, domainName)
 	cpuUsageCacheMu.Unlock()
@@ -629,11 +634,17 @@ func (m *Manager) ensureCPUSampler(domainName string) {
 	cpuUsageCache[domainName] = entry
 	cpuUsageCacheMu.Unlock()
 
+	// Create a per-domain context that can be cancelled when the VM is deleted
+	ctx, cancel := context.WithCancel(m.ctx)
+	samplerCancelMu.Lock()
+	samplerCancelFuncs[domainName] = cancel
+	samplerCancelMu.Unlock()
+
 	m.cpuWg.Add(1)
-	go m.runCPUSampler(domainName)
+	go m.runCPUSampler(ctx, domainName)
 }
 
-func (m *Manager) runCPUSampler(domainName string) {
+func (m *Manager) runCPUSampler(ctx context.Context, domainName string) {
 	defer m.cpuWg.Done()
 
 	m.sampleCPUUsage(domainName)
@@ -642,12 +653,22 @@ func (m *Manager) runCPUSampler(domainName string) {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			m.sampleCPUUsage(domainName)
 		}
 	}
+}
+
+// stopCPUSampler stops the CPU sampler goroutine for a domain.
+func stopCPUSampler(domainName string) {
+	samplerCancelMu.Lock()
+	if cancel, ok := samplerCancelFuncs[domainName]; ok {
+		cancel()
+		delete(samplerCancelFuncs, domainName)
+	}
+	samplerCancelMu.Unlock()
 }
 
 func (m *Manager) sampleCPUUsage(domainName string) {

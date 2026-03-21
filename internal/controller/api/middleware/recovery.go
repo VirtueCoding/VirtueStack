@@ -68,3 +68,17 @@ type ErrorDetail struct {
 type ErrorResponse struct {
 	Error ErrorDetail `json:"error"`
 }
+
+// RespondWithError sends a standardized error response.
+// This is the canonical error response function that all API handlers should use.
+func RespondWithError(c *gin.Context, status int, code, message string) {
+	correlationID := GetCorrelationID(c)
+	resp := ErrorResponse{
+		Error: ErrorDetail{
+			Code:          code,
+			Message:       message,
+			CorrelationID: correlationID,
+		},
+	}
+	c.AbortWithStatusJSON(status, resp)
+}

@@ -8,18 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// respondWithError sends a standardized error response.
-func respondWithError(c *gin.Context, status int, code, message string) {
-	resp := models.ErrorResponse{
-		Error: models.ErrorDetail{
-			Code:          code,
-			Message:       message,
-			CorrelationID: middleware.GetCorrelationID(c),
-		},
-	}
-	c.AbortWithStatusJSON(status, resp)
-}
-
 // logAuditEvent logs an audit event for admin actions.
 // changes accepts any JSON-marshalable value (e.g. map[string]any, a struct, or json.RawMessage).
 // Pass nil when there are no changes to record.

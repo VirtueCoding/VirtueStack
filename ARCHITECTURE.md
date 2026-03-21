@@ -1546,9 +1546,8 @@ CREATE TABLE tasks (
 CREATE TABLE backups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     vm_id UUID NOT NULL REFERENCES vms(id),
-    type VARCHAR(20) CHECK (type IN ('full', 'incremental')),
+    type VARCHAR(20) DEFAULT 'full' CHECK (type IN ('full')),
     rbd_snapshot VARCHAR(100),
-    diff_from_snapshot VARCHAR(100),  -- For incremental: base snapshot
     storage_path TEXT,  -- Path on mounted backup volume or FTP
     size_bytes BIGINT,
     status VARCHAR(20) DEFAULT 'creating'
@@ -1979,7 +1978,7 @@ For **QCOW2** nodes: VM disks are local to each node. HA failover requires resto
 | Aspect | Configuration |
 |--------|--------------|
 | **Schedule** | Monthly staggered (spread across the month to avoid storage I/O spikes) |
-| **Method** | Ceph: RBD snapshot → `rbd export` (full) or `rbd export-diff` (incremental); QCOW2: `qemu-img convert` to standalone image |
+| **Method** | Ceph: RBD snapshot → `rbd export`; QCOW2: `qemu-img convert` to standalone image |
 | **Storage** | Mounted volume path OR offsite FTP (configurable per system) |
 | **Retention** | Configurable: e.g., keep last 3 monthly backups per VM |
 | **Consistency** | QEMU Guest Agent `fsfreeze` before snapshot (if agent available) |
@@ -2008,7 +2007,6 @@ func calculateBackupSlot(vmID uuid.UUID, monthDays int) (day int, hour int) {
 3. Node Agent: rbd snap create vs-vms/vs-{uuid}-disk0@backup-{timestamp}
 4. Controller calls Node Agent: GuestThawFilesystems
 5. Node Agent: rbd export vs-vms/vs-{uuid}-disk0@backup-{timestamp} /mnt/backups/{uuid}/{timestamp}.raw
-   (Or for incremental: rbd export-diff --from-snap @previous @current)
 6. Transfer to offsite if configured (FTP/mounted NFS)
 7. Update backup record in database
 8. Clean up old snapshots per retention policy
@@ -2150,7 +2148,7 @@ For IPv6 /64 blocks, create a wildcard PTR or individual entries:
 | `vs_tasks_total` | Counter | type, status |
 | `vs_task_duration_seconds` | Histogram | type |
 | `vs_ws_connections_active` | Gauge | type (vnc, serial, status) |
-| `vs_backup_duration_seconds` | Histogram | type (full, incremental) |
+| `vs_backup_duration_seconds` | Histogram | type (full) |
 | `vs_bandwidth_bytes_total` | Counter | vm_id, direction |
 
 ### Node Agent Metrics (Prometheus Exporter)

@@ -27,7 +27,7 @@ type BackupListFilter struct {
 	models.PaginationParams
 	VMID   *string
 	Status *string
-	Type   *string // "full" or "incremental"
+	Type   *string // "full"
 }
 
 // SnapshotListFilter holds filter parameters for listing snapshots.
@@ -53,7 +53,7 @@ func scanBackup(row pgx.Row) (models.Backup, error) {
 	var b models.Backup
 	err := row.Scan(
 		&b.ID, &b.VMID, &b.Type, &b.StorageBackend, &b.RBDSnapshot,
-		&b.FilePath, &b.DiffFromSnapshot, &b.StoragePath, &b.SizeBytes,
+		&b.FilePath, &b.StoragePath, &b.SizeBytes,
 		&b.Status, &b.CreatedAt, &b.ExpiresAt,
 	)
 	return b, err
@@ -61,7 +61,7 @@ func scanBackup(row pgx.Row) (models.Backup, error) {
 
 const backupSelectCols = `
 	id, vm_id, type, storage_backend, rbd_snapshot,
-	file_path, diff_from_snapshot, storage_path, size_bytes,
+	file_path, storage_path, size_bytes,
 	status, created_at, expires_at`
 
 // CreateBackup inserts a new backup record into the database.
@@ -70,13 +70,13 @@ func (r *BackupRepository) CreateBackup(ctx context.Context, backup *models.Back
 	const q = `
 		INSERT INTO backups (
 			vm_id, type, storage_backend, rbd_snapshot, file_path,
-			diff_from_snapshot, storage_path, size_bytes, status, expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			storage_path, size_bytes, status, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING ` + backupSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		backup.VMID, backup.Type, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
-		backup.DiffFromSnapshot, backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
+		backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
 	)
 	created, err := scanBackup(row)
 	if err != nil {
