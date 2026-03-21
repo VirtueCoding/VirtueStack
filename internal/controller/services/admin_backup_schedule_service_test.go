@@ -157,7 +157,7 @@ func TestCalculateNextRunTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateNextRunTime(tt.frequency, now)
+			result := models.CalculateNextRunTime(tt.frequency, now)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

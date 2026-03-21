@@ -141,12 +141,33 @@ type AdminBackupSchedule struct {
 	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
 }
 
+// BackupScheduleFrequency constants for customer backup schedules.
+const (
+	BackupScheduleFrequencyDaily   = "daily"
+	BackupScheduleFrequencyWeekly  = "weekly"
+	BackupScheduleFrequencyMonthly = "monthly"
+)
+
 // AdminBackupScheduleFrequency constants define the valid frequency values.
 const (
 	AdminBackupScheduleFrequencyDaily   = "daily"
 	AdminBackupScheduleFrequencyWeekly  = "weekly"
 	AdminBackupScheduleFrequencyMonthly = "monthly"
 )
+
+// CalculateNextRunTime calculates the next run time based on frequency.
+func CalculateNextRunTime(frequency string, from time.Time) time.Time {
+	switch frequency {
+	case AdminBackupScheduleFrequencyDaily:
+		return from.Add(24 * time.Hour)
+	case AdminBackupScheduleFrequencyWeekly:
+		return from.Add(7 * 24 * time.Hour)
+	case AdminBackupScheduleFrequencyMonthly:
+		return from.AddDate(0, 1, 0)
+	default:
+		return from.Add(24 * time.Hour)
+	}
+}
 
 // CustomerAPIKeyCreateRequest holds the fields required to create a new customer API key.
 type CustomerAPIKeyCreateRequest struct {

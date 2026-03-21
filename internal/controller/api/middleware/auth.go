@@ -546,7 +546,8 @@ func checkAllowedIP(c *gin.Context, allowedIPs []string) error {
 				return nil
 			}
 		} else {
-			if net.ParseIP(allowed).Equal(clientIP) {
+			allowedIP := net.ParseIP(allowed)
+			if allowedIP != nil && allowedIP.Equal(clientIP) {
 				return nil
 			}
 		}

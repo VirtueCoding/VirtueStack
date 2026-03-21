@@ -76,7 +76,7 @@ func (h *AdminHandler) CreateAdminBackupSchedule(c *gin.Context) {
 	}
 
 	// Calculate next run time based on frequency
-	nextRunAt := calculateNextRunTime(req.Frequency, time.Now())
+	nextRunAt := models.CalculateNextRunTime(req.Frequency, time.Now())
 
 	// Get admin ID from context
 	adminID, exists := c.Get("admin_id")
@@ -228,7 +228,7 @@ func (h *AdminHandler) UpdateAdminBackupSchedule(c *gin.Context) {
 	}
 	if req.Frequency != nil {
 		schedule.Frequency = *req.Frequency
-		schedule.NextRunAt = calculateNextRunTime(*req.Frequency, time.Now())
+		schedule.NextRunAt = models.CalculateNextRunTime(*req.Frequency, time.Now())
 	}
 	if req.RetentionCount != nil {
 		schedule.RetentionCount = *req.RetentionCount
@@ -329,7 +329,7 @@ func (h *AdminHandler) RunAdminBackupSchedule(c *gin.Context) {
 
 	// Update the next run time to now to trigger execution
 	now := time.Now()
-	nextRun := calculateNextRunTime(schedule.Frequency, now)
+	nextRun := models.CalculateNextRunTime(schedule.Frequency, now)
 	if err := h.adminBackupScheduleRepo.UpdateNextRunAt(c.Request.Context(), scheduleID, now, now); err != nil {
 		h.logger.Error("failed to trigger admin backup schedule run",
 			"schedule_id", scheduleID,
@@ -381,18 +381,4 @@ func toAdminBackupScheduleResponse(s models.AdminBackupSchedule) AdminBackupSche
 	}
 
 	return resp
-}
-
-// calculateNextRunTime calculates the next run time based on frequency.
-func calculateNextRunTime(frequency string, from time.Time) time.Time {
-	switch frequency {
-	case "daily":
-		return from.Add(24 * time.Hour)
-	case "weekly":
-		return from.Add(7 * 24 * time.Hour)
-	case "monthly":
-		return from.AddDate(0, 1, 0)
-	default:
-		return from.Add(24 * time.Hour)
-	}
 }

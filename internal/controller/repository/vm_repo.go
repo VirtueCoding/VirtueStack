@@ -403,3 +403,102 @@ func (r *VMRepository) UpdateAttachedISO(ctx context.Context, vmID string, isoID
 	}
 	return nil
 }
+
+// ListByNodeIDs returns all active VMs on any of the specified nodes.
+// This is more efficient than making multiple individual node queries.
+func (r *VMRepository) ListByNodeIDs(ctx context.Context, nodeIDs []string) ([]models.VM, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+
+	q := `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id = ANY($1)`
+	vms, err := ScanRows(ctx, r.db, q, []any{nodeIDs}, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs by node IDs: %w", err)
+	}
+	return vms, nil
+}
+
+// ListByCustomerIDs returns all active VMs owned by any of the specified customers.
+// This is more efficient than making multiple individual customer queries.
+func (r *VMRepository) ListByCustomerIDs(ctx context.Context, customerIDs []string) ([]models.VM, error) {
+	if len(customerIDs) == 0 {
+		return nil, nil
+	}
+
+	q := `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND customer_id = ANY($1)`
+	vms, err := ScanRows(ctx, r.db, q, []any{customerIDs}, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs by customer IDs: %w", err)
+	}
+	return vms, nil
+}
+
+// ListByPlanIDs returns all active VMs using any of the specified plans.
+// This is more efficient than fetching all VMs and filtering in-memory.
+func (r *VMRepository) ListByPlanIDs(ctx context.Context, planIDs []string) ([]models.VM, error) {
+	if len(planIDs) == 0 {
+		return nil, nil
+	}
+
+	q := `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND plan_id = ANY($1)`
+	vms, err := ScanRows(ctx, r.db, q, []any{planIDs}, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs by plan IDs: %w", err)
+	}
+	return vms, nil
+}
+
+// AdminBackupTargetFilter combines multiple filter criteria for admin backup schedules.
+// All specified filters are applied as an AND condition (intersection).
+type AdminBackupTargetFilter struct {
+	NodeIDs     []string
+	CustomerIDs []string
+	PlanIDs     []string
+}
+
+// ListForAdminBackupTarget returns VMs matching the combined filter criteria.
+// If multiple filters are specified, the result is their intersection.
+// If no filters are specified, all active VMs are returned.
+func (r *VMRepository) ListForAdminBackupTarget(ctx context.Context, filter AdminBackupTargetFilter) ([]models.VM, error) {
+	// If no filters, return all active VMs
+	if len(filter.NodeIDs) == 0 && len(filter.CustomerIDs) == 0 && len(filter.PlanIDs) == 0 {
+		return r.ListAllActive(ctx)
+	}
+
+	// Build query with optional filters
+	where := []string{"deleted_at IS NULL", "node_id IS NOT NULL"}
+	args := []any{}
+	idx := 1
+
+	if len(filter.NodeIDs) > 0 {
+		where = append(where, fmt.Sprintf("node_id = ANY($%d)", idx))
+		args = append(args, filter.NodeIDs)
+		idx++
+	}
+	if len(filter.CustomerIDs) > 0 {
+		where = append(where, fmt.Sprintf("customer_id = ANY($%d)", idx))
+		args = append(args, filter.CustomerIDs)
+		idx++
+	}
+	if len(filter.PlanIDs) > 0 {
+		where = append(where, fmt.Sprintf("plan_id = ANY($%d)", idx))
+		args = append(args, filter.PlanIDs)
+		idx++
+	}
+
+	q := fmt.Sprintf("SELECT %s FROM vms WHERE %s", vmSelectCols, strings.Join(where, " AND "))
+	vms, err := ScanRows(ctx, r.db, q, args, func(rows pgx.Rows) (models.VM, error) {
+		return scanVM(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs for admin backup target: %w", err)
+	}
+	return vms, nil
+}

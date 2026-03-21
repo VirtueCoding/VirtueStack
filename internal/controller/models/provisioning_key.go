@@ -47,7 +47,7 @@ func (k *ProvisioningKey) IsAllowedIP(ip string) bool {
 			continue
 		}
 
-		if allowed == ip {
+		if allowedIP := net.ParseIP(allowed); allowedIP != nil && allowedIP.Equal(parsedIP) {
 			return true
 		}
 	}
@@ -108,7 +108,7 @@ func (k *CustomerAPIKey) IsAllowedIP(ip string) bool {
 			continue
 		}
 
-		if allowed == ip {
+		if allowedIP := net.ParseIP(allowed); allowedIP != nil && allowedIP.Equal(parsedIP) {
 			return true
 		}
 	}

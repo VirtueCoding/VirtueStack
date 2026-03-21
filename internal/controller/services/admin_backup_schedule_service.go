@@ -164,7 +164,7 @@ func (s *AdminBackupScheduleService) executeSchedule(ctx context.Context, schedu
 	}
 
 	// Update schedule's next run time
-	nextRunAt := calculateNextRunTime(schedule.Frequency, now)
+	nextRunAt := models.CalculateNextRunTime(schedule.Frequency, now)
 	if err := s.adminScheduleRepo.UpdateNextRunAt(ctx, schedule.ID, nextRunAt, now); err != nil {
 		s.logger.Error("failed to update admin backup schedule next run time",
 			"schedule_id", schedule.ID,
@@ -181,6 +181,7 @@ func (s *AdminBackupScheduleService) executeSchedule(ctx context.Context, schedu
 }
 
 // findTargetVMs finds all VMs that match the schedule's targeting criteria.
+// Uses efficient batch queries to avoid N+1 database calls.
 func (s *AdminBackupScheduleService) findTargetVMs(ctx context.Context, schedule models.AdminBackupSchedule) ([]models.VM, error) {
 	// If targeting all VMs, get all active VMs
 	if schedule.TargetAll {
@@ -191,100 +192,28 @@ func (s *AdminBackupScheduleService) findTargetVMs(ctx context.Context, schedule
 		return vms, nil
 	}
 
-	// Note: The VM repository doesn't support filtering by multiple plan IDs directly.
-	// We fetch VMs matching node/customer criteria and filter plan IDs in-memory.
-
-	var allVMs []models.VM
-	seenVMs := make(map[string]bool)
-
-	// Build a map of plan IDs for quick lookup
-	planIDSet := make(map[string]bool)
-	for _, planID := range schedule.TargetPlanIDs {
-		planIDSet[planID] = true
+	// Use the efficient batch query method that applies all filters in a single query
+	filter := repository.AdminBackupTargetFilter{
+		NodeIDs:     schedule.TargetNodeIDs,
+		CustomerIDs: schedule.TargetCustomerIDs,
+		PlanIDs:     schedule.TargetPlanIDs,
 	}
 
-	// Fetch VMs by node IDs
-	for _, nodeID := range schedule.TargetNodeIDs {
-		nodeFilter := models.VMListFilter{
-			PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
-			NodeID:           &nodeID,
-		}
-		vms, _, err := s.vmRepo.List(ctx, nodeFilter)
-		if err != nil {
-			s.logger.Warn("failed to list VMs by node ID", "node_id", nodeID, "error", err)
-			continue
-		}
-		for _, vm := range vms {
-			if !seenVMs[vm.ID] {
-				seenVMs[vm.ID] = true
-				allVMs = append(allVMs, vm)
-			}
-		}
+	vms, err := s.vmRepo.ListForAdminBackupTarget(ctx, filter)
+	if err != nil {
+		s.logger.Error("failed to list VMs for admin backup target",
+			"schedule_id", schedule.ID,
+			"node_ids", schedule.TargetNodeIDs,
+			"customer_ids", schedule.TargetCustomerIDs,
+			"plan_ids", schedule.TargetPlanIDs,
+			"error", err)
+		return nil, err
 	}
 
-	// Fetch VMs by customer IDs
-	for _, customerID := range schedule.TargetCustomerIDs {
-		customerFilter := models.VMListFilter{
-			PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
-			CustomerID:       &customerID,
-		}
-		vms, _, err := s.vmRepo.List(ctx, customerFilter)
-		if err != nil {
-			s.logger.Warn("failed to list VMs by customer ID", "customer_id", customerID, "error", err)
-			continue
-		}
-		for _, vm := range vms {
-			if !seenVMs[vm.ID] {
-				seenVMs[vm.ID] = true
-				allVMs = append(allVMs, vm)
-			}
-		}
-	}
-
-	// If plan IDs are specified and we have no VMs from node/customer targeting,
-	// we need to query all VMs and filter by plan ID in-memory
-	if len(planIDSet) > 0 && len(allVMs) == 0 {
-		// Query all active VMs and filter by plan ID
-		allActiveVMs, err := s.vmRepo.ListAllActive(ctx)
-		if err != nil {
-			s.logger.Warn("failed to list all active VMs for plan filtering", "error", err)
-		} else {
-			for _, vm := range allActiveVMs {
-				if planIDSet[vm.PlanID] && !seenVMs[vm.ID] {
-					seenVMs[vm.ID] = true
-					allVMs = append(allVMs, vm)
-				}
-			}
-		}
-	} else if len(planIDSet) > 0 {
-		// Filter existing VMs by plan ID as well (intersection with node/customer targeting)
-		filtered := allVMs[:0]
-		for _, vm := range allVMs {
-			if planIDSet[vm.PlanID] {
-				filtered = append(filtered, vm)
-			}
-		}
-		allVMs = filtered
-	}
-
-	return allVMs, nil
+	return vms, nil
 }
 
 // generateAdminBackupName generates a backup name for an admin schedule.
 func generateAdminBackupName(scheduleName string, now time.Time) string {
 	return scheduleName + "-" + now.Format("20060102-150405")
-}
-
-// calculateNextRunTime calculates the next run time based on frequency.
-func calculateNextRunTime(frequency string, from time.Time) time.Time {
-	switch frequency {
-	case models.AdminBackupScheduleFrequencyDaily:
-		return from.Add(24 * time.Hour)
-	case models.AdminBackupScheduleFrequencyWeekly:
-		return from.Add(7 * 24 * time.Hour)
-	case models.AdminBackupScheduleFrequencyMonthly:
-		return from.AddDate(0, 1, 0)
-	default:
-		return from.Add(24 * time.Hour)
-	}
 }
