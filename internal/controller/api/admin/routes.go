@@ -77,6 +77,14 @@ import (
 //	  GET    /backup-schedules/:id - Get backup schedule by ID
 //	  PUT    /backup-schedules/:id - Update backup schedule
 //	  DELETE /backup-schedules/:id - Delete backup schedule
+//
+//	Admin Backup Schedules:
+//	  POST   /admin-backup-schedules     - Create admin backup schedule
+//	  GET    /admin-backup-schedules     - List admin backup schedules
+//	  GET    /admin-backup-schedules/:id - Get admin backup schedule by ID
+//	  PUT    /admin-backup-schedules/:id - Update admin backup schedule
+//	  DELETE /admin-backup-schedules/:id - Delete admin backup schedule
+//	  POST   /admin-backup-schedules/:id/run - Trigger immediate execution
 func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	admin := router.Group("/admin")
 
@@ -203,6 +211,17 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			backupSchedules.GET("/:id", handler.GetBackupSchedule)
 			backupSchedules.PUT("/:id", handler.UpdateBackupSchedule)
 			backupSchedules.DELETE("/:id", handler.DeleteBackupSchedule)
+		}
+
+		// Admin backup schedule management (mass backup campaigns)
+		adminBackupSchedules := protected.Group("/admin-backup-schedules")
+		{
+			adminBackupSchedules.POST("", handler.CreateAdminBackupSchedule)
+			adminBackupSchedules.GET("", handler.ListAdminBackupSchedules)
+			adminBackupSchedules.GET("/:id", handler.GetAdminBackupSchedule)
+			adminBackupSchedules.PUT("/:id", handler.UpdateAdminBackupSchedule)
+			adminBackupSchedules.DELETE("/:id", handler.DeleteAdminBackupSchedule)
+			adminBackupSchedules.POST("/:id/run", handler.RunAdminBackupSchedule)
 		}
 	}
 }

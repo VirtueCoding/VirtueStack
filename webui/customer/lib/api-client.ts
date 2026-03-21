@@ -282,6 +282,7 @@ export interface VM {
   template_name?: string;
   template_id?: string;
   plan_name?: string;
+  attached_iso?: string;
   ip_addresses?: IPAddress[];
 }
 
@@ -341,7 +342,9 @@ export interface Backup {
   id: string;
   vm_id: string;
   name: string;
-  type: "full";
+  source: "manual" | "customer_schedule" | "admin_schedule";
+  admin_schedule_id?: string;
+  storage_backend?: "ceph" | "qcow";
   size_bytes: number;
   status: "pending" | "creating" | "completed" | "failed" | "restoring";
   created_at: string;
@@ -462,6 +465,7 @@ export interface ApiKey {
   name: string;
   key?: string;
   permissions: string[];
+  allowed_ips?: string[];
   is_active: boolean;
   expires_at?: string;
   created_at: string;
@@ -483,6 +487,7 @@ export interface Webhook {
 export interface CreateApiKeyRequest {
   name: string;
   permissions: string[];
+  allowed_ips?: string[];
   expires_at?: string;
 }
 
@@ -682,5 +687,81 @@ export const isoApi = {
       `/customer/vms/${vmId}/iso/${isoId}/detach`,
       {}
     );
+  },
+};
+
+export interface IPAddressRecord {
+  id: string;
+  ip_set_id: string;
+  address: string;
+  ip_version: number;
+  vm_id?: string;
+  customer_id?: string;
+  is_primary: boolean;
+  rdns_hostname?: string;
+  status: string;
+  assigned_at?: string;
+  released_at?: string;
+  cooldown_until?: string;
+  created_at: string;
+}
+
+export interface RDNSResponse {
+  ip_address: string;
+  rdns_hostname?: string;
+}
+
+export interface UpdateRDNSRequest {
+  hostname: string;
+}
+
+export const rdnsApi = {
+  async listIPs(vmId: string): Promise<IPAddressRecord[]> {
+    return apiClient.get<IPAddressRecord[]>(`/customer/vms/${vmId}/ips`);
+  },
+
+  async getRDNS(vmId: string, ipId: string): Promise<RDNSResponse> {
+    return apiClient.get<RDNSResponse>(`/customer/vms/${vmId}/ips/${ipId}/rdns`);
+  },
+
+  async updateRDNS(vmId: string, ipId: string, hostname: string): Promise<RDNSResponse> {
+    return apiClient.put<RDNSResponse>(`/customer/vms/${vmId}/ips/${ipId}/rdns`, { hostname });
+  },
+
+  async deleteRDNS(vmId: string, ipId: string): Promise<void> {
+    return apiClient.delete<void>(`/customer/vms/${vmId}/ips/${ipId}/rdns`);
+  },
+};
+
+export interface NotificationPreferences {
+  id: string;
+  email_enabled: boolean;
+  telegram_enabled: boolean;
+  events: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateNotificationPreferencesRequest {
+  email_enabled?: boolean;
+  telegram_enabled?: boolean;
+  events?: string[];
+}
+
+export interface NotificationEventType {
+  events: string[];
+}
+
+export const notificationApi = {
+  async getPreferences(): Promise<NotificationPreferences> {
+    return apiClient.get<NotificationPreferences>("/customer/notifications/preferences");
+  },
+
+  async updatePreferences(prefs: UpdateNotificationPreferencesRequest): Promise<NotificationPreferences> {
+    return apiClient.put<NotificationPreferences>("/customer/notifications/preferences", prefs);
+  },
+
+  async getEventTypes(): Promise<NotificationEventType> {
+    return apiClient.get<NotificationEventType>("/customer/notifications/events/types");
   },
 };

@@ -22,6 +22,7 @@ import (
 type CreateAPIKeyRequest struct {
 	Name        string   `json:"name" validate:"required,max=100"`
 	Permissions []string `json:"permissions" validate:"required,min=1,dive,max=100"`
+	AllowedIPs  []string `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"`
 }
 
@@ -35,6 +36,7 @@ type APIKeyResponse struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Permissions []string `json:"permissions"`
+	AllowedIPs  []string `json:"allowed_ips,omitempty"`
 	Key         string   `json:"key,omitempty"`
 	IsActive    bool     `json:"is_active"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"`
@@ -88,6 +90,7 @@ func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 			ID:          key.ID,
 			Name:        key.Name,
 			Permissions: key.Permissions,
+			AllowedIPs:  key.AllowedIPs,
 			IsActive:    key.IsActive,
 			ExpiresAt:   expiresAtStr,
 			CreatedAt:   key.CreatedAt.Format(time.RFC3339),
@@ -147,6 +150,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		Name:        req.Name,
 		KeyHash:     keyHash,
 		Permissions: req.Permissions,
+		AllowedIPs:  req.AllowedIPs,
 		ExpiresAt:   expiresAt,
 	}
 
@@ -180,6 +184,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		ID:          keyID,
 		Name:        req.Name,
 		Permissions: req.Permissions,
+		AllowedIPs:  req.AllowedIPs,
 		Key:         rawKey,
 		IsActive:    true,
 		ExpiresAt:   expiresAtStr,
@@ -257,6 +262,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 		ID:          keyID,
 		Name:        existingKey.Name,
 		Permissions: existingKey.Permissions,
+		AllowedIPs:  existingKey.AllowedIPs,
 		Key:         newRawKey,
 		IsActive:    true,
 		ExpiresAt:   expiresAtStr,
@@ -359,7 +365,7 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 }
 
 // CustomerAPIKeyValidator returns a function that validates customer API keys.
-// It returns the key ID, customer ID, and permissions for valid keys.
+// It returns the key ID, customer ID, permissions, and allowed IPs for valid keys.
 // Returns an error if the key is not found, revoked, or expired.
 func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middleware.CustomerAPIKeyValidator {
 	return func(ctx context.Context, keyHash string) (middleware.CustomerAPIKeyInfo, error) {
@@ -377,6 +383,7 @@ func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middlewa
 			KeyID:       key.ID,
 			CustomerID:  key.CustomerID,
 			Permissions: key.Permissions,
+			AllowedIPs:  key.AllowedIPs,
 		}, nil
 	}
 }

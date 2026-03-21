@@ -84,6 +84,7 @@ type CustomerAPIKeyInfo struct {
 	KeyID       string
 	CustomerID  string
 	Permissions []string
+	AllowedIPs  []string
 }
 
 // CustomerAPIKeyValidator looks up a customer API key by its SHA-256 hash.
@@ -239,6 +240,7 @@ func RequireUserType(userTypes ...string) gin.HandlerFunc {
 // CustomerAPIKeyAuth returns a Gin middleware that validates customer API keys.
 // The key is read from the X-API-Key request header.
 // The raw key is hashed with SHA-256 before database lookup via validator.
+// If the key has allowed_ips configured, the request source IP is verified.
 // On success it sets "user_id" (customer_id), "user_type"="customer", "api_key_id", and "permissions".
 // This middleware is for programmatic API access by customers.
 func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
@@ -258,6 +260,19 @@ func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
 			)
 			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY", "API key is invalid, revoked, or expired")
 			return
+		}
+
+		// Check IP whitelist if configured
+		if len(info.AllowedIPs) > 0 {
+			if err := checkAllowedIP(c, info.AllowedIPs); err != nil {
+				slog.Warn("customer api key ip check failed",
+					"key_id", info.KeyID,
+					"error", err,
+					"correlation_id", GetCorrelationID(c),
+				)
+				abortWithAuthError(c, http.StatusForbidden, "IP_NOT_ALLOWED", "source IP is not permitted for this API key")
+				return
+			}
 		}
 
 		// Set the standard auth context keys for customer API key auth.

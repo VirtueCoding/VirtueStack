@@ -19,6 +19,8 @@ app/
     ├── layout.tsx      # Sidebar, auth guard
     └── page.tsx        # Node overview, alerts
         ├── audit-logs/page.tsx
+        ├── backups/page.tsx        # All backups management
+        ├── backup-schedules/page.tsx # Admin backup campaigns
         ├── customers/page.tsx
         ├── ip-sets/page.tsx
         ├── nodes/page.tsx
@@ -38,6 +40,12 @@ components/
 │   ├── button.tsx, input.tsx, table.tsx
 │   ├── dialog.tsx, sheet.tsx, dropdown-menu.tsx
 │   └── toast.tsx, toaster.tsx, badge.tsx
+├── backups/
+│   ├── BackupList.tsx           # Backup table with filters
+│   ├── BackupDetailModal.tsx    # Backup detail view
+│   ├── RestoreConfirmModal.tsx  # Restore confirmation
+│   ├── AdminScheduleList.tsx    # Admin schedules table
+│   └── CreateScheduleModal.tsx  # Create/edit schedule
 ├── plans/
 │   ├── PlanList.tsx
 │   └── PlanEditDialog.tsx

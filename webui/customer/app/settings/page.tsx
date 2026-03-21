@@ -4,11 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { settingsApi } from "@/lib/api-client";
 import { RequireAuth } from "@/lib/require-auth";
-import { User, Shield, Key, Webhook } from "lucide-react";
+import { User, Shield, Key, Webhook, Bell } from "lucide-react";
 import { ProfileTab } from "@/components/settings/ProfileTab";
 import { SecurityTab } from "@/components/settings/SecurityTab";
 import { ApiKeysTab } from "@/components/settings/ApiKeysTab";
 import { WebhooksTab } from "@/components/settings/WebhooksTab";
+import { NotificationsTab } from "@/components/settings/NotificationsTab";
 
 export default function SettingsPage() {
   const { data: profile, isLoading: profileLoading } = useQuery({
@@ -48,7 +49,7 @@ export default function SettingsPage() {
         </div>
 
         <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-2 lg:max-w-lg">
+          <TabsList className="grid w-full max-w-md grid-cols-3 lg:max-w-xl">
             <TabsTrigger value="profile" className="gap-2">
               <User className="h-4 w-4" />
               Profile
@@ -56,6 +57,10 @@ export default function SettingsPage() {
             <TabsTrigger value="security" className="gap-2">
               <Shield className="h-4 w-4" />
               Security
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="gap-2">
+              <Bell className="h-4 w-4" />
+              Notifications
             </TabsTrigger>
             <TabsTrigger value="api-keys" className="gap-2">
               <Key className="h-4 w-4" />
@@ -82,6 +87,11 @@ export default function SettingsPage() {
               backupCodesData={backupCodesData}
               isLoading={twoFactorLoading}
             />
+          </TabsContent>
+
+          {/* Notifications Tab */}
+          <TabsContent value="notifications" className="space-y-6">
+            <NotificationsTab />
           </TabsContent>
 
           {/* API Keys Tab */}

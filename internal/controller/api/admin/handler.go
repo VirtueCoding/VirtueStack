@@ -13,23 +13,24 @@ import (
 
 // AdminHandlerConfig holds all dependencies required to construct an AdminHandler.
 type AdminHandlerConfig struct {
-	NodeService      *services.NodeService
-	VMService        *services.VMService
-	MigrationService *services.MigrationService
-	PlanService      *services.PlanService
-	TemplateService  *services.TemplateService
-	IPAMService      *services.IPAMService
-	CustomerService  *services.CustomerService
-	BackupService    *services.BackupService
-	AuthService      *services.AuthService
-	AuditRepo        *repository.AuditRepository
-	IPRepo           *repository.IPRepository
-	SettingsRepo     *repository.SettingsRepository
-	FailoverRepo     *repository.FailoverRepository
-	RDNSService      *services.RDNSService
-	JWTSecret        string
-	Issuer           string
-	Logger           *slog.Logger
+	NodeService               *services.NodeService
+	VMService                 *services.VMService
+	MigrationService          *services.MigrationService
+	PlanService               *services.PlanService
+	TemplateService           *services.TemplateService
+	IPAMService               *services.IPAMService
+	CustomerService           *services.CustomerService
+	BackupService             *services.BackupService
+	AuthService               *services.AuthService
+	AuditRepo                 *repository.AuditRepository
+	IPRepo                    *repository.IPRepository
+	SettingsRepo              *repository.SettingsRepository
+	FailoverRepo              *repository.FailoverRepository
+	AdminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
+	RDNSService               *services.RDNSService
+	JWTSecret                 string
+	Issuer                    string
+	Logger                    *slog.Logger
 }
 
 // AdminHandler handles admin-facing API requests.
@@ -37,43 +38,45 @@ type AdminHandlerConfig struct {
 // plans, templates, IP pools, customers, audit logs, settings, and backups.
 // All operations are authenticated via JWT with role=admin and require 2FA.
 type AdminHandler struct {
-	nodeService      *services.NodeService
-	vmService        *services.VMService
-	migrationService *services.MigrationService
-	planService      *services.PlanService
-	templateService  *services.TemplateService
-	ipamService      *services.IPAMService
-	customerService  *services.CustomerService
-	backupService    *services.BackupService
-	authService      *services.AuthService
-	auditRepo        *repository.AuditRepository
-	ipRepo           *repository.IPRepository
-	settingsRepo     *repository.SettingsRepository
-	failoverRepo     *repository.FailoverRepository
-	rdnsService      *services.RDNSService
-	authConfig       middleware.AuthConfig
-	logger           *slog.Logger
+	nodeService               *services.NodeService
+	vmService                 *services.VMService
+	migrationService          *services.MigrationService
+	planService               *services.PlanService
+	templateService           *services.TemplateService
+	ipamService               *services.IPAMService
+	customerService           *services.CustomerService
+	backupService             *services.BackupService
+	authService               *services.AuthService
+	auditRepo                 *repository.AuditRepository
+	ipRepo                    *repository.IPRepository
+	settingsRepo              *repository.SettingsRepository
+	failoverRepo              *repository.FailoverRepository
+	adminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
+	rdnsService               *services.RDNSService
+	authConfig                middleware.AuthConfig
+	logger                    *slog.Logger
 }
 
 // NewAdminHandler creates a new AdminHandler with the given dependencies.
 func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 	return &AdminHandler{
-		nodeService:      cfg.NodeService,
-		vmService:        cfg.VMService,
-		migrationService: cfg.MigrationService,
-		planService:      cfg.PlanService,
-		templateService:  cfg.TemplateService,
-		ipamService:      cfg.IPAMService,
-		customerService:  cfg.CustomerService,
-		backupService:    cfg.BackupService,
-		authService:      cfg.AuthService,
-		auditRepo:        cfg.AuditRepo,
-		ipRepo:           cfg.IPRepo,
-		settingsRepo:     cfg.SettingsRepo,
-		failoverRepo:     cfg.FailoverRepo,
-		rdnsService:      cfg.RDNSService,
-		authConfig:       middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
-		logger:           cfg.Logger.With("component", "admin-handler"),
+		nodeService:             cfg.NodeService,
+		vmService:               cfg.VMService,
+		migrationService:        cfg.MigrationService,
+		planService:             cfg.PlanService,
+		templateService:         cfg.TemplateService,
+		ipamService:             cfg.IPAMService,
+		customerService:         cfg.CustomerService,
+		backupService:           cfg.BackupService,
+		authService:             cfg.AuthService,
+		auditRepo:               cfg.AuditRepo,
+		ipRepo:                  cfg.IPRepo,
+		settingsRepo:            cfg.SettingsRepo,
+		failoverRepo:            cfg.FailoverRepo,
+		adminBackupScheduleRepo: cfg.AdminBackupScheduleRepo,
+		rdnsService:             cfg.RDNSService,
+		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
+		logger:                  cfg.Logger.With("component", "admin-handler"),
 	}
 }
 

@@ -33,6 +33,8 @@ import { VMBackupsTab } from "@/components/vm/VMBackupsTab";
 import { VMSnapshotsTab } from "@/components/vm/VMSnapshotsTab";
 import { VMSettingsTab } from "@/components/vm/VMSettingsTab";
 import { VMConsoleTab } from "@/components/vm/VMConsoleTab";
+import { VMISOTab } from "@/components/vm/VMISOTab";
+import { VMRDNSTab } from "@/components/vm/VMRDNSTab";
 
 function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string }) {
   const [token, setToken] = useState<string | null>(null);
@@ -388,7 +390,7 @@ export default function VMDetailPage() {
       </Card>
 
       <Tabs defaultValue="console" className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-9">
           <TabsTrigger value="console">
             <Monitor className="mr-2 h-4 w-4" />
             VNC
@@ -400,6 +402,14 @@ export default function VMDetailPage() {
           <TabsTrigger value="network">
             <Network className="mr-2 h-4 w-4" />
             Network
+          </TabsTrigger>
+          <TabsTrigger value="rdns">
+            <Network className="mr-2 h-4 w-4" />
+            RDNS
+          </TabsTrigger>
+          <TabsTrigger value="iso">
+            <HardDrive className="mr-2 h-4 w-4" />
+            ISO
           </TabsTrigger>
           <TabsTrigger value="backups">
             <Server className="mr-2 h-4 w-4" />
@@ -486,6 +496,16 @@ export default function VMDetailPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* RDNS Tab */}
+        <TabsContent value="rdns">
+          <VMRDNSTab vmId={vmId} />
+        </TabsContent>
+
+        {/* ISO Tab */}
+        <TabsContent value="iso">
+          <VMISOTab vmId={vmId} vmStatus={vm.status} attachedISOId={vm.attached_iso} />
         </TabsContent>
 
         {/* Backups Tab */}

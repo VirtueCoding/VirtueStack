@@ -13,9 +13,11 @@ import (
 
 // AdminBackupListFilter represents filter options for listing all backups.
 type AdminBackupListFilter struct {
-	CustomerID *string `form:"customer_id"`
-	VMID       *string `form:"vm_id"`
-	Status     *string `form:"status"`
+	CustomerID       *string `form:"customer_id"`
+	VMID             *string `form:"vm_id"`
+	Status           *string `form:"status"`
+	Source           *string `form:"source"`
+	AdminScheduleID  *string `form:"admin_schedule_id"`
 }
 
 // ListBackups handles GET /backups - lists all backups across all customers.
@@ -26,6 +28,8 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	customerID := c.Query("customer_id")
 	vmID := c.Query("vm_id")
 	status := c.Query("status")
+	source := c.Query("source")
+	adminScheduleID := c.Query("admin_schedule_id")
 
 	// Validate UUID query parameters
 	if customerID != "" {
@@ -40,6 +44,12 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 			return
 		}
 	}
+	if adminScheduleID != "" {
+		if _, err := uuid.Parse(adminScheduleID); err != nil {
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ADMIN_SCHEDULE_ID", "admin_schedule_id must be a valid UUID")
+			return
+		}
+	}
 
 	// Validate status against known enum values
 	validBackupStatuses := map[string]bool{
@@ -50,11 +60,22 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
+	// Validate source against known enum values
+	validBackupSources := map[string]bool{
+		"manual": true, "customer_schedule": true, "admin_schedule": true,
+	}
+	if source != "" && !validBackupSources[source] {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SOURCE", "Invalid source value. Must be one of: manual, customer_schedule, admin_schedule")
+		return
+	}
+
 	// Build filter
 	filter := AdminBackupListFilter{
-		CustomerID: &customerID,
-		VMID:       &vmID,
-		Status:     &status,
+		CustomerID:      &customerID,
+		VMID:            &vmID,
+		Status:          &status,
+		Source:          &source,
+		AdminScheduleID: &adminScheduleID,
 	}
 
 	// Clear nil pointers for empty strings
@@ -67,13 +88,20 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	if status == "" {
 		filter.Status = nil
 	}
+	if source == "" {
+		filter.Source = nil
+	}
+	if adminScheduleID == "" {
+		filter.AdminScheduleID = nil
+	}
 
 	repoFilter := repository.BackupListFilter{
 		PaginationParams: pagination,
 		VMID:             filter.VMID,
 		Status:           filter.Status,
+		Source:           filter.Source,
+		AdminScheduleID:  filter.AdminScheduleID,
 	}
-	repoFilter.Type = nil
 
 	backups, total, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
 	if err != nil {

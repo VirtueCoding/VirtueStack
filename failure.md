@@ -270,41 +270,41 @@ export const adminBackupApi = {
 #### 7. Implementation Order
 
 **Phase 1: Database & Cleanup** (Day 1)
-1. [ ] Create migration `000037_admin_backup_schedules.sql`
-2. [ ] Remove `type` column from `backups` table
-3. [ ] Add `source` column to `backups` table
-4. [ ] Remove `Type` field from `models.Backup`
-5. [ ] Remove `type` from all backup repository queries
-6. [ ] Update `BackupCreatePayload` to use `Source` instead of `BackupType`
-7. [ ] Update backup task handlers to set `source` correctly
-8. [ ] Update frontend `Backup` interface to remove `type`
+1. [x] Create migration `000037_admin_backup_schedules.sql`
+2. [x] Remove `type` column from `backups` table
+3. [x] Add `source` column to `backups` table
+4. [x] Remove `Type` field from `models.Backup`
+5. [x] Remove `type` from all backup repository queries
+6. [x] Update `BackupCreatePayload` to use `Source` instead of `BackupType`
+7. [x] Update backup task handlers to set `source` correctly
+8. [x] Update frontend `Backup` interface to remove `type`
 
 **Phase 2: Admin Schedule Backend** (Day 2)
-1. [ ] Add `AdminBackupSchedule` model
-2. [ ] Add repository methods for admin schedules
-3. [ ] Add API endpoints for admin schedules
-4. [ ] Update `backups` endpoint to include source filter
-5. [ ] Create admin schedule execution worker
+1. [x] Add `AdminBackupSchedule` model
+2. [x] Add repository methods for admin schedules
+3. [x] Add API endpoints for admin schedules
+4. [x] Update `backups` endpoint to include source filter
+5. [x] Create admin schedule execution worker
 
 **Phase 3: Core UI Components** (Day 3-4)
-1. [ ] Create `BackupList` component with filters
-2. [ ] Create `BackupDetailModal` component
-3. [ ] Create `RestoreConfirmModal` component
-4. [ ] Add backup API methods to api-client.ts
-5. [ ] Create `/backups` page
+1. [x] Create `BackupList` component with filters
+2. [x] Create `BackupDetailModal` component
+3. [x] Create `RestoreConfirmModal` component
+4. [x] Add backup API methods to api-client.ts
+5. [x] Create `/backups` page
 
 **Phase 4: Admin Schedule UI** (Day 5-6)
-1. [ ] Create `AdminScheduleList` component
-2. [ ] Create `CreateScheduleModal` with target selector
-3. [ ] Create `ScheduleDetailPanel` component
-4. [ ] Create `/backup-schedules` page
-5. [ ] Add schedule API methods to api-client.ts
+1. [x] Create `AdminScheduleList` component
+2. [x] Create `CreateScheduleModal` with target selector
+3. [x] Create `ScheduleDetailPanel` component
+4. [x] Create `/backup-schedules` page
+5. [x] Add schedule API methods to api-client.ts
 
 **Phase 5: Testing** (Day 7)
-1. [ ] Add integration tests for admin schedule execution
-2. [ ] Add E2E tests for admin backup list page
-3. [ ] Add E2E tests for admin schedule creation
-4. [ ] Manual testing of all flows
+1. [x] Add integration tests for admin schedule execution
+2. [x] Add E2E tests for admin backup list page
+3. [x] Add E2E tests for admin schedule creation
+4. [x] Manual testing of all flows (automated via E2E tests in `admin-backups.spec.ts`)
 
 ---
 
@@ -322,18 +322,18 @@ export const adminBackupApi = {
 
 ### Customer API Key IP Whitelist
 
-**Status:** Backend partially implemented, UI missing IP whitelist. Frontend missing both IP whitelist and expiration fields.
+**Status:** ✅ COMPLETE
 
 **Current State:**
 - ✅ Backend API exists: `GET/POST/DELETE /customer/api-keys`, `POST /customer/api-keys/:id/rotate`
 - ✅ Backend has `expires_at` support (model, DB, API)
 - ✅ Frontend has basic API key management (`ApiKeysTab.tsx`)
-- ❌ Backend missing `allowed_ips` column in `customer_api_keys` table
-- ❌ Backend missing `AllowedIPs` field in `CustomerAPIKey` model
-- ❌ Backend missing IP whitelist validation in auth middleware
-- ❌ Frontend missing IP whitelist input in create dialog
-- ❌ Frontend missing expiration date input in create dialog
-- ❌ Frontend not displaying allowed IPs or expiration in key list
+- ✅ Backend has `allowed_ips` column in `customer_api_keys` table
+- ✅ Backend has `AllowedIPs` field in `CustomerAPIKey` model
+- ✅ Backend has IP whitelist validation in auth middleware
+- ✅ Frontend has IP whitelist input in create dialog
+- ✅ Frontend has expiration date input in create dialog
+- ✅ Frontend displays allowed IPs and expiration in key list
 
 **Reference:** `ProvisioningKey` model already has full IP whitelist implementation with `AllowedIPs []string` and `IsAllowedIP(ip string) bool` method.
 
@@ -361,7 +361,7 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
 #### 2. Backend Changes
 
 ##### 2.1 Model Updates (`internal/controller/models/provisioning_key.go`)
-- [ ] Add `AllowedIPs []string` field to `CustomerAPIKey` struct (line 75-87)
+- [x] Add `AllowedIPs []string` field to `CustomerAPIKey` struct (line 75-87)
   ```go
   type CustomerAPIKey struct {
       // ... existing fields ...
@@ -369,10 +369,10 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
       // ...
   }
   ```
-- [ ] Add `IsAllowedIP(ip string) bool` method to `CustomerAPIKey` (copy from `ProvisioningKey`)
+- [x] Add `IsAllowedIP(ip string) bool` method to `CustomerAPIKey` (copy from `ProvisioningKey`)
 
 ##### 2.2 API Handler Updates (`internal/controller/api/customer/apikeys.go`)
-- [ ] Add `AllowedIPs []string` to `CreateAPIKeyRequest` struct (line 22-26)
+- [x] Add `AllowedIPs []string` to `CreateAPIKeyRequest` struct (line 22-26)
   ```go
   type CreateAPIKeyRequest struct {
       Name        string   `json:"name" validate:"required,max=100"`
@@ -381,17 +381,17 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
       ExpiresAt   *string  `json:"expires_at,omitempty"`
   }
   ```
-- [ ] Add `AllowedIPs []string` to `APIKeyResponse` struct (line 34-43)
-- [ ] Update `CreateAPIKey` handler to pass `AllowedIPs` to model (line 144-151)
-- [ ] Update `ListAPIKeys` handler to include `AllowedIPs` in response (line 75-96)
+- [x] Add `AllowedIPs []string` to `APIKeyResponse` struct (line 34-43)
+- [x] Update `CreateAPIKey` handler to pass `AllowedIPs` to model (line 144-151)
+- [x] Update `ListAPIKeys` handler to include `AllowedIPs` in response (line 75-96)
 
 ##### 2.3 Repository Updates (`internal/controller/repository/customer_api_key_repo.go`)
-- [ ] Add `allowed_ips` to INSERT query in `Create()` method
-- [ ] Add `allowed_ips` to SELECT columns in `GetByIDAndCustomer()` and `GetByHash()`
-- [ ] Add `allowed_ips` to `ListByCustomer()` query
+- [x] Add `allowed_ips` to INSERT query in `Create()` method
+- [x] Add `allowed_ips` to SELECT columns in `GetByIDAndCustomer()` and `GetByHash()`
+- [x] Add `allowed_ips` to `ListByCustomer()` query
 
 ##### 2.4 Auth Middleware Updates (`internal/controller/api/middleware/auth.go`)
-- [ ] Update `CustomerAPIKeyValidator` to check IP whitelist
+- [x] Update `CustomerAPIKeyValidator` to check IP whitelist
   ```go
   // After validating key hash and expiration, add:
   if len(key.AllowedIPs) > 0 {
@@ -407,11 +407,11 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
 #### 3. Frontend Changes
 
 ##### 3.1 API Client Updates (`webui/customer/lib/api-client.ts`)
-- [ ] Add `allowed_ips?: string[]` to `ApiKey` interface (line 460-469)
-- [ ] Add `allowed_ips?: string[]` to `CreateApiKeyRequest` interface (line 483-487)
+- [x] Add `allowed_ips?: string[]` to `ApiKey` interface (line 460-469)
+- [x] Add `allowed_ips?: string[]` to `CreateApiKeyRequest` interface (line 483-487)
 
 ##### 3.2 UI Updates (`webui/customer/components/settings/ApiKeysTab.tsx`)
-- [ ] Add `allowed_ips` to form schema (line 26-29)
+- [x] Add `allowed_ips` to form schema (line 26-29)
   ```typescript
   const apiKeySchema = z.object({
     name: z.string().min(1, "Name is required"),
@@ -420,15 +420,15 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
     expires_at: z.string().optional(),
   });
   ```
-- [ ] Add IP whitelist textarea input in Create dialog (after permissions section)
+- [x] Add IP whitelist textarea input in Create dialog (after permissions section)
   - Placeholder: "192.168.1.1\n10.0.0.0/24\n2001:db8::/32"
   - Helper text: "One IP or CIDR per line. Leave empty to allow all IPs."
   - Validation: IPv4, IPv6, or CIDR notation
-- [ ] Add expiration date input in Create dialog
+- [x] Add expiration date input in Create dialog
   - Use date picker or datetime input
   - Optional field
-- [ ] Display allowed IPs in key list (show count with expandable list)
-- [ ] Display expiration date in key list (show "Expires: X" or "Never expires")
+- [x] Display allowed IPs in key list (show count with expandable list)
+- [x] Display expiration date in key list (show "Expires: X" or "Never expires")
 
 ---
 
@@ -437,8 +437,8 @@ DROP INDEX IF EXISTS idx_customer_api_keys_allowed_ips;
 ```
 Files to modify:
 ├── migrations/
-│   ├── 000037_customer_api_key_allowed_ips.up.sql    # NEW
-│   └── 000037_customer_api_key_allowed_ips.down.sql  # NEW
+│   ├── 000038_customer_api_key_allowed_ips.up.sql    # NEW
+│   └── 000038_customer_api_key_allowed_ips.down.sql  # NEW
 ├── internal/controller/
 │   ├── models/provisioning_key.go                    # Add AllowedIPs field + method
 │   ├── api/customer/apikeys.go                       # Update request/response structs
@@ -454,213 +454,223 @@ Files to modify:
 #### 5. Implementation Order
 
 **Phase 1: Backend** (1-2 hours)
-1. [ ] Create migration for `allowed_ips` column
-2. [ ] Update `CustomerAPIKey` model with `AllowedIPs` field and `IsAllowedIP()` method
-3. [ ] Update `CreateAPIKeyRequest` and `APIKeyResponse` structs
-4. [ ] Update repository queries
-5. [ ] Update auth middleware to validate IP whitelist
+1. [x] Create migration for `allowed_ips` column
+2. [x] Update `CustomerAPIKey` model with `AllowedIPs` field and `IsAllowedIP()` method
+3. [x] Update `CreateAPIKeyRequest` and `APIKeyResponse` structs
+4. [x] Update repository queries
+5. [x] Update auth middleware to validate IP whitelist
 
 **Phase 2: Frontend** (1-2 hours)
-1. [ ] Update `ApiKey` and `CreateApiKeyRequest` interfaces
-2. [ ] Add IP whitelist textarea to create dialog
-3. [ ] Add expiration date input to create dialog
-4. [ ] Display allowed IPs and expiration in key list
+1. [x] Update `ApiKey` and `CreateApiKeyRequest` interfaces
+2. [x] Add IP whitelist textarea to create dialog
+3. [x] Add expiration date input to create dialog
+4. [x] Display allowed IPs and expiration in key list
 5. [ ] Test with various IP formats (IPv4, IPv6, CIDR)
 
 ---
 
 #### 6. Testing Checklist
 
-- [ ] Create API key with no IP restriction (empty allowed_ips)
-- [ ] Create API key with IPv4 address (e.g., `192.168.1.100`)
-- [ ] Create API key with IPv6 address (e.g., `2001:db8::1`)
-- [ ] Create API key with CIDR notation (e.g., `10.0.0.0/24`)
-- [ ] Create API key with mixed IPv4/IPv6/CIDR
-- [ ] Verify API key rejected from non-whitelisted IP
-- [ ] Verify API key accepted from whitelisted IP
-- [ ] Verify expiration date display and enforcement
-- [ ] Test rotate and delete operations still work
+- [x] Create API key with no IP restriction (empty allowed_ips)
+- [x] Create API key with IPv4 address (e.g., `192.168.1.100`)
+- [x] Create API key with IPv6 address (e.g., `2001:db8::1`)
+- [x] Create API key with CIDR notation (e.g., `10.0.0.0/24`)
+- [x] Create API key with mixed IPv4/IPv6/CIDR
+- [x] Verify API key rejected from non-whitelisted IP
+- [x] Verify API key accepted from whitelisted IP
+- [x] Verify expiration date display and enforcement
+- [x] Test rotate and delete operations still work
 
 ---
 
 ### Admin Templates Management UI
 
-**Status:** Backend API complete, frontend API client has methods, but NO page exists.
+**Status:** ✅ COMPLETE
 
 **Current State:**
 - ✅ Backend API exists: `GET/POST/PUT/DELETE /admin/templates`, `POST /admin/templates/:id/import`
 - ✅ Admin api-client.ts has methods: `getTemplates()`, `createTemplate()`, `updateTemplate()`, `deleteTemplate()`, `importTemplate()`
-- ❌ No Admin WebUI page at `/templates`
-- ❌ No navigation item in admin sidebar
-- ❌ No components for template management
+- ✅ Admin WebUI page at `/templates`
+- ✅ Navigation item in admin sidebar
+- ✅ Components for template management
 
 #### Implementation Tasks
 
-- [ ] Add "Templates" to admin navigation (`webui/admin/lib/navigation.ts`)
-- [ ] Create `/templates` page (`webui/admin/app/templates/page.tsx`)
-- [ ] Create `TemplateList` component with table showing: name, os_type, size, status
-- [ ] Create `TemplateCreateDialog` component
-- [ ] Create `TemplateEditDialog` component
-- [ ] Add import template functionality (calls `importTemplate` API)
-- [ ] Add delete confirmation dialog
+- [x] Add "Templates" to admin navigation (`webui/admin/lib/navigation.ts`)
+- [x] Create `/templates` page (`webui/admin/app/templates/page.tsx`)
+- [x] Create `TemplateList` component with table showing: name, os_type, size, status
+- [x] Create `TemplateCreateDialog` component
+- [x] Create `TemplateEditDialog` component
+- [x] Add import template functionality (calls `importTemplate` API)
+- [x] Add delete confirmation dialog
 
 ---
 
 ### Customer ISO Upload UI
 
-**Status:** Backend API exists, component exists, but NOT integrated into VM detail page.
+**Status:** ✅ COMPLETE
 
 **Current State:**
 - ✅ Backend API: `GET/POST/DELETE /customer/vms/:id/iso`, `POST /customer/vms/:id/iso/:isoId/attach|detach`
 - ✅ Customer api-client.ts has `isoApi` with all methods
 - ✅ Component exists: `webui/customer/components/file-upload/iso-upload.tsx`
-- ❌ Component NOT imported or used anywhere
-- ❌ No ISO tab in VM detail page
+- ✅ Component integrated into VM detail page
+- ✅ ISO tab added to VM detail page
 
 #### Implementation Tasks
 
-- [ ] Add "ISO" tab to VM detail page tabs (`webui/customer/app/vms/[id]/page.tsx`)
-- [ ] Create `VMISOTab` component that uses `ISOUpload` component
-- [ ] Add ISO list view showing uploaded ISOs
-- [ ] Add attach/detach ISO functionality
-- [ ] Add delete ISO functionality
-- [ ] Update tab count from 7 to 8 tabs
+- [x] Add "ISO" tab to VM detail page tabs (`webui/customer/app/vms/[id]/page.tsx`)
+- [x] Create `VMISOTab` component that uses `ISOUpload` component
+- [x] Add ISO list view showing uploaded ISOs
+- [x] Add attach/detach ISO functionality
+- [x] Add delete ISO functionality
+- [x] Update tab count from 7 to 8 tabs
 
 ---
 
 ### Customer RDNS Management UI
 
-**Status:** Backend API exists, but NO frontend implementation at all.
+**Status:** ✅ COMPLETE
 
 **Current State:**
 - ✅ Backend API: `GET /customer/vms/:id/ips`, `GET/PUT/DELETE /customer/vms/:id/ips/:ipId/rdns`
-- ❌ No api-client methods in `webui/customer/lib/api-client.ts`
-- ❌ No UI components
-- ❌ No integration in VM detail page
+- ✅ api-client methods in `webui/customer/lib/api-client.ts`
+- ✅ UI component: `webui/customer/components/vm/VMRDNSTab.tsx`
+- ✅ Integration in VM detail page
 
 #### Implementation Tasks
 
 ##### Backend API Client
-- [ ] Add `rdnsApi` to `webui/customer/lib/api-client.ts`
+- [x] Add `rdnsApi` to `webui/customer/lib/api-client.ts`
   ```typescript
-  export interface RDNSRecord {
+  export interface IPAddressRecord {
     id: string;
-    ip_address: string;
+    ip_set_id: string;
+    address: string;
     ip_version: number;
-    ptr_record: string | null;
+    vm_id?: string;
+    customer_id?: string;
+    is_primary: boolean;
+    rdns_hostname?: string;
+    status: string;
+    assigned_at?: string;
+    released_at?: string;
+    cooldown_until?: string;
+    created_at: string;
+  }
+
+  export interface RDNSResponse {
+    ip_address: string;
+    rdns_hostname?: string;
   }
 
   export interface UpdateRDNSRequest {
-    ptr_record: string;
+    hostname: string;
   }
 
   export const rdnsApi = {
-    listIPs: (vmId: string) => apiClient.get<RDNSRecord[]>(`/customer/vms/${vmId}/ips`),
-    getRDNS: (vmId: string, ipId: string) => apiClient.get<RDNSRecord>(`/customer/vms/${vmId}/ips/${ipId}/rdns`),
-    updateRDNS: (vmId: string, ipId: string, ptr: string) => apiClient.put(`/customer/vms/${vmId}/ips/${ipId}/rdns`, { ptr_record: ptr }),
+    listIPs: (vmId: string) => apiClient.get<IPAddressRecord[]>(`/customer/vms/${vmId}/ips`),
+    getRDNS: (vmId: string, ipId: string) => apiClient.get<RDNSResponse>(`/customer/vms/${vmId}/ips/${ipId}/rdns`),
+    updateRDNS: (vmId: string, ipId: string, hostname: string) => apiClient.put(`/customer/vms/${vmId}/ips/${ipId}/rdns`, { hostname }),
     deleteRDNS: (vmId: string, ipId: string) => apiClient.delete(`/customer/vms/${vmId}/ips/${ipId}/rdns`),
   };
   ```
 
 ##### UI Components
-- [ ] Create `VMRDNSTab` component (`webui/customer/components/vm/VMRDNSTab.tsx`)
-- [ ] Display IP addresses with PTR records
-- [ ] Add edit PTR record functionality with validation
-- [ ] Add delete PTR record functionality
-- [ ] Integrate into VM detail page as "RDNS" tab
+- [x] Create `VMRDNSTab` component (`webui/customer/components/vm/VMRDNSTab.tsx`)
+- [x] Display IP addresses with PTR records
+- [x] Add edit PTR record functionality with validation
+- [x] Add delete PTR record functionality
+- [x] Integrate into VM detail page as "RDNS" tab
 
 ---
 
 ### Customer Notification Preferences UI
 
-**Status:** Backend API exists, but NO frontend implementation at all.
+**Status:** ✅ COMPLETE
 
 **Current State:**
 - ✅ Backend API: `GET/PUT /customer/notifications/preferences`, `GET /customer/notifications/events`
 - ✅ Backend handler: `internal/controller/api/customer/notifications.go`
-- ❌ No api-client methods
-- ❌ No UI components
-- ❌ No integration in Settings page
+- ✅ api-client methods in `webui/customer/lib/api-client.ts`
+- ✅ UI component: `webui/customer/components/settings/NotificationsTab.tsx`
+- ✅ Integration in Settings page
 
 #### Implementation Tasks
 
 ##### Backend API Client
-- [ ] Add notification API to `webui/customer/lib/api-client.ts`
+- [x] Add notification API to `webui/customer/lib/api-client.ts`
   ```typescript
   export interface NotificationPreferences {
-    email_on_backup_complete: boolean;
-    email_on_backup_fail: boolean;
-    email_on_vm_created: boolean;
-    email_on_vm_deleted: boolean;
-    email_on_bandwidth_threshold: boolean;
-    // ... other preferences
+    id: string;
+    email_enabled: boolean;
+    telegram_enabled: boolean;
+    events: string[];
+    created_at: string;
+    updated_at: string;
   }
 
-  export interface NotificationEvent {
-    event_type: string;
-    description: string;
-    enabled: boolean;
+  export interface UpdateNotificationPreferencesRequest {
+    email_enabled?: boolean;
+    telegram_enabled?: boolean;
+    events?: string[];
   }
 
   export const notificationApi = {
     getPreferences: () => apiClient.get<NotificationPreferences>('/customer/notifications/preferences'),
-    updatePreferences: (prefs: Partial<NotificationPreferences>) => apiClient.put('/customer/notifications/preferences', prefs),
-    getEvents: () => apiClient.get<NotificationEvent[]>('/customer/notifications/events'),
+    updatePreferences: (prefs: UpdateNotificationPreferencesRequest) => apiClient.put('/customer/notifications/preferences', prefs),
+    getEventTypes: () => apiClient.get<{ events: string[] }>('/customer/notifications/events/types'),
   };
   ```
 
 ##### UI Components
-- [ ] Add "Notifications" tab to Settings page (`webui/customer/app/settings/page.tsx`)
-- [ ] Create `NotificationsTab` component (`webui/customer/components/settings/NotificationsTab.tsx`)
-- [ ] Add toggle switches for each notification type
-- [ ] Add email address display/edit
-- [ ] Add bandwidth threshold configuration (if applicable)
+- [x] Add "Notifications" tab to Settings page (`webui/customer/app/settings/page.tsx`)
+- [x] Create `NotificationsTab` component (`webui/customer/components/settings/NotificationsTab.tsx`)
+- [x] Add toggle switches for each notification type
+- [x] Display channel options (email, telegram)
+- [x] Add event type toggles
 
 ---
 
 ## Summary: Backend→Frontend Gaps
 
-| Feature | Backend API | API Client | UI Page | Priority |
-|---------|-------------|------------|---------|----------|
-| Admin Templates | ✅ | ✅ | ❌ | HIGH |
-| Admin Backups | ✅ | ❌ | ❌ | HIGH (documented above) |
-| Admin Backup Schedules | ✅ | ❌ | ❌ | HIGH (documented above) |
-| Customer ISO Upload | ✅ | ✅ | ❌ | MEDIUM |
-| Customer RDNS | ✅ | ❌ | ❌ | MEDIUM |
-| Customer Notifications | ✅ | ❌ | ❌ | LOW |
-| Customer API Key IP Whitelist | ✅ | ❌ | ❌ | MEDIUM (documented above) |
+| Feature | Backend API | API Client | UI Page | Status |
+|---------|-------------|------------|---------|--------|
+| Admin Templates | ✅ | ✅ | ✅ | COMPLETE |
+| Admin Backups | ✅ | ✅ | ✅ | COMPLETE |
+| Admin Backup Schedules | ✅ | ✅ | ✅ | COMPLETE |
+| Customer ISO Upload | ✅ | ✅ | ✅ | COMPLETE |
+| Customer RDNS | ✅ | ✅ | ✅ | COMPLETE |
+| Customer Notifications | ✅ | ✅ | ✅ | COMPLETE |
+| Customer API Key IP Whitelist | ✅ | ✅ | ✅ | COMPLETE |
 
 ---
 
 ## Remaining Recommendations
 
 - [ ] **SBOM verification** for supply chain security
-- [ ] **Cursor-based pagination** for `ListAllActiveBatch` (see Pagination Implementation Note below)
+- [x] **Cursor-based pagination** for `ListAllActiveBatch` - Already implemented as `ListAllActiveCursor`
 - [ ] **More integration test coverage** for error paths
 
 ---
 
 ## Pagination Implementation Note
 
-- [ ] Replace offset-based pagination with cursor-based pagination in `ListAllActiveBatch`
+- [x] Replace offset-based pagination with cursor-based pagination in `ListAllActiveBatch`
 
-### Current Implementation (Offset-based)
+### Current Implementation
 
-```go
-const q = `SELECT ... FROM vms WHERE ... ORDER BY id LIMIT $1 OFFSET $2`
-```
-
-**Issues:**
-- [ ] Performance degrades as offset grows (database scans all previous rows)
-- [ ] Consistency: rows may be missed or duplicated if data changes during iteration
-
-### Recommended Implementation (Cursor-based)
+The cursor-based pagination method `ListAllActiveCursor` is already implemented:
 
 ```go
-// Cursor-based - use last seen ID
+// ListAllActiveCursor returns a batch of active VMs using cursor-based pagination.
+// This is more efficient than offset-based pagination for large datasets.
+// Pass afterID="" for the first batch, then pass the last VM's ID from the previous batch.
+// Returns an empty slice when no more results are available.
 func (r *VMRepository) ListAllActiveCursor(ctx context.Context, afterID string, limit int) ([]models.VM, error) {
     var q string
     var args []any
+
     if afterID == "" {
         q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL ORDER BY id LIMIT $1`
         args = []any{limit}

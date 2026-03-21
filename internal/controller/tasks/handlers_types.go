@@ -255,9 +255,10 @@ type VMMigratePayload struct {
 
 // BackupCreatePayload represents the payload for backup.create tasks.
 type BackupCreatePayload struct {
-	VMID       string `json:"vm_id"`
-	BackupName string `json:"backup_name"`
-	BackupType string `json:"backup_type"` // "full" or "incremental"
+	VMID            string `json:"vm_id"`
+	BackupName      string `json:"backup_name"`
+	Source          string `json:"source"` // "manual", "customer_schedule", "admin_schedule"
+	AdminScheduleID string `json:"admin_schedule_id,omitempty"`
 }
 
 // BackupRestorePayload represents the payload for backup.restore tasks.

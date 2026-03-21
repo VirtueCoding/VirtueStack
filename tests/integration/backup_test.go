@@ -32,7 +32,7 @@ func TestBackupCreation(t *testing.T) {
 		require.NoError(t, err, "Backup creation should succeed")
 		assert.NotEmpty(t, backup.ID, "Backup ID should be generated")
 		assert.Equal(t, vmID, backup.VMID, "Backup VM ID should match")
-		assert.Equal(t, "full", backup.Type, "Backup type should be full")
+		assert.Equal(t, models.BackupSourceManual, backup.Source, "Backup source should be manual")
 		assert.Equal(t, models.BackupStatusCreating, backup.Status, "Backup status should be creating")
 	})
 

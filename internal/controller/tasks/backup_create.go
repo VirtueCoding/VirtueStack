@@ -89,11 +89,11 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 	}
 
 	logger = logger.With("vm_id", payload.VMID, "backup_name", payload.BackupName)
-	logger.Info("backup.create task started", "backup_type", payload.BackupType)
+	logger.Info("backup.create task started", "source", payload.Source)
 
 	backupStart := time.Now()
 	defer func() {
-		controllermetrics.BackupDuration.WithLabelValues(payload.BackupType).Observe(time.Since(backupStart).Seconds())
+		controllermetrics.BackupDuration.WithLabelValues(payload.Source).Observe(time.Since(backupStart).Seconds())
 	}()
 
 	if task.IsTerminal() {
@@ -244,12 +244,16 @@ func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 
 	backup := &models.Backup{
 		VMID:           payload.VMID,
-		Type:           payload.BackupType,
+		Source:         payload.Source,
 		StorageBackend: storageBackendQCOW,
 		FilePath:       &backupFilePath,
 		SnapshotName:   &snapshotName,
 		SizeBytes:      &sizeBytes,
 		Status:         models.BackupStatusCompleted,
+	}
+
+	if payload.AdminScheduleID != "" {
+		backup.AdminScheduleID = &payload.AdminScheduleID
 	}
 
 	expiresAt := time.Now().AddDate(0, 0, DefaultBackupExpirationDays)
@@ -351,11 +355,15 @@ func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 	storagePath := fmt.Sprintf("%s/%s", BackupPoolName, backupImageName)
 	backup := &models.Backup{
 		VMID:           payload.VMID,
-		Type:           payload.BackupType,
+		Source:         payload.Source,
 		StorageBackend: storageBackendCeph,
 		RBDSnapshot:    &snapshotResp.RBDSnapshotName,
 		StoragePath:    &storagePath,
 		Status:         models.BackupStatusCompleted,
+	}
+
+	if payload.AdminScheduleID != "" {
+		backup.AdminScheduleID = &payload.AdminScheduleID
 	}
 
 	expiresAt := time.Now().AddDate(0, 0, DefaultBackupExpirationDays)

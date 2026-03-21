@@ -71,19 +71,20 @@ type Server struct {
 	nodeClient *NodeClient
 	storage    services.TemplateStorage
 	// Services
-	vmService        *services.VMService
-	authService      *services.AuthService
-	nodeService      *services.NodeService
-	ipamService      *services.IPAMService
-	planService      *services.PlanService
-	templateService  *services.TemplateService
-	customerService  *services.CustomerService
-	backupService    *services.BackupService
-	migrationService *services.MigrationService
-	failoverMonitor  *services.FailoverMonitor
-	heartbeatChecker *services.HeartbeatChecker
-	rdnsService      *services.RDNSService
-	bandwidthRepo    *repository.BandwidthRepository
+	vmService                 *services.VMService
+	authService               *services.AuthService
+	nodeService               *services.NodeService
+	ipamService               *services.IPAMService
+	planService               *services.PlanService
+	templateService           *services.TemplateService
+	customerService           *services.CustomerService
+	backupService             *services.BackupService
+	migrationService          *services.MigrationService
+	failoverMonitor           *services.FailoverMonitor
+	heartbeatChecker          *services.HeartbeatChecker
+	rdnsService               *services.RDNSService
+	bandwidthRepo             *repository.BandwidthRepository
+	adminBackupScheduleService *services.AdminBackupScheduleService
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
@@ -326,23 +327,24 @@ func (s *Server) InitializeServices() error {
 	})
 
 	s.adminHandler = admin.NewAdminHandler(admin.AdminHandlerConfig{
-		NodeService:      s.nodeService,
-		VMService:        s.vmService,
-		MigrationService: s.migrationService,
-		PlanService:      s.planService,
-		TemplateService:  s.templateService,
-		IPAMService:      s.ipamService,
-		CustomerService:  s.customerService,
-		BackupService:    s.backupService,
-		AuthService:      s.authService,
-		AuditRepo:        auditRepo,
-		IPRepo:           ipRepo,
-		SettingsRepo:     settingsRepo,
-		FailoverRepo:     failoverRepo,
-		RDNSService:      s.rdnsService,
-		JWTSecret:        s.config.JWTSecret.Value(),
-		Issuer:           "virtuestack",
-		Logger:           s.logger,
+		NodeService:             s.nodeService,
+		VMService:               s.vmService,
+		MigrationService:        s.migrationService,
+		PlanService:             s.planService,
+		TemplateService:         s.templateService,
+		IPAMService:             s.ipamService,
+		CustomerService:         s.customerService,
+		BackupService:           s.backupService,
+		AuthService:             s.authService,
+		AuditRepo:               auditRepo,
+		IPRepo:                  ipRepo,
+		SettingsRepo:            settingsRepo,
+		FailoverRepo:            failoverRepo,
+		AdminBackupScheduleRepo: repository.NewAdminBackupScheduleRepository(s.dbPool),
+		RDNSService:             s.rdnsService,
+		JWTSecret:               s.config.JWTSecret.Value(),
+		Issuer:                  "virtuestack",
+		Logger:                  s.logger,
 	})
 
 	notificationPreferenceRepo := repository.NewNotificationPreferenceRepository(s.dbPool)
@@ -365,6 +367,15 @@ func (s *Server) InitializeServices() error {
 		notificationEventRepo,
 		notifyService,
 	)
+
+	// Initialize admin backup schedule service for mass backup campaigns
+	s.adminBackupScheduleService = services.NewAdminBackupScheduleService(services.AdminBackupScheduleServiceConfig{
+		AdminBackupScheduleRepo: repository.NewAdminBackupScheduleRepository(s.dbPool),
+		VMRepo:                  vmRepo,
+		BackupRepo:              backupRepo,
+		TaskPublisher:           taskPublisher,
+		Logger:                  s.logger,
+	})
 
 	s.logger.Info("services initialized")
 
@@ -547,6 +558,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 	if s.backupService != nil {
 		s.logger.Info("starting backup scheduler")
 		go s.backupService.StartScheduler(ctx)
+	}
+
+	if s.adminBackupScheduleService != nil {
+		s.logger.Info("starting admin backup schedule scheduler")
+		go s.adminBackupScheduleService.StartScheduler(ctx)
 	}
 
 	if s.failoverMonitor != nil {

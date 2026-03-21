@@ -52,7 +52,7 @@ PUT    /settings/:key
 GET    /backups
 POST   /backups/:id/restore
 GET    /backup-schedules, /backup-schedules/:id
-POST   /backup-schedules
+POST   /backup-schedules, /backup-schedules/:id/run
 DELETE /backup-schedules/:id
 PUT    /backup-schedules/:id
 ```
@@ -113,6 +113,7 @@ POST   /2fa/backup-codes/regenerate
 | PlanService | `plan_service.go` | VPS plans |
 | TemplateService | `template_service.go` | OS templates |
 | BackupService | `backup_service.go` | Backup CRUD |
+| AdminBackupScheduleService | `admin_backup_schedule_service.go` | Mass backup campaigns |
 | MigrationService | `migration_service.go` | Live migration |
 | FailoverService | `failover_service.go` | HA failover |
 | RDNSService | `rdns_service.go` | Reverse DNS |

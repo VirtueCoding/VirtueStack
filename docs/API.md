@@ -1564,6 +1564,30 @@ Update a backup schedule (partial update).
 
 ---
 
+#### `POST /admin/backup-schedules/:id/run`
+
+Trigger immediate execution of an admin backup schedule. Creates backup tasks for all target VMs.
+
+**Response (`202 Accepted`):** Returns task IDs for the created backup tasks.
+
+**Request Body:**
+
+```json
+{}
+```
+
+**Response Example:**
+
+```json
+{
+  "message": "Schedule execution started",
+  "vms_targeted": 15,
+  "backups_scheduled": 15
+}
+```
+
+---
+
 #### `DELETE /admin/backup-schedules/:id`
 
 Delete a backup schedule.

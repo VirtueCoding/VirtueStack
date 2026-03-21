@@ -80,6 +80,10 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   ├── 000032_plans_slug_not_null.up.sql
 │   ├── 000033_failover_requested_by_restrict.up.sql
 │   └── 000034_customer_backup_codes_shown.up.sql
+│   ├── 000035_add_vm_ceph_columns.up.sql
+│   ├── 000036_add_node_ceph_config.up.sql
+│   ├── 000037_admin_backup_schedules.up.sql   # Admin mass backup campaigns
+│   └── 000038_customer_api_key_allowed_ips.up.sql
 │
 ├── webui/                                  # Web UIs (82 TSX files)
 │   ├── admin/                            # Admin panel (8 pages)
@@ -357,11 +361,14 @@ PUT    /settings/:key
 // Backups
 GET    /backups
 POST   /backups/:id/restore
+
+// Admin Backup Schedules (mass backup campaigns)
 GET    /backup-schedules
 POST   /backup-schedules
 GET    /backup-schedules/:id
 PUT    /backup-schedules/:id
 DELETE /backup-schedules/:id
+POST   /backup-schedules/:id/run    # Trigger immediate execution
 ```
 
 ### 5.3 Customer API Endpoints

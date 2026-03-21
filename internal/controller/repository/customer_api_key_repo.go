@@ -28,13 +28,15 @@ func scanCustomerAPIKey(row pgx.Row) (models.CustomerAPIKey, error) {
 	var key models.CustomerAPIKey
 	var vmIDs []string
 	var permissions []string
+	var allowedIPs []string
 
 	err := row.Scan(
 		&key.ID, &key.CustomerID, &key.Name, &key.KeyHash,
-		&vmIDs, &permissions, &key.LastUsedAt,
+		&allowedIPs, &vmIDs, &permissions, &key.LastUsedAt,
 		&key.CreatedAt, &key.RevokedAt, &key.ExpiresAt,
 	)
 
+	key.AllowedIPs = allowedIPs
 	key.VMIDs = vmIDs
 	key.Permissions = permissions
 	key.IsActive = key.RevokedAt == nil
@@ -44,7 +46,7 @@ func scanCustomerAPIKey(row pgx.Row) (models.CustomerAPIKey, error) {
 
 const customerAPIKeySelectCols = `
 	id, customer_id, name, key_hash,
-	vm_ids, permissions, last_used_at,
+	allowed_ips, vm_ids, permissions, last_used_at,
 	created_at, revoked_at, expires_at`
 
 // Create inserts a new customer API key into the database.
@@ -52,12 +54,12 @@ const customerAPIKeySelectCols = `
 func (r *CustomerAPIKeyRepository) Create(ctx context.Context, key *models.CustomerAPIKey) error {
 	const q = `
 		INSERT INTO customer_api_keys (
-			id, customer_id, name, key_hash, vm_ids, permissions
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			id, customer_id, name, key_hash, allowed_ips, vm_ids, permissions
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + customerAPIKeySelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		key.ID, key.CustomerID, key.Name, key.KeyHash, key.VMIDs, key.Permissions,
+		key.ID, key.CustomerID, key.Name, key.KeyHash, key.AllowedIPs, key.VMIDs, key.Permissions,
 	)
 
 	created, err := scanCustomerAPIKey(row)

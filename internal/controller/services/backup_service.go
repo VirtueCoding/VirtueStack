@@ -212,7 +212,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 	backup := &models.Backup{
 		ID:             uuid.New().String(),
 		VMID:           vmID,
-		Type:           "full",
+		Source:         models.BackupSourceManual,
 		Status:         models.BackupStatusCreating,
 		StorageBackend: storageBackend,
 	}
@@ -316,7 +316,7 @@ func (s *BackupService) createCephBackup(ctx context.Context, vm *models.VM, bac
 		"backup_id", backup.ID,
 		"vm_id", vm.ID,
 		"name", name,
-		"type", "full")
+		"source", backup.Source)
 
 	return backup, nil
 }
@@ -938,7 +938,7 @@ func (s *BackupService) scheduleBackupForVM(ctx context.Context, vmID string, ye
 	taskID, err := s.taskPublisher.PublishTask(ctx, "backup.create", map[string]any{
 		"vm_id":       vmID,
 		"backup_name": fmt.Sprintf("monthly-%d-%02d", year, month),
-		"backup_type": "full",
+		"source":      models.BackupSourceCustomerSchedule,
 	})
 	if err != nil {
 		s.logger.Error("failed to publish backup task for VM",

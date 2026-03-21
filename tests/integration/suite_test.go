@@ -496,8 +496,8 @@ func CreateTestBackup(ctx context.Context, vmID string) (string, error) {
 	backupID := crypto.GenerateUUID()
 
 	query := `
-		INSERT INTO backups (id, vm_id, type, status, created_at)
-		VALUES ($1, $2, 'full', 'completed', NOW())
+		INSERT INTO backups (id, vm_id, source, status, created_at)
+		VALUES ($1, $2, 'manual', 'completed', NOW())
 		RETURNING id
 	`
 

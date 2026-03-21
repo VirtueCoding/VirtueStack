@@ -21,11 +21,13 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, ApiKey } from "@/lib/api-client";
 import { useMutationToast } from "@/lib/utils/toast-helpers";
-import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check } from "lucide-react";
+import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check, Globe } from "lucide-react";
 
 const apiKeySchema = z.object({
   name: z.string().min(1, "Name is required"),
   permissions: z.array(z.string()).min(1, "At least one permission is required"),
+  allowed_ips: z.string().optional(),
+  expires_at: z.string().optional(),
 });
 
 type ApiKeyFormData = z.infer<typeof apiKeySchema>;
@@ -59,6 +61,8 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
     defaultValues: {
       name: "",
       permissions: [],
+      allowed_ips: "",
+      expires_at: "",
     },
   });
 
@@ -121,9 +125,16 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
   };
 
   const handleCreateApiKey = (data: ApiKeyFormData) => {
+    // Parse allowed_ips from textarea (one per line)
+    const allowedIps = data.allowed_ips
+      ? data.allowed_ips.split("\n").map(ip => ip.trim()).filter(ip => ip.length > 0)
+      : undefined;
+
     createApiKeyMutation.mutate({
       name: data.name,
       permissions: data.permissions,
+      allowed_ips: allowedIps,
+      expires_at: data.expires_at || undefined,
     });
   };
 
@@ -208,6 +219,18 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                         <Calendar className="h-3 w-3" />
                         Last used: {apiKey.last_used_at ? new Date(apiKey.last_used_at).toLocaleDateString() : 'Never'}
                       </div>
+                      {apiKey.allowed_ips && apiKey.allowed_ips.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Globe className="h-3 w-3" />
+                          IPs: {apiKey.allowed_ips.length} whitelisted
+                        </div>
+                      )}
+                      {apiKey.expires_at && (
+                        <div className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          Expires: {new Date(apiKey.expires_at).toLocaleDateString()}
+                        </div>
+                      )}
                     </div>
                     {apiKey.key && (
                       <div className="flex items-center gap-2">
@@ -298,6 +321,19 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               {apiKeyForm.formState.errors.permissions && (
                 <p className="text-sm text-destructive">{apiKeyForm.formState.errors.permissions.message}</p>
               )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="allowed-ips">IP Whitelist (Optional)</Label>
+              <textarea
+                id="allowed-ips"
+                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="192.168.1.1&#10;10.0.0.0/24&#10;2001:db8::/32"
+                rows={3}
+                {...apiKeyForm.register("allowed_ips")}
+              />
+              <p className="text-xs text-muted-foreground">
+                One IP address or CIDR range per line. Leave empty to allow all IPs.
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setApiKeyDialogOpen(false)}>

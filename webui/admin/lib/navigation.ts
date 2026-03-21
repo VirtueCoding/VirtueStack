@@ -6,6 +6,9 @@ import {
   Network,
   Users,
   ShieldCheck,
+  HardDrive,
+  Calendar,
+  Database,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -20,7 +23,10 @@ export const adminNavItems: NavItem[] = [
   { href: "/vms", label: "VMs", icon: Monitor },
   { href: "/nodes", label: "Nodes", icon: Server },
   { href: "/plans", label: "Plans", icon: FileText },
+  { href: "/templates", label: "Templates", icon: HardDrive },
   { href: "/ip-sets", label: "IP Sets", icon: Network },
   { href: "/customers", label: "Customers", icon: Users },
+  { href: "/backups", label: "Backups", icon: Database },
+  { href: "/backup-schedules", label: "Schedules", icon: Calendar },
   { href: "/audit-logs", label: "Audit Logs", icon: ShieldCheck },
 ];

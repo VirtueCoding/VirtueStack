@@ -77,6 +77,7 @@ type CustomerAPIKey struct {
 	CustomerID  string     `json:"customer_id" db:"customer_id"`
 	Name        string     `json:"name" db:"name"`
 	KeyHash     string     `json:"-" db:"key_hash"`
+	AllowedIPs  []string   `json:"allowed_ips,omitempty" db:"allowed_ips"`
 	VMIDs       []string   `json:"vm_ids,omitempty" db:"vm_ids"`
 	Permissions []string   `json:"permissions" db:"permissions"`
 	IsActive    bool       `json:"is_active" db:"is_active"`
@@ -84,4 +85,32 @@ type CustomerAPIKey struct {
 	ExpiresAt   *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+}
+
+// IsAllowedIP checks if the given IP is in the allowed list.
+// An empty allowed list means all IPs are permitted.
+func (k *CustomerAPIKey) IsAllowedIP(ip string) bool {
+	if len(k.AllowedIPs) == 0 {
+		return true
+	}
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+
+	for _, allowed := range k.AllowedIPs {
+		if strings.Contains(allowed, "/") {
+			_, network, err := net.ParseCIDR(allowed)
+			if err == nil && network.Contains(parsedIP) {
+				return true
+			}
+			continue
+		}
+
+		if allowed == ip {
+			return true
+		}
+	}
+	return false
 }

@@ -74,8 +74,9 @@ failover_requests (HA tracking)
 | `templates` | id, name, os_family, rbd_image, rbd_snapshot | OS images |
 | `vms` | id, customer_id, node_id, plan_id, hostname, status, storage_backend | Virtual machines |
 | `snapshots` | id, vm_id, name, rbd_snapshot | Point-in-time |
-| `backups` | id, vm_id, type, status, storage_path | Backups |
+| `backups` | id, vm_id, source, status, storage_path | Backups |
 | `backup_schedules` | id, vm_id, interval, retention | Scheduled backups |
+| `admin_backup_schedules` | id, name, frequency, target_*, retention_count | Mass backup campaigns |
 
 ### Async & Audit
 
@@ -124,7 +125,8 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000009-000018 | Features (API keys, password reset, failed logins) |
 | 000019-000021 | Storage backends, failover, ISO |
 | 000022-000028 | RLS policies, constraints |
-| 000029-000033 | Performance indexes, plan limits |
+| 000029-000034 | Performance indexes, plan limits |
+| 000035-000038 | Ceph config, admin backup schedules, API key IP whitelist |
 
 ## Database Roles
 

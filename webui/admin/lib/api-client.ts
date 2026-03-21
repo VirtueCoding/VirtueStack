@@ -570,3 +570,138 @@ export const adminTemplatesApi = {
     return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, {});
   },
 };
+
+// ============================================================================
+// Admin Backup API
+// ============================================================================
+
+export interface AdminBackup {
+  id: string;
+  vm_id: string;
+  vm_hostname?: string;
+  customer_id?: string;
+  customer_email?: string;
+  source: "manual" | "customer_schedule" | "admin_schedule";
+  admin_schedule_id?: string;
+  admin_schedule_name?: string;
+  storage_backend: string;
+  status: "creating" | "completed" | "failed" | "restoring";
+  size_bytes?: number;
+  created_at: string;
+  expires_at?: string;
+}
+
+export interface AdminBackupListParams {
+  page?: number;
+  per_page?: number;
+  customer_id?: string;
+  vm_id?: string;
+  status?: string;
+  source?: string;
+  admin_schedule_id?: string;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: {
+    page: number;
+    per_page: number;
+    total: number;
+    total_pages: number;
+  };
+}
+
+export const adminBackupsApi = {
+  async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
+    const searchParams = new URLSearchParams();
+    if (params.page) searchParams.set("page", String(params.page));
+    if (params.per_page) searchParams.set("per_page", String(params.per_page));
+    if (params.customer_id) searchParams.set("customer_id", params.customer_id);
+    if (params.vm_id) searchParams.set("vm_id", params.vm_id);
+    if (params.status) searchParams.set("status", params.status);
+    if (params.source) searchParams.set("source", params.source);
+    if (params.admin_schedule_id) searchParams.set("admin_schedule_id", params.admin_schedule_id);
+
+    return apiClient.get<PaginatedResponse<AdminBackup>>(`/admin/backups?${searchParams.toString()}`);
+  },
+
+  async restoreBackup(id: string): Promise<{ backup_id: string; status: string }> {
+    return apiClient.post<{ backup_id: string; status: string }>(`/admin/backups/${id}/restore`, {});
+  },
+};
+
+// ============================================================================
+// Admin Backup Schedule API
+// ============================================================================
+
+export interface AdminBackupSchedule {
+  id: string;
+  name: string;
+  description?: string;
+  frequency: "daily" | "weekly" | "monthly";
+  retention_count: number;
+  target_all: boolean;
+  target_plan_ids?: string[];
+  target_node_ids?: string[];
+  target_customer_ids?: string[];
+  active: boolean;
+  next_run_at: string;
+  last_run_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAdminBackupScheduleRequest {
+  name: string;
+  description?: string;
+  frequency: "daily" | "weekly" | "monthly";
+  retention_count: number;
+  target_all: boolean;
+  target_plan_ids?: string[];
+  target_node_ids?: string[];
+  target_customer_ids?: string[];
+  active?: boolean;
+}
+
+export interface UpdateAdminBackupScheduleRequest {
+  name?: string;
+  description?: string;
+  frequency?: "daily" | "weekly" | "monthly";
+  retention_count?: number;
+  target_all?: boolean;
+  target_plan_ids?: string[];
+  target_node_ids?: string[];
+  target_customer_ids?: string[];
+  active?: boolean;
+}
+
+export const adminBackupSchedulesApi = {
+  async getSchedules(params: { page?: number; per_page?: number; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
+    const searchParams = new URLSearchParams();
+    if (params.page) searchParams.set("page", String(params.page));
+    if (params.per_page) searchParams.set("per_page", String(params.per_page));
+    if (params.active !== undefined) searchParams.set("active", String(params.active));
+
+    return apiClient.get<PaginatedResponse<AdminBackupSchedule>>(`/admin/admin-backup-schedules?${searchParams.toString()}`);
+  },
+
+  async getSchedule(id: string): Promise<AdminBackupSchedule> {
+    return apiClient.get<AdminBackupSchedule>(`/admin/admin-backup-schedules/${id}`);
+  },
+
+  async createSchedule(data: CreateAdminBackupScheduleRequest): Promise<AdminBackupSchedule> {
+    return apiClient.post<AdminBackupSchedule>("/admin/admin-backup-schedules", data);
+  },
+
+  async updateSchedule(id: string, data: UpdateAdminBackupScheduleRequest): Promise<AdminBackupSchedule> {
+    return apiClient.put<AdminBackupSchedule>(`/admin/admin-backup-schedules/${id}`, data);
+  },
+
+  async deleteSchedule(id: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/admin-backup-schedules/${id}`);
+  },
+
+  async runSchedule(id: string): Promise<{ message: string; next_run_at: string }> {
+    return apiClient.post<{ message: string; next_run_at: string }>(`/admin/admin-backup-schedules/${id}/run`, {});
+  },
+};

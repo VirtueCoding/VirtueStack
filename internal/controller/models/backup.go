@@ -12,11 +12,21 @@ const (
 	BackupStatusDeleted   = "deleted"
 )
 
+// Backup source constants define how a backup was initiated.
+const (
+	BackupSourceManual          = "manual"
+	BackupSourceCustomerSchedule = "customer_schedule"
+	BackupSourceAdminSchedule   = "admin_schedule"
+)
+
 // Backup represents a full backup of a VM's disk.
 type Backup struct {
 	ID   string `json:"id" db:"id"`
 	VMID string `json:"vm_id" db:"vm_id"`
-	Type string `json:"type" db:"type"` // "full"
+	// Source indicates how the backup was initiated: "manual", "customer_schedule", or "admin_schedule"
+	Source string `json:"source" db:"source"`
+	// AdminScheduleID references the admin schedule that created this backup, if applicable
+	AdminScheduleID *string `json:"admin_schedule_id,omitempty" db:"admin_schedule_id"`
 	// StorageBackend indicates the storage type: "ceph" or "qcow"
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// RBDSnapshot is the RBD snapshot name for Ceph backups (backward compatibility)
@@ -111,6 +121,32 @@ type WebhookDelivery struct {
 type SnapshotCreateRequest struct {
 	Name string `json:"name" validate:"required,max=100"`
 }
+
+// AdminBackupSchedule represents a mass backup campaign targeting multiple VMs.
+type AdminBackupSchedule struct {
+	ID              string     `json:"id" db:"id"`
+	Name            string     `json:"name" db:"name"`
+	Description     *string    `json:"description,omitempty" db:"description"`
+	Frequency       string     `json:"frequency" db:"frequency"` // "daily", "weekly", "monthly"
+	RetentionCount  int        `json:"retention_count" db:"retention_count"`
+	TargetAll       bool       `json:"target_all" db:"target_all"`
+	TargetPlanIDs   []string   `json:"target_plan_ids,omitempty" db:"target_plan_ids"`
+	TargetNodeIDs   []string   `json:"target_node_ids,omitempty" db:"target_node_ids"`
+	TargetCustomerIDs []string `json:"target_customer_ids,omitempty" db:"target_customer_ids"`
+	Active          bool       `json:"active" db:"active"`
+	NextRunAt       time.Time  `json:"next_run_at" db:"next_run_at"`
+	LastRunAt       *time.Time `json:"last_run_at,omitempty" db:"last_run_at"`
+	CreatedBy       *string    `json:"created_by,omitempty" db:"created_by"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+// AdminBackupScheduleFrequency constants define the valid frequency values.
+const (
+	AdminBackupScheduleFrequencyDaily   = "daily"
+	AdminBackupScheduleFrequencyWeekly  = "weekly"
+	AdminBackupScheduleFrequencyMonthly = "monthly"
+)
 
 // CustomerAPIKeyCreateRequest holds the fields required to create a new customer API key.
 type CustomerAPIKeyCreateRequest struct {

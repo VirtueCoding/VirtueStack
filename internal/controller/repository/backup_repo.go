@@ -25,9 +25,10 @@ func NewBackupRepository(db DB) *BackupRepository {
 // BackupListFilter holds filter parameters for listing backups.
 type BackupListFilter struct {
 	models.PaginationParams
-	VMID   *string
-	Status *string
-	Type   *string // "full"
+	VMID            *string
+	Status          *string
+	Source          *string // "manual", "customer_schedule", "admin_schedule"
+	AdminScheduleID *string
 }
 
 // SnapshotListFilter holds filter parameters for listing snapshots.
@@ -52,16 +53,16 @@ type BackupScheduleListFilter struct {
 func scanBackup(row pgx.Row) (models.Backup, error) {
 	var b models.Backup
 	err := row.Scan(
-		&b.ID, &b.VMID, &b.Type, &b.StorageBackend, &b.RBDSnapshot,
-		&b.FilePath, &b.StoragePath, &b.SizeBytes,
+		&b.ID, &b.VMID, &b.Source, &b.AdminScheduleID, &b.StorageBackend, &b.RBDSnapshot,
+		&b.FilePath, &b.SnapshotName, &b.StoragePath, &b.SizeBytes,
 		&b.Status, &b.CreatedAt, &b.ExpiresAt,
 	)
 	return b, err
 }
 
 const backupSelectCols = `
-	id, vm_id, type, storage_backend, rbd_snapshot,
-	file_path, storage_path, size_bytes,
+	id, vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot,
+	file_path, snapshot_name, storage_path, size_bytes,
 	status, created_at, expires_at`
 
 // CreateBackup inserts a new backup record into the database.
@@ -69,14 +70,14 @@ const backupSelectCols = `
 func (r *BackupRepository) CreateBackup(ctx context.Context, backup *models.Backup) error {
 	const q = `
 		INSERT INTO backups (
-			vm_id, type, storage_backend, rbd_snapshot, file_path,
-			storage_path, size_bytes, status, expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
+			snapshot_name, storage_path, size_bytes, status, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING ` + backupSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		backup.VMID, backup.Type, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
-		backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
+		backup.VMID, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
+		backup.SnapshotName, backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
 	)
 	created, err := scanBackup(row)
 	if err != nil {
@@ -126,9 +127,14 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 		args = append(args, *filter.Status)
 		idx++
 	}
-	if filter.Type != nil {
-		where = append(where, fmt.Sprintf("type = $%d", idx))
-		args = append(args, *filter.Type)
+	if filter.Source != nil {
+		where = append(where, fmt.Sprintf("source = $%d", idx))
+		args = append(args, *filter.Source)
+		idx++
+	}
+	if filter.AdminScheduleID != nil {
+		where = append(where, fmt.Sprintf("admin_schedule_id = $%d", idx))
+		args = append(args, *filter.AdminScheduleID)
 		idx++
 	}
 
@@ -172,9 +178,14 @@ func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID
 		args = append(args, *filter.Status)
 		idx++
 	}
-	if filter.Type != nil {
-		where = append(where, fmt.Sprintf("b.type = $%d", idx))
-		args = append(args, *filter.Type)
+	if filter.Source != nil {
+		where = append(where, fmt.Sprintf("b.source = $%d", idx))
+		args = append(args, *filter.Source)
+		idx++
+	}
+	if filter.AdminScheduleID != nil {
+		where = append(where, fmt.Sprintf("b.admin_schedule_id = $%d", idx))
+		args = append(args, *filter.AdminScheduleID)
 		idx++
 	}
 
