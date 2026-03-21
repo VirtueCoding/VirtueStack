@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-19 | Files scanned: 180+ | Token estimate: ~900 -->
+<!-- Generated: 2026-03-21 | Files scanned: 180+ | Token estimate: ~900 -->
 
 # VirtueStack Architecture
 

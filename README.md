@@ -50,6 +50,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Storage Management | ✅ Ceph RBD + QCOW2 dual backend |
 | Bandwidth Monitoring | ✅ Real-time tracking with limits and overage throttling |
 | Backup & Snapshots | ✅ Automated backups, snapshots, and recovery |
+| Admin Backup Schedules | ✅ Mass backup campaigns targeting VMs by plan/node/customer |
 | Console Access | ✅ Web-based VNC (noVNC) and Serial (xterm.js) consoles |
 | HA Node Failover | ✅ IPMI fencing, STONITH, Ceph blocklist, VM redistribution |
 | PowerDNS rDNS | ✅ Reverse DNS with MySQL direct access, IPv4+IPv6 PTR |
@@ -57,6 +58,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module |
 | ISO Mounting | ✅ Upload and attach ISO images to VMs |
 | Webhooks | ✅ Customer webhook delivery with retry and logging |
+| Notification Preferences | ✅ Email and Telegram notifications per event type |
 
 ### Security & Authentication
 
@@ -65,7 +67,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
 | JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
 | RBAC | ✅ Role-based permissions (customer and admin) |
-| API Keys | ✅ Secure API access with expiration |
+| API Keys | ✅ Secure API access with expiration and IP whitelist |
+| API Key IP Whitelist | ✅ IPv4, IPv6, CIDR support for customer and provisioning keys |
 | Audit Logging | ✅ Immutable operation logs with partitioning |
 | Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
 | Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
@@ -84,8 +87,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Portal | Technology | Pages |
 |--------|------------|-------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, IP Sets, Audit Logs, Settings |
-| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics), Settings (profile, 2FA, API keys) |
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Audit Logs, Settings |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, RDNS), Settings (profile, 2FA, API keys, webhooks, notifications) |
 
 ### API System
 
@@ -260,11 +263,11 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 | Document | Description |
 |----------|-------------|
 | [AGENTS.md](AGENTS.md) | Technical reference for AI agents and LLM-assisted development |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture specification |
+| [docs/CODEMAPS/](docs/CODEMAPS/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
 | [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
-| [docs/USAGE.md](docs/USAGE.md) | Usage documentation |
 | [docs/API.md](docs/API.md) | API reference |
 | [CODING_STANDARD.md](CODING_STANDARD.md) | Quality gates and coding rules |
+| [failure.md](failure.md) | Implementation tasks and backend-frontend gap tracking |
 
 ---
 
@@ -315,12 +318,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 |-----------|--------|
 | Controller APIs | 100% |
 | Node Agent | 100% |
-| Database Schema (24 migrations) | 100% |
+| Database Schema (38 migrations) | 100% |
 | Authentication (JWT, 2FA, API Keys) | 100% |
 | VM Lifecycle | 100% |
 | Storage (Ceph RBD + QCOW) | 100% |
 | Live Migration | 100% |
 | Backup & Snapshots | 100% |
+| Admin Backup Schedules | 100% |
 | WebSocket Console | 100% |
 | Web UIs | 100% |
 | WHMCS Module | 100% |
@@ -328,3 +332,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 | HA Failover | 100% |
 | PowerDNS rDNS | 100% |
 | Monitoring | 100% |
+| E2E Tests | 100% |

@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-19 | Files scanned: 33 migrations | Token estimate: ~850 -->
+<!-- Generated: 2026-03-21 | Files scanned: 38 migrations | Token estimate: ~850 -->
 
 # Data Architecture
 

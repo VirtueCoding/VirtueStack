@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-19 | Files scanned: 65 TSX files | Token estimate: ~700 -->
+<!-- Generated: 2026-03-21 | Files scanned: 65 TSX files | Token estimate: ~700 -->
 
 # Frontend Architecture
 
