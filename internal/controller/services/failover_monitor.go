@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -168,7 +169,7 @@ func (m *FailoverMonitor) getNodesNeedingFailover(ctx context.Context) ([]models
 	}
 
 	// Combine and filter
-	allNodes := append(activeNodes, degradedNodes...)
+	allNodes := slices.Concat(activeNodes, degradedNodes)
 	return filterNodesNeedingFailover(allNodes, m.config.Threshold), nil
 }
 

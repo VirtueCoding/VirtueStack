@@ -43,9 +43,9 @@ var (
 	ErrNoIPMIConfigured = stderrors.New("IPMI not configured for this node")
 
 	// 2FA errors
-	Err2FAAlreadyEnabled    = stderrors.New("2FA is already enabled")
-	Err2FANotEnabled        = stderrors.New("2FA is not enabled")
-	Err2FASetupNotInitiated = stderrors.New("2FA setup not initiated")
+	ErrTwoFAAlreadyEnabled    = stderrors.New("2FA is already enabled")
+	ErrTwoFANotEnabled        = stderrors.New("2FA is not enabled")
+	ErrTwoFASetupNotInitiated = stderrors.New("2FA setup not initiated")
 
 	// VM state errors
 	ErrInvalidVMState = stderrors.New("invalid VM state for operation")

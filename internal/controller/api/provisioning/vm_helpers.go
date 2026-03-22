@@ -2,6 +2,7 @@ package provisioning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -91,7 +92,8 @@ func getValidVMWithChecks(ctx context.Context, vmRepo *repository.VMRepository, 
 	if err != nil {
 		// Override error messages if specified
 		if opts.AlreadyDeleted {
-			if ve, ok := err.(vmValidationError); ok && ve.errCode == "VM_DELETED" {
+			var ve vmValidationError
+			if errors.As(err, &ve) && ve.errCode == "VM_DELETED" {
 				ve.errCode = "VM_ALREADY_DELETED"
 				if opts.DeletedErrMsg != "" {
 					ve.errMsg = opts.DeletedErrMsg
@@ -121,7 +123,8 @@ func getValidVMWithChecks(ctx context.Context, vmRepo *repository.VMRepository, 
 
 // respondWithValidationError sends a vmValidationError as an HTTP response.
 func respondWithValidationError(c *gin.Context, err error) {
-	if ve, ok := err.(vmValidationError); ok {
+	var ve vmValidationError
+	if errors.As(err, &ve) {
 		middleware.RespondWithError(c, ve.status, ve.errCode, ve.errMsg)
 		return
 	}
@@ -191,7 +194,8 @@ func validateResizeRequest(req ResizeRequest) error {
 func bindAndValidateResizeRequest(c *gin.Context) (*ResizeRequest, error) {
 	var req ResizeRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			return nil, vmValidationError{
 				status:  apiErr.HTTPStatus,
 				errCode: apiErr.Code,

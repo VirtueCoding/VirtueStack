@@ -288,6 +288,7 @@ func (s *Server) InitializeServices() error {
 		TaskRepo:      taskRepo,
 		VMRepo:        vmRepo,
 		IPRepo:        ipRepo,
+		PlanService:   s.planService,
 		JWTSecret:     s.config.JWTSecret.Value(),
 		Issuer:        "virtuestack",
 		EncryptionKey: s.config.EncryptionKey.Value(),
@@ -341,6 +342,7 @@ func (s *Server) InitializeServices() error {
 		SettingsRepo:            settingsRepo,
 		FailoverRepo:            failoverRepo,
 		AdminBackupScheduleRepo: repository.NewAdminBackupScheduleRepository(s.dbPool),
+		AdminRepo:               adminRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",
@@ -502,11 +504,12 @@ func (s *Server) requestLogger() gin.HandlerFunc {
 			"correlation_id", middleware.GetCorrelationID(c),
 		)
 
-		if status >= 500 {
+		switch {
+		case status >= 500:
 			logger.Error("request completed with error")
-		} else if status >= 400 {
+		case status >= 400:
 			logger.Warn("request completed with client error")
-		} else {
+		default:
 			logger.Debug("request completed")
 		}
 	}
@@ -760,17 +763,19 @@ func respondJSONWithMeta(c *gin.Context, status int, data any, meta models.Pagin
 func respondError(c *gin.Context, apiErr *apierrors.APIError) {
 	correlationID := middleware.GetCorrelationID(c)
 
-	resp := gin.H{
-		"error": gin.H{
-			"code":           apiErr.Code,
-			"message":        apiErr.Message,
-			"correlation_id": correlationID,
-		},
+	errData := gin.H{
+		"code":           apiErr.Code,
+		"message":        apiErr.Message,
+		"correlation_id": correlationID,
 	}
 
 	// Add validation details if present
 	if len(apiErr.Details) > 0 {
-		resp["error"].(gin.H)["details"] = apiErr.Details
+		errData["details"] = apiErr.Details
+	}
+
+	resp := gin.H{
+		"error": errData,
 	}
 
 	c.JSON(apiErr.HTTPStatus, resp)

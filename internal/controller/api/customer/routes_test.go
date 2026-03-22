@@ -203,23 +203,24 @@ func TestAPISubsetPermissionEnforcement(t *testing.T) {
 			r.Use(middleware.RequireUserType("customer"))
 
 			// Add a simple route with permission check
-			if tt.endpoint == "/vms" && tt.method == http.MethodGet {
+			switch {
+			case tt.endpoint == "/vms" && tt.method == http.MethodGet:
 				r.GET("/vms", middleware.RequirePermission(PermissionVMRead), func(c *gin.Context) {
 					c.Status(http.StatusOK)
 				})
-			} else if tt.endpoint == "/vms/vm-1/start" {
+			case tt.endpoint == "/vms/vm-1/start":
 				r.POST("/vms/vm-1/start", middleware.RequirePermission(PermissionVMPower), func(c *gin.Context) {
 					c.Status(http.StatusOK)
 				})
-			} else if tt.endpoint == "/backups" && tt.method == http.MethodGet {
+			case tt.endpoint == "/backups" && tt.method == http.MethodGet:
 				r.GET("/backups", middleware.RequirePermission(PermissionBackupRead), func(c *gin.Context) {
 					c.Status(http.StatusOK)
 				})
-			} else if tt.endpoint == "/backups" && tt.method == http.MethodPost {
+			case tt.endpoint == "/backups" && tt.method == http.MethodPost:
 				r.POST("/backups", middleware.RequirePermission(PermissionBackupWrite), func(c *gin.Context) {
 					c.Status(http.StatusOK)
 				})
-			} else if tt.endpoint == "/snapshots" && tt.method == http.MethodPost {
+			case tt.endpoint == "/snapshots" && tt.method == http.MethodPost:
 				r.POST("/snapshots", middleware.RequirePermission(PermissionSnapshotWrite), func(c *gin.Context) {
 					c.Status(http.StatusOK)
 				})

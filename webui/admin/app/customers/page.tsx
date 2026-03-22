@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  User,
   Plus,
   Search,
   Eye,
@@ -32,9 +31,12 @@ import {
   CheckCircle,
   Trash2,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import { adminCustomersApi, type Customer } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
+import { CustomerCreateDialog, type CreateCustomerFormData } from "@/components/customers/CustomerCreateDialog";
+import { CustomerEditDialog, type EditCustomerFormData } from "@/components/customers/CustomerEditDialog";
 
 type DialogAction = "suspend" | "unsuspend" | "delete" | null;
 
@@ -46,22 +48,30 @@ export default function CustomersPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+
+  const loadCustomers = async () => {
+    try {
+      const data = await adminCustomersApi.getCustomers();
+      setCustomers(data || []);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to load customers.",
+        variant: "destructive",
+      });
+    }
+  };
 
   useEffect(() => {
     async function loadData() {
-      try {
-        const data = await adminCustomersApi.getCustomers();
-        setCustomers(data || []);
-      } catch (err) {
-        toast({
-          title: "Error",
-          description: "Failed to load customers.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
+      await loadCustomers();
+      setLoading(false);
     }
     loadData();
   }, [toast]);
@@ -83,6 +93,11 @@ export default function CustomersPage() {
     setSelectedCustomer(customer);
     setDialogAction(action);
     setDialogOpen(true);
+  };
+
+  const openEditDialog = (customer: Customer) => {
+    setEditCustomer(customer);
+    setEditDialogOpen(true);
   };
 
   const handleConfirmAction = async () => {
@@ -111,9 +126,8 @@ export default function CustomersPage() {
           description: `${selectedCustomer.name} has been permanently deleted.`,
         });
       }
-      
-      const data = await adminCustomersApi.getCustomers();
-      setCustomers(data || []);
+
+      await loadCustomers();
     } catch (error) {
       toast({
         title: "Action Failed",
@@ -124,6 +138,47 @@ export default function CustomersPage() {
       setLoadingId(null);
       setSelectedCustomer(null);
       setDialogAction(null);
+    }
+  };
+
+  const handleCreateCustomer = async (data: CreateCustomerFormData) => {
+    setIsCreating(true);
+    try {
+      await adminCustomersApi.createCustomer({
+        name: data.name,
+        email: data.email,
+        password: data.password,
+        phone: data.phone || undefined,
+      });
+      toast({
+        title: "Customer Created",
+        description: `${data.name} has been created successfully.`,
+      });
+      await loadCustomers();
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleEditCustomer = async (data: EditCustomerFormData) => {
+    if (!editCustomer) return;
+    setIsSaving(true);
+    try {
+      await adminCustomersApi.updateCustomer(editCustomer.id, {
+        name: data.name,
+        status: data.status,
+      });
+      toast({
+        title: "Customer Updated",
+        description: `${data.name} has been updated successfully.`,
+      });
+      await loadCustomers();
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -147,7 +202,7 @@ export default function CustomersPage() {
               Manage client accounts and subscriptions
             </p>
           </div>
-          <Button disabled>
+          <Button onClick={() => setCreateDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Add Customer
           </Button>
@@ -239,7 +294,16 @@ export default function CustomersPage() {
                               <Eye className="h-4 w-4" />
                               <span className="sr-only">View Profile</span>
                             </Button>
-                            
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(customer)}
+                              disabled={loadingId === customer.id}
+                              title="Edit Customer"
+                            >
+                              <Pencil className="h-4 w-4" />
+                              <span className="sr-only">Edit Customer</span>
+                            </Button>
                             {customer.status === "active" ? (
                               <Button
                                 variant="ghost"
@@ -297,6 +361,7 @@ export default function CustomersPage() {
           </CardContent>
         </Card>
 
+        {/* Confirmation Dialog for Suspend/Unsuspend/Delete */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -332,8 +397,8 @@ export default function CustomersPage() {
               </Button>
               <Button
                 variant={
-                  dialogAction === "delete" 
-                    ? "destructive" 
+                  dialogAction === "delete"
+                    ? "destructive"
                     : "default"
                 }
                 onClick={handleConfirmAction}
@@ -343,6 +408,23 @@ export default function CustomersPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Create Customer Dialog */}
+        <CustomerCreateDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreate={handleCreateCustomer}
+          isCreating={isCreating}
+        />
+
+        {/* Edit Customer Dialog */}
+        <CustomerEditDialog
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          customer={editCustomer}
+          onSave={handleEditCustomer}
+          isSaving={isSaving}
+        />
       </div>
     </div>
   );

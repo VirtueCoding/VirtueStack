@@ -26,6 +26,7 @@ func NewBackupRepository(db DB) *BackupRepository {
 type BackupListFilter struct {
 	models.PaginationParams
 	VMID            *string
+	VMIDs           []string // Filter by multiple VM IDs (for API key vm_ids scope)
 	Status          *string
 	Source          *string // "manual", "customer_schedule", "admin_schedule"
 	AdminScheduleID *string
@@ -34,7 +35,8 @@ type BackupListFilter struct {
 // SnapshotListFilter holds filter parameters for listing snapshots.
 type SnapshotListFilter struct {
 	models.PaginationParams
-	VMID *string
+	VMID  *string
+	VMIDs []string // Filter by multiple VM IDs (for API key vm_ids scope)
 }
 
 // BackupScheduleListFilter holds filter parameters for listing backup schedules.
@@ -83,6 +85,64 @@ func (r *BackupRepository) CreateBackup(ctx context.Context, backup *models.Back
 	if err != nil {
 		return fmt.Errorf("creating backup: %w", err)
 	}
+	*backup = created
+	return nil
+}
+
+// CreateBackupWithLimitCheck atomically checks the backup count and creates a new backup.
+// Returns ErrQuotaExceeded if the count is already at or above the limit.
+// This prevents TOCTOU race conditions when multiple concurrent requests check the limit.
+func (r *BackupRepository) CreateBackupWithLimitCheck(ctx context.Context, backup *models.Backup, limit int) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Lock the VM row to prevent concurrent backup creation
+	const lockQ = `SELECT id FROM vms WHERE id = $1 FOR UPDATE`
+	_, err = tx.Exec(ctx, lockQ, backup.VMID)
+	if err != nil {
+		return fmt.Errorf("locking VM row: %w", err)
+	}
+
+	// Count existing backups within the transaction
+	const countQ = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted'`
+	var count int
+	err = tx.QueryRow(ctx, countQ, backup.VMID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("counting backups: %w", err)
+	}
+
+	if count >= limit {
+		return fmt.Errorf("backup limit exceeded: %d/%d", count, limit)
+	}
+
+	// Create the backup
+	const q = `
+		INSERT INTO backups (
+			vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
+			snapshot_name, storage_path, size_bytes, status, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		RETURNING ` + backupSelectCols
+
+	row := tx.QueryRow(ctx, q,
+		backup.VMID, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
+		backup.SnapshotName, backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
+	)
+	created, err := scanBackup(row)
+	if err != nil {
+		return fmt.Errorf("creating backup: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
 	*backup = created
 	return nil
 }
@@ -172,6 +232,15 @@ func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID
 		where = append(where, fmt.Sprintf("b.vm_id = $%d", idx))
 		args = append(args, *filter.VMID)
 		idx++
+	}
+	if len(filter.VMIDs) > 0 {
+		placeholders := make([]string, len(filter.VMIDs))
+		for i, vmID := range filter.VMIDs {
+			placeholders[i] = fmt.Sprintf("$%d", idx)
+			args = append(args, vmID)
+			idx++
+		}
+		where = append(where, fmt.Sprintf("b.vm_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 	if filter.Status != nil {
 		where = append(where, fmt.Sprintf("b.status = $%d", idx))
@@ -324,6 +393,62 @@ func (r *BackupRepository) CreateSnapshot(ctx context.Context, snapshot *models.
 	return nil
 }
 
+// CreateSnapshotWithLimitCheck atomically checks the snapshot count and creates a new snapshot.
+// Returns ErrQuotaExceeded if the count is already at or above the limit.
+// This prevents TOCTOU race conditions when multiple concurrent requests check the limit.
+func (r *BackupRepository) CreateSnapshotWithLimitCheck(ctx context.Context, snapshot *models.Snapshot, limit int) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Lock the VM row to prevent concurrent snapshot creation
+	const lockQ = `SELECT id FROM vms WHERE id = $1 FOR UPDATE`
+	_, err = tx.Exec(ctx, lockQ, snapshot.VMID)
+	if err != nil {
+		return fmt.Errorf("locking VM row: %w", err)
+	}
+
+	// Count existing snapshots within the transaction
+	const countQ = `SELECT COUNT(*) FROM snapshots WHERE vm_id = $1`
+	var count int
+	err = tx.QueryRow(ctx, countQ, snapshot.VMID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("counting snapshots: %w", err)
+	}
+
+	if count >= limit {
+		return fmt.Errorf("snapshot limit exceeded: %d/%d", count, limit)
+	}
+
+	// Create the snapshot
+	const q = `
+		INSERT INTO snapshots (
+			vm_id, name, rbd_snapshot, size_bytes
+		) VALUES ($1,$2,$3,$4)
+		RETURNING ` + snapshotSelectCols
+
+	row := tx.QueryRow(ctx, q,
+		snapshot.VMID, snapshot.Name, snapshot.RBDSnapshot, snapshot.SizeBytes,
+	)
+	created, err := scanSnapshot(row)
+	if err != nil {
+		return fmt.Errorf("creating snapshot: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	*snapshot = created
+	return nil
+}
+
 // GetSnapshotByID returns a snapshot by its UUID. Returns ErrNotFound if no snapshot matches.
 func (r *BackupRepository) GetSnapshotByID(ctx context.Context, id string) (*models.Snapshot, error) {
 	const q = `SELECT ` + snapshotSelectCols + ` FROM snapshots WHERE id = $1`
@@ -378,6 +503,15 @@ func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customer
 		where = append(where, fmt.Sprintf("s.vm_id = $%d", idx))
 		args = append(args, *filter.VMID)
 		idx++
+	}
+	if len(filter.VMIDs) > 0 {
+		placeholders := make([]string, len(filter.VMIDs))
+		for i, vmID := range filter.VMIDs {
+			placeholders[i] = fmt.Sprintf("$%d", idx)
+			args = append(args, vmID)
+			idx++
+		}
+		where = append(where, fmt.Sprintf("s.vm_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	clause := strings.Join(where, " AND ")

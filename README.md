@@ -2,7 +2,7 @@
 
 **A modern, scalable Virtual Machine management platform built for VPS hosting providers.**
 
-[![Go Version](https://img.shields.io/badge/Go-1.25-blue)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.26-blue)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-19-blue)](https://reactjs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -141,7 +141,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Layer | Technologies |
 |-------|-------------|
-| **Backend** | Go 1.25, Gin, gRPC, NATS JetStream, PostgreSQL |
+| **Backend** | Go 1.26, Gin, gRPC, NATS JetStream, PostgreSQL |
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui |
 | **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2, Docker, Nginx |
 

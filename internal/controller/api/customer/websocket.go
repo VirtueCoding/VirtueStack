@@ -50,7 +50,7 @@ var (
 	// Allowed origins loaded from environment variable
 	allowedOrigins     []string
 	allowedOriginsInit sync.Once
-	allowedOriginsErr  error
+	errAllowedOrigins  error
 )
 
 // loadAllowedOrigins loads allowed origins from environment variable or falls back to defaults
@@ -73,11 +73,11 @@ func loadAllowedOrigins() ([]string, error) {
 			// Validate that origin is a valid URL with http/https scheme
 			parsed, err := url.Parse(origin)
 			if err != nil {
-				allowedOriginsErr = fmt.Errorf("invalid origin %q: %w", origin, err)
+				errAllowedOrigins = fmt.Errorf("invalid origin %q: %w", origin, err)
 				return
 			}
 			if parsed.Scheme != "http" && parsed.Scheme != "https" {
-				allowedOriginsErr = fmt.Errorf("origin %q has unsupported scheme %q (must be http or https)", origin, parsed.Scheme)
+				errAllowedOrigins = fmt.Errorf("origin %q has unsupported scheme %q (must be http or https)", origin, parsed.Scheme)
 				return
 			}
 
@@ -89,7 +89,7 @@ func loadAllowedOrigins() ([]string, error) {
 		}
 	})
 
-	return allowedOrigins, allowedOriginsErr
+	return allowedOrigins, errAllowedOrigins
 }
 
 var upgrader = websocket.Upgrader{
@@ -224,11 +224,12 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"error", err,
 			"correlation_id", correlationID)
 
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+		switch {
+		case sharederrors.Is(err, sharederrors.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "VM not found"})
-		} else if sharederrors.Is(err, sharederrors.ErrConflict) {
+		case sharederrors.Is(err, sharederrors.ErrConflict):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		} else {
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate access"})
 		}
 		return
@@ -259,9 +260,19 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 	ws.SetReadLimit(webSocketBufferSize)
 	controllermetrics.WSConnectionsActive.Inc()
 	defer controllermetrics.WSConnectionsActive.Dec()
-	ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
+	if err := ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout)); err != nil {
+		h.logger.Warn("failed to set initial WebSocket read deadline",
+			"vm_id", vmID,
+			"error", err,
+			"correlation_id", correlationID)
+	}
 	ws.SetPongHandler(func(string) error {
-		ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
+		if err := ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout)); err != nil {
+			h.logger.Debug("failed to update WebSocket read deadline in pong handler",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+		}
 		return nil
 	})
 
@@ -334,7 +345,14 @@ func (s *serialStream) CloseSend() error {
 // proxyConsoleStream proxies data bidirectionally between WebSocket and gRPC console stream.
 // This is a generic implementation that handles both VNC and Serial console types.
 func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string, ct consoleType) {
-	defer ws.Close()
+	defer func() {
+		if err := ws.Close(); err != nil {
+			h.logger.Debug("failed to close WebSocket connection",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+		}
+	}()
 
 	config := h.getConsoleConfig(ct)
 	stream, err := h.createConsoleStream(ctx, conn, ct)
@@ -345,7 +363,14 @@ func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.
 			"correlation_id", correlationID)
 		return
 	}
-	defer stream.CloseSend()
+	defer func() {
+		if err := stream.CloseSend(); err != nil {
+			h.logger.Debug("failed to close gRPC stream",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+		}
+	}()
 
 	if err := stream.Send([]byte(vmID)); err != nil {
 		h.logger.Error("failed to send VM ID to "+string(ct)+" stream",
@@ -427,7 +452,12 @@ func (h *CustomerHandler) readFromWebSocket(ctx context.Context, cancel context.
 		default:
 		}
 
-		ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout))
+		if err := ws.SetReadDeadline(time.Now().Add(webSocketIdleTimeout)); err != nil {
+			h.logger.Debug("failed to set WebSocket read deadline",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+		}
 
 		messageType, msg, err := ws.ReadMessage()
 		if err != nil {
@@ -476,7 +506,12 @@ func (h *CustomerHandler) readFromStream(ctx context.Context, cancel context.Can
 			return
 		}
 
-		ws.SetWriteDeadline(time.Now().Add(webSocketIdleTimeout))
+		if err := ws.SetWriteDeadline(time.Now().Add(webSocketIdleTimeout)); err != nil {
+			h.logger.Debug("failed to set WebSocket write deadline",
+				"vm_id", vmID,
+				"error", err,
+				"correlation_id", correlationID)
+		}
 
 		if err := ws.WriteMessage(config.writeMsgType, data); err != nil {
 			h.logger.Error("failed to write "+config.name+" data to WebSocket",

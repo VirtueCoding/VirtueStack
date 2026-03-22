@@ -55,7 +55,7 @@ type VMCreateRequest struct {
 	PlanID         string   `json:"plan_id" validate:"required,uuid"`
 	Hostname       string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
 	TemplateID     string   `json:"template_id" validate:"required,uuid"`
-	Password       string   `json:"password" validate:"required,min=8,max=128"`
+	Password       string   `json:"password" validate:"required,min=12,max=128"`
 	SSHKeys        []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
 	LocationID     *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
 	WHMCSServiceID *int     `json:"whmcs_service_id,omitempty"`
@@ -64,10 +64,11 @@ type VMCreateRequest struct {
 
 // VMListFilter holds query parameters for filtering and paginating VM list results.
 type VMListFilter struct {
-	CustomerID *string `form:"customer_id"`
-	NodeID     *string `form:"node_id"`
-	Status     *string `form:"status"`
-	Search     *string `form:"search"` // hostname search
+	CustomerID *string  `form:"customer_id"`
+	NodeID     *string  `form:"node_id"`
+	Status     *string  `form:"status"`
+	Search     *string  `form:"search"` // hostname search
+	VMIDs      []string `form:"-"`      // Filter by multiple VM IDs (for API key vm_ids scope)
 	PaginationParams
 }
 

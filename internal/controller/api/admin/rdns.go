@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -64,7 +65,8 @@ func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 
 	var req AdminRDNSRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

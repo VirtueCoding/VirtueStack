@@ -4,6 +4,7 @@
 package vm
 
 import (
+	"context"
 	"log/slog"
 
 	"libvirt.org/go/libvirt"
@@ -30,12 +31,12 @@ type metricsData struct {
 
 // collectMetrics gathers all metrics from a running domain.
 // Errors are logged but do not cause the function to fail.
-func (m *Manager) collectMetrics(domain *libvirt.Domain, vmID string, logger *slog.Logger) *metricsData {
+func (m *Manager) collectMetrics(ctx context.Context, domain *libvirt.Domain, vmID string, logger *slog.Logger) *metricsData {
 	data := &metricsData{}
 
 	// Get CPU stats
 	var err error
-	data.cpuPercent, err = m.getCPUUsage(domain)
+	data.cpuPercent, err = m.getCPUUsage(ctx, domain)
 	if err != nil {
 		logger.Warn("could not get CPU usage", "error", err, "vm_id", vmID)
 	}

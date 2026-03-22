@@ -16,6 +16,6 @@
     "rootDir": ".",
     "types": ["node", "@playwright/test"]
   },
-  "include": ["./*.ts"],
+  "include": ["./*.ts", "./pages/**/*.ts", "./utils/**/*.ts", "./fixtures/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

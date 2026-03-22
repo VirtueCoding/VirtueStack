@@ -276,7 +276,11 @@ func (s *AlertService) sendWebhook(ctx context.Context, url, secret string, payl
 	if err != nil {
 		return fmt.Errorf("sending webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			s.logger.Error("failed to close response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)

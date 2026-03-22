@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal } from "lucide-react";
-import { adminTemplatesApi, type Template } from "@/lib/api-client";
+import { adminTemplatesApi, type Template, type UpdateTemplateRequest } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
@@ -32,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TemplateEditDialog, type EditTemplateFormData } from "@/components/templates/TemplateEditDialog";
 
 type DialogAction = "create" | "edit" | "delete" | "import" | null;
 
@@ -65,6 +66,8 @@ export default function TemplatesPage() {
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
   const [formData, setFormData] = useState<TemplateFormData>({
     name: "",
     os_family: "debian",
@@ -102,6 +105,11 @@ export default function TemplatesPage() {
     setDialogAction(action);
     if (template) {
       setSelectedTemplate(template);
+      // Open edit dialog separately for the TemplateEditDialog component
+      if (action === "edit") {
+        setEditDialogOpen(true);
+        return;
+      }
       setFormData({
         name: template.name,
         os_family: template.os_family,
@@ -146,28 +154,33 @@ export default function TemplatesPage() {
     }
   };
 
-  const handleEdit = async () => {
+  const handleEditSave = async (data: EditTemplateFormData) => {
     if (!selectedTemplate) return;
-    setSaving(true);
+    setEditSaving(true);
     try {
-      const updated = await adminTemplatesApi.updateTemplate(selectedTemplate.id, {
-        name: formData.name,
-        os_family: formData.os_family,
-      });
+      const updateData: UpdateTemplateRequest = {};
+      // Only include fields that have values
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.os_family !== undefined) updateData.os_family = data.os_family;
+      if (data.os_version !== undefined) updateData.os_version = data.os_version;
+      if (data.rbd_image !== undefined) updateData.rbd_image = data.rbd_image;
+      if (data.rbd_snapshot !== undefined) updateData.rbd_snapshot = data.rbd_snapshot;
+      if (data.min_disk_gb !== undefined) updateData.min_disk_gb = data.min_disk_gb;
+      if (data.supports_cloudinit !== undefined) updateData.supports_cloudinit = data.supports_cloudinit;
+      if (data.is_active !== undefined) updateData.is_active = data.is_active;
+      if (data.sort_order !== undefined) updateData.sort_order = data.sort_order;
+      if (data.description !== undefined) updateData.description = data.description;
+      if (data.storage_backend !== undefined) updateData.storage_backend = data.storage_backend;
+      if (data.file_path !== undefined) updateData.file_path = data.file_path;
+
+      const updated = await adminTemplatesApi.updateTemplate(selectedTemplate.id, updateData);
       setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       toast({
         title: "Template Updated",
         description: `Template "${updated.name}" has been updated successfully.`,
       });
-      closeDialog();
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to update template",
-        variant: "destructive",
-      });
     } finally {
-      setSaving(false);
+      setEditSaving(false);
     }
   };
 
@@ -385,20 +398,16 @@ export default function TemplatesPage() {
         </div>
       </div>
 
-      {/* Create/Edit Dialog */}
+      {/* Create Dialog */}
       <Dialog
-        open={dialogOpen && (dialogAction === "create" || dialogAction === "edit")}
+        open={dialogOpen && dialogAction === "create"}
         onOpenChange={(open) => { if (!open) closeDialog(); }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {dialogAction === "create" ? "Create Template" : "Edit Template"}
-            </DialogTitle>
+            <DialogTitle>Create Template</DialogTitle>
             <DialogDescription>
-              {dialogAction === "create"
-                ? "Add a new OS template for VM provisioning."
-                : "Update the template details."}
+              Add a new OS template for VM provisioning.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -420,32 +429,39 @@ export default function TemplatesPage() {
                 placeholder="e.g., debian, ubuntu, centos"
               />
             </div>
-            {dialogAction === "create" && (
-              <div className="space-y-2">
-                <Label htmlFor="rbd_image">RBD Image (Optional)</Label>
-                <Input
-                  id="rbd_image"
-                  value={formData.rbd_image}
-                  onChange={(e) => setFormData({ ...formData, rbd_image: e.target.value })}
-                  placeholder="e.g., vs-images/ubuntu-24.04"
-                />
-              </div>
-            )}
+            <div className="space-y-2">
+              <Label htmlFor="rbd_image">RBD Image (Optional)</Label>
+              <Input
+                id="rbd_image"
+                value={formData.rbd_image}
+                onChange={(e) => setFormData({ ...formData, rbd_image: e.target.value })}
+                placeholder="e.g., vs-images/ubuntu-24.04"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeDialog}>
               Cancel
             </Button>
             <Button
-              onClick={dialogAction === "create" ? handleCreate : handleEdit}
+              onClick={handleCreate}
               disabled={saving || !formData.name}
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {dialogAction === "create" ? "Create" : "Save"}
+              Create
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Edit Dialog */}
+      <TemplateEditDialog
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        template={selectedTemplate}
+        onSave={handleEditSave}
+        isSaving={editSaving}
+      />
 
       {/* Import Dialog */}
       <Dialog

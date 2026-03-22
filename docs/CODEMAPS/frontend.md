@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-21 | Files scanned: 65 TSX files | Token estimate: ~700 -->
+<!-- Generated: 2026-03-22 | Files scanned: 82 TSX files | Token estimate: ~950 -->
 
 # Frontend Architecture
 
@@ -25,7 +25,10 @@ app/
         ├── ip-sets/page.tsx
         ├── nodes/page.tsx
         ├── plans/page.tsx
-        ├── settings/page.tsx
+        ├── settings/
+        │   ├── page.tsx            # System settings
+        │   └── permissions/page.tsx # Permission management (super_admin) (NEW)
+        ├── templates/page.tsx
         └── vms/page.tsx
 ```
 
@@ -37,22 +40,36 @@ components/
 ├── mobile-nav.tsx      # Responsive nav
 ├── theme-toggle.tsx    # Dark/light mode
 ├── ui/                 # shadcn/ui primitives
-│   ├── button.tsx, input.tsx, table.tsx
+│   ├── button.tsx, input.tsx, table.tsx, textarea.tsx
 │   ├── dialog.tsx, sheet.tsx, dropdown-menu.tsx
-│   └── toast.tsx, toaster.tsx, badge.tsx
+│   └── toast.tsx, toaster.tsx, badge.tsx, checkbox.tsx
 ├── backups/
 │   ├── BackupList.tsx           # Backup table with filters
 │   ├── BackupDetailModal.tsx    # Backup detail view
 │   ├── RestoreConfirmModal.tsx  # Restore confirmation
 │   ├── AdminScheduleList.tsx    # Admin schedules table
 │   └── CreateScheduleModal.tsx  # Create/edit schedule
+├── customers/
+│   ├── CustomerCreateDialog.tsx # Create customer (NEW)
+│   └── CustomerEditDialog.tsx   # Edit name/status (NEW)
+├── ip-sets/
+│   ├── IPSetList.tsx            # IP set table
+│   ├── IPSetCreateDialog.tsx    # Create IP set
+│   ├── IPSetEditDialog.tsx      # Edit IP set
+│   ├── IPSetDetailDialog.tsx    # View IP set details
+│   └── IPSetImportDialog.tsx    # Import IPs
+├── nodes/
+│   ├── NodeCreateDialog.tsx     # Register new node
+│   └── NodeEditDialog.tsx       # Edit node config
 ├── plans/
-│   ├── PlanList.tsx
-│   └── PlanEditDialog.tsx
-└── ip-sets/
-    ├── IPSetList.tsx
-    ├── IPSetCreateDialog.tsx
-    └── IPSetImportDialog.tsx
+│   ├── PlanList.tsx             # Plans table
+│   ├── PlanCreateDialog.tsx     # Create plan (NEW)
+│   └── PlanEditDialog.tsx       # Edit plan
+├── templates/
+│   └── TemplateEditDialog.tsx   # Edit template
+└── vms/
+    ├── VMCreateDialog.tsx       # Create VM manually
+    └── VMEditDialog.tsx         # Edit VM properties
 ```
 
 ## Customer Portal
@@ -121,7 +138,7 @@ Zustand (if used)
 
 ## API Client Pattern
 
-**Files:** `webui/*/lib/api.ts` (inferred)
+**Files:** `webui/*/lib/api-client.ts`
 
 ```typescript
 // Authenticated fetch wrapper
@@ -155,3 +172,12 @@ useMutation({ mutationFn: (id) => api.post(`customer/vms/${id}/start`) })
 | State | TanStack Query + Zustand |
 | Charts | uPlot + Apache ECharts |
 | Console | noVNC + xterm.js |
+
+## New Components (Since Last Update)
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Permissions Page | `app/settings/permissions/` | Super-admin permission management |
+| CustomerCreateDialog | `components/customers/` | Create customer modal |
+| CustomerEditDialog | `components/customers/` | Edit customer modal |
+| PlanCreateDialog | `components/plans/` | Create plan modal |

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -20,11 +21,16 @@ import (
 
 // verifyLoginCredentials fetches the customer by email and verifies the password.
 // On wrong password it records the failure and returns ErrUnauthorized.
+// Timing attack mitigation: always performs password verification even for non-existent emails.
 func (s *AuthService) verifyLoginCredentials(ctx context.Context, email, password string) (*models.Customer, error) {
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			s.logger.Warn("login attempt for non-existent email", "email", util.MaskEmail(email))
+			// Timing attack mitigation: perform a dummy password verification
+			// to ensure consistent response time regardless of email existence.
+			// The dummy hash uses standard Argon2id parameters.
+			_, _ = s.verifyPassword(password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG")
 			return nil, sharederrors.ErrUnauthorized
 		}
 		return nil, fmt.Errorf("getting customer by email: %w", err)
@@ -81,6 +87,7 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 		return tokens, "", nil
 	}
 
+	s.enforceCustomerSessionLimit(ctx, customer.ID)
 	tokens, refreshToken, err := s.createLoginSession(ctx, customer.ID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
 	if err != nil {
 		return nil, "", err
@@ -119,7 +126,7 @@ func (s *AuthService) consumeBackupCode(ctx context.Context, userID, totpCode st
 		if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) != 1 {
 			continue
 		}
-		remaining := append(backupCodesHash[:i:i], backupCodesHash[i+1:]...)
+		remaining := slices.Concat(backupCodesHash[:i], backupCodesHash[i+1:])
 		if err := updateFn(ctx, userID, remaining); err != nil {
 			s.logger.Warn("failed to update backup codes after use", "user_id", userID, "error", err)
 		}
@@ -163,6 +170,7 @@ func (s *AuthService) Verify2FA(ctx context.Context, tempToken, totpCode, ipAddr
 		s.logger.Info("backup code used for authentication", "customer_id", customer.ID)
 	}
 
+	s.enforceCustomerSessionLimit(ctx, customer.ID)
 	tokens, refreshToken, err := s.createLoginSession(ctx, customer.ID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
 	if err != nil {
 		return nil, "", err

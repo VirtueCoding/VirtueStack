@@ -3,6 +3,7 @@ package libvirtutil
 
 import (
 	"encoding/xml"
+	"errors"
 
 	"libvirt.org/go/libvirt"
 )
@@ -53,7 +54,8 @@ func IsLibvirtError(err error, code libvirt.ErrorNumber) bool {
 	if err == nil {
 		return false
 	}
-	if lerr, ok := err.(libvirt.Error); ok {
+	var lerr libvirt.Error
+	if errors.As(err, &lerr) {
 		return lerr.Code == code
 	}
 	return false

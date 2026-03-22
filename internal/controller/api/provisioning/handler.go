@@ -21,6 +21,7 @@ type ProvisioningHandler struct {
 	taskRepo      *repository.TaskRepository
 	vmRepo        *repository.VMRepository
 	ipRepo        *repository.IPRepository
+	planService   *services.PlanService
 	authConfig    middleware.AuthConfig
 	encryptionKey string
 	logger        *slog.Logger
@@ -33,6 +34,7 @@ type ProvisioningHandlerConfig struct {
 	TaskRepo      *repository.TaskRepository
 	VMRepo        *repository.VMRepository
 	IPRepo        *repository.IPRepository
+	PlanService   *services.PlanService
 	JWTSecret     string
 	Issuer        string
 	EncryptionKey string
@@ -47,6 +49,7 @@ func NewProvisioningHandler(cfg ProvisioningHandlerConfig) *ProvisioningHandler 
 		taskRepo:      cfg.TaskRepo,
 		vmRepo:        cfg.VMRepo,
 		ipRepo:        cfg.IPRepo,
+		planService:   cfg.PlanService,
 		authConfig:    middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		encryptionKey: cfg.EncryptionKey,
 		logger:        cfg.Logger.With("component", "provisioning-handler"),
@@ -87,10 +90,14 @@ type VMStatusResponse struct {
 }
 
 // ResizeRequest represents the request body for VM resize operations.
+// PlanID is optional - when provided, the VM's plan is updated and resources
+// are validated against the new plan. Raw resource values can still be provided
+// for backwards compatibility and advanced use cases.
 type ResizeRequest struct {
-	VCPU     *int `json:"vcpu,omitempty" validate:"omitempty,gt=0"`
-	MemoryMB *int `json:"memory_mb,omitempty" validate:"omitempty,gt=0"`
-	DiskGB   *int `json:"disk_gb,omitempty" validate:"omitempty,gt=0"`
+	PlanID   string `json:"plan_id,omitempty" validate:"omitempty,uuid"`
+	VCPU     *int   `json:"vcpu,omitempty" validate:"omitempty,gt=0"`
+	MemoryMB *int   `json:"memory_mb,omitempty" validate:"omitempty,gt=0"`
+	DiskGB   *int   `json:"disk_gb,omitempty" validate:"omitempty,gt=0"`
 }
 
 // PasswordRequest represents the request body for password operations.

@@ -1,11 +1,11 @@
 # VirtueStack AGENTS.md
 
-> **AI Agent Reference Document**  
-> This file provides complete technical context for AI agents working on the VirtueStack codebase.  
+> **AI Agent Reference Document**
+> This file provides complete technical context for AI agents working on the VirtueStack codebase.
 > For human-friendly overview, see [README.md](README.md).
 
-**Version:** 2.2  
-**Last Updated:** March 2026  
+**Version:** 2.3
+**Last Updated:** March 2026
 **Purpose:** Machine-readable single source of truth for LLM agents working on VirtueStack
 
 > **Companion document:** [`CODING_STANDARD.md`](CODING_STANDARD.md) defines the rules all generated code must follow — prohibitions, error handling patterns, security requirements, testing rules, and quality gates. This document describes *what exists in the project* (architecture, APIs, data models, config).  
@@ -62,7 +62,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── virtuestack/
 │       └── node_agent.proto              # gRPC service definition
 │
-├── migrations/                             # Database migrations (35 files)
+├── migrations/                             # Database migrations (44 files)
 │   ├── 000001_initial_schema.up.sql
 │   ├── 000019_add_storage_backend.up.sql
 │   ├── 000020_add_failover_requests.up.sql
@@ -83,10 +83,16 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   ├── 000035_add_vm_ceph_columns.up.sql
 │   ├── 000036_add_node_ceph_config.up.sql
 │   ├── 000037_admin_backup_schedules.up.sql   # Admin mass backup campaigns
-│   └── 000038_customer_api_key_allowed_ips.up.sql
+│   ├── 000038_customer_api_key_allowed_ips.up.sql
+│   ├── 000039_console_tokens.up.sql           # Time-limited console access
+│   ├── 000040_console_tokens_rls.up.sql
+│   ├── 000041_whmcs_service_id_unique.up.sql
+│   ├── 000042_customers_rls.up.sql
+│   ├── 000043_cleanup_plan_legacy_columns.up.sql
+│   └── 000044_admin_permissions.up.sql        # Fine-grained admin permissions
 │
-├── webui/                                  # Web UIs (82 TSX files)
-│   ├── admin/                            # Admin panel (8 pages)
+├── webui/                                  # Web UIs (82+ TSX files)
+│   ├── admin/                            # Admin panel (9 pages)
 │   └── customer/                         # Customer portal (3 pages)
 │
 ├── modules/                                # WHMCS module (7 PHP files)
@@ -135,8 +141,8 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 ### Backend
 | Component | Technology | Version |
 |-----------|------------|---------|
-| Language | Go | 1.25 |
-| HTTP Framework | Gin | v1.10.0 |
+| Language | Go | 1.26 |
+| HTTP Framework | Gin | v1.10.1 |
 | Database | PostgreSQL | 16+ |
 | Message Queue | NATS JetStream | v1.38.0 |
 | gRPC | google.golang.org/grpc | v1.79.1 |
@@ -144,9 +150,9 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 | Ceph Bindings | go-ceph | v0.30.0 |
 | libvirt Bindings | libvirt-go | v1.10005.0 |
 | Password Hashing | argon2id | v1.0.0 |
-| JWT | golang-jwt/jwt/v5 | v5.2.1 |
+| JWT | golang-jwt/jwt/v5 | v5.2.2 |
 | TOTP | pquerna/otp | v1.4.0 |
-| Validation | go-playground/validator | v10.23.0 |
+| Validation | go-playground/validator | v10.26.0 |
 | Migrations | golang-migrate/migrate | v4.19.1 |
 | WebSocket | gorilla/websocket | v1.5.3 |
 

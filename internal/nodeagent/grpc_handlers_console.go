@@ -4,6 +4,7 @@ package nodeagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -43,7 +44,9 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 	}
 
 	vncPort, err := h.server.getVNCPort(domain)
-	domain.Free()
+	if freeErr := domain.Free(); freeErr != nil {
+		logger.Debug("failed to free domain after getting VNC port", "error", freeErr)
+	}
 	if err != nil {
 		return status.Errorf(codes.Internal, "getting VNC port: %v", err)
 	}
@@ -54,11 +57,16 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 		vncHost = "127.0.0.1"
 	}
 	vncAddr := net.JoinHostPort(vncHost, strconv.Itoa(int(vncPort)))
-	conn, err := net.DialTimeout("tcp", vncAddr, 5*time.Second)
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", vncAddr)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "connecting to VNC: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logger.Debug("failed to close VNC connection", "error", err)
+		}
+	}()
 
 	logger.Info("VNC console stream established", "vnc_addr", vncAddr)
 
@@ -75,7 +83,7 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 			}
 			n, err := conn.Read(buf)
 			if err != nil {
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					errCh <- fmt.Errorf("reading from VNC: %w", err)
 				} else {
 					errCh <- nil
@@ -99,7 +107,7 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 			}
 			frame, err := stream.Recv()
 			if err != nil {
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					errCh <- fmt.Errorf("receiving from gRPC stream: %w", err)
 				} else {
 					errCh <- nil
@@ -138,14 +146,22 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 	if err != nil {
 		return status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			logger.Debug("failed to free domain after serial console", "error", err)
+		}
+	}()
 
 	// Open a console stream via libvirt
 	libvirtStream, err := h.server.libvirtConn.NewStream(0)
 	if err != nil {
 		return status.Errorf(codes.Internal, "creating libvirt stream: %v", err)
 	}
-	defer libvirtStream.Free()
+	defer func() {
+		if err := libvirtStream.Free(); err != nil {
+			logger.Debug("failed to free libvirt stream", "error", err)
+		}
+	}()
 
 	if err := domain.OpenConsole("", libvirtStream, libvirt.DOMAIN_CONSOLE_FORCE); err != nil {
 		return status.Errorf(codes.Internal, "opening serial console: %v", err)

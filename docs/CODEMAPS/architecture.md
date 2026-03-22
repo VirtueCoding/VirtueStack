@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-21 | Files scanned: 180+ | Token estimate: ~900 -->
+<!-- Generated: 2026-03-22 | Files scanned: 180+ | Token estimate: ~900 -->
 
 # VirtueStack Architecture
 
@@ -61,7 +61,7 @@
 ## Data Flow
 
 ```
-API Request → Middleware (Auth, CSRF, Rate Limit)
+API Request → Middleware (Auth, CSRF, Rate Limit, Permissions)
            → Handler → Service → Repository → PostgreSQL
            → (async) NATS → Task Worker → Node Agent gRPC
            → Response
@@ -77,3 +77,12 @@ API Request → Middleware (Auth, CSRF, Rate Limit)
 | Customer UI | `webui/customer/app/layout.tsx` | `webui/customer/next.config.js` |
 | gRPC Proto | `proto/virtuestack/node_agent.proto` | - |
 | Migrations | `migrations/000001_initial_schema.up.sql` | - |
+
+## New Components (Since Last Update)
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Audit Masking | `internal/controller/audit/` | PII masking for audit logs |
+| Permissions Middleware | `internal/controller/api/middleware/permissions.go` | Admin RBAC enforcement |
+| Console Tokens | `internal/controller/models/console_token.go` | Time-limited VNC/serial access |
+| Admin Permissions | `internal/controller/models/permission.go` | Permission constants |

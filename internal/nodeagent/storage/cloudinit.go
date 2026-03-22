@@ -68,7 +68,11 @@ func (g *CloudInitGenerator) Generate(ctx context.Context, cfg *CloudInitConfig)
 	if err != nil {
 		return "", fmt.Errorf("creating temp dir for cloud-init %s: %w", cfg.VMID, err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			logger.Warn("failed to remove temp dir for cloud-init", "path", tmpDir, "error", err)
+		}
+	}()
 
 	if err := g.writeMetaData(tmpDir, cfg); err != nil {
 		return "", fmt.Errorf("writing meta-data for VM %s: %w", cfg.VMID, err)
@@ -82,7 +86,9 @@ func (g *CloudInitGenerator) Generate(ctx context.Context, cfg *CloudInitConfig)
 
 	isoPath := filepath.Join(g.outputPath, fmt.Sprintf("vs-%s-seed.iso", cfg.VMID))
 	if err := g.buildISO(ctx, tmpDir, isoPath); err != nil {
-		os.Remove(isoPath)
+		if rmErr := os.Remove(isoPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove incomplete ISO file", "path", isoPath, "error", rmErr)
+		}
 		return "", fmt.Errorf("building cloud-init ISO for VM %s: %w", cfg.VMID, err)
 	}
 

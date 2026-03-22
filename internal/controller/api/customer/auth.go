@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -42,7 +43,8 @@ const customerRefreshCookiePath = "/api/v1/customer/auth/refresh"
 func (h *CustomerHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -93,7 +95,8 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -209,7 +212,8 @@ func (h *CustomerHandler) Logout(c *gin.Context) {
 func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

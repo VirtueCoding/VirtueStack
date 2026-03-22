@@ -3,9 +3,11 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -240,7 +242,7 @@ func (r *CustomerRepository) Update(ctx context.Context, customer *models.Custom
 	)
 	updated, err := scanCustomer(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("updating customer %s: %w", customer.ID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("updating customer %s: %w", customer.ID, err)
@@ -469,7 +471,7 @@ func (r *CustomerRepository) GetSessionLastReauthAt(ctx context.Context, session
 	var lastReauthAt *time.Time
 	err := r.db.QueryRow(ctx, q, sessionID).Scan(&lastReauthAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, sharederrors.ErrNotFound
 		}
 		return nil, fmt.Errorf("getting session last_reauth_at: %w", err)
@@ -549,18 +551,32 @@ func NewAdminRepository(db DB) *AdminRepository {
 // scanAdmin scans a single admin row into a models.Admin struct.
 func scanAdmin(row pgx.Row) (models.Admin, error) {
 	var a models.Admin
+	var permsJSON []byte
 	err := row.Scan(
 		&a.ID, &a.Email, &a.PasswordHash, &a.Name,
 		&a.TOTPSecretEncrypted, &a.TOTPEnabled, &a.TOTPBackupCodesHash,
-		&a.Role, &a.MaxSessions, &a.CreatedAt,
+		&a.Role, &a.MaxSessions, &permsJSON, &a.CreatedAt,
 	)
-	return a, err
+	if err != nil {
+		return a, err
+	}
+	if len(permsJSON) > 0 {
+		var permStrs []string
+		if err := json.Unmarshal(permsJSON, &permStrs); err != nil {
+			return a, fmt.Errorf("unmarshaling permissions: %w", err)
+		}
+		a.Permissions = make([]models.Permission, len(permStrs))
+		for i, s := range permStrs {
+			a.Permissions[i] = models.Permission(s)
+		}
+	}
+	return a, nil
 }
 
 const adminSelectCols = `
 	id, email, password_hash, name,
 	totp_secret_encrypted, totp_enabled, totp_backup_codes_hash,
-	role, max_sessions, created_at`
+	role, max_sessions, permissions, created_at`
 
 // Create inserts a new admin record into the database.
 func (r *AdminRepository) Create(ctx context.Context, admin *models.Admin) error {
@@ -673,9 +689,12 @@ func (r *AdminRepository) UpdatePasswordHash(ctx context.Context, id, passwordHa
 // UpdateBackupCodes updates the TOTP backup codes for an admin.
 func (r *AdminRepository) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
 	const q = `UPDATE admins SET totp_backup_codes_hash = $1, updated_at = NOW() WHERE id = $2`
-	_, err := r.db.Exec(ctx, q, codes, userID)
+	tag, err := r.db.Exec(ctx, q, codes, userID)
 	if err != nil {
 		return fmt.Errorf("updating backup codes for admin %s: %w", userID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating backup codes for admin %s: %w", userID, ErrNoRowsAffected)
 	}
 	return nil
 }
@@ -774,9 +793,12 @@ func (r *CustomerRepository) UpdateCustomerPasswordHash(ctx context.Context, id,
 // UpdateBackupCodes updates the TOTP backup codes for a customer.
 func (r *CustomerRepository) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
 	const q = `UPDATE customers SET totp_backup_codes_hash = $1, updated_at = NOW() WHERE id = $2`
-	_, err := r.db.Exec(ctx, q, codes, userID)
+	tag, err := r.db.Exec(ctx, q, codes, userID)
 	if err != nil {
 		return fmt.Errorf("updating backup codes for user %s: %w", userID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating backup codes for user %s: %w", userID, ErrNoRowsAffected)
 	}
 	return nil
 }
@@ -834,6 +856,37 @@ func (r *CustomerRepository) UpdateBackupCodesWithShown(ctx context.Context, id 
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating customer %s backup codes: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// UpdatePermissions updates the permissions for an admin.
+// Pass nil or empty slice to reset to role-based default permissions.
+// UpdatePermissions updates the permissions for an admin.
+// Pass nil or empty slice to reset to role-based default permissions.
+func (r *AdminRepository) UpdatePermissions(ctx context.Context, id string, permissions []models.Permission) error {
+	const q = `UPDATE admins SET permissions = $1::jsonb, updated_at = NOW() WHERE id = $2`
+
+	var permsJSON []byte
+	var err error
+	if len(permissions) > 0 {
+		// Convert to string slice for JSON marshaling
+		permStrs := make([]string, len(permissions))
+		for i, p := range permissions {
+			permStrs[i] = string(p)
+		}
+		permsJSON, err = json.Marshal(permStrs)
+		if err != nil {
+			return fmt.Errorf("marshaling permissions: %w", err)
+		}
+	}
+
+	tag, err := r.db.Exec(ctx, q, permsJSON, id)
+	if err != nil {
+		return fmt.Errorf("updating admin %s permissions: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating admin %s permissions: %w", id, ErrNoRowsAffected)
 	}
 	return nil
 }

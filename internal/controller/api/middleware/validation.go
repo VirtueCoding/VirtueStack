@@ -41,6 +41,11 @@ func registerCustomValidations(v *validator.Validate) {
 	_ = v.RegisterValidation("hostname_rfc1123", func(fl validator.FieldLevel) bool {
 		return ValidateHostname(fl.Field().String()) == nil
 	})
+
+	// "slug" validates lowercase alphanumeric with hyphens (e.g., "standard-1", "pro-plan").
+	_ = v.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
+		return slugRegex.MatchString(fl.Field().String())
+	})
 }
 
 // BindAndValidate binds the request body into dst (must be a pointer to a struct)
@@ -91,6 +96,10 @@ func ValidateUUID(id string) error {
 // hostnameRegex matches valid RFC 1123 hostnames.
 // Labels may contain letters, digits, and hyphens; they must not start or end with a hyphen.
 var hostnameRegex = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)
+
+// slugRegex matches lowercase alphanumeric with hyphens.
+// Must start and end with alphanumeric, hyphens only between characters.
+var slugRegex = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // ValidateHostname validates hostname per RFC 1123.
 // Returns a *sharederrors.ValidationError on failure.
@@ -177,6 +186,8 @@ func fieldIssue(fe validator.FieldError) string {
 		return "must be a valid UUID v4"
 	case "hostname_rfc1123":
 		return "must be a valid RFC 1123 hostname"
+	case "slug":
+		return "must be lowercase alphanumeric with hyphens (e.g., standard-1)"
 	case "oneof":
 		return fmt.Sprintf("must be one of: %s", fe.Param())
 	case "gt":

@@ -214,7 +214,9 @@ func (m *DHCPManager) StopDHCPForVM(ctx context.Context, vmID string) error {
 	if err := m.sendSignal(pid, syscall.SIGTERM); err != nil {
 		logger.Warn("failed to send SIGTERM, trying SIGKILL", "error", err)
 		// Force kill if SIGTERM fails
-		m.sendSignal(pid, syscall.SIGKILL)
+		if err := m.sendSignal(pid, syscall.SIGKILL); err != nil {
+			logger.Warn("failed to send SIGKILL", "error", err)
+		}
 	}
 
 	// Wait for process to exit (with timeout)
@@ -468,7 +470,9 @@ func (m *DHCPManager) CleanupStaleProcesses(ctx context.Context) error {
 		pid, _ := strconv.Atoi(string(pidData))
 		if pid > 0 && m.isProcessRunning(pid) {
 			logger.Info("killing stale dnsmasq process", "vm_id", vmID, "pid", pid)
-			m.sendSignal(pid, syscall.SIGTERM)
+			if err := m.sendSignal(pid, syscall.SIGTERM); err != nil {
+			logger.Warn("failed to send SIGTERM", "error", err)
+		}
 			m.waitForProcessExit(pid, 5*time.Second)
 		}
 
@@ -569,7 +573,9 @@ func (m *DHCPManager) waitForProcessExit(pid int, timeout time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	// Force kill if still running
-	m.sendSignal(pid, syscall.SIGKILL)
+	if err := m.sendSignal(pid, syscall.SIGKILL); err != nil {
+		m.logger.Warn("failed to send SIGKILL", "error", err)
+	}
 }
 
 // cleanupVMFiles removes all DHCP-related files for a VM.
@@ -605,7 +611,11 @@ func (m *DHCPManager) saveLeaseStatus(vmID string, lease *DHCPLease) error {
 func (m *DHCPManager) monitorProcess(ctx context.Context, cancel context.CancelFunc, vmID string, cmd *exec.Cmd, logFile *os.File) {
 	defer m.wg.Done()
 	defer cancel()
-	defer logFile.Close()
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			m.logger.Debug("failed to close dnsmasq log file", "error", err)
+		}
+	}()
 
 	err := cmd.Wait()
 	if err != nil {

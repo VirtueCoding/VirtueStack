@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"errors"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -56,7 +57,12 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 	if !ok {
 		return
 	}
-	defer ctx.file.Close()
+	defer func() {
+		if err := ctx.file.Close(); err != nil {
+			h.logger.Warn("failed to close uploaded file", "error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}()
 
 	if !h.validateISOFile(c, ctx.header) {
 		return
@@ -197,7 +203,12 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to create file on disk")
 		return nil, false
 	}
-	defer dst.Close()
+	defer func() {
+		if err := dst.Close(); err != nil {
+			h.logger.Warn("failed to close ISO file", "path", destPath, "error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}()
 
 	written, checksum, err := h.copyFileWithHash(dst, file, destPath)
 	if err != nil {
@@ -209,7 +220,10 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 	}
 
 	if written > maxISOSizeBytes {
-		os.Remove(destPath)
+		if err := os.Remove(destPath); err != nil {
+			h.logger.Warn("failed to remove oversized ISO file", "path", destPath, "error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
 		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
 		return nil, false
 	}
@@ -230,9 +244,13 @@ func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath
 	multiWriter := io.MultiWriter(dst, hasher)
 
 	written, err := io.CopyN(multiWriter, src, maxISOSizeBytes+1)
-	if err != nil && err != io.EOF {
-		dst.Close()
-		os.Remove(destPath)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if closeErr := dst.Close(); closeErr != nil {
+			h.logger.Warn("failed to close file during cleanup", "path", destPath, "error", closeErr)
+		}
+		if removeErr := os.Remove(destPath); removeErr != nil {
+			h.logger.Warn("failed to remove file during cleanup", "path", destPath, "error", removeErr)
+		}
 		return 0, "", err
 	}
 
@@ -243,7 +261,7 @@ func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath
 // writeChecksumSidecar writes the SHA256 checksum to a sidecar file.
 func (h *CustomerHandler) writeChecksumSidecar(destPath, checksum, correlationID string) {
 	sumPath := destPath + ".sha256"
-	if err := os.WriteFile(sumPath, []byte(checksum), 0640); err != nil {
+	if err := os.WriteFile(sumPath, []byte(checksum), 0640); err != nil { //nolint:gosec // G306: 0640 is acceptable for checksum files (non-sensitive)
 		h.logger.Warn("failed to write checksum sidecar",
 			"path", sumPath, "error", err,
 			"correlation_id", correlationID)
@@ -324,7 +342,11 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
 		return
 	}
-	os.Remove(isoPath + ".sha256")
+	if err := os.Remove(isoPath + ".sha256"); err != nil && !os.IsNotExist(err) {
+		h.logger.Warn("failed to delete ISO checksum sidecar",
+			"path", isoPath+".sha256", "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+	}
 
 	h.logger.Info("ISO deleted",
 		"iso_id", isoID,

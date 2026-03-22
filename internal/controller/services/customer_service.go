@@ -231,6 +231,29 @@ func (s *CustomerService) GetByEmail(ctx context.Context, email string) (*models
 	return customer, nil
 }
 
+// Create creates a new customer account.
+// The customer will be created with active status and the provided credentials.
+func (s *CustomerService) Create(ctx context.Context, actorID, actorIP string, customer *models.Customer) (*models.Customer, error) {
+	// Create the customer in the repository
+	if err := s.customerRepo.Create(ctx, customer); err != nil {
+		return nil, fmt.Errorf("creating customer: %w", err)
+	}
+
+	// Log audit event
+	changes := map[string]any{
+		"email": customer.Email,
+		"name":  customer.Name,
+	}
+	s.logAudit(ctx, actorID, actorIP, "customer.create", customer.ID, changes, true, "")
+
+	s.logger.Info("customer created",
+		"customer_id", customer.ID,
+		"email", util.MaskEmail(customer.Email),
+		"name", customer.Name)
+
+	return customer, nil
+}
+
 type ProfileUpdateParams struct {
 	Name  *string
 	Email *string

@@ -98,8 +98,12 @@ func (m *DHCPManager) startDNSMasqProcess(
 ) (*exec.Cmd, *os.File, int, error) {
 	// Test config before starting
 	if err := m.testDNSMasqConfig(ctx, files.configPath); err != nil {
-		os.Remove(files.configPath)
-		os.Remove(files.leasePath)
+		if removeErr := os.Remove(files.configPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logger.Warn("failed to remove config file during cleanup", "error", removeErr, "path", files.configPath)
+		}
+		if removeErr := os.Remove(files.leasePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logger.Warn("failed to remove lease file during cleanup", "error", removeErr, "path", files.leasePath)
+		}
 		return nil, nil, 0, fmt.Errorf("invalid dnsmasq config: %w", err)
 	}
 
@@ -121,7 +125,9 @@ func (m *DHCPManager) startDNSMasqProcess(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		if closeErr := logFile.Close(); closeErr != nil {
+			logger.Warn("failed to close log file after start failure", "error", closeErr, "path", files.logPath)
+		}
 		return nil, nil, 0, fmt.Errorf("starting dnsmasq: %w", err)
 	}
 
@@ -131,8 +137,12 @@ func (m *DHCPManager) startDNSMasqProcess(
 	// Write PID file
 	if err := os.WriteFile(files.pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
 		// Kill the process if we can't write PID file
-		cmd.Process.Kill()
-		logFile.Close()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			logger.Warn("failed to kill dnsmasq process after PID file write failure", "error", killErr, "pid", pid)
+		}
+		if closeErr := logFile.Close(); closeErr != nil {
+			logger.Warn("failed to close log file after PID file write failure", "error", closeErr, "path", files.logPath)
+		}
 		return nil, nil, 0, fmt.Errorf("writing PID file: %w", err)
 	}
 
@@ -180,10 +190,11 @@ func (m *DHCPManager) startProcessMonitor(
 	logFile *os.File,
 ) {
 	// Start goroutine to wait for process exit and clean up.
-	// A fresh background context with timeout is created so that cancellation of the
-	// caller's ctx does not immediately cancel the monitor. cancel() is called inside
-	// the goroutine after it finishes so the context is properly released.
+	// We derive the monitor context from the parent context to maintain
+	// cancellation propagation while using a timeout for the cleanup phase.
+	// The cancel function is called inside the goroutine after it finishes
+	// so the context is properly released.
 	m.wg.Add(1)
-	monitorCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	monitorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	go m.monitorProcess(monitorCtx, cancel, cfg.VMID, cmd, logFile)
 }

@@ -154,6 +154,14 @@ function handleWebhook(): void
             case 'vm.migrated':
                 if ($whmcsServiceId > 0) {
                     $newNodeId = $data['node_id'] ?? '';
+                    // SECURITY: Validate node_id is a valid UUID before storing
+                    if (!empty($newNodeId) && !VirtueStackHelper::isValidUuid($newNodeId)) {
+                        logWebhook('warning', "Invalid node_id received in vm.migrated webhook", [
+                            'node_id' => $newNodeId,
+                            'service_id' => $whmcsServiceId,
+                        ]);
+                        break;
+                    }
                     updateServiceField($whmcsServiceId, 'node_id', $newNodeId);
                     logActivity("VirtueStack: VM migrated for service {$whmcsServiceId} to node {$newNodeId}");
                 }

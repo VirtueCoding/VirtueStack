@@ -70,7 +70,7 @@ func prepareMigrationContext(ctx context.Context, task *models.Task, deps *Handl
 	// Idempotency check: VM already on target
 	if vm.NodeID != nil && *vm.NodeID == payload.TargetNodeID {
 		logger.Info("VM already on target node, migration complete (idempotent)")
-		markMigrationComplete(ctx, deps, task.ID, payload)
+		markMigrationComplete(ctx, deps, task.ID, payload, logger)
 		return nil, nil
 	}
 
@@ -121,19 +121,25 @@ func validateMigrationEntities(ctx context.Context, deps *HandlerDeps, payload V
 }
 
 // markMigrationComplete marks the task as complete for idempotent success.
-func markMigrationComplete(ctx context.Context, deps *HandlerDeps, taskID string, payload VMMigratePayload) {
-	deps.TaskRepo.UpdateProgress(ctx, taskID, 100, "VM already on target node")
+func markMigrationComplete(ctx context.Context, deps *HandlerDeps, taskID string, payload VMMigratePayload, logger *slog.Logger) {
+	if err := deps.TaskRepo.UpdateProgress(ctx, taskID, 100, "VM already on target node"); err != nil {
+		logger.Warn("failed to update task progress for idempotent completion", "error", err)
+	}
 	result := VMMigrateResult{
 		VMID: payload.VMID, SourceNodeID: payload.SourceNodeID,
 		TargetNodeID: payload.TargetNodeID, Status: "already_migrated",
 	}
 	resultJSON, _ := json.Marshal(result)
-	deps.TaskRepo.SetCompleted(ctx, taskID, resultJSON)
+	if err := deps.TaskRepo.SetCompleted(ctx, taskID, resultJSON); err != nil {
+		logger.Warn("failed to set task completed for idempotent completion", "error", err)
+	}
 }
 
 // executeMigrationStrategy runs the appropriate migration strategy.
 func executeMigrationStrategy(mc *MigrationContext) error {
-	mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 10, "Preparing migration...")
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 10, "Preparing migration..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
 
 	switch mc.Payload.MigrationStrategy {
 	case MigrationStrategyLiveSharedStorage:
@@ -154,12 +160,16 @@ func handleMigrationFailure(mc *MigrationContext, err error) {
 	if restoreStatus == "" {
 		restoreStatus = models.VMStatusError
 	}
-	mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, restoreStatus)
+	if err := mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, restoreStatus); err != nil {
+		mc.Logger.Warn("failed to restore VM status after migration failure", "error", err)
+	}
 }
 
 // finalizeMigration updates the VM record and completes the task.
 func finalizeMigration(mc *MigrationContext) error {
-	mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 90, "Updating VM assignment...")
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 90, "Updating VM assignment..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
 
 	if err := mc.Deps.VMRepo.UpdateNodeAssignment(mc.Ctx, mc.Payload.VMID, mc.Payload.TargetNodeID); err != nil {
 		return fmt.Errorf("updating VM %s node assignment: %w", mc.Payload.VMID, err)
@@ -169,9 +179,13 @@ func finalizeMigration(mc *MigrationContext) error {
 	if mc.Payload.PreMigrationState == models.VMStatusStopped || mc.Payload.PreMigrationState == models.VMStatusSuspended {
 		finalStatus = mc.Payload.PreMigrationState
 	}
-	mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, finalStatus)
+	if err := mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, finalStatus); err != nil {
+		mc.Logger.Warn("failed to update VM status after migration", "error", err)
+	}
 
-	mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 100, "Migration completed successfully")
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 100, "Migration completed successfully"); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
 	result := VMMigrateResult{
 		VMID: mc.Payload.VMID, SourceNodeID: mc.Payload.SourceNodeID,
 		SourceNodeAddress: mc.SourceNode.GRPCAddress, TargetNodeID: mc.Payload.TargetNodeID,
@@ -180,7 +194,9 @@ func finalizeMigration(mc *MigrationContext) error {
 		SourceStorageBackend: mc.Payload.SourceStorageBackend, TargetStorageBackend: mc.Payload.TargetStorageBackend,
 	}
 	resultJSON, _ := json.Marshal(result)
-	mc.Deps.TaskRepo.SetCompleted(mc.Ctx, mc.Task.ID, resultJSON)
+	if err := mc.Deps.TaskRepo.SetCompleted(mc.Ctx, mc.Task.ID, resultJSON); err != nil {
+		mc.Logger.Warn("failed to set task completed", "error", err)
+	}
 
 	mc.Logger.Info("vm.migrate task completed successfully", "vm_id", mc.Payload.VMID,
 		"source_node", mc.Payload.SourceNodeID, "target_node", mc.Payload.TargetNodeID)
@@ -280,7 +296,9 @@ func executeLiveDiskCopyMigration(mc *MigrationContext) error {
 		DiskSizeGB:     mc.Payload.DiskSizeGB,
 		Compress:       true,
 		ProgressCallback: func(progress int) {
-			mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+			if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress)); err != nil {
+				mc.Logger.Debug("failed to update task progress during disk transfer", "error", err)
+			}
 		},
 	}
 
@@ -356,7 +374,9 @@ func executeColdDiskCopyMigration(mc *MigrationContext) error {
 		DiskSizeGB:     mc.Payload.DiskSizeGB,
 		Compress:       true,
 		ProgressCallback: func(progress int) {
-			mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+			if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress)); err != nil {
+				mc.Logger.Debug("failed to update task progress during disk transfer", "error", err)
+			}
 		},
 	}
 
@@ -424,7 +444,9 @@ func executeColdMigration(mc *MigrationContext) error {
 		Compress:             true,
 		ConvertFormat:        true,
 		ProgressCallback: func(progress int) {
-			mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+			if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress)); err != nil {
+				mc.Logger.Debug("failed to update task progress during disk transfer", "error", err)
+			}
 		},
 	}
 

@@ -33,11 +33,17 @@ type infrastructure struct {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run contains the main application logic. It returns an exit code.
+// Using a separate function ensures deferred functions run before os.Exit.
+func run() int {
 	// Load configuration
 	cfg, err := controller.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Setup logging
@@ -53,7 +59,7 @@ func main() {
 	infra, err := initializeInfrastructure(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("Failed to initialize infrastructure", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer closeDBPool(infra.dbPool, logger)
 	defer closeNATS(infra.nc, logger)
@@ -62,13 +68,13 @@ func main() {
 	srv, worker, err := initializeServer(ctx, cfg, infra, logger)
 	if err != nil {
 		logger.Error("Failed to initialize server", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Start task worker
 	if err := worker.Start(ctx, defaultNumWorkers); err != nil {
 		logger.Error("Failed to start task worker", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Start background schedulers (backup scheduler)
@@ -91,6 +97,7 @@ func main() {
 	runShutdown(logger, serverErr, worker, srv)
 
 	logger.Info("VirtueStack Controller stopped")
+	return 0
 }
 
 // initializeInfrastructure connects to PostgreSQL and NATS.
@@ -155,6 +162,9 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)
 
+	// RegisterAPIRoutes sets up HTTP routes. Context is obtained from the HTTP request
+	// at runtime in the middleware handlers, not during route registration.
+	//nolint:contextcheck // Route registration does not require context; middleware obtains it from HTTP request
 	server.RegisterAPIRoutes()
 
 	return server, worker, nil

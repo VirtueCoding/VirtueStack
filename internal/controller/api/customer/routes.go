@@ -67,8 +67,8 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	registerSnapshotRoutes(protected, handler)
 
 	protected.GET("/templates", handler.ListTemplates)
-	protected.GET("/ws/vnc/:vmId", handler.HandleVNCWebSocket)
-	protected.GET("/ws/serial/:vmId", handler.HandleSerialWebSocket)
+	protected.GET("/ws/vnc/:vmId", middleware.RequireVMScope(), handler.HandleVNCWebSocket)
+	protected.GET("/ws/serial/:vmId", middleware.RequireVMScope(), handler.HandleSerialWebSocket)
 
 	if notifyHandler != nil {
 		RegisterNotificationRoutes(protected, notifyHandler)
@@ -99,7 +99,7 @@ func registerVMRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 
 	// Read operations require vm:read
 	vms.GET("", middleware.RequirePermission(PermissionVMRead), handler.ListVMs)
-	vms.GET("/:id", middleware.RequirePermission(PermissionVMRead), handler.GetVM)
+	vms.GET("/:id", middleware.RequirePermission(PermissionVMRead), middleware.RequireVMScope(), handler.GetVM)
 
 	registerPowerRoutes(vms, handler)
 	registerConsoleRoutes(vms, handler)
@@ -113,10 +113,10 @@ func registerPowerRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 	power := vms.Group("")
 	power.Use(middleware.RequirePermission(PermissionVMPower))
 	{
-		power.POST("/:id/start", handler.StartVM)
-		power.POST("/:id/stop", handler.StopVM)
-		power.POST("/:id/restart", handler.RestartVM)
-		power.POST("/:id/force-stop", handler.ForceStopVM)
+		power.POST("/:id/start", middleware.RequireVMScope(), handler.StartVM)
+		power.POST("/:id/stop", middleware.RequireVMScope(), handler.StopVM)
+		power.POST("/:id/restart", middleware.RequireVMScope(), handler.RestartVM)
+		power.POST("/:id/force-stop", middleware.RequireVMScope(), handler.ForceStopVM)
 	}
 }
 
@@ -126,8 +126,8 @@ func registerConsoleRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 	console := vms.Group("")
 	console.Use(middleware.RequirePermission(PermissionVMPower))
 	{
-		console.POST("/:id/console-token", handler.GetConsoleToken)
-		console.POST("/:id/serial-token", handler.GetSerialToken)
+		console.POST("/:id/console-token", middleware.RequireVMScope(), handler.GetConsoleToken)
+		console.POST("/:id/serial-token", middleware.RequireVMScope(), handler.GetSerialToken)
 	}
 }
 
@@ -136,9 +136,9 @@ func registerMonitoringRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 	monitoring := vms.Group("")
 	monitoring.Use(middleware.RequirePermission(PermissionVMRead))
 	{
-		monitoring.GET("/:id/metrics", handler.GetMetrics)
-		monitoring.GET("/:id/bandwidth", handler.GetBandwidth)
-		monitoring.GET("/:id/network", handler.GetNetworkHistory)
+		monitoring.GET("/:id/metrics", middleware.RequireVMScope(), handler.GetMetrics)
+		monitoring.GET("/:id/bandwidth", middleware.RequireVMScope(), handler.GetBandwidth)
+		monitoring.GET("/:id/network", middleware.RequireVMScope(), handler.GetNetworkHistory)
 	}
 }
 
@@ -146,16 +146,18 @@ func registerMonitoringRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 func registerRDNSRoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 	rdns := vms.Group("")
 	// Read operations require vm:read
-	rdns.GET("/:id/ips", middleware.RequirePermission(PermissionVMRead), handler.ListVMIPs)
-	rdns.GET("/:id/ips/:ipId/rdns", middleware.RequirePermission(PermissionVMRead), handler.GetRDNS)
+	rdns.GET("/:id/ips", middleware.RequirePermission(PermissionVMRead), middleware.RequireVMScope(), handler.ListVMIPs)
+	rdns.GET("/:id/ips/:ipId/rdns", middleware.RequirePermission(PermissionVMRead), middleware.RequireVMScope(), handler.GetRDNS)
 
 	// Write operations require vm:write
 	rdns.PUT("/:id/ips/:ipId/rdns",
 		middleware.RequirePermission(PermissionVMWrite),
+		middleware.RequireVMScope(),
 		middleware.RDNSUpdateRateLimit(),
 		handler.UpdateRDNS)
 	rdns.DELETE("/:id/ips/:ipId/rdns",
 		middleware.RequirePermission(PermissionVMWrite),
+		middleware.RequireVMScope(),
 		handler.DeleteRDNS)
 }
 
@@ -164,11 +166,11 @@ func registerISORoutes(vms *gin.RouterGroup, handler *CustomerHandler) {
 	iso := vms.Group("")
 	iso.Use(middleware.RequirePermission(PermissionVMWrite))
 	{
-		iso.POST("/:id/iso/upload", handler.UploadISO)
-		iso.GET("/:id/iso", handler.ListISOs) // Also requires vm:write as it's VM modification context
-		iso.DELETE("/:id/iso/:isoId", handler.DeleteISO)
-		iso.POST("/:id/iso/:isoId/attach", handler.AttachISO)
-		iso.POST("/:id/iso/:isoId/detach", handler.DetachISO)
+		iso.POST("/:id/iso/upload", middleware.RequireVMScope(), handler.UploadISO)
+		iso.GET("/:id/iso", middleware.RequireVMScope(), handler.ListISOs) // Also requires vm:write as it's VM modification context
+		iso.DELETE("/:id/iso/:isoId", middleware.RequireVMScope(), handler.DeleteISO)
+		iso.POST("/:id/iso/:isoId/attach", middleware.RequireVMScope(), handler.AttachISO)
+		iso.POST("/:id/iso/:isoId/detach", middleware.RequireVMScope(), handler.DetachISO)
 	}
 }
 

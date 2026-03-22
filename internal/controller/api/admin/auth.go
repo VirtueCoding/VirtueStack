@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -36,7 +37,8 @@ const adminRefreshCookiePath = "/api/v1/admin/auth/refresh"
 func (h *AdminHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -81,7 +83,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 func (h *AdminHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -172,9 +175,10 @@ func (h *AdminHandler) Logout(c *gin.Context) {
 // MeResponse contains the current admin user's identity.
 // This is a lightweight response suitable for session validation.
 type MeResponse struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // Me returns the current authenticated admin user's identity.
@@ -199,10 +203,18 @@ func (h *AdminHandler) Me(c *gin.Context) {
 		return
 	}
 
+	// Get effective permissions (custom permissions or role-based defaults)
+	permissions := admin.Permissions
+	if len(permissions) == 0 {
+		// Use role-based default permissions if no custom permissions set
+		permissions = models.GetDefaultPermissions(admin.Role)
+	}
+
 	resp := MeResponse{
-		ID:    admin.ID,
-		Email: admin.Email,
-		Role:  admin.Role,
+		ID:          admin.ID,
+		Email:       admin.Email,
+		Role:        admin.Role,
+		Permissions: models.PermissionsToStrings(permissions),
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})

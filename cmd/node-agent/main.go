@@ -19,11 +19,17 @@ import (
 const defaultShutdownTimeout = 30 * time.Second
 
 func main() {
+	os.Exit(run())
+}
+
+// run contains the main application logic. It returns an exit code.
+// Using a separate function ensures deferred functions run before os.Exit.
+func run() int {
 	// Load configuration
 	cfg, err := nodeagent.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Parse shutdown timeout from config (default to 30s)
@@ -51,7 +57,7 @@ func main() {
 	server, err := nodeagent.NewServer(cfg, logger)
 	if err != nil {
 		logger.Error("Failed to create server", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Start the gRPC server in a goroutine
@@ -98,4 +104,5 @@ func main() {
 	}
 
 	logger.Info("VirtueStack Node Agent stopped")
+	return 0
 }

@@ -5,6 +5,7 @@ package nodeagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -145,7 +146,11 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 	if h.server.storageType == storage.StorageTypeQCOW && snapshotName != "" {
 		// Create a temporary exported image from the snapshot
 		tempPath := sourcePath + ".export"
-		defer os.Remove(tempPath)
+		defer func() {
+			if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+				logger.Debug("failed to remove temporary export file", "path", tempPath, "error", err)
+			}
+		}()
 
 		// Use qemu-img convert to export snapshot
 		args := []string{"convert", "-l", snapshotName, "-O", "qcow2", sourcePath, tempPath}
@@ -165,7 +170,11 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 	if err != nil {
 		return status.Errorf(codes.Internal, "opening source disk: %v", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			logger.Debug("failed to close source disk file", "error", err)
+		}
+	}()
 
 	// Get file info for progress tracking
 	fileInfo, err := file.Stat()
@@ -237,7 +246,11 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	if err != nil {
 		return status.Errorf(codes.Internal, "creating target file: %v", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			logger.Debug("failed to close target disk file", "error", err)
+		}
+	}()
 
 	// Write the first chunk
 	if _, err := file.Write(firstMsg.GetData()); err != nil {
@@ -250,7 +263,7 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	// Receive remaining chunks
 	for {
 		chunk, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

@@ -1,6 +1,6 @@
 # VirtueStack Architecture
 
-**Version:** 2.2 — March 2026  
+**Version:** 2.3 — March 2026  
 **Companion:** `CODING_STANDARD.md` — all code MUST pass the 19 Quality Gates defined there.  
 **Applies to:** Every component, API, schema, and module described below.
 
@@ -58,7 +58,7 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Single language for backend | Go 1.25+ | One language for Node Agent + Controller. Single binary deployment. Excellent libvirt/Ceph bindings. |
+| Single language for backend | Go 1.26+ | One language for Node Agent + Controller. Single binary deployment. Excellent libvirt/Ceph bindings. |
 | Async task execution | NATS JetStream | Durable message queue embedded in Controller. VM provisioning takes 5-60s — APIs cannot block. |
 | Console proxying | Controller as WebSocket proxy | Web UIs NEVER talk directly to Node Agents. Controller validates auth, proxies VNC/serial via gRPC stream. |
 | HA failover safety | IPMI fencing (optional) + admin confirmation | Without fencing, admin manually confirms dead node. With IPMI credentials, auto-fence before RBD lock release. |
@@ -72,8 +72,8 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 | Component | Language | Framework/Libraries | Version |
 |-----------|----------|-------------------|---------|
-| **Node Agent** | Go | `libvirt.org/go/libvirt`, `github.com/ceph/go-ceph`, gRPC | Go 1.25+ |
-| **Controller** | Go | Gin, `pgx` (PostgreSQL), `nats.go`, gRPC, gorilla/websocket | Go 1.25+ |
+| **Node Agent** | Go | `libvirt.org/go/libvirt`, `github.com/ceph/go-ceph`, gRPC | Go 1.26+ |
+| **Controller** | Go | Gin, `pgx` (PostgreSQL), `nats.go`, gRPC, gorilla/websocket | Go 1.26+ |
 | **Admin WebUI** | TypeScript | React 19, Next.js 16, shadcn/ui, Tailwind CSS, TanStack Query | TS 5.5+ |
 | **Customer WebUI** | TypeScript | React 19, Next.js 16, shadcn/ui, Tailwind CSS, TanStack Query | TS 5.5+ |
 | **WHMCS Module** | PHP | WHMCS SDK, Guzzle HTTP | PHP 8.3+ |

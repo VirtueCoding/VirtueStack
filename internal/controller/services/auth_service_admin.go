@@ -21,7 +21,10 @@ func (s *AuthService) verifyAdminCredentials(ctx context.Context, email, passwor
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			s.logger.Warn("admin login attempt for non-existent email", "email", util.MaskEmail(email))
-			// Record a failed attempt to prevent user enumeration via timing.
+			// Timing attack mitigation: perform a dummy password verification
+			// to ensure consistent response time regardless of email existence.
+			// The dummy hash uses standard Argon2id parameters.
+			_, _ = s.verifyPassword(password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG")
 			_ = s.customerRepo.RecordFailedLogin(ctx, email)
 			return nil, sharederrors.ErrUnauthorized
 		}
@@ -135,4 +138,29 @@ func (s *AuthService) GetAdminByID(ctx context.Context, adminID string) (*models
 		return nil, fmt.Errorf("getting admin by id: %w", err)
 	}
 	return admin, nil
+}
+
+// UpdateAdminPermissions updates the permissions for an admin.
+// This method is used by super_admin to manage fine-grained permissions for other admins.
+// Pass an empty slice to reset the admin to use role-based default permissions.
+func (s *AuthService) UpdateAdminPermissions(ctx context.Context, adminID string, permissions []models.Permission) (*models.Admin, error) {
+	// Verify the admin exists and update permissions
+	_, err := s.adminRepo.GetByID(ctx, adminID)
+	if err != nil {
+		return nil, fmt.Errorf("getting admin: %w", err)
+	}
+
+	// Update permissions
+	if err := s.adminRepo.UpdatePermissions(ctx, adminID, permissions); err != nil {
+		return nil, fmt.Errorf("updating permissions: %w", err)
+	}
+
+	// Fetch updated admin
+	updated, err := s.adminRepo.GetByID(ctx, adminID)
+	if err != nil {
+		return nil, fmt.Errorf("getting updated admin: %w", err)
+	}
+
+	s.logger.Info("updated admin permissions", "admin_id", adminID, "permission_count", len(permissions))
+	return updated, nil
 }

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -33,11 +34,12 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 	// Optional active filter
 	if isActiveStr := c.Query("is_active"); isActiveStr != "" {
 		var isActive bool
-		if isActiveStr == "true" {
+		switch isActiveStr {
+		case "true":
 			isActive = true
-		} else if isActiveStr == "false" {
+		case "false":
 			isActive = false
-		} else {
+		default:
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
 			return
 		}
@@ -68,7 +70,8 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 	var req models.TemplateCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -155,7 +158,8 @@ func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 
 	var req models.TemplateUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -234,7 +238,8 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 
 	var req TemplateImportRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

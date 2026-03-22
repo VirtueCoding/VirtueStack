@@ -223,3 +223,15 @@ func (r *PlanRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// CountVMsByPlan returns the count of VMs using the specified plan.
+// This is useful for determining if a plan can be safely deleted.
+func (r *PlanRepository) CountVMsByPlan(ctx context.Context, planID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM vms WHERE plan_id = $1`
+	var count int
+	err := r.db.QueryRow(ctx, q, planID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting VMs for plan %s: %w", planID, err)
+	}
+	return count, nil
+}

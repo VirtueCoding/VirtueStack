@@ -96,7 +96,7 @@ E2E tests (`.github/workflows/e2e.yml`) run on push/PR to main affecting WebUI o
 
 | Package | Test Files | Coverage Focus |
 |---------|------------|----------------|
-| `internal/controller/api/admin` | `auth_test.go`, `customers_test.go`, `nodes_test.go` | HTTP handler validation (37 tests) |
+| `internal/controller/api/admin` | `auth_test.go`, `customers_test.go`, `nodes_test.go`, `plans_test.go` | HTTP handler validation (40+ tests) |
 | `internal/controller/api/customer` | `auth_test.go` | Password change, auth validation |
 | `internal/controller/api/middleware` | Multiple | Rate limiting, auth, CSRF |
 | `internal/controller/services` | Multiple | Business logic, auth flows, 2FA |

@@ -118,7 +118,9 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	// Initialize storage backend based on configuration
 	storageBackend, storageType, templateMgr, err := initializeStorage(cfg, logger)
 	if err != nil {
-		libvirtConn.Close()
+		if _, closeErr := libvirtConn.Close(); closeErr != nil {
+			logger.Error("error closing libvirt connection during cleanup", "error", closeErr)
+		}
 		return nil, fmt.Errorf("initializing storage: %w", err)
 	}
 
@@ -149,7 +151,9 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	// Setup gRPC server with mTLS
 	grpcServer, err := s.createGRPCServer()
 	if err != nil {
-		libvirtConn.Close()
+		if _, closeErr := libvirtConn.Close(); closeErr != nil {
+			s.logger.Error("error closing libvirt connection during cleanup", "error", closeErr)
+		}
 		s.closeStorage()
 		return nil, fmt.Errorf("creating gRPC server: %w", err)
 	}
@@ -227,7 +231,7 @@ func (s *Server) registerServices() {
 
 // Start starts the gRPC server and begins listening for connections.
 func (s *Server) Start(ctx context.Context) error {
-	listener, err := net.Listen("tcp", s.listenAddr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.listenAddr)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", s.listenAddr, err)
 	}
@@ -313,7 +317,9 @@ func (s *Server) collectVMMetrics(ctx context.Context) {
 	}
 	defer func() {
 		for _, dom := range domains {
-			dom.Free()
+			if freeErr := dom.Free(); freeErr != nil {
+				s.logger.Warn("error freeing domain resource", "error", freeErr)
+			}
 		}
 	}()
 
@@ -378,7 +384,10 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) {
 
 		go func() {
 			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Derive shutdown context from parent to maintain context chain.
+			// Even though ctx is done, context.WithoutCancel preserves trace
+			// correlation while allowing the shutdown to proceed.
+			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			_ = srv.Shutdown(shutdownCtx)
 		}()
@@ -392,6 +401,8 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) {
 
 func vmMapLibvirtState(state libvirt.DomainState) string {
 	switch state {
+	case libvirt.DOMAIN_NOSTATE:
+		return "no_state"
 	case libvirt.DOMAIN_RUNNING:
 		return "running"
 	case libvirt.DOMAIN_BLOCKED:
@@ -450,11 +461,11 @@ func (s *Server) getDiskUsage() float64 {
 }
 
 // getStoragePoolStats returns the storage pool statistics.
-func (s *Server) getStoragePoolStats() (totalGB, usedGB int64) {
+func (s *Server) getStoragePoolStats(ctx context.Context) (totalGB, usedGB int64) {
 	if s.storageBackend == nil {
 		return 0, 0
 	}
-	stats, err := s.storageBackend.GetPoolStats(context.Background())
+	stats, err := s.storageBackend.GetPoolStats(ctx)
 	if err != nil {
 		s.logger.Warn("could not get storage pool stats", "error", err, "backend", s.storageType)
 		return 0, 0
@@ -634,7 +645,7 @@ func (h *grpcHandler) GetNodeResources(ctx context.Context, req *nodeagentpb.Emp
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
 	}
 
-	totalDiskGB, usedDiskGB := h.server.getStoragePoolStats()
+	totalDiskGB, usedDiskGB := h.server.getStoragePoolStats(ctx)
 
 	return &nodeagentpb.NodeResourcesResponse{
 		TotalVcpu:     resources.TotalVCPU,

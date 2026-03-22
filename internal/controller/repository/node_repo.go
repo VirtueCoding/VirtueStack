@@ -188,8 +188,12 @@ func (r *NodeRepository) RecordHeartbeat(ctx context.Context, hb *models.NodeHea
 // UpdateHeartbeatMisses increments the consecutive heartbeat miss counter for a node.
 func (r *NodeRepository) UpdateHeartbeatMisses(ctx context.Context, nodeID string, misses int) error {
 	const q = `UPDATE nodes SET consecutive_heartbeat_misses = $1 WHERE id = $2`
-	if _, err := r.db.Exec(ctx, q, misses, nodeID); err != nil {
+	tag, err := r.db.Exec(ctx, q, misses, nodeID)
+	if err != nil {
 		return fmt.Errorf("updating heartbeat misses for node %s: %w", nodeID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating heartbeat misses for node %s: %w", nodeID, ErrNoRowsAffected)
 	}
 	return nil
 }
@@ -203,6 +207,35 @@ func (r *NodeRepository) UpdateAllocatedResources(ctx context.Context, nodeID st
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating node %s allocated resources: %w", nodeID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// IncrementAllocatedResources atomically adds the specified vCPU and memory to a node's allocated counts.
+// This is safe for concurrent updates as it uses SQL atomic operations.
+func (r *NodeRepository) IncrementAllocatedResources(ctx context.Context, nodeID string, vcpu, memoryMB int) error {
+	const q = `UPDATE nodes SET allocated_vcpu = allocated_vcpu + $1, allocated_memory_mb = allocated_memory_mb + $2 WHERE id = $3`
+	tag, err := r.db.Exec(ctx, q, vcpu, memoryMB, nodeID)
+	if err != nil {
+		return fmt.Errorf("incrementing node %s allocated resources: %w", nodeID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("incrementing node %s allocated resources: %w", nodeID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// DecrementAllocatedResources atomically subtracts the specified vCPU and memory from a node's allocated counts.
+// This is safe for concurrent updates as it uses SQL atomic operations.
+// Values are clamped to zero to prevent negative allocations.
+func (r *NodeRepository) DecrementAllocatedResources(ctx context.Context, nodeID string, vcpu, memoryMB int) error {
+	const q = `UPDATE nodes SET allocated_vcpu = GREATEST(0, allocated_vcpu - $1), allocated_memory_mb = GREATEST(0, allocated_memory_mb - $2) WHERE id = $3`
+	tag, err := r.db.Exec(ctx, q, vcpu, memoryMB, nodeID)
+	if err != nil {
+		return fmt.Errorf("decrementing node %s allocated resources: %w", nodeID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("decrementing node %s allocated resources: %w", nodeID, ErrNoRowsAffected)
 	}
 	return nil
 }

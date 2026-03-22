@@ -2,12 +2,15 @@ package customer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,8 +35,15 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		PaginationParams: pagination,
 	}
 
+	// Get vm_ids scope from API key (if any)
+	vmIDs := middleware.GetVMIDs(c)
+
 	// Optional VM ID filter
 	if vmID := c.Query("vm_id"); vmID != "" {
+		// Check if API key has access to this VM
+		if !middleware.CheckVMScope(c, vmID) {
+			return
+		}
 		// Verify VM belongs to customer
 		if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 			if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -44,6 +54,9 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 			return
 		}
 		filter.VMID = &vmID
+	} else if len(vmIDs) > 0 {
+		// API key has vm_ids restriction, filter results
+		filter.VMIDs = vmIDs
 	}
 
 	// Optional status filter
@@ -76,12 +89,14 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 
 // CreateBackup handles POST /backups - creates a backup for a VM.
 // This is an async operation. Returns 202 Accepted with a task_id.
+// Quota enforcement is handled atomically in the service layer to prevent race conditions.
 func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	var req CreateBackupRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -92,6 +107,11 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	// Validate UUID
 	if _, err := uuid.Parse(req.VMID); err != nil {
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, req.VMID) {
 		return
 	}
 
@@ -106,22 +126,21 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 		return
 	}
 
+	// Get plan limit for atomic check
 	planLimit := defaultBackupLimit
 	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
 	if planErr == nil && plan.BackupLimit > 0 {
 		planLimit = plan.BackupLimit
 	}
 
-	backupCount, countErr := h.backupRepo.CountBackupsByVM(c.Request.Context(), vm.ID)
-	if countErr == nil && backupCount >= planLimit {
-		middleware.RespondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
-			fmt.Sprintf("Backup limit reached for this VM (%d/%d). Delete existing backups first.", backupCount, planLimit))
-		return
-	}
-
-	// Create backup
-	backup, err := h.backupService.CreateBackup(c.Request.Context(), vm.ID, req.Name)
+	// Create backup with atomic limit check to prevent race conditions
+	backup, err := h.backupService.CreateBackupWithLimitCheck(c.Request.Context(), vm.ID, req.Name, planLimit)
 	if err != nil {
+		if errors.Is(err, services.ErrBackupLimitExceeded) || strings.Contains(err.Error(), "limit exceeded") {
+			middleware.RespondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
+				fmt.Sprintf("Backup limit reached for this VM (%d max). Delete existing backups first.", planLimit))
+			return
+		}
 		h.logger.Error("failed to create backup",
 			"vm_id", req.VMID,
 			"customer_id", customerID,
@@ -163,6 +182,11 @@ func (h *CustomerHandler) GetBackup(c *gin.Context) {
 		return
 	}
 
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, backup.VMID) {
+		return
+	}
+
 	// Verify backup belongs to a VM owned by the customer
 	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
 		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
@@ -192,6 +216,11 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 			return
 		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "BACKUP_DELETE_FAILED", "Failed to retrieve backup")
+		return
+	}
+
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, backup.VMID) {
 		return
 	}
 
@@ -243,6 +272,11 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 		return
 	}
 
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, backup.VMID) {
+		return
+	}
+
 	// Verify backup belongs to a VM owned by the customer
 	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
 		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
@@ -270,6 +304,7 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 }
 
 // verifyBackupOwnership verifies that a VM belongs to the customer.
+//
 // Deprecated: Use verifyVMOwnership instead.
 func (h *CustomerHandler) verifyBackupOwnership(ctx context.Context, vmID, customerID string) bool {
 	return h.verifyVMOwnership(ctx, vmID, customerID)

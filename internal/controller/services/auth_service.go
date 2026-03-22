@@ -37,6 +37,9 @@ const (
 	// MaxAdminSessions is the maximum concurrent sessions for admin users.
 	MaxAdminSessions = 3
 
+	// MaxCustomerSessions is the maximum concurrent sessions for customer users.
+	MaxCustomerSessions = 10
+
 	// MaxFailedLoginAttempts is the maximum failed login attempts before account lockout.
 	MaxFailedLoginAttempts = 5
 
@@ -135,6 +138,12 @@ func (s *AuthService) hashPassword(password string) (string, error) {
 	return hash, nil
 }
 
+// HashPassword hashes a password using Argon2id.
+// This is the public version for use by other services.
+func (s *AuthService) HashPassword(password string) (string, error) {
+	return s.hashPassword(password)
+}
+
 // verifyPassword verifies a password against an Argon2id hash.
 func (s *AuthService) verifyPassword(password, hash string) (bool, error) {
 	match, err := argon2id.ComparePasswordAndHash(password, hash)
@@ -151,4 +160,19 @@ func ConstantTimeCompare(a, b string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// enforceCustomerSessionLimit evicts the oldest customer session when MaxCustomerSessions
+// is already reached. Failures are logged and do not block login.
+func (s *AuthService) enforceCustomerSessionLimit(ctx context.Context, customerID string) {
+	count, err := s.customerRepo.CountSessionsByUser(ctx, customerID, "customer")
+	if err != nil {
+		s.logger.Warn("failed to count customer sessions", "customer_id", customerID, "error", err)
+		return
+	}
+	if count >= MaxCustomerSessions {
+		if err := s.customerRepo.DeleteOldestSession(ctx, customerID, "customer"); err != nil {
+			s.logger.Warn("failed to delete oldest customer session", "customer_id", customerID, "error", err)
+		}
+	}
 }

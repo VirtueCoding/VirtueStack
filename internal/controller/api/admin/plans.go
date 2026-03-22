@@ -22,11 +22,12 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 	// Optional active filter
 	if isActiveStr := c.Query("is_active"); isActiveStr != "" {
 		var isActive bool
-		if isActiveStr == "true" {
+		switch isActiveStr {
+		case "true":
 			isActive = true
-		} else if isActiveStr == "false" {
+		case "false":
 			isActive = false
-		} else {
+		default:
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_IS_ACTIVE", "is_active must be 'true' or 'false'")
 			return
 		}
@@ -52,7 +53,8 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	var req models.PlanCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -98,7 +100,8 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 
 	var req models.PlanUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -171,4 +174,30 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetPlanUsage handles GET /plans/:id/usage - returns VM count for a plan.
+func (h *AdminHandler) GetPlanUsage(c *gin.Context) {
+	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
+	if !ok {
+		return
+	}
+
+	count, err := h.planService.GetPlanUsage(c.Request.Context(), planID)
+	if err != nil {
+		if handleNotFoundError(c, err, "PLAN_NOT_FOUND", "Plan not found") {
+			return
+		}
+		h.logger.Error("failed to get plan usage",
+			"plan_id", planID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PLAN_USAGE_FAILED", "Failed to retrieve plan usage")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"plan_id":  planID,
+		"vm_count": count,
+	})
 }

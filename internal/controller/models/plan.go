@@ -43,7 +43,7 @@ type Plan struct {
 // Price fields are in integer minor units (cents).
 type PlanCreateRequest struct {
 	Name             string `json:"name" validate:"required,max=100"`
-	Slug             string `json:"slug" validate:"required,max=100,alphanum"`
+	Slug             string `json:"slug" validate:"required,max=100,slug"`
 	VCPU             int    `json:"vcpu" validate:"required,min=1"`
 	MemoryMB         int    `json:"memory_mb" validate:"required,min=512"`
 	DiskGB           int    `json:"disk_gb" validate:"required,min=10"`
@@ -64,7 +64,7 @@ type PlanCreateRequest struct {
 // Price fields are in integer minor units (cents).
 type PlanUpdateRequest struct {
 	Name             *string `json:"name,omitempty" validate:"omitempty,max=100"`
-	Slug             *string `json:"slug,omitempty" validate:"omitempty,max=100,alphanum"`
+	Slug             *string `json:"slug,omitempty" validate:"omitempty,max=100,slug"`
 	VCPU             *int    `json:"vcpu,omitempty" validate:"omitempty,min=1"`
 	MemoryMB         *int    `json:"memory_mb,omitempty" validate:"omitempty,min=512"`
 	DiskGB           *int    `json:"disk_gb,omitempty" validate:"omitempty,min=10"`

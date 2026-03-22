@@ -2,9 +2,11 @@ package provisioning
 
 import (
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
+	"slices"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -17,7 +19,8 @@ import (
 func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	var req ProvisioningCreateVMRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -121,7 +124,7 @@ func generateRandomPassword() string {
 		rest[i] = randChar(allChars)
 	}
 
-	combined := append(required, rest...)
+	combined := slices.Concat(required, rest)
 
 	// Shuffle using crypto/rand to avoid predictable placement of required chars
 	for i := len(combined) - 1; i > 0; i-- {

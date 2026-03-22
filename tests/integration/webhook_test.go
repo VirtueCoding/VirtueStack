@@ -443,7 +443,9 @@ func TestWebhookSignatureVerification(t *testing.T) {
 		signature := generateSignature(payloadBytes, secret)
 
 		// Tamper with payload
-		tamperedPayload := append(payloadBytes[:len(payloadBytes)-1], 'X')
+		tamperedPayload := make([]byte, len(payloadBytes)-1)
+		copy(tamperedPayload, payloadBytes[:len(payloadBytes)-1])
+		tamperedPayload = append(tamperedPayload, 'X')
 
 		// Verify should fail
 		valid := suite.WebhookService.VerifySignature(tamperedPayload, signature, secret)

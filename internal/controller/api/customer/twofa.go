@@ -115,7 +115,7 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 	if err != nil {
 		h.logger.Warn("2FA initiation failed", "user_id", userID, "error", err)
 
-		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
+		if errors.Is(err, sharederrors.ErrTwoFAAlreadyEnabled) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
@@ -138,7 +138,8 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	var req Enable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -163,12 +164,12 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(err, sharederrors.Err2FAAlreadyEnabled) {
+		if errors.Is(err, sharederrors.ErrTwoFAAlreadyEnabled) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "ALREADY_ENABLED", "2FA is already enabled for this account")
 			return
 		}
 
-		if errors.Is(err, sharederrors.Err2FASetupNotInitiated) {
+		if errors.Is(err, sharederrors.ErrTwoFASetupNotInitiated) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_INITIATED", "Please initiate 2FA setup first")
 			return
 		}
@@ -188,7 +189,8 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 	var req Disable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -207,7 +209,7 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(err, sharederrors.Err2FANotEnabled) {
+		if errors.Is(err, sharederrors.ErrTwoFANotEnabled) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_ENABLED", "2FA is not enabled for this account")
 			return
 		}

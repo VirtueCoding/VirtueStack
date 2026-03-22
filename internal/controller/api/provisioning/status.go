@@ -1,6 +1,7 @@
 package provisioning
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -116,7 +117,8 @@ func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 
 	var req PowerOperationRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

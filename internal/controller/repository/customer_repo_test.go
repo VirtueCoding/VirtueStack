@@ -261,8 +261,16 @@ func TestCustomerUpdate(t *testing.T) {
 					// Return the updated customer
 					updated := validCustomer
 					if len(args) >= 2 {
-						updated.Name = args[0].(string)
-						updated.Email = args[1].(string)
+						name, ok := args[0].(string)
+						if !ok {
+							t.Fatalf("expected string for name arg, got %T", args[0])
+						}
+						email, ok := args[1].(string)
+						if !ok {
+							t.Fatalf("expected string for email arg, got %T", args[1])
+						}
+						updated.Name = name
+						updated.Email = email
 					}
 					updated.UpdatedAt = time.Now()
 					return mockCustomerRow{customer: updated}
@@ -279,10 +287,8 @@ func TestCustomerUpdate(t *testing.T) {
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Fatalf("expected error containing %q, got %q", tt.errContains, err.Error())
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}

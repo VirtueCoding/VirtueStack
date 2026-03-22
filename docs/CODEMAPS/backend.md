@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-21 | Files scanned: 112 Go files | Token estimate: ~950 -->
+<!-- Generated: 2026-03-22 | Files scanned: 115 Go files | Token estimate: ~1100 -->
 
 # Backend Architecture
 
@@ -17,17 +17,24 @@
 ```
 POST   /auth/login, /verify-2fa, /refresh, /logout
 GET    /auth/me
+GET    /auth/permissions              # List available permissions
+PUT    /auth/permissions/:admin_id    # Update admin permissions (super_admin only)
+
+GET    /admins                        # List admins (super_admin only)
 
 GET    /nodes, /nodes/:id
 POST   /nodes, /nodes/:id/drain, /nodes/:id/failover, /nodes/:id/undrain
 DELETE /nodes/:id
+PUT    /nodes/:id
+
+GET    /failover-requests, /failover-requests/:id
 
 GET    /vms, /vms/:id, /vms/:id/ips
 POST   /vms, /vms/:id/migrate
 DELETE /vms/:id
 PUT    /vms/:id, /vms/:id/ips/:ipId/rdns
 
-GET    /plans
+GET    /plans, /plans/:id/usage
 POST   /plans
 PUT    /plans/:id
 DELETE /plans/:id
@@ -35,6 +42,7 @@ DELETE /plans/:id
 GET    /templates, /templates/:id
 POST   /templates, /templates/:id/import
 DELETE /templates/:id
+PUT    /templates/:id
 
 GET    /ip-sets, /ip-sets/:id, /ip-sets/:id/available
 POST   /ip-sets
@@ -42,6 +50,7 @@ DELETE /ip-sets/:id
 PUT    /ip-sets/:id
 
 GET    /customers, /customers/:id, /customers/:id/audit-logs
+POST   /customers
 DELETE /customers/:id
 PUT    /customers/:id
 
@@ -55,6 +64,11 @@ GET    /backup-schedules, /backup-schedules/:id
 POST   /backup-schedules, /backup-schedules/:id/run
 DELETE /backup-schedules/:id
 PUT    /backup-schedules/:id
+
+GET    /admin-backup-schedules, /admin-backup-schedules/:id
+POST   /admin-backup-schedules, /admin-backup-schedules/:id/run
+DELETE /admin-backup-schedules/:id
+PUT    /admin-backup-schedules/:id
 ```
 
 ## Customer API Routes
@@ -73,6 +87,12 @@ GET    /vms/:id/metrics, /vms/:id/bandwidth, /vms/:id/network
 GET    /vms/:id/ips, /vms/:id/ips/:ipId/rdns
 PUT    /vms/:id/ips/:ipId/rdns
 DELETE /vms/:id/ips/:ipId/rdns
+
+# ISO Management (NEW)
+POST   /vms/:id/iso/upload
+GET    /vms/:id/iso
+DELETE /vms/:id/iso/:isoId
+POST   /vms/:id/iso/:isoId/attach, /vms/:id/iso/:isoId/detach
 
 GET    /ws/vnc/:vmId, /ws/serial/:vmId (WebSocket)
 
@@ -94,11 +114,37 @@ GET    /webhooks, /webhooks/:id, /webhooks/:id/deliveries
 POST   /webhooks
 DELETE /webhooks/:id
 PUT    /webhooks/:id
+POST   /webhooks/:id/test
 
 GET    /templates
 POST   /2fa/initiate, /2fa/enable, /2fa/disable
 GET    /2fa/status, /2fa/backup-codes
 POST   /2fa/backup-codes/regenerate
+```
+
+## Provisioning API Routes
+
+**File:** `internal/controller/api/provisioning/routes.go`
+
+```
+POST   /vms                    # Create VM (async, returns task_id)
+GET    /vms/:id                # Get VM by ID
+GET    /vms/by-service/:id     # Get VM by WHMCS service ID
+DELETE /vms/:id                # Delete VM (async)
+POST   /vms/:id/suspend        # Billing suspend
+POST   /vms/:id/unsuspend      # Unsuspend
+POST   /vms/:id/resize         # Resize resources
+POST   /vms/:id/password       # Set root password
+POST   /vms/:id/password/reset # Reset password
+POST   /vms/:id/power          # Power operations
+GET    /vms/:id/status         # VM status
+GET    /vms/:id/rdns           # Get rDNS
+PUT    /vms/:id/rdns           # Set rDNS
+
+GET    /tasks/:id              # Task status
+
+GET    /plans                  # List plans (NEW)
+GET    /plans/:id              # Get plan (NEW)
 ```
 
 ## Service Layer
@@ -117,7 +163,7 @@ POST   /2fa/backup-codes/regenerate
 | MigrationService | `migration_service.go` | Live migration |
 | FailoverService | `failover_service.go` | HA failover |
 | RDNSService | `rdns_service.go` | Reverse DNS |
-| RBACService | `rbac_service.go` | Permissions |
+| RBACService | `rbac_service.go` | Permissions (NEW) |
 | IPAMService | `ipam_service.go` | IP allocation |
 | BandwidthService | `bandwidth_service.go` | Usage tracking |
 | WebhookService | `webhook.go` | Webhook delivery |
@@ -141,13 +187,14 @@ POST   /2fa/backup-codes/regenerate
 | WebhookRepo | `webhook_repo.go` | customer_webhooks, webhook_deliveries |
 | SettingsRepo | `settings_repo.go` | system_settings |
 | FailoverRepo | `failover_repo.go` | failover_requests |
+| ConsoleTokenRepo | `console_token_repo.go` | console_tokens (NEW) |
 
 ## Middleware Chain
 
 **Directory:** `internal/controller/api/middleware/`
 
 ```
-Request → Correlation → Metrics → RateLimit → Recovery → Auth → CSRF → Validation → Handler
+Request → Correlation → Metrics → RateLimit → Recovery → Auth → CSRF → Permissions → Validation → Handler
 ```
 
 | Middleware | File | Purpose |
@@ -156,6 +203,8 @@ Request → Correlation → Metrics → RateLimit → Recovery → Auth → CSRF
 | APIKeyAuth | `auth.go` | Provisioning API key |
 | RequireRole | `auth.go` | Admin role check |
 | RequireUserType | `auth.go` | Customer type check |
+| RequireAdminPermission | `permissions.go` | Admin RBAC check (NEW) |
+| RequirePermission | `permissions.go` | Customer API key permissions (NEW) |
 | CSRF | `csrf.go` | Double-submit token |
 | RateLimit | `ratelimit.go` | Token bucket per IP/user |
 | Metrics | `metrics.go` | Prometheus instrumentation |

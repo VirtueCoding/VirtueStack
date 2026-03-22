@@ -1,6 +1,6 @@
 # VirtueStack Installation Guide
 
-**Version:** 2.2 — March 2026
+**Version:** 2.3 — March 2026
 
 This guide covers installation for both production deployments and test/development environments.
 
@@ -33,7 +33,7 @@ This guide covers installation for both production deployments and test/developm
 |-------------|---------|-------|
 | Docker Engine | 26+ | Container runtime |
 | Docker Compose | 2.x | Container orchestration |
-| Go | 1.24+ | For building from source |
+| Go | 1.26+ | For building from source |
 | Make | Any | Build automation |
 | OpenSSL | 1.1.1+ | Certificate generation |
 
@@ -44,11 +44,29 @@ This guide covers installation for both production deployments and test/developm
 | Ubuntu Server | 24.04 LTS | Recommended OS |
 | KVM/QEMU | 8.x | Hardware virtualization |
 | libvirt | 10.x | VM management |
-| Go | 1.24+ | For building from source |
+| Go | 1.26+ | For building from source |
 | Ceph client | Reef (18.x) or Squid (19.x) | Only for Ceph backend |
 | qemu-utils | 8.x | For QCOW2 operations |
 | cloud-image-utils | Any | Cloud-init ISO generation |
 | dnsmasq | 2.x | DHCP/DNS for VMs |
+
+**Node Agent Binary Dependencies:**
+
+The `node-agent` binary is dynamically linked and requires these shared libraries at runtime:
+
+| Library | Package | Purpose |
+|---------|---------|---------|
+| `libvirt.so.0` | `libvirt0` | KVM/QEMU VM management |
+| `libvirt-qemu.so.0` | `libvirt0` | QEMU-specific APIs |
+| `librbd.so.1` | `librbd1` | Ceph RBD block storage |
+| `librados.so.2` | `librados2` | Ceph RADOS client |
+
+**Minimum installation for binary-only deployment:**
+```bash
+sudo apt install -y libvirt0 librbd1 librados2
+```
+
+> **Note:** The node-agent uses CGO to interface with libvirt and Ceph. These dependencies cannot be statically linked. Full hypervisor nodes typically already have these libraries installed as part of KVM/libvirt setup.
 
 ### Hardware Requirements
 
@@ -237,6 +255,11 @@ sudo apt install -y qemu-utils cloud-image-utils dnsmasq
 
 # For Ceph backend, install ceph-common
 sudo apt install -y ceph-common
+
+# Verify node-agent binary dependencies (run after copying binary)
+# This will show all required shared libraries
+ldd /usr/local/bin/virtuestack-node-agent
+# If any libraries show "not found", install the missing packages above
 ```
 
 #### Step 2: Configure Network Bridge
@@ -835,6 +858,21 @@ rbd info vs-vms/vs-{vm-uuid}-disk0
 # Check storage (QCOW2)
 ls -la /var/lib/virtuestack/vms/
 qemu-img info /var/lib/virtuestack/vms/vs-{vm-uuid}-disk0.qcow2
+```
+
+#### Node agent fails to start with "library not found"
+
+```bash
+# Check for missing shared libraries
+ldd /usr/local/bin/virtuestack-node-agent | grep "not found"
+
+# Common missing libraries and their packages:
+# libvirt.so.0 not found  → sudo apt install libvirt0
+# librbd.so.1 not found   → sudo apt install librbd1
+# librados.so.2 not found → sudo apt install librados2
+
+# Install all required libraries
+sudo apt install -y libvirt0 librbd1 librados2
 ```
 
 ### Useful Commands

@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -142,7 +143,9 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePa
 	// Verify the copied image
 	if err := m.verifyImage(ctx, targetPath); err != nil {
 		// Cleanup on verification failure
-		os.Remove(targetPath)
+		if rmErr := os.Remove(targetPath); rmErr != nil {
+			logger.Warn("failed to cleanup template after verification failure", "path", targetPath, "error", rmErr)
+		}
 		return "", 0, fmt.Errorf("importing template %s: verification failed: %w", name, err)
 	}
 
@@ -150,7 +153,9 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePa
 	size, err := m.GetTemplateSize(ctx, targetPath)
 	if err != nil {
 		// Cleanup on size check failure
-		os.Remove(targetPath)
+		if rmErr := os.Remove(targetPath); rmErr != nil {
+			logger.Warn("failed to cleanup template after size check failure", "path", targetPath, "error", rmErr)
+		}
 		return "", 0, fmt.Errorf("importing template %s: getting size: %w", name, err)
 	}
 
@@ -239,7 +244,9 @@ func (m *QCOWTemplateManager) CloneForVM(ctx context.Context, templatePath, vmID
 	// Resize if needed (VM disk is typically larger than template)
 	if err := m.resizeImage(ctx, vmDiskPath, sizeGB); err != nil {
 		// Cleanup on resize failure
-		os.Remove(vmDiskPath)
+		if rmErr := os.Remove(vmDiskPath); rmErr != nil {
+			logger.Warn("failed to cleanup VM disk after resize failure", "path", vmDiskPath, "error", rmErr)
+		}
 		return "", fmt.Errorf("cloning template for VM %s: resizing: %w", vmID, err)
 	}
 
@@ -333,8 +340,12 @@ func (m *QCOWTemplateManager) validateWritable(path string) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
-	os.Remove(testFile)
+	if err := f.Close(); err != nil {
+		m.logger.Warn("failed to close test file during writable check", "path", testFile, "error", err)
+	}
+	if err := os.Remove(testFile); err != nil {
+		m.logger.Warn("failed to remove test file during writable check", "path", testFile, "error", err)
+	}
 	return nil
 }
 
@@ -345,7 +356,11 @@ func (m *QCOWTemplateManager) copyFile(src, dst string) (err error) {
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
-	defer in.Close()
+	defer func() {
+		if cerr := in.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	out, err := os.Create(dst)
 	if err != nil {
@@ -412,7 +427,8 @@ func (m *QCOWTemplateManager) getQemuImageSize(ctx context.Context, path string)
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
 			return 0, fmt.Errorf("qemu-img info failed for %s: %w (stderr: %s)", path, err, strings.TrimSpace(string(ee.Stderr)))
 		}
 		return 0, fmt.Errorf("qemu-img info failed for %s: %w", path, err)

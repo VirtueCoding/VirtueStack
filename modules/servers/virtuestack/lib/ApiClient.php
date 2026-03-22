@@ -41,7 +41,7 @@ final class ApiClient
      * @param string $apiUrl    Base URL for Controller API (e.g., https://controller.example.com/api/v1)
      * @param string $apiKey    Provisioning API key
      * @param int    $timeout   Request timeout in seconds
-     * @param bool   $verifySsl Whether to verify SSL certificates
+     * @param bool   $verifySsl Whether to verify SSL certificates (ignored in production - always true)
      */
     public function __construct(
         string $apiUrl,
@@ -51,11 +51,16 @@ final class ApiClient
         bool $debug = false
     ) {
         $apiUrl = rtrim($apiUrl, '/');
-        
+
         if (!filter_var($apiUrl, FILTER_VALIDATE_URL)) {
             throw new InvalidArgumentException('Invalid API URL provided');
         }
-        
+
+        // SECURITY: Enforce HTTPS for production API calls
+        if (strpos($apiUrl, 'https://') !== 0) {
+            throw new InvalidArgumentException('API URL must use HTTPS for secure communication');
+        }
+
         if (empty($apiKey)) {
             throw new InvalidArgumentException('API key cannot be empty');
         }
@@ -63,7 +68,8 @@ final class ApiClient
         $this->apiUrl = $apiUrl;
         $this->apiKey = $apiKey;
         $this->timeout = max(5, $timeout);
-        $this->verifySsl = $verifySsl;
+        // SECURITY: Always verify SSL certificates - do not allow disabling in production
+        $this->verifySsl = true;
         $this->debug = $debug;
         $this->userAgent = 'VirtueStack-WHMCS/1.0 (PHP ' . PHP_VERSION . ')';
     }
@@ -102,7 +108,10 @@ final class ApiClient
         $required = ['customer_id', 'plan_id', 'template_id', 'hostname', 'whmcs_service_id'];
         $this->validateRequired($params, $required);
 
-        $response = $this->request('POST', '/provisioning/vms', $params);
+        // SECURITY: Generate idempotency key from service_id to prevent duplicate VMs on retry
+        $idempotencyKey = 'whmcs-service-' . $params['whmcs_service_id'];
+
+        $response = $this->request('POST', '/provisioning/vms', $params, $idempotencyKey);
 
         if (!isset($response['data']['task_id'], $response['data']['vm_id'])) {
             throw new RuntimeException('Invalid response from API: missing task_id or vm_id');
@@ -229,6 +238,47 @@ final class ApiClient
         $response = $this->request('GET', "/provisioning/plans/{$planId}");
 
         return $response['data'] ?? [];
+    }
+
+    /**
+     * List all active plans.
+     *
+     * Used by WHMCS for product configuration validation and dropdown population.
+     *
+     * @return array List of active plans with id, name, vcpu, memory_mb, disk_gb
+     *
+     * @throws RuntimeException On API error
+     */
+    public function listPlans(): array
+    {
+        try {
+            $response = $this->request('GET', '/provisioning/plans');
+            return $this->normalizeListResponse($response['data'] ?? []);
+        } catch (\Throwable $e) {
+            // Fallback to admin endpoint if provisioning endpoint fails
+            $this->log('warning', 'listPlans: Provisioning endpoint failed, trying admin: ' . $e->getMessage());
+        }
+
+        $response = $this->request('GET', '/admin/plans');
+        return $this->normalizeListResponse($response['data'] ?? []);
+    }
+
+    /**
+     * Validate that a plan ID exists in the system.
+     *
+     * @param string $planId Plan UUID to validate
+     *
+     * @return bool True if plan exists and is active
+     */
+    public function planExists(string $planId): bool
+    {
+        try {
+            $this->validateUuid($planId, 'Plan ID');
+            $plan = $this->getPlan($planId);
+            return !empty($plan) && ($plan['is_active'] ?? true);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**
@@ -484,18 +534,19 @@ final class ApiClient
     /**
      * Make an HTTP request to the API.
      *
-     * @param string $method HTTP method
-     * @param string $path   API path (relative to base URL)
-     * @param array  $data   Request body data (for POST/PATCH/PUT)
+     * @param string $method        HTTP method
+     * @param string $path          API path (relative to base URL)
+     * @param array  $data          Request body data (for POST/PATCH/PUT)
+     * @param string $idempotencyKey Optional idempotency key for deduplication
      *
      * @return array Decoded JSON response
      *
      * @throws RuntimeException On HTTP error or invalid response
      */
-    private function request(string $method, string $path, array $data = []): array
+    private function request(string $method, string $path, array $data = [], string $idempotencyKey = ''): array
     {
         $url = $this->apiUrl . $path;
-        
+
         if ($this->debug) {
             $this->log('debug', "API Request: {$method} {$url}");
         }
@@ -513,6 +564,11 @@ final class ApiClient
 
         if (!empty($data) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
             $headers[] = 'Content-Type: application/json';
+        }
+
+        // Add idempotency key header for deduplication on POST requests
+        if (!empty($idempotencyKey) && $method === 'POST') {
+            $headers[] = 'Idempotency-Key: ' . $idempotencyKey;
         }
 
         $options = [

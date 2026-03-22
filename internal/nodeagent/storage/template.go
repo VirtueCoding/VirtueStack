@@ -94,7 +94,11 @@ func (m *TemplateManager) ImportTemplate(ctx context.Context, name, osFamily, os
 	if err != nil {
 		return fmt.Errorf("importing template %s: creating temp dir: %w", name, err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			logger.Warn("failed to remove temp directory during cleanup", "path", tmpDir, "error", err)
+		}
+	}()
 
 	// Convert qcow2 to raw
 	rawPath := filepath.Join(tmpDir, name+".raw")
@@ -303,7 +307,11 @@ func (m *TemplateManager) createTemplateSnapshot(ctx context.Context, imageName,
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot creation", "image", imageName, "error", err)
+		}
+	}()
 
 	if _, err := img.CreateSnapshot(snapName); err != nil {
 		return fmt.Errorf("creating snapshot %s@%s: %w", imageName, snapName, err)
@@ -327,7 +335,11 @@ func (m *TemplateManager) protectTemplateSnapshot(ctx context.Context, imageName
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot protect: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot protect", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Protect(); err != nil {
@@ -352,7 +364,11 @@ func (m *TemplateManager) unprotectTemplateSnapshot(ctx context.Context, imageNa
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot unprotect: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot unprotect", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Unprotect(); err != nil {
@@ -398,7 +414,11 @@ func (m *TemplateManager) removeSnapshot(pool, imageName, snapName string) error
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot removal: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			m.logger.Warn("failed to close RBD image after snapshot removal", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Remove(); err != nil {
@@ -441,7 +461,11 @@ func (m *TemplateManager) getImageSize(pool, imageName string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("opening image %s/%s to get size: %w", pool, imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			m.logger.Warn("failed to close RBD image after getting size", "image", imageName, "error", err)
+		}
+	}()
 
 	size, err := img.GetSize()
 	if err != nil {

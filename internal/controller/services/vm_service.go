@@ -236,7 +236,48 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 // CreateVM creates a new virtual machine.
 // This is an async operation that publishes a vm.create task.
 // Returns the created VM record and task ID for polling.
+//
+// Idempotency: If an IdempotencyKey is provided and a task with that key exists,
+// returns the existing VM and task instead of creating duplicates.
+// Also checks for existing VM by WHMCSServiceID to handle WHMCS retries.
 func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, customerID string) (*models.VM, string, error) {
+	// Idempotency check: If WHMCSServiceID provided, check for existing VM
+	// This handles WHMCS retry scenarios where the provisioning call times out
+	// but the VM was already created.
+	if req.WHMCSServiceID != nil && *req.WHMCSServiceID > 0 {
+		existingVM, err := s.vmRepo.GetByWHMCSServiceID(ctx, *req.WHMCSServiceID)
+		if err == nil && existingVM != nil {
+			// VM already exists for this WHMCS service - find the associated task
+			s.logger.Info("VM already exists for WHMCS service, returning existing",
+				"vm_id", existingVM.ID, "whmcs_service_id", *req.WHMCSServiceID, "customer_id", customerID)
+			// Return the existing VM. Task lookup would require storing vm_id in task payload.
+			// For now, return empty task ID since the VM exists.
+			return existingVM, "", nil
+		}
+	}
+
+	// Idempotency check: If IdempotencyKey provided, check for existing task
+	if req.IdempotencyKey != "" {
+		existingTask, err := s.taskRepo.GetByIDempotencyKey(ctx, req.IdempotencyKey)
+		if err == nil && existingTask != nil {
+			// Task exists - extract VM ID from payload if available
+			s.logger.Info("Task already exists for idempotency key, returning existing",
+				"task_id", existingTask.ID, "idempotency_key", req.IdempotencyKey)
+			// Parse the VM ID from the task payload (json.RawMessage)
+			var payload struct {
+				VMID string `json:"vm_id"`
+			}
+			if err := json.Unmarshal(existingTask.Payload, &payload); err == nil && payload.VMID != "" {
+				vm, err := s.vmRepo.GetByID(ctx, payload.VMID)
+				if err == nil {
+					return vm, existingTask.ID, nil
+				}
+			}
+			// Task exists but VM not found - return task ID only
+			return nil, existingTask.ID, nil
+		}
+	}
+
 	plan, template, err := s.validateCreateVMRequest(ctx, req)
 	if err != nil {
 		return nil, "", err
@@ -295,7 +336,8 @@ func (s *VMService) StartVM(ctx context.Context, vmID, customerID string, isAdmi
 
 	// Update status
 	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
-		s.logger.Warn("failed to update VM status after start", "vm_id", vm.ID, "error", err)
+		s.logger.Error("failed to update VM status after start - status mismatch may occur",
+			"vm_id", vm.ID, "error", err)
 	}
 
 	s.logger.Info("VM started", "vm_id", vm.ID, "customer_id", customerID)
@@ -335,7 +377,8 @@ func (s *VMService) StopVM(ctx context.Context, vmID, customerID string, force b
 
 	// Update status
 	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusStopped); err != nil {
-		s.logger.Warn("failed to update VM status after stop", "vm_id", vm.ID, "error", err)
+		s.logger.Error("failed to update VM status after stop - status mismatch may occur",
+			"vm_id", vm.ID, "error", err)
 	}
 
 	s.logger.Info("VM stopped", "vm_id", vm.ID, "force", force, "customer_id", customerID)
@@ -371,6 +414,12 @@ func (s *VMService) RestartVM(ctx context.Context, vmID, customerID string, isAd
 	// Start the VM
 	if err := s.nodeAgent.StartVM(ctx, *vm.NodeID, vm.ID); err != nil {
 		return fmt.Errorf("starting VM during restart: %w", err)
+	}
+
+	// Update status to running
+	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
+		s.logger.Error("failed to update VM status after restart - status mismatch may occur",
+			"vm_id", vm.ID, "error", err)
 	}
 
 	s.logger.Info("VM restarted", "vm_id", vm.ID, "customer_id", customerID)
@@ -499,11 +548,30 @@ func (s *VMService) ReinstallVM(ctx context.Context, vmID, templateID, customerI
 	return vm, taskID, nil
 }
 
+// GetPlan retrieves a plan by ID.
+// This is a convenience method for handlers that need to validate plan existence.
+func (s *VMService) GetPlan(ctx context.Context, planID string) (*models.Plan, error) {
+	plan, err := s.planRepo.GetByID(ctx, planID)
+	if err != nil {
+		return nil, fmt.Errorf("getting plan: %w", err)
+	}
+	return plan, nil
+}
+
 // ResizeVM resizes a VM's resources.
 // CPU/memory-only changes are performed synchronously (libvirt hot-plug).
 // Disk resize changes are performed asynchronously via vm.resize task.
 // Returns a task ID when disk resize is required, empty string for synchronous ops.
 func (s *VMService) ResizeVM(ctx context.Context, vmID, customerID string, newVcpu, newMemoryMB, newDiskGB int, isAdmin bool) (string, error) {
+	return s.ResizeVMWithPlan(ctx, vmID, customerID, newVcpu, newMemoryMB, newDiskGB, "", isAdmin)
+}
+
+// ResizeVMWithPlan resizes a VM's resources and optionally updates the plan.
+// When newPlanID is provided, the VM's plan is updated to the new plan.
+// CPU/memory-only changes are performed synchronously (libvirt hot-plug).
+// Disk resize changes are performed asynchronously via vm.resize task.
+// Returns a task ID when disk resize is required, empty string for synchronous ops.
+func (s *VMService) ResizeVMWithPlan(ctx context.Context, vmID, customerID string, newVcpu, newMemoryMB, newDiskGB int, newPlanID string, isAdmin bool) (string, error) {
 	// Get VM and verify ownership
 	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
 	if err != nil {
@@ -551,6 +619,14 @@ func (s *VMService) ResizeVM(ctx context.Context, vmID, customerID string, newVc
 	// Check if node is assigned
 	if vm.NodeID == nil {
 		return "", fmt.Errorf("VM has no node assigned")
+	}
+
+	// Update plan if a new plan is provided
+	if newPlanID != "" && newPlanID != vm.PlanID {
+		if err := s.vmRepo.UpdatePlanID(ctx, vm.ID, newPlanID); err != nil {
+			return "", fmt.Errorf("updating VM plan: %w", err)
+		}
+		s.logger.Info("VM plan updated", "vm_id", vm.ID, "old_plan_id", vm.PlanID, "new_plan_id", newPlanID)
 	}
 
 	requiresDiskResize := newDiskGB > vm.DiskGB

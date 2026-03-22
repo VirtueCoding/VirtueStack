@@ -582,11 +582,12 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 	}
 
 	// Validate storage backend specific requirements
-	if cfg.StorageBackend == "qcow" {
+	switch cfg.StorageBackend {
+	case "qcow":
 		if cfg.StoragePath == "" {
 			missing = append(missing, "STORAGE_PATH (required when storage_backend is qcow)")
 		}
-	} else if cfg.StorageBackend == "ceph" {
+	case "ceph":
 		// Validate Ceph settings
 		if cfg.CephPool == "" {
 			missing = append(missing, "CEPH_POOL (required when storage_backend is ceph)")
@@ -597,7 +598,9 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 		if cfg.CephConf == "" {
 			missing = append(missing, "CEPH_CONF (required when storage_backend is ceph)")
 		}
-	} else if cfg.StorageBackend != "" && cfg.StorageBackend != "ceph" && cfg.StorageBackend != "qcow" {
+	case "":
+		// Empty is valid (uses default)
+	default:
 		return fmt.Errorf("invalid storage_backend %q: must be 'ceph' or 'qcow'", cfg.StorageBackend)
 	}
 

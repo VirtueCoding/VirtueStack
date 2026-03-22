@@ -108,9 +108,12 @@ func (r *ProvisioningKeyRepository) List(ctx context.Context, includeRevoked boo
 // UpdateLastUsed updates the last_used_at timestamp for a key.
 func (r *ProvisioningKeyRepository) UpdateLastUsed(ctx context.Context, id string) error {
 	const q = `UPDATE provisioning_keys SET last_used_at = NOW() WHERE id = $1`
-	_, err := r.db.Exec(ctx, q, id)
+	tag, err := r.db.Exec(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("updating last_used_at for key %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating last_used_at for key %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
 }

@@ -327,10 +327,16 @@ func (p *EmailProvider) sendEmail(ctx context.Context, to, msg string) error {
 
 	client, err := smtp.NewClient(conn, p.config.Host)
 	if err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			p.logger.Debug("failed to close connection after SMTP client error", "error", closeErr)
+		}
 		return fmt.Errorf("creating SMTP client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP client", "error", err)
+		}
+	}()
 
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
@@ -347,7 +353,11 @@ func (p *EmailProvider) sendEmail(ctx context.Context, to, msg string) error {
 	if err != nil {
 		return fmt.Errorf("preparing data: %w", err)
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP data writer", "error", err)
+		}
+	}()
 	if _, err := w.Write([]byte(msg)); err != nil {
 		return fmt.Errorf("writing message: %w", err)
 	}
@@ -370,10 +380,16 @@ func (p *EmailProvider) sendWithSTARTTLS(ctx context.Context, addr string, auth 
 
 	conn, err := smtp.NewClient(netConn, p.config.Host)
 	if err != nil {
-		netConn.Close()
+		if closeErr := netConn.Close(); closeErr != nil {
+			p.logger.Debug("failed to close connection after SMTP client error", "error", closeErr)
+		}
 		return fmt.Errorf("creating SMTP client: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP connection", "error", err)
+		}
+	}()
 
 	// Send EHLO
 	if err := conn.Hello("virtuestack.local"); err != nil {
@@ -410,7 +426,11 @@ func (p *EmailProvider) sendWithSTARTTLS(ctx context.Context, addr string, auth 
 	if err != nil {
 		return fmt.Errorf("preparing data: %w", err)
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP data writer", "error", err)
+		}
+	}()
 
 	_, err = w.Write([]byte(msg))
 	if err != nil {
@@ -441,16 +461,26 @@ func (p *EmailProvider) sendWithTLS(ctx context.Context, addr string, auth smtp.
 
 	conn := tls.Client(netConn, tlsConfig)
 	if err := conn.HandshakeContext(dialCtx); err != nil {
-		netConn.Close()
+		if closeErr := netConn.Close(); closeErr != nil {
+			p.logger.Debug("failed to close connection after TLS handshake error", "error", closeErr)
+		}
 		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			p.logger.Debug("failed to close TLS connection", "error", err)
+		}
+	}()
 
 	client, err := smtp.NewClient(conn, p.config.Host)
 	if err != nil {
 		return fmt.Errorf("creating SMTP client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP client", "error", err)
+		}
+	}()
 
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
@@ -470,7 +500,11 @@ func (p *EmailProvider) sendWithTLS(ctx context.Context, addr string, auth smtp.
 	if err != nil {
 		return fmt.Errorf("preparing data: %w", err)
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			p.logger.Debug("failed to close SMTP data writer", "error", err)
+		}
+	}()
 
 	_, err = w.Write([]byte(msg))
 	if err != nil {

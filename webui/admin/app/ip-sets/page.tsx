@@ -6,21 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Network, Database, HardDrive, FileSpreadsheet, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, adminIPSetsApi, IPSetDetail } from "@/lib/api-client";
 import { IPSetCreateDialog } from "@/components/ip-sets/IPSetCreateDialog";
+import { IPSetEditDialog } from "@/components/ip-sets/IPSetEditDialog";
+import { IPSetDetailDialog } from "@/components/ip-sets/IPSetDetailDialog";
 import { IPSetImportDialog } from "@/components/ip-sets/IPSetImportDialog";
 import { IPSetList, IPSetDisplay } from "@/components/ip-sets/IPSetList";
-import { CreateIPSetFormData } from "@/components/ip-sets/validation";
-
-interface IPSet {
-  id: string;
-  name: string;
-  type: "ipv4" | "ipv6";
-  location: string;
-  total_ips: number;
-  available_ips: number;
-  cidr: string;
-}
+import { CreateIPSetFormData, EditIPSetFormData } from "@/components/ip-sets/validation";
 
 function mapApiIPSet(raw: Record<string, unknown>): IPSetDisplay {
   return {
@@ -46,6 +38,20 @@ export default function IPSetsPage() {
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedIPSetId, setSelectedIPSetId] = useState<string | null>(null);
+  const [selectedIPSetForEdit, setSelectedIPSetForEdit] = useState<{
+    id: string;
+    name: string;
+    gateway: string;
+    vlan_id?: number | null;
+    location_id?: string | null;
+    node_ids?: string[];
+    ip_version: number;
+    network: string;
+  } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   const fetchIPSets = async () => {
@@ -70,7 +76,7 @@ export default function IPSetsPage() {
   const handleCreate = async (data: CreateIPSetFormData) => {
     setIsCreating(true);
     try {
-      const response = await apiClient.post<IPSet>("/admin/ip-sets", {
+      const response = await adminIPSetsApi.createIPSet({
         name: data.name,
         network: data.network,
         gateway: data.gateway,
@@ -105,6 +111,81 @@ export default function IPSetsPage() {
       });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleView = (ipSet: IPSetDisplay) => {
+    setSelectedIPSetId(ipSet.id);
+    setDetailDialogOpen(true);
+  };
+
+  const handleEditFromDetail = (ipSet: IPSetDetail) => {
+    setSelectedIPSetForEdit({
+      id: ipSet.id,
+      name: ipSet.name,
+      gateway: ipSet.gateway,
+      vlan_id: ipSet.vlan_id ?? null,
+      location_id: ipSet.location_id ?? null,
+      node_ids: ipSet.node_ids ?? [],
+      ip_version: ipSet.ip_version,
+      network: ipSet.network,
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleEdit = async (data: EditIPSetFormData) => {
+    if (!selectedIPSetForEdit) return;
+
+    setIsSaving(true);
+    try {
+      await adminIPSetsApi.updateIPSet(selectedIPSetForEdit.id, {
+        name: data.name,
+        gateway: data.gateway,
+        vlan_id: data.vlan_id ?? undefined,
+        location_id: data.location_id ?? undefined,
+        node_ids: data.node_ids,
+      });
+
+      // Refresh the list
+      await fetchIPSets();
+
+      toast({
+        title: "IP Set Updated",
+        description: `IP set has been updated successfully.`,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to update IP set";
+      toast({
+        title: "Failed to Update IP Set",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEditClick = async (ipSet: IPSetDisplay) => {
+    // Fetch full details for editing
+    try {
+      const details = await adminIPSetsApi.getIPSet(ipSet.id);
+      setSelectedIPSetForEdit({
+        id: details.id,
+        name: details.name,
+        gateway: details.gateway,
+        vlan_id: details.vlan_id ?? null,
+        location_id: details.location_id ?? null,
+        node_ids: details.node_ids ?? [],
+        ip_version: details.ip_version,
+        network: details.network,
+      });
+      setEditDialogOpen(true);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to load IP set details for editing.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -230,7 +311,11 @@ export default function IPSetsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <IPSetList ipSets={filteredIPSets} />
+            <IPSetList
+              ipSets={filteredIPSets}
+              onView={handleView}
+              onEdit={handleEditClick}
+            />
           </CardContent>
         </Card>
       </div>
@@ -240,6 +325,21 @@ export default function IPSetsPage() {
         onOpenChange={setCreateDialogOpen}
         onCreate={handleCreate}
         isCreating={isCreating}
+      />
+
+      <IPSetDetailDialog
+        open={detailDialogOpen}
+        onOpenChange={setDetailDialogOpen}
+        ipSetId={selectedIPSetId}
+        onEdit={handleEditFromDetail}
+      />
+
+      <IPSetEditDialog
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        ipSet={selectedIPSetForEdit}
+        onSave={handleEdit}
+        isSaving={isSaving}
       />
     </div>
   );

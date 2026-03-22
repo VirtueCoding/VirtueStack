@@ -429,7 +429,9 @@ func (m *QCOWManager) FlattenImage(ctx context.Context, imageName string) error 
 		imagePath,
 		tempPath)
 	if err != nil {
-		os.Remove(tempPath)
+		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logger.Debug("failed to remove temporary file after conversion error", "path", tempPath, "error", removeErr)
+		}
 		return fmt.Errorf("flattening image %s: %w", imageName, err)
 	}
 
@@ -437,7 +439,9 @@ func (m *QCOWManager) FlattenImage(ctx context.Context, imageName string) error 
 
 	// Replace original with flattened version
 	if err := os.Rename(tempPath, imagePath); err != nil {
-		os.Remove(tempPath)
+		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logger.Debug("failed to remove temporary file after rename error", "path", tempPath, "error", removeErr)
+		}
 		return fmt.Errorf("replacing image with flattened version %s: %w", imageName, err)
 	}
 

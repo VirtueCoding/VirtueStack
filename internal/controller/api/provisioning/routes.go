@@ -101,6 +101,12 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 	{
 		tasks.GET("/:id", handler.GetTask)
 	}
+
+	plans := group.Group("/plans")
+	{
+		plans.GET("", handler.ListPlans)
+		plans.GET("/:id", handler.GetPlan)
+	}
 }
 
 // RegisterProvisioningRoutes registers all provisioning API routes.
@@ -123,6 +129,8 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 //	POST   /vms/:id/power          - Power operations (start/stop/restart)
 //	GET    /vms/:id/status         - Get VM status
 //	GET    /tasks/:id              - Get task status
+//	GET    /plans                  - List all active plans
+//	GET    /plans/:id              - Get plan details by ID
 func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHandler, apiKeyRepo *repository.ProvisioningKeyRepository, auditRepo *repository.AuditRepository) {
 	apiKeyValidator := APIKeyValidatorFunc(apiKeyRepo)
 

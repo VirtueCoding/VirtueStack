@@ -97,7 +97,11 @@ func (m *Manager) CreateVM(ctx context.Context, cfg *DomainConfig) (*CreateResul
 	if err != nil {
 		return nil, fmt.Errorf("defining domain: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	domainName, err := domain.GetName()
 	if err != nil {
@@ -145,7 +149,11 @@ func (m *Manager) StartVM(ctx context.Context, vmID string) error {
 	if err != nil {
 		return fmt.Errorf("lookup domain for start: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check current state
 	state, _, err := domain.GetState()
@@ -188,7 +196,11 @@ func (m *Manager) StopVM(ctx context.Context, vmID string, timeoutSec int) error
 	if err != nil {
 		return fmt.Errorf("lookup domain for stop: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check current state
 	state, _, err := domain.GetState()
@@ -243,7 +255,11 @@ func (m *Manager) ForceStopVM(ctx context.Context, vmID string) error {
 	if err != nil {
 		return fmt.Errorf("lookup domain for force stop: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check current state
 	state, _, err := domain.GetState()
@@ -279,7 +295,11 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 	if err != nil {
 		return fmt.Errorf("lookup domain for delete: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check current state
 	state, _, err := domain.GetState()
@@ -322,7 +342,11 @@ func (m *Manager) GetStatus(ctx context.Context, vmID string) (*VMStatus, error)
 	if err != nil {
 		return nil, fmt.Errorf("lookup domain for status: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Get domain state
 	state, _, err := domain.GetState()
@@ -360,7 +384,11 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 	if err != nil {
 		return nil, fmt.Errorf("lookup domain for metrics: %w", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check if running
 	state, _, err := domain.GetState()
@@ -374,7 +402,7 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 
 	// Collect all metrics
 	logger := m.logger.With("vm_id", vmID)
-	data := m.collectMetrics(domain, vmID, logger)
+	data := m.collectMetrics(ctx, domain, vmID, logger)
 	return data.toVMMetrics(vmID), nil
 }
 
@@ -405,7 +433,9 @@ func (m *Manager) GetNodeResources(ctx context.Context) (*NodeResources, error) 
 		}
 		usedVCPU += int32(info.NrVirtCpu)
 		usedMemoryMB += int64(info.Memory / 1024) // Convert from KB to MB
-		dom.Free()
+		if err := dom.Free(); err != nil {
+			logger.Debug("failed to free domain", "error", err)
+		}
 	}
 
 	// Read load average from /proc/loadavg
@@ -514,7 +544,11 @@ func (m *Manager) recordVMStartTime(vmID string) error {
 	if err != nil {
 		return fmt.Errorf("creating uptime file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			m.logger.Debug("failed to close uptime file", "error", err)
+		}
+	}()
 
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(data); err != nil {
@@ -537,7 +571,11 @@ func (m *Manager) getVMStartTime(vmID string) int64 {
 		m.logger.Warn("failed to open uptime file", "vm_id", vmID, "error", err)
 		return 0
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			m.logger.Debug("failed to close uptime file", "error", err)
+		}
+	}()
 
 	var data uptimeData
 	decoder := json.NewDecoder(file)
@@ -588,13 +626,13 @@ func (m *Manager) getDomainUptime(domain *libvirt.Domain) (int64, error) {
 }
 
 // getCPUUsage calculates the CPU usage percentage for a domain.
-func (m *Manager) getCPUUsage(domain *libvirt.Domain) (float64, error) {
+func (m *Manager) getCPUUsage(ctx context.Context, domain *libvirt.Domain) (float64, error) {
 	domainName, err := domain.GetName()
 	if err != nil {
 		return 0, err
 	}
 
-	m.ensureCPUSampler(domainName)
+	m.ensureCPUSampler(ctx, domainName)
 
 	cpuUsageCacheMu.RLock()
 	entry, ok := cpuUsageCache[domainName]
@@ -623,7 +661,7 @@ func (m *Manager) getCPUUsage(domain *libvirt.Domain) (float64, error) {
 	return 0, nil
 }
 
-func (m *Manager) ensureCPUSampler(domainName string) {
+func (m *Manager) ensureCPUSampler(ctx context.Context, domainName string) {
 	cpuUsageCacheMu.Lock()
 	entry := cpuUsageCache[domainName]
 	if entry.Sampling {
@@ -635,7 +673,10 @@ func (m *Manager) ensureCPUSampler(domainName string) {
 	cpuUsageCacheMu.Unlock()
 
 	// Create a per-domain context that can be cancelled when the VM is deleted
-	ctx, cancel := context.WithCancel(m.ctx)
+	// Derive sampler context from passed context. We use context.WithoutCancel to detach
+	// from request cancellation since the sampler should run independently of individual requests.
+	// The sampler is cancelled when the VM is deleted via stopCPUSampler.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	samplerCancelMu.Lock()
 	samplerCancelFuncs[domainName] = cancel
 	samplerCancelMu.Unlock()
@@ -676,7 +717,11 @@ func (m *Manager) sampleCPUUsage(domainName string) {
 	if err != nil {
 		return
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	info, err := domain.GetInfo()
 	if err != nil {
@@ -766,6 +811,7 @@ func (m *Manager) getMemoryUsageFromStats(domain *libvirt.Domain) (int64, bool) 
 // parseMemoryStats extracts available, unused, and RSS values from memory stats.
 func parseMemoryStats(stats []libvirt.DomainMemoryStat) (available, unused, rss uint64) {
 	for _, stat := range stats {
+		//nolint:exhaustive // We only care about these specific memory stats; others are intentionally ignored
 		switch libvirt.DomainMemoryStatTags(stat.Tag) {
 		case libvirt.DOMAIN_MEMORY_STAT_AVAILABLE:
 			available = stat.Val
@@ -773,6 +819,8 @@ func parseMemoryStats(stats []libvirt.DomainMemoryStat) (available, unused, rss 
 			unused = stat.Val
 		case libvirt.DOMAIN_MEMORY_STAT_RSS:
 			rss = stat.Val
+		default:
+			// Ignore other memory stat tags (e.g., SWAP_IN, SWAP_OUT, MAJOR_FAULT, etc.)
 		}
 	}
 	return

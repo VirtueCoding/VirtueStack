@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -129,7 +130,7 @@ func (s *RDNSService) GetReverseDNS(ctx context.Context, ipAddress string) (stri
 	var content string
 	err = s.db.QueryRowContext(ctx, query, zoneID, ptrName).Scan(&content)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
 		return "", fmt.Errorf("querying PTR record: %w", err)
@@ -155,7 +156,7 @@ func (s *RDNSService) getZoneID(ctx context.Context, zoneName string) (int64, er
 	var zoneID int64
 	err := s.db.QueryRowContext(ctx, query, zoneName).Scan(&zoneID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, fmt.Errorf("zone %s not found in PowerDNS", zoneName)
 		}
 		return 0, fmt.Errorf("querying zone ID: %w", err)
@@ -234,7 +235,7 @@ func (s *RDNSService) updateSOASerial(ctx context.Context, zoneID int64) error {
 	var content string
 	err := s.db.QueryRowContext(ctx, selectQuery, zoneID).Scan(&recordID, &content)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			// No SOA record found - this is unusual but not fatal
 			return fmt.Errorf("no SOA record found for zone")
 		}

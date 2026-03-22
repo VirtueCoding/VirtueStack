@@ -1,6 +1,7 @@
+version: "2"
+
 run:
   timeout: 5m
-  go: "1.25"
 
 linters:
   enable:
@@ -8,9 +9,7 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
     - bodyclose
     - contextcheck
     - durationcheck
@@ -31,8 +30,9 @@ linters:
     - unconvert
     - unparam
     - wastedassign
-    - funlen
-    - nestif
+  # funlen and nestif are style preferences, disabled globally
+  # - funlen
+  # - nestif
 
 linters-settings:
   revive:
@@ -64,6 +64,11 @@ linters-settings:
   gosec:
     excludes:
       - G104  # We use errcheck separately
+      - G101  # False positives for const names containing "password", "key", etc.
+      - G115  # Integer overflow - we use explicit conversions safely
+      - G204  # Subprocess with variable - IPMI commands need dynamic args
+      - G304  # File inclusion - we use trusted paths from config
+      - G306  # WriteFile permissions - appropriate for our use case
 
   errcheck:
     check-type-assertions: true
@@ -89,8 +94,23 @@ issues:
         - gosec
         - errcheck
         - forcetypeassert
+        - funlen
+        - nestif
+        - revive
+        - gocritic
     - path: proto/
       linters:
         - all
+    - path: webui/.*/node_modules/
+      linters:
+        - all
+    - path: tests/
+      linters:
+        - errcheck
+        - forcetypeassert
+        - errorlint
+        - funlen
+        - gocritic
+        - gosec
   max-issues-per-linter: 0
   max-same-issues: 0

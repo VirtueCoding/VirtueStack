@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -39,7 +40,8 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 
 	var req UpdateProfileRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -67,7 +69,8 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		if validationErr, ok := err.(*sharederrors.ValidationError); ok {
+		var validationErr *sharederrors.ValidationError
+		if errors.As(err, &validationErr) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", validationErr.Error())
 			return
 		}

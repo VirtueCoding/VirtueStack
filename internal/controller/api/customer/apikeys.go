@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/audit"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -111,7 +112,8 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 
 	var req CreateAPIKeyRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -333,6 +335,7 @@ func hashAPIKey(rawKey string) string {
 
 // logAudit creates an audit log entry for customer operations.
 // resourceType identifies the kind of entity being acted upon (e.g. "api_key", "ip_address").
+// Sensitive fields are automatically masked before logging.
 func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourceID string, changes map[string]any, success bool) {
 	if h.auditRepo == nil {
 		return
@@ -342,9 +345,11 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 	actorIP := c.ClientIP()
 	correlationID := middleware.GetCorrelationID(c)
 
-	changesJSON, _ := json.Marshal(changes)
+	// Mask sensitive fields before logging
+	maskedChanges := audit.MaskSensitiveFields(changes)
+	changesJSON, _ := json.Marshal(maskedChanges)
 
-	audit := &models.AuditLog{
+	auditLog := &models.AuditLog{
 		ActorID:       &customerID,
 		ActorType:     models.AuditActorCustomer,
 		ActorIP:       &actorIP,
@@ -356,7 +361,7 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 		Success:       success,
 	}
 
-	if err := h.auditRepo.Append(c.Request.Context(), audit); err != nil {
+	if err := h.auditRepo.Append(c.Request.Context(), auditLog); err != nil {
 		h.logger.Error("failed to write audit log",
 			"action", action,
 			"resource_id", resourceID,
@@ -365,7 +370,7 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 }
 
 // CustomerAPIKeyValidator returns a function that validates customer API keys.
-// It returns the key ID, customer ID, permissions, and allowed IPs for valid keys.
+// It returns the key ID, customer ID, permissions, allowed IPs, and VM IDs for valid keys.
 // Returns an error if the key is not found, revoked, or expired.
 func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middleware.CustomerAPIKeyValidator {
 	return func(ctx context.Context, keyHash string) (middleware.CustomerAPIKeyInfo, error) {
@@ -384,6 +389,7 @@ func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middlewa
 			CustomerID:  key.CustomerID,
 			Permissions: key.Permissions,
 			AllowedIPs:  key.AllowedIPs,
+			VMIDs:       key.VMIDs,
 		}, nil
 	}
 }

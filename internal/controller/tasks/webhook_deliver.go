@@ -146,7 +146,7 @@ func executeDeliveryAttempt(
 	delivery *models.WebhookDelivery,
 	logger *slog.Logger,
 ) bool {
-	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, deps.EncryptionKey)
+	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, deps.EncryptionKey, logger)
 
 	// Calculate next retry time if failed.
 	var nextRetryAt *time.Time
@@ -203,7 +203,7 @@ func executeDeliveryAttempt(
 
 // deliverWebhook performs the actual HTTP delivery of a webhook.
 // Returns success status, HTTP response code, response body, and error message.
-func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.CustomerWebhook, delivery *models.WebhookDelivery, encryptionKey string) (bool, int, string, string) {
+func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.CustomerWebhook, delivery *models.WebhookDelivery, encryptionKey string, logger *slog.Logger) (bool, int, string, string) {
 	// Validate the URL is parseable. SSRF protection is enforced at TCP connect
 	// time by the custom dialer in the HTTP client (see newSSRFSafeDialContext).
 	_, err := url.Parse(webhook.URL)
@@ -238,7 +238,11 @@ func deliverWebhook(ctx context.Context, client *http.Client, webhook *models.Cu
 	if err != nil {
 		return false, 0, "", fmt.Sprintf("sending request: %s", err.Error())
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.Warn("failed to close response body", "error", closeErr)
+		}
+	}()
 
 	// Read response body (limited to 4KB)
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 4096))

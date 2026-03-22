@@ -218,11 +218,11 @@ func PasswordChangeRateLimit() gin.HandlerFunc {
 	})
 }
 
-// ProvisioningRateLimit allows up to 100 requests per minute per API key.
-// Suitable for automated provisioning workflows with reasonable rate limiting.
+// ProvisioningRateLimit allows up to 1000 requests per minute per API key.
+// Suitable for high-volume WHMCS provisioning workflows with automated batch operations.
 func ProvisioningRateLimit() gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{
-		Requests: 100,
+		Requests: 1000,
 		Window:   time.Minute,
 		KeyFunc:  keyByAPIKeyID,
 	})

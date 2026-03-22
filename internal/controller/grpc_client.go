@@ -185,7 +185,11 @@ func (nc *NodeClient) RemoveConnection(nodeID string) {
 	defer nc.mu.Unlock()
 
 	if conn, exists := nc.conns[nodeID]; exists {
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			nc.logger.Warn("failed to close gRPC connection",
+				"node_id", nodeID,
+				"error", err)
+		}
 		delete(nc.conns, nodeID)
 		nc.logger.Info("removed gRPC connection", "node_id", nodeID)
 	}
@@ -197,8 +201,13 @@ func (nc *NodeClient) Close() {
 	defer nc.mu.Unlock()
 
 	for nodeID, conn := range nc.conns {
-		conn.Close()
-		nc.logger.Debug("closed gRPC connection", "node_id", nodeID)
+		if err := conn.Close(); err != nil {
+			nc.logger.Warn("failed to close gRPC connection",
+				"node_id", nodeID,
+				"error", err)
+		} else {
+			nc.logger.Debug("closed gRPC connection", "node_id", nodeID)
+		}
 	}
 
 	nc.conns = make(map[string]*grpc.ClientConn)

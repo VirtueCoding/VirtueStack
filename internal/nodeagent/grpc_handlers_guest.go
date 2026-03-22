@@ -63,7 +63,11 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			h.server.logger.Debug("failed to free domain after guest exec", "vm_id", req.GetVmId(), "error", err)
+		}
+	}()
 
 	// Build the guest-exec command
 	args := req.GetArgs()
@@ -138,7 +142,11 @@ func (h *grpcHandler) GuestSetPassword(ctx context.Context, req *nodeagentpb.Gue
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			h.server.logger.Debug("failed to free domain after guest password set", "vm_id", req.GetVmId(), "error", err)
+		}
+	}()
 
 	agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
 	if err := agent.SetUserPassword(ctx, req.GetUsername(), req.GetPasswordHash()); err != nil {
@@ -161,7 +169,11 @@ func (h *grpcHandler) GuestFreezeFilesystems(ctx context.Context, req *nodeagent
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			h.server.logger.Debug("failed to free domain after guest freeze", "vm_id", req.GetVmId(), "error", err)
+		}
+	}()
 
 	agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
 	count, err := agent.FreezeFilesystems(ctx)
@@ -187,7 +199,11 @@ func (h *grpcHandler) GuestThawFilesystems(ctx context.Context, req *nodeagentpb
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			h.server.logger.Debug("failed to free domain after guest thaw", "vm_id", req.GetVmId(), "error", err)
+		}
+	}()
 
 	agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
 	count, err := agent.ThawFilesystems(ctx)
@@ -213,7 +229,11 @@ func (h *grpcHandler) GuestGetNetworkInterfaces(ctx context.Context, req *nodeag
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			h.server.logger.Debug("failed to free domain after guest network query", "vm_id", req.GetVmId(), "error", err)
+		}
+	}()
 
 	cmd := `{"execute":"guest-network-get-interfaces"}`
 	output, err := domain.QemuAgentCommand(cmd, libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT, 10)

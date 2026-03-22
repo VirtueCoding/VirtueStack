@@ -124,6 +124,90 @@ add_hook('ProductConfigurationPage', 1, function (array $vars) {
     return $vars;
 });
 
+/**
+ * Hook: Product Edit - Validate VirtueStack configuration.
+ *
+ * Validates Plan ID and Template ID when an admin saves product configuration.
+ * This catches configuration errors early before a customer tries to order.
+ */
+add_hook('ProductEdit', 1, function (array $vars) {
+    // Only for VirtueStack products
+    if (!isset($vars['servertype']) || $vars['servertype'] !== 'virtuestack') {
+        return;
+    }
+
+    $productId = (int) ($vars['id'] ?? 0);
+    if ($productId <= 0) {
+        return;
+    }
+
+    // Get the configuration options from the form
+    $configOption1 = trim((string) ($vars['configoption1'] ?? '')); // Plan ID
+    $configOption2 = trim((string) ($vars['configoption2'] ?? '')); // Template ID
+
+    // Validate Plan ID format
+    if (!empty($configOption1)) {
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $configOption1)) {
+            logActivity("VirtueStack: Product {$productId} has invalid Plan ID format: {$configOption1}");
+            // Note: WHMCS doesn't provide a way to abort the save from a hook,
+            // but we log the warning for admin visibility
+        } else {
+            // Try to validate against API if server is configured
+            try {
+                $server = getProductServer($productId);
+                if ($server) {
+                    $apiUrl = buildApiUrlFromServer($server);
+                    $apiKey = decrypt($server->password ?? '');
+
+                    if (!empty($apiKey)) {
+                        $client = new ApiClient($apiUrl, $apiKey, 10, true);
+                        if (!$client->planExists($configOption1)) {
+                            logActivity("VirtueStack WARNING: Product {$productId} has non-existent Plan ID: {$configOption1}");
+                        } else {
+                            $plan = $client->getPlan($configOption1);
+                            logActivity("VirtueStack: Product {$productId} Plan validated: " . ($plan['name'] ?? $configOption1));
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                logActivity("VirtueStack: Could not validate Plan ID for product {$productId}: " . $e->getMessage());
+            }
+        }
+    }
+
+    // Validate Template ID format
+    if (!empty($configOption2)) {
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $configOption2)) {
+            logActivity("VirtueStack: Product {$productId} has invalid Template ID format: {$configOption2}");
+        }
+    }
+});
+
+/**
+ * Hook: Product Add - Validate VirtueStack configuration on creation.
+ *
+ * Validates Plan ID and Template ID when an admin creates a new product.
+ */
+add_hook('ProductAdd', 1, function (array $vars) {
+    // Only for VirtueStack products
+    if (!isset($vars['servertype']) || $vars['servertype'] !== 'virtuestack') {
+        return;
+    }
+
+    // Get the configuration options from the form
+    $configOption1 = trim((string) ($vars['configoption1'] ?? '')); // Plan ID
+    $configOption2 = trim((string) ($vars['configoption2'] ?? '')); // Template ID
+
+    // Log validation warnings (WHMCS doesn't allow blocking from hooks)
+    if (!empty($configOption1) && !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $configOption1)) {
+        logActivity("VirtueStack WARNING: New product has invalid Plan ID format: {$configOption1}");
+    }
+
+    if (!empty($configOption2) && !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $configOption2)) {
+        logActivity("VirtueStack WARNING: New product has invalid Template ID format: {$configOption2}");
+    }
+});
+
 // ============================================================================
 // ADMIN AREA HOOKS
 // ============================================================================
@@ -828,4 +912,146 @@ function sendAdminNotification(string $subject, string $message): void
     }
 
     logActivity("VirtueStack Admin Notification: {$subject}");
+}
+
+/**
+ * Get server associated with a product.
+ *
+ * @param int $productId Product ID
+ *
+ * @return object|null Server data or null
+ */
+function getProductServer(int $productId): ?object
+{
+    try {
+        $product = Capsule::table('tblproducts')
+            ->where('id', $productId)
+            ->first(['servergroup']);
+
+        if (!$product || empty($product->servergroup)) {
+            return null;
+        }
+
+        // Get first server from the server group
+        $serverGroup = Capsule::table('tblservergroups')
+            ->where('id', $product->servergroup)
+            ->first(['filltype', 'id']);
+
+        if (!$serverGroup) {
+            return null;
+        }
+
+        $serverRel = Capsule::table('tblservergroupsrel')
+            ->where('groupid', $serverGroup->id)
+            ->orderBy('id')
+            ->first(['serverid']);
+
+        if (!$serverRel) {
+            return null;
+        }
+
+        return Capsule::table('tblservers')
+            ->where('id', $serverRel->serverid)
+            ->where('disabled', 0)
+            ->first(['id', 'hostname', 'ipaddress', 'password', 'secure', 'port']);
+    } catch (\Exception $e) {
+        logActivity("VirtueStack: Error getting server for product {$productId}: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Build API URL from server object.
+ *
+ * @param object $server Server data
+ *
+ * @return string API URL
+ */
+function buildApiUrlFromServer(object $server): string
+{
+    $hostname = $server->hostname ?? $server->ipaddress ?? '';
+    $secure = ($server->secure ?? 'on') === 'on';
+    $port = (int) ($server->port ?: 443);
+
+    $protocol = $secure ? 'https' : 'http';
+
+    return "{$protocol}://{$hostname}:{$port}/api/v1";
+}
+
+/**
+ * Get available VirtueStack plans.
+ *
+ * Used for product configuration dropdown population.
+ *
+ * @return array List of plans with id => name
+ */
+function getVirtueStackPlans(): array
+{
+    static $cache = ['data' => null, 'expires' => 0];
+
+    if ($cache['data'] !== null && time() < $cache['expires']) {
+        return $cache['data'];
+    }
+
+    $plans = [];
+
+    $services = getActiveVirtueStackServices();
+    if (empty($services)) {
+        return $plans;
+    }
+
+    foreach ($services as $service) {
+        $serviceId = (int) ($service['service_id'] ?? 0);
+        if ($serviceId <= 0) {
+            continue;
+        }
+
+        $client = getApiClientForService($serviceId);
+        if (!$client) {
+            continue;
+        }
+
+        try {
+            $items = $client->listPlans();
+
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    $id = (string) ($item['id'] ?? '');
+                    $name = (string) ($item['name'] ?? '');
+                    if ($id !== '' && $name !== '') {
+                        // Include specs in the name for easier identification
+                        $specs = [];
+                        if (isset($item['vcpu'])) {
+                            $specs[] = $item['vcpu'] . ' vCPU';
+                        }
+                        if (isset($item['memory_mb'])) {
+                            $specs[] = round($item['memory_mb'] / 1024, 1) . 'GB RAM';
+                        }
+                        if (isset($item['disk_gb'])) {
+                            $specs[] = $item['disk_gb'] . 'GB Disk';
+                        }
+                        $displayName = $name;
+                        if (!empty($specs)) {
+                            $displayName .= ' (' . implode(', ', $specs) . ')';
+                        }
+                        $plans[$id] = $displayName;
+                    }
+                }
+            }
+
+            if (!empty($plans)) {
+                break;
+            }
+        } catch (\Exception $e) {
+            logActivity('VirtueStack: Failed to fetch plans: ' . $e->getMessage());
+        }
+    }
+
+    $cache['data'] = $plans;
+    $cache['expires'] = time() + 300;
+
+    return $plans;
 }

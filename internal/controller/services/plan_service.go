@@ -11,16 +11,28 @@ import (
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
+// PlanRepository defines the interface for plan repository operations.
+type PlanRepository interface {
+	Create(ctx context.Context, plan *models.Plan) error
+	GetByID(ctx context.Context, id string) (*models.Plan, error)
+	GetBySlug(ctx context.Context, slug string) (*models.Plan, error)
+	List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, int, error)
+	ListActive(ctx context.Context) ([]models.Plan, error)
+	Update(ctx context.Context, plan *models.Plan) error
+	Delete(ctx context.Context, id string) error
+	CountVMsByPlan(ctx context.Context, planID string) (int, error)
+}
+
 // PlanService provides business logic for managing service plans.
 // Plans define the resource allocations (vCPU, memory, disk, bandwidth)
 // and pricing for VPS offerings.
 type PlanService struct {
-	planRepo *repository.PlanRepository
+	planRepo PlanRepository
 	logger   *slog.Logger
 }
 
 // NewPlanService creates a new PlanService with the given dependencies.
-func NewPlanService(planRepo *repository.PlanRepository, logger *slog.Logger) *PlanService {
+func NewPlanService(planRepo PlanRepository, logger *slog.Logger) *PlanService {
 	return &PlanService{
 		planRepo: planRepo,
 		logger:   logger.With("component", "plan-service"),
@@ -166,4 +178,24 @@ func (s *PlanService) Delete(ctx context.Context, id string) error {
 
 	s.logger.Info("plan deleted", "plan_id", id)
 	return nil
+}
+
+// GetPlanUsage returns the count of VMs using a specific plan.
+// This is useful for determining if a plan can be safely deleted.
+func (s *PlanService) GetPlanUsage(ctx context.Context, id string) (int, error) {
+	// Verify plan exists
+	_, err := s.planRepo.GetByID(ctx, id)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return 0, fmt.Errorf("plan not found: %s", id)
+		}
+		return 0, fmt.Errorf("getting plan: %w", err)
+	}
+
+	count, err := s.planRepo.CountVMsByPlan(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("getting plan usage: %w", err)
+	}
+
+	return count, nil
 }

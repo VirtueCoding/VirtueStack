@@ -1,8 +1,8 @@
-<!-- Generated: 2026-03-19 | Files scanned: go.mod, package.json | Token estimate: ~600 -->
+<!-- Generated: 2026-03-22 | Files scanned: go.mod, package.json | Token estimate: ~650 -->
 
 # Dependencies
 
-## Backend (Go 1.25)
+## Backend (Go 1.26)
 
 ### Core Framework
 | Package | Version | Purpose |
@@ -21,7 +21,7 @@
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `github.com/alexedwards/argon2id` | v1.0.0 | Password hashing |
-| `github.com/golang-jwt/jwt/v5` | v5.2.1 | JWT tokens |
+| `github.com/golang-jwt/jwt/v5` | v5.2.2 | JWT tokens |
 | `github.com/pquerna/otp` | v1.4.0 | TOTP 2FA |
 
 ### Infrastructure
@@ -111,3 +111,7 @@
 | `github.com/stretchr/testify` | Assertions |
 | `github.com/testcontainers/*` | Integration tests |
 | `@playwright/test` | E2E tests |
+
+## New Dependencies (Since Last Update)
+
+None - dependency versions remain stable from last codemap generation.

@@ -5,10 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -41,7 +38,8 @@ func NewIPAMService(
 
 // AllocateIPv4 allocates an available IPv4 address from an IP set in the specified location.
 // The IP is assigned to the VM and marked as primary if it's the first IP for the VM.
-func (s *IPAMService) AllocateIPv4(ctx context.Context, vmID, customerID, locationID string) (*models.IPAddress, error) {
+// Parameter order matches the IPAllocator interface: (locationID, vmID, customerID).
+func (s *IPAMService) AllocateIPv4(ctx context.Context, locationID, vmID, customerID string) (*models.IPAddress, error) {
 	// Find IP set for the location
 	ipSets, _, err := s.ipRepo.ListIPSets(ctx, repository.IPSetListFilter{
 		LocationID: &locationID,
@@ -105,6 +103,7 @@ func (s *IPAMService) ReleaseIPv4(ctx context.Context, ipID string) error {
 // AllocateIPv6 allocates a /64 IPv6 subnet from a node's /48 prefix.
 // Each VM gets its own /64 subnet with a gateway address.
 // The subnet index is tracked per-prefix to ensure unique allocation.
+// Uses atomic allocation to prevent race conditions.
 func (s *IPAMService) AllocateIPv6(ctx context.Context, vmID, customerID, nodeID string) (*models.VMIPv6Subnet, error) {
 	// Get the node's IPv6 prefix
 	prefix, err := s.ipRepo.GetIPv6PrefixByNode(ctx, nodeID)
@@ -115,53 +114,20 @@ func (s *IPAMService) AllocateIPv6(ctx context.Context, vmID, customerID, nodeID
 		return nil, fmt.Errorf("getting IPv6 prefix for node %s: %w", nodeID, err)
 	}
 
-	// Get all existing subnets for this prefix to find the next available index
-	existingSubnets, err := s.ipRepo.GetVMIPv6SubnetsByPrefix(ctx, prefix.ID)
+	// Use atomic allocation to prevent race conditions
+	vmSubnet, err := s.ipRepo.CreateVMIPv6SubnetWithIndexCheck(ctx, vmID, prefix.ID)
 	if err != nil {
-		return nil, fmt.Errorf("checking existing IPv6 subnets for prefix: %w", err)
-	}
-
-	// Calculate the next subnet index (find max and increment)
-	nextIndex := 0
-	for _, sub := range existingSubnets {
-		if sub.SubnetIndex >= nextIndex {
-			nextIndex = sub.SubnetIndex + 1
-		}
-	}
-
-	// Check we haven't exhausted the /48 prefix (65536 possible /64 subnets)
-	if nextIndex >= 65536 {
-		return nil, fmt.Errorf("IPv6 prefix %s is exhausted (no available /64 subnets)", prefix.Prefix)
-	}
-
-	// Generate the /64 subnet from the /48 prefix
-	subnet, gateway, err := generateIPv6Subnet(prefix.Prefix, nextIndex)
-	if err != nil {
-		return nil, fmt.Errorf("generating IPv6 subnet: %w", err)
-	}
-
-	// Create the subnet record
-	vmSubnet := &models.VMIPv6Subnet{
-		ID:           uuid.New().String(),
-		VMID:         vmID,
-		IPv6PrefixID: prefix.ID,
-		Subnet:       subnet,
-		SubnetIndex:  nextIndex,
-		Gateway:      gateway,
-	}
-
-	if err := s.ipRepo.CreateVMIPv6Subnet(ctx, vmSubnet); err != nil {
-		return nil, fmt.Errorf("creating IPv6 subnet: %w", err)
+		return nil, fmt.Errorf("allocating IPv6 subnet: %w", err)
 	}
 
 	s.logger.Info("IPv6 subnet allocated",
 		"subnet_id", vmSubnet.ID,
-		"subnet", subnet,
-		"gateway", gateway,
+		"subnet", vmSubnet.Subnet,
+		"gateway", vmSubnet.Gateway,
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"node_id", nodeID,
-		"subnet_index", nextIndex)
+		"subnet_index", vmSubnet.SubnetIndex)
 
 	return vmSubnet, nil
 }
@@ -319,48 +285,4 @@ func (s *IPAMService) GetIPv6SubnetsByVM(ctx context.Context, vmID string) ([]mo
 // ptrInt16 returns a pointer to an int16 value.
 func ptrInt16(v int16) *int16 {
 	return &v
-}
-
-// generateIPv6Subnet generates a /64 subnet and gateway from a /48 prefix.
-// The subnetIndex determines which /64 block is used from the /48.
-func generateIPv6Subnet(prefix48 string, subnetIndex int) (subnet, gateway string, err error) {
-	// Parse the /48 prefix
-	prefix, err := netip.ParsePrefix(prefix48)
-	if err != nil {
-		return "", "", fmt.Errorf("parsing prefix %s: %w", prefix48, err)
-	}
-
-	// Get the prefix address
-	addr := prefix.Addr()
-
-	// Convert to 16-byte array
-	bytes := addr.As16()
-
-	// The subnet index goes in bits 48-63 of the address (the next 16 bits after the /48 prefix)
-	// We need to modify bytes 6 and 7 (indices 6 and 7 in the 16-byte array)
-	// Bytes 6-7 contain bits 48-63
-	byte6 := (subnetIndex >> 8) & 0xFF
-	byte7 := subnetIndex & 0xFF
-
-	bytes[6] = byte(byte6)
-	bytes[7] = byte(byte7)
-
-	// Create the new address
-	newAddr := netip.AddrFrom16(bytes)
-
-	// Create /64 subnet
-	subnetAddr := netip.PrefixFrom(newAddr, 64)
-	if !subnetAddr.IsValid() {
-		return "", "", fmt.Errorf("invalid subnet generated")
-	}
-
-	subnet = subnetAddr.String()
-
-	// Gateway is typically the first address in the subnet (::1)
-	gatewayBytes := newAddr.As16()
-	gatewayBytes[15] = 1 // Set last byte to 1 for ::1
-	gatewayAddr := netip.AddrFrom16(gatewayBytes)
-	gateway = gatewayAddr.String()
-
-	return subnet, gateway, nil
 }

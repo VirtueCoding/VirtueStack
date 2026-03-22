@@ -2,6 +2,7 @@ package admin
 
 import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,6 +36,7 @@ import (
 //	Plans:
 //	  GET    /plans              - List all plans
 //	  POST   /plans              - Create plan
+//	  GET    /plans/:id/usage    - Get VM count for plan
 //	  PUT    /plans/:id          - Update plan
 //	  DELETE /plans/:id          - Delete plan
 //
@@ -85,6 +87,10 @@ import (
 //	  PUT    /admin-backup-schedules/:id - Update admin backup schedule
 //	  DELETE /admin-backup-schedules/:id - Delete admin backup schedule
 //	  POST   /admin-backup-schedules/:id/run - Trigger immediate execution
+//
+//	Permission Management:
+//	  GET    /auth/permissions           - List all available permissions
+//	  PUT    /auth/permissions/:admin_id - Update admin permissions (super_admin only)
 func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	admin := router.Group("/admin")
 
@@ -103,125 +109,149 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	protectedAuth.Use(middleware.RequireRole("admin", "super_admin"))
 	{
 		protectedAuth.GET("/me", handler.Me)
+		protectedAuth.GET("/permissions", handler.ListPermissions)
+	}
+
+	// Permission management - super_admin only
+	permissionMgmt := admin.Group("/auth/permissions")
+	permissionMgmt.Use(middleware.JWTAuth(handler.authConfig))
+	permissionMgmt.Use(middleware.RequireRole("super_admin"))
+	permissionMgmt.Use(middleware.AdminLoader(handler.authService.GetAdminByID))
+	permissionMgmt.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	{
+		permissionMgmt.PUT("/:admin_id", handler.UpdateAdminPermissions)
+	}
+
+	// Admin management - super_admin only
+	adminMgmt := admin.Group("/admins")
+	adminMgmt.Use(middleware.JWTAuth(handler.authConfig))
+	adminMgmt.Use(middleware.RequireRole("super_admin"))
+	adminMgmt.Use(middleware.AdminLoader(handler.authService.GetAdminByID))
+	adminMgmt.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	{
+		adminMgmt.GET("", handler.ListAdmins)
 	}
 
 	protected := admin.Group("")
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireRole("admin", "super_admin"))
+	protected.Use(middleware.AdminLoader(handler.authService.GetAdminByID))
 	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 	protected.Use(middleware.AdminRateLimit())
 	{
 		// Node management
 		nodes := protected.Group("/nodes")
 		{
-			nodes.GET("", handler.ListNodes)
-			nodes.POST("", handler.RegisterNode)
-			nodes.GET("/:id", handler.GetNode)
-			nodes.PUT("/:id", handler.UpdateNode)
-			nodes.DELETE("/:id", handler.DeleteNode)
-			nodes.POST("/:id/drain", handler.DrainNode)
-			nodes.POST("/:id/failover", handler.FailoverNode)
-			nodes.POST("/:id/undrain", handler.UndrainNode)
+			nodes.GET("", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.ListNodes)
+			nodes.POST("", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.RegisterNode)
+			nodes.GET("/:id", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.GetNode)
+			nodes.PUT("/:id", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UpdateNode)
+			nodes.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionNodesDelete), handler.DeleteNode)
+			nodes.POST("/:id/drain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.DrainNode)
+			nodes.POST("/:id/failover", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.FailoverNode)
+			nodes.POST("/:id/undrain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UndrainNode)
 		}
 
 		// Failover requests
 		failoverRequests := protected.Group("/failover-requests")
 		{
-			failoverRequests.GET("", handler.ListFailoverRequests)
-			failoverRequests.GET("/:id", handler.GetFailoverRequest)
+			failoverRequests.GET("", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.ListFailoverRequests)
+			failoverRequests.GET("/:id", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.GetFailoverRequest)
 		}
 
 		// VM management
 		vms := protected.Group("/vms")
 		{
-			vms.GET("", handler.ListVMs)
-			vms.POST("", handler.CreateVM)
-			vms.GET("/:id", handler.GetVM)
-			vms.PUT("/:id", handler.UpdateVM)
-			vms.DELETE("/:id", handler.DeleteVM)
-			vms.POST("/:id/migrate", handler.MigrateVM)
-			vms.GET("/:id/ips", handler.GetVMIPs)
-			vms.GET("/:id/ips/:ipId/rdns", handler.GetIPRDNS)
-			vms.PUT("/:id/ips/:ipId/rdns", handler.UpdateIPRDNS)
-			vms.DELETE("/:id/ips/:ipId/rdns", handler.DeleteIPRDNS)
+			vms.GET("", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.ListVMs)
+			vms.POST("", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.CreateVM)
+			vms.GET("/:id", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVM)
+			vms.PUT("/:id", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.UpdateVM)
+			vms.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionVMsDelete), handler.DeleteVM)
+			vms.POST("/:id/migrate", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.MigrateVM)
+			vms.GET("/:id/ips", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVMIPs)
+			vms.GET("/:id/ips/:ipId/rdns", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetIPRDNS)
+			vms.PUT("/:id/ips/:ipId/rdns", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.UpdateIPRDNS)
+			vms.DELETE("/:id/ips/:ipId/rdns", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.DeleteIPRDNS)
 		}
 
 		// Plan management
 		plans := protected.Group("/plans")
 		{
-			plans.GET("", handler.ListPlans)
-			plans.POST("", handler.CreatePlan)
-			plans.PUT("/:id", handler.UpdatePlan)
-			plans.DELETE("/:id", handler.DeletePlan)
+			plans.GET("", middleware.RequireAdminPermission(models.PermissionPlansRead), handler.ListPlans)
+			plans.POST("", middleware.RequireAdminPermission(models.PermissionPlansWrite), handler.CreatePlan)
+			plans.GET("/:id/usage", middleware.RequireAdminPermission(models.PermissionPlansRead), handler.GetPlanUsage)
+			plans.PUT("/:id", middleware.RequireAdminPermission(models.PermissionPlansWrite), handler.UpdatePlan)
+			plans.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionPlansDelete), handler.DeletePlan)
 		}
 
 		// Template management
 		templates := protected.Group("/templates")
 		{
-			templates.GET("", handler.ListTemplates)
-			templates.POST("", handler.CreateTemplate)
-			templates.PUT("/:id", handler.UpdateTemplate)
-			templates.DELETE("/:id", handler.DeleteTemplate)
-			templates.POST("/:id/import", handler.ImportTemplate)
+			templates.GET("", middleware.RequireAdminPermission(models.PermissionTemplatesRead), handler.ListTemplates)
+			templates.POST("", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.CreateTemplate)
+			templates.PUT("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.UpdateTemplate)
+			templates.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DeleteTemplate)
+			templates.POST("/:id/import", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.ImportTemplate)
 		}
 
 		// IP Set management
 		ipSets := protected.Group("/ip-sets")
 		{
-			ipSets.GET("", handler.ListIPSets)
-			ipSets.POST("", handler.CreateIPSet)
-			ipSets.GET("/:id", handler.GetIPSet)
-			ipSets.PUT("/:id", handler.UpdateIPSet)
-			ipSets.DELETE("/:id", handler.DeleteIPSet)
-			ipSets.GET("/:id/available", handler.ListAvailableIPs)
+			ipSets.GET("", middleware.RequireAdminPermission(models.PermissionIPSetsRead), handler.ListIPSets)
+			ipSets.POST("", middleware.RequireAdminPermission(models.PermissionIPSetsWrite), handler.CreateIPSet)
+			ipSets.GET("/:id", middleware.RequireAdminPermission(models.PermissionIPSetsRead), handler.GetIPSet)
+			ipSets.PUT("/:id", middleware.RequireAdminPermission(models.PermissionIPSetsWrite), handler.UpdateIPSet)
+			ipSets.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionIPSetsDelete), handler.DeleteIPSet)
+			ipSets.GET("/:id/available", middleware.RequireAdminPermission(models.PermissionIPSetsRead), handler.ListAvailableIPs)
 		}
 
 		// Customer management
 		customers := protected.Group("/customers")
 		{
-			customers.GET("", handler.ListCustomers)
-			customers.GET("/:id", handler.GetCustomer)
-			customers.PUT("/:id", handler.UpdateCustomer)
-			customers.DELETE("/:id", handler.DeleteCustomer)
-			customers.GET("/:id/audit-logs", handler.GetCustomerAuditLogs)
+			customers.GET("", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.ListCustomers)
+			customers.POST("", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.CreateCustomer)
+			customers.GET("/:id", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomer)
+			customers.PUT("/:id", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.UpdateCustomer)
+			customers.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionCustomersDelete), handler.DeleteCustomer)
+			customers.GET("/:id/audit-logs", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomerAuditLogs)
 		}
 
 		// Audit logs
-		protected.GET("/audit-logs", handler.ListAuditLogs)
+		protected.GET("/audit-logs", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.ListAuditLogs)
 
 		// Settings
 		settings := protected.Group("/settings")
 		{
-			settings.GET("", handler.GetSettings)
-			settings.PUT("/:key", handler.UpdateSetting)
+			settings.GET("", middleware.RequireAdminPermission(models.PermissionSettingsRead), handler.GetSettings)
+			settings.PUT("/:key", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdateSetting)
 		}
 
 		// Backup management
 		backups := protected.Group("/backups")
 		{
-			backups.GET("", handler.ListBackups)
-			backups.POST("/:id/restore", handler.RestoreBackup)
+			backups.GET("", middleware.RequireAdminPermission(models.PermissionBackupsRead), handler.ListBackups)
+			backups.POST("/:id/restore", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.RestoreBackup)
 		}
 
 		// Backup schedule management
 		backupSchedules := protected.Group("/backup-schedules")
 		{
-			backupSchedules.POST("", handler.CreateBackupSchedule)
-			backupSchedules.GET("", handler.ListBackupSchedules)
-			backupSchedules.GET("/:id", handler.GetBackupSchedule)
-			backupSchedules.PUT("/:id", handler.UpdateBackupSchedule)
-			backupSchedules.DELETE("/:id", handler.DeleteBackupSchedule)
+			backupSchedules.POST("", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.CreateBackupSchedule)
+			backupSchedules.GET("", middleware.RequireAdminPermission(models.PermissionBackupsRead), handler.ListBackupSchedules)
+			backupSchedules.GET("/:id", middleware.RequireAdminPermission(models.PermissionBackupsRead), handler.GetBackupSchedule)
+			backupSchedules.PUT("/:id", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.UpdateBackupSchedule)
+			backupSchedules.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.DeleteBackupSchedule)
 		}
 
 		// Admin backup schedule management (mass backup campaigns)
 		adminBackupSchedules := protected.Group("/admin-backup-schedules")
 		{
-			adminBackupSchedules.POST("", handler.CreateAdminBackupSchedule)
-			adminBackupSchedules.GET("", handler.ListAdminBackupSchedules)
-			adminBackupSchedules.GET("/:id", handler.GetAdminBackupSchedule)
-			adminBackupSchedules.PUT("/:id", handler.UpdateAdminBackupSchedule)
-			adminBackupSchedules.DELETE("/:id", handler.DeleteAdminBackupSchedule)
-			adminBackupSchedules.POST("/:id/run", handler.RunAdminBackupSchedule)
+			adminBackupSchedules.POST("", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.CreateAdminBackupSchedule)
+			adminBackupSchedules.GET("", middleware.RequireAdminPermission(models.PermissionBackupsRead), handler.ListAdminBackupSchedules)
+			adminBackupSchedules.GET("/:id", middleware.RequireAdminPermission(models.PermissionBackupsRead), handler.GetAdminBackupSchedule)
+			adminBackupSchedules.PUT("/:id", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.UpdateAdminBackupSchedule)
+			adminBackupSchedules.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.DeleteAdminBackupSchedule)
+			adminBackupSchedules.POST("/:id/run", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.RunAdminBackupSchedule)
 		}
 	}
 }

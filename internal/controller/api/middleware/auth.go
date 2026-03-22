@@ -38,6 +38,9 @@ const (
 	// permissionsContextKey is the gin context key for API key permissions.
 	permissionsContextKey = "permissions"
 
+	// vmIDsContextKey is the gin context key for API key VM scope.
+	vmIDsContextKey = "vm_ids"
+
 	// tempTokenPurposeClaim is the custom claim key for temp token purpose.
 	tempTokenPurposeClaim = "purpose"
 
@@ -85,6 +88,7 @@ type CustomerAPIKeyInfo struct {
 	CustomerID  string
 	Permissions []string
 	AllowedIPs  []string
+	VMIDs       []string // VMs this key is scoped to (empty = all VMs)
 }
 
 // CustomerAPIKeyValidator looks up a customer API key by its SHA-256 hash.
@@ -241,7 +245,7 @@ func RequireUserType(userTypes ...string) gin.HandlerFunc {
 // The key is read from the X-API-Key request header.
 // The raw key is hashed with SHA-256 before database lookup via validator.
 // If the key has allowed_ips configured, the request source IP is verified.
-// On success it sets "user_id" (customer_id), "user_type"="customer", "api_key_id", and "permissions".
+// On success it sets "user_id" (customer_id), "user_type"="customer", "api_key_id", "permissions", and "vm_ids".
 // This middleware is for programmatic API access by customers.
 func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -282,6 +286,7 @@ func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
 		c.Set(apiKeyIDContextKey, info.KeyID)
 		c.Set(actorTypeContextKey, "customer_api_key")
 		c.Set(permissionsContextKey, info.Permissions)
+		c.Set(vmIDsContextKey, info.VMIDs)
 		c.Next()
 	}
 }
@@ -335,6 +340,7 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 		c.Set(apiKeyIDContextKey, info.KeyID)
 		c.Set(actorTypeContextKey, "customer_api_key")
 		c.Set(permissionsContextKey, info.Permissions)
+		c.Set(vmIDsContextKey, info.VMIDs)
 		c.Next()
 	}
 }
@@ -345,6 +351,84 @@ func GetPermissions(c *gin.Context) []string {
 	v, _ := c.Get(permissionsContextKey)
 	perms, _ := v.([]string)
 	return perms
+}
+
+// GetVMIDs extracts the VM IDs scope set by CustomerAPIKeyAuth from gin.Context.
+// Returns nil if not present or empty (i.e., JWT auth or API key with no VM restriction).
+// An empty/nil return means all VMs are accessible.
+func GetVMIDs(c *gin.Context) []string {
+	v, _ := c.Get(vmIDsContextKey)
+	vmIDs, _ := v.([]string)
+	return vmIDs
+}
+
+// IsVMAllowed checks if a specific VM ID is accessible with the current authentication.
+// For JWT auth, returns true (JWT auth has access to all customer's VMs).
+// For API key auth with empty vm_ids, returns true (key has access to all VMs).
+// For API key auth with vm_ids set, checks if the VM is in the allowed list.
+func IsVMAllowed(c *gin.Context, vmID string) bool {
+	vmIDs := GetVMIDs(c)
+	if len(vmIDs) == 0 {
+		// JWT auth or API key with no VM restriction
+		return true
+	}
+	for _, id := range vmIDs {
+		if id == vmID {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckVMScope is a helper function for handlers to check vm_ids scope enforcement.
+// It returns true if the VM is allowed, or false and sends an error response if not.
+// Use this in handlers that receive vm_id in the request body or need to check
+// scope after fetching a resource (backups, snapshots, etc.).
+//
+// Example usage:
+//
+//	if !middleware.CheckVMScope(c, req.VMID) {
+//	    return
+//	}
+func CheckVMScope(c *gin.Context, vmID string) bool {
+	if IsVMAllowed(c, vmID) {
+		return true
+	}
+	slog.Warn("API key VM scope violation",
+		"requested_vm", vmID,
+		"allowed_vms", GetVMIDs(c),
+		"correlation_id", GetCorrelationID(c),
+	)
+	abortWithAuthError(c, http.StatusForbidden, "VM_NOT_IN_SCOPE",
+		"API key is not authorized for this VM")
+	return false
+}
+
+// RequireVMScope returns a middleware that checks if the VM in the request path
+// is within the API key's allowed VM scope.
+// For JWT-authenticated requests, all VMs are accessible.
+// Must be used after CustomerAPIKeyAuth or JWTOrCustomerAPIKeyAuth.
+func RequireVMScope() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		vmID := c.Param("id")
+		if vmID == "" {
+			// No VM ID in path, let the handler deal with it
+			c.Next()
+			return
+		}
+
+		if !IsVMAllowed(c, vmID) {
+			slog.Warn("API key VM scope violation",
+				"requested_vm", vmID,
+				"allowed_vms", GetVMIDs(c),
+				"correlation_id", GetCorrelationID(c),
+			)
+			abortWithAuthError(c, http.StatusForbidden, "VM_NOT_IN_SCOPE",
+				"API key is not authorized for this VM")
+			return
+		}
+		c.Next()
+	}
 }
 
 // HasPermission checks if the authenticated request has a specific permission.

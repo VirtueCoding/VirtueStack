@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -17,7 +18,7 @@ type AdminVMCreateRequest struct {
 	PlanID     string   `json:"plan_id" validate:"required,uuid"`
 	TemplateID string   `json:"template_id" validate:"required,uuid"`
 	Hostname   string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
-	Password   string   `json:"password" validate:"required,min=8,max=128"`
+	Password   string   `json:"password" validate:"required,min=12,max=128"`
 	SSHKeys    []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
 	LocationID *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
 	NodeID     *string  `json:"node_id,omitempty" validate:"omitempty,uuid"` // Force specific node
@@ -98,7 +99,8 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 func (h *AdminHandler) CreateVM(c *gin.Context) {
 	var req AdminVMCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -185,7 +187,8 @@ func (h *AdminHandler) UpdateVM(c *gin.Context) {
 
 	var req AdminVMUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -350,7 +353,8 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 
 	var req VMMigrateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

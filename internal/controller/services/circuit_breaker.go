@@ -188,6 +188,10 @@ func (cb *CircuitBreaker) RecordFailure(key string, err error) {
 	case CircuitBreakerHalfOpen:
 		entry.State = CircuitBreakerOpen
 		entry.SuccessCount = 0
+
+	case CircuitBreakerOpen:
+		// Already open, failure just extends cooldown
+		entry.SuccessCount = 0
 	}
 }
 

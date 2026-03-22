@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -20,9 +19,11 @@ interface PlanListProps {
   getStatusBadge: (status: Plan["status"]) => React.ReactNode;
   formatMemory: (mb: number) => string;
   formatPrice: (cents: number) => string;
+  canWrite?: boolean;
+  canDelete?: boolean;
 }
 
-export function PlanList({ plans, onEdit, onDelete, getStatusBadge, formatMemory, formatPrice }: PlanListProps) {
+export function PlanList({ plans, onEdit, onDelete, getStatusBadge, formatMemory, formatPrice, canWrite = true, canDelete = true }: PlanListProps) {
   if (plans.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
@@ -77,7 +78,7 @@ export function PlanList({ plans, onEdit, onDelete, getStatusBadge, formatMemory
               <TableCell>
                 <div className="flex items-center gap-2">
                   <Network className="h-4 w-4 text-muted-foreground" />
-                  <span>{plan.bandwidth_mbps} Mbps</span>
+                  <span>{plan.port_speed_mbps} Mbps</span>
                 </div>
               </TableCell>
               <TableCell>
@@ -106,23 +107,27 @@ export function PlanList({ plans, onEdit, onDelete, getStatusBadge, formatMemory
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onEdit(plan)}
-                  >
-                    <Edit className="mr-1 h-3 w-3" />
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onDelete(plan)}
-                    className="text-destructive hover:bg-destructive/10"
-                  >
-                    <Trash2 className="mr-1 h-3 w-3" />
-                    Delete
-                  </Button>
+                  {canWrite && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onEdit(plan)}
+                    >
+                      <Edit className="mr-1 h-3 w-3" />
+                      Edit
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onDelete(plan)}
+                      className="text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="mr-1 h-3 w-3" />
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </TableCell>
             </TableRow>

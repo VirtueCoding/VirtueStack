@@ -143,7 +143,7 @@ type WebhookPayload struct {
 // Create creates a new webhook endpoint for a customer.
 func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (*models.CustomerWebhook, error) {
 	// Validate URL
-	if err := s.validateWebhookURL(req.URL); err != nil {
+	if err := s.validateWebhookURL(ctx, req.URL); err != nil {
 		return nil, err
 	}
 
@@ -228,7 +228,7 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 
 	// Validate URL if provided
 	if req.URL != nil {
-		if err := s.validateWebhookURL(*req.URL); err != nil {
+		if err := s.validateWebhookURL(ctx, *req.URL); err != nil {
 			return nil, err
 		}
 	}
@@ -441,7 +441,7 @@ func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customer
 
 // validateWebhookURL validates that a webhook URL is properly formatted, uses HTTPS,
 // and does not resolve to a private/internal IP address (SSRF protection).
-func (s *WebhookService) validateWebhookURL(webhookURL string) error {
+func (s *WebhookService) validateWebhookURL(ctx context.Context, webhookURL string) error {
 	// Parse URL
 	parsed, err := url.Parse(webhookURL)
 	if err != nil {
@@ -469,7 +469,7 @@ func (s *WebhookService) validateWebhookURL(webhookURL string) error {
 	// connect time via the SSRF-safe transport in tasks.DefaultHTTPClient(),
 	// which eliminates the DNS-rebinding TOCTOU window that this pre-flight
 	// check cannot close on its own.
-	addrs, err := net.LookupHost(parsed.Hostname())
+	addrs, err := net.DefaultResolver.LookupHost(ctx, parsed.Hostname())
 	if err != nil {
 		return fmt.Errorf("cannot resolve webhook URL hostname: %w", err)
 	}
@@ -553,7 +553,7 @@ func (s *WebhookService) ProcessPendingDeliveriesSync(ctx context.Context, batch
 // Returns the signing secret for the created webhook.
 func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerWebhook) (string, error) {
 	// Validate URL (must be HTTPS)
-	if err := s.validateWebhookURL(webhook.URL); err != nil {
+	if err := s.validateWebhookURL(ctx, webhook.URL); err != nil {
 		return "", err
 	}
 
@@ -590,7 +590,11 @@ func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerW
 	if err != nil {
 		return "", fmt.Errorf("webhook endpoint unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			s.logger.Debug("failed to close webhook response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("webhook endpoint returned status %d", resp.StatusCode)

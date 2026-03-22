@@ -154,7 +154,11 @@ func (p *TelegramProvider) sendToChat(ctx context.Context, chatID, message, pars
 	if err != nil {
 		return fmt.Errorf("sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			p.logger.Debug("failed to close Telegram response body", "error", err)
+		}
+	}()
 
 	var result telegramResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

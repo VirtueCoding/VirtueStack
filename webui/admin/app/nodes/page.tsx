@@ -22,7 +22,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useRouter } from "next/navigation";
 import {
   Server,
   Plus,
@@ -31,9 +30,18 @@ import {
   ArrowDownToLine,
   RefreshCcw,
   Loader2,
+  Pencil,
 } from "lucide-react";
-import { adminNodesApi, type Node } from "@/lib/api-client";
+import {
+  adminNodesApi,
+  type Node,
+  type NodeDetail,
+  type CreateNodeRequest,
+  type UpdateNodeRequest,
+} from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
+import { NodeCreateDialog, type CreateNodeFormData } from "@/components/nodes/NodeCreateDialog";
+import { NodeEditDialog, type EditNodeFormData } from "@/components/nodes/NodeEditDialog";
 
 type DialogAction = "drain" | "failover" | null;
 
@@ -45,24 +53,29 @@ export default function NodesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingNode, setEditingNode] = useState<NodeDetail | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
-  const router = useRouter();
+
+  const fetchNodes = async () => {
+    try {
+      const data = await adminNodesApi.getNodes();
+      setNodes(data || []);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to load nodes.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function fetchNodes() {
-      try {
-        const data = await adminNodesApi.getNodes();
-        setNodes(data || []);
-      } catch (err) {
-        toast({
-          title: "Error",
-          description: "Failed to load nodes.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchNodes();
   }, [toast]);
 
@@ -79,7 +92,7 @@ export default function NodesPage() {
       const nodeDetails = await adminNodesApi.getNode(node.id);
       toast({
         title: "Node Details",
-        description: `Viewing ${nodeDetails.name} (${nodeDetails.hostname})`,
+        description: `Viewing ${nodeDetails.hostname} (${nodeDetails.grpc_address})`,
       });
     } catch (error) {
       toast({
@@ -89,6 +102,73 @@ export default function NodesPage() {
       });
     } finally {
       setLoadingId(null);
+    }
+  };
+
+  const handleEdit = async (node: Node) => {
+    setLoadingId(node.id);
+    try {
+      const nodeDetails = await adminNodesApi.getNode(node.id);
+      setEditingNode(nodeDetails);
+      setEditDialogOpen(true);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to fetch node details",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  const handleCreate = async (data: CreateNodeFormData) => {
+    setIsCreating(true);
+    try {
+      const request: CreateNodeRequest = {
+        hostname: data.hostname,
+        grpc_address: data.grpc_address,
+        management_ip: data.management_ip,
+        total_vcpu: data.total_vcpu,
+        total_memory_mb: data.total_memory_mb,
+        storage_backend: data.storage_backend,
+        storage_path: data.storage_path || undefined,
+        ceph_pool: data.ceph_pool || undefined,
+        ipmi_address: data.ipmi_address || undefined,
+        ipmi_username: data.ipmi_username || undefined,
+        ipmi_password: data.ipmi_password || undefined,
+      };
+      await adminNodesApi.createNode(request);
+      toast({
+        title: "Node Registered",
+        description: `Node ${data.hostname} has been registered successfully.`,
+      });
+      await fetchNodes();
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleSave = async (data: EditNodeFormData) => {
+    if (!editingNode) return;
+    setIsSaving(true);
+    try {
+      const request: UpdateNodeRequest = {};
+      if (data.grpc_address) request.grpc_address = data.grpc_address;
+      if (data.total_vcpu) request.total_vcpu = data.total_vcpu;
+      if (data.total_memory_mb) request.total_memory_mb = data.total_memory_mb;
+      if (data.storage_backend) request.storage_backend = data.storage_backend;
+      if (data.storage_path) request.storage_path = data.storage_path;
+      if (data.ipmi_address) request.ipmi_address = data.ipmi_address;
+
+      await adminNodesApi.updateNode(editingNode.id, request);
+      toast({
+        title: "Node Updated",
+        description: `Node ${editingNode.hostname} has been updated successfully.`,
+      });
+      await fetchNodes();
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -118,9 +198,8 @@ export default function NodesPage() {
           description: `Failover process started for ${selectedNode.name}.`,
         });
       }
-      
-      const data = await adminNodesApi.getNodes();
-      setNodes(data || []);
+
+      await fetchNodes();
     } catch (error) {
       toast({
         title: "Action Failed",
@@ -144,7 +223,7 @@ export default function NodesPage() {
               Manage hypervisor nodes and cluster capacity
             </p>
           </div>
-          <Button disabled>
+          <Button onClick={() => setCreateDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Add Node
           </Button>
@@ -290,6 +369,20 @@ export default function NodesPage() {
                               )}
                               <span className="sr-only">View Details</span>
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEdit(node)}
+                              disabled={loadingId === node.id}
+                              title="Edit Node"
+                            >
+                              {loadingId === node.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Pencil className="h-4 w-4" />
+                              )}
+                              <span className="sr-only">Edit Node</span>
+                            </Button>
                             {node.status === "online" && (
                               <Button
                                 variant="ghost"
@@ -328,6 +421,7 @@ export default function NodesPage() {
           </CardContent>
         </Card>
 
+        {/* Drain/Failover Confirmation Dialog */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -363,6 +457,23 @@ export default function NodesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Create Node Dialog */}
+        <NodeCreateDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreate={handleCreate}
+          isCreating={isCreating}
+        />
+
+        {/* Edit Node Dialog */}
+        <NodeEditDialog
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          node={editingNode}
+          onSave={handleSave}
+          isSaving={isSaving}
+        />
       </div>
     </div>
   );

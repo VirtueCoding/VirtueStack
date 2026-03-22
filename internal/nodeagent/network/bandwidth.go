@@ -87,7 +87,11 @@ func (m *NodeBandwidthManager) GetVMNetworkStats(ctx context.Context, vmName str
 	if err != nil {
 		return 0, 0, err
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check if running
 	state, _, err := domain.GetState()
@@ -127,7 +131,11 @@ func (m *NodeBandwidthManager) GetAllInterfaceStats(ctx context.Context, vmName 
 	if err != nil {
 		return nil, err
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	// Check if running
 	state, _, err := domain.GetState()
@@ -274,14 +282,18 @@ func (m *NodeBandwidthManager) ListThrottledVMs(ctx context.Context) ([]string, 
 	for _, domain := range domains {
 		name, err := domain.GetName()
 		if err != nil {
-			domain.Free()
+			if err := domain.Free(); err != nil {
+				m.logger.Debug("failed to free domain", "error", err)
+			}
 			continue
 		}
 
 		// Check if throttled
 		ifaceName, err := m.getInterfaceNameFromDomain(&domain)
 		if err != nil {
-			domain.Free()
+			if err := domain.Free(); err != nil {
+				m.logger.Debug("failed to free domain", "vm_name", name, "error", err)
+			}
 			continue
 		}
 
@@ -294,7 +306,9 @@ func (m *NodeBandwidthManager) ListThrottledVMs(ctx context.Context) ([]string, 
 			throttledVMs = append(throttledVMs, name)
 		}
 
-		domain.Free()
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "vm_name", name, "error", err)
+		}
 	}
 
 	return throttledVMs, nil
@@ -307,7 +321,11 @@ func (m *NodeBandwidthManager) GetInterfaceName(ctx context.Context, vmName stri
 	if err != nil {
 		return "", err
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			m.logger.Debug("failed to free domain", "error", err)
+		}
+	}()
 
 	return m.getInterfaceNameFromDomain(domain)
 }
@@ -446,10 +464,14 @@ func (m *NodeBandwidthManager) GetThrottleStatus(ctx context.Context, vmName str
 				// Parse rate string like "5Mbit" or "5000Kbit"
 				if strings.HasSuffix(rateStr, "Mbit") {
 					var mbits int
-					fmt.Sscanf(rateStr, "%dMbit", &mbits)
+					if _, err := fmt.Sscanf(rateStr, "%dMbit", &mbits); err != nil {
+						m.logger.Debug("failed to parse Mbit rate", "rate", rateStr, "error", err)
+					}
 					cfg.RateKbps = mbits * 1000
 				} else if strings.HasSuffix(rateStr, "Kbit") {
-					fmt.Sscanf(rateStr, "%dKbit", &cfg.RateKbps)
+					if _, err := fmt.Sscanf(rateStr, "%dKbit", &cfg.RateKbps); err != nil {
+						m.logger.Debug("failed to parse Kbit rate", "rate", rateStr, "error", err)
+					}
 				}
 				break
 			}

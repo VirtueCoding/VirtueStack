@@ -3,7 +3,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -139,7 +141,7 @@ func (r *IPRepository) UpdateIPSet(ctx context.Context, ipSet *models.IPSet) err
 	)
 	updated, err := scanIPSet(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("updating IP set %s: %w", ipSet.ID, ErrNoRowsAffected)
 		}
 		return fmt.Errorf("updating IP set %s: %w", ipSet.ID, err)
@@ -325,7 +327,7 @@ func (r *IPRepository) AllocateIPv4(ctx context.Context, ipSetID, vmID, customer
 	row := tx.QueryRow(ctx, selectQ, ipSetID)
 	ip, err := scanIPAddress(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("no available IPv4 addresses in IP set %s", ipSetID)
 		}
 		return nil, fmt.Errorf("finding available IP: %w", err)
@@ -415,7 +417,7 @@ func (r *IPRepository) GetRDNS(ctx context.Context, ipID string) (string, error)
 	var hostname *string
 	row := r.db.QueryRow(ctx, q, ipID)
 	if err := row.Scan(&hostname); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("getting RDNS for IP %s: %w", ipID, ErrNoRowsAffected)
 		}
 		return "", fmt.Errorf("getting RDNS for IP %s: %w", ipID, err)
@@ -566,6 +568,107 @@ func (r *IPRepository) DeleteVMIPv6SubnetByID(ctx context.Context, id string) er
 		return fmt.Errorf("deleting IPv6 subnet %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
+}
+
+// CreateVMIPv6SubnetWithIndexCheck atomically finds the next available subnet index
+// and creates a new IPv6 subnet. This prevents TOCTOU race conditions when multiple
+// concurrent requests try to allocate subnets from the same prefix.
+// The prefix string is queried within the transaction to compute the actual subnet.
+// Returns an error if the prefix is exhausted (65536 subnets max for a /48).
+func (r *IPRepository) CreateVMIPv6SubnetWithIndexCheck(ctx context.Context, vmID, prefixID string) (*models.VMIPv6Subnet, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Lock the prefix row and get the prefix string
+	const lockQ = `SELECT prefix FROM ipv6_prefixes WHERE id = $1 FOR UPDATE`
+	var prefixStr string
+	err = tx.QueryRow(ctx, lockQ, prefixID).Scan(&prefixStr)
+	if err != nil {
+		return nil, fmt.Errorf("locking IPv6 prefix row: %w", err)
+	}
+
+	// Find the max subnet_index within the transaction
+	const maxQ = `SELECT COALESCE(MAX(subnet_index), -1) FROM vm_ipv6_subnets WHERE ipv6_prefix_id = $1`
+	var maxIndex int
+	err = tx.QueryRow(ctx, maxQ, prefixID).Scan(&maxIndex)
+	if err != nil {
+		return nil, fmt.Errorf("finding max subnet index: %w", err)
+	}
+
+	nextIndex := maxIndex + 1
+
+	// Check we haven't exhausted the /48 prefix (65536 possible /64 subnets)
+	if nextIndex >= 65536 {
+		return nil, fmt.Errorf("IPv6 prefix is exhausted (no available /64 subnets)")
+	}
+
+	// Generate the /64 subnet from the /48 prefix
+	subnet, gateway, err := generateIPv6Subnet(prefixStr, nextIndex)
+	if err != nil {
+		return nil, fmt.Errorf("generating IPv6 subnet: %w", err)
+	}
+
+	// Create the subnet with the calculated index
+	const q = `
+		INSERT INTO vm_ipv6_subnets (vm_id, ipv6_prefix_id, subnet, subnet_index, gateway)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING ` + vmIPv6SubnetSelectCols
+
+	row := tx.QueryRow(ctx, q, vmID, prefixID, subnet, nextIndex, gateway)
+	created, err := scanVMIPv6Subnet(row)
+	if err != nil {
+		return nil, fmt.Errorf("creating VM IPv6 subnet: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return &created, nil
+}
+
+// generateIPv6Subnet generates a /64 subnet and gateway from a /48 prefix and subnet index.
+// The subnet index determines which /64 within the /48 is allocated.
+func generateIPv6Subnet(prefix48 string, subnetIndex int) (subnet, gateway string, err error) {
+	// Parse the /48 prefix
+	prefix, err := netip.ParsePrefix(prefix48)
+	if err != nil {
+		return "", "", fmt.Errorf("parsing prefix %s: %w", prefix48, err)
+	}
+
+	// Get the prefix address
+	addr := prefix.Addr()
+
+	// Convert to 16-byte array
+	bytes := addr.As16()
+
+	// The subnet index goes in bits 48-63 of the address (the next 16 bits after the /48 prefix)
+	// We need to modify bytes 6 and 7 (indices 6 and 7 in the 16-byte array)
+	// Bytes 6-7 contain bits 48-63
+	byte6 := (subnetIndex >> 8) & 0xFF
+	byte7 := subnetIndex & 0xFF
+
+	bytes[6] = byte(byte6)
+	bytes[7] = byte(byte7)
+
+	// Create the /64 subnet
+	subnetAddr := netip.AddrFrom16(bytes)
+	subnet = fmt.Sprintf("%s/64", subnetAddr.String())
+
+	// Gateway is the first address in the subnet (::1)
+	gatewayBytes := bytes
+	gatewayBytes[15] = 1
+	gatewayAddr := netip.AddrFrom16(gatewayBytes)
+	gateway = gatewayAddr.String()
+
+	return subnet, gateway, nil
 }
 
 // ============================================================================

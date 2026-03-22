@@ -71,7 +71,8 @@ function virtuestack_ConfigOptions(): array
         'Plan ID' => [
             'Type'        => 'text',
             'Size'        => 36,
-            'Description' => 'VirtueStack Plan UUID (e.g., 550e8400-e29b-41d4-a716-446655440000)',
+            'Description' => 'VirtueStack Plan UUID (e.g., 550e8400-e29b-41d4-a716-446655440000). '
+                . 'Use "Validate Configuration" button below to verify the Plan ID exists.',
         ],
         'Template ID' => [
             'Type'        => 'text',
@@ -99,6 +100,110 @@ function virtuestack_ConfigOptions(): array
 }
 
 /**
+ * Validate a Plan ID exists in VirtueStack.
+ *
+ * Used during product configuration to catch errors early.
+ *
+ * @param string     $planId Plan UUID to validate
+ * @param array|null $params WHMCS module parameters (for API client)
+ *
+ * @return array Validation result with 'valid' bool and 'error' string if invalid
+ */
+function virtuestack_validatePlanId(string $planId, ?array $params = null): array
+{
+    // Basic UUID format validation
+    if (empty($planId)) {
+        return [
+            'valid' => false,
+            'error' => 'Plan ID is required. Please enter a valid Plan UUID.',
+        ];
+    }
+
+    if (!VirtueStackHelper::isValidUuid($planId)) {
+        return [
+            'valid' => false,
+            'error' => 'Plan ID must be a valid UUID format (e.g., 550e8400-e29b-41d4-a716-446655440000).',
+        ];
+    }
+
+    // If params provided, validate against API
+    if ($params !== null) {
+        try {
+            $client = virtuestack_getApiClient($params);
+
+            if (!$client->planExists($planId)) {
+                return [
+                    'valid' => false,
+                    'error' => "Plan ID '{$planId}' not found or is inactive. "
+                        . 'Please verify the Plan UUID in your VirtueStack Controller admin panel.',
+                ];
+            }
+
+            // Optionally fetch plan details for informational purposes
+            $plan = $client->getPlan($planId);
+            $specs = [];
+            if (isset($plan['vcpu'])) {
+                $specs[] = $plan['vcpu'] . ' vCPU';
+            }
+            if (isset($plan['memory_mb'])) {
+                $specs[] = round($plan['memory_mb'] / 1024, 1) . ' GB RAM';
+            }
+            if (isset($plan['disk_gb'])) {
+                $specs[] = $plan['disk_gb'] . ' GB Disk';
+            }
+
+            return [
+                'valid' => true,
+                'error' => '',
+                'plan_name' => $plan['name'] ?? 'Unknown',
+                'plan_specs' => implode(', ', $specs),
+            ];
+        } catch (\Exception $e) {
+            return [
+                'valid' => false,
+                'error' => 'Failed to validate Plan ID against VirtueStack API: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    // Without params, just validate UUID format
+    return [
+        'valid' => true,
+        'error' => '',
+    ];
+}
+
+/**
+ * Validate a Template ID exists in VirtueStack.
+ *
+ * @param string     $templateId Template UUID to validate
+ * @param array|null $params     WHMCS module parameters (for API client)
+ *
+ * @return array Validation result with 'valid' bool and 'error' string if invalid
+ */
+function virtuestack_validateTemplateId(string $templateId, ?array $params = null): array
+{
+    if (empty($templateId)) {
+        return [
+            'valid' => false,
+            'error' => 'Template ID is required. Please enter a valid Template UUID.',
+        ];
+    }
+
+    if (!VirtueStackHelper::isValidUuid($templateId)) {
+        return [
+            'valid' => false,
+            'error' => 'Template ID must be a valid UUID format.',
+        ];
+    }
+
+    return [
+        'valid' => true,
+        'error' => '',
+    ];
+}
+
+/**
  * Provision a new VM.
  *
  * Called when a new service is activated. Creates the VM via Controller API.
@@ -122,6 +227,25 @@ function virtuestack_CreateAccount(array $params): string
         // Get API client
         $client = virtuestack_getApiClient($params);
 
+        // IDEMPOTENCY CHECK: Check if VM already exists for this service
+        // This prevents duplicate VMs on WHMCS retry (e.g., timeout scenarios)
+        try {
+            $existingVM = $client->getVMByServiceId($serviceId);
+            if (!empty($existingVM['id'])) {
+                VirtueStackHelper::log('CreateAccount', 'VM already exists for service, skipping creation', json_encode([
+                    'service_id' => $serviceId,
+                    'vm_id' => $existingVM['id'],
+                ]));
+                // Update custom fields with existing VM info
+                virtuestack_updateServiceField($serviceId, 'vm_id', $existingVM['id']);
+                virtuestack_updateServiceField($serviceId, 'provisioning_status', 'completed');
+                return 'success';
+            }
+        } catch (\Exception $e) {
+            // VM doesn't exist yet, continue with creation
+            VirtueStackHelper::log('CreateAccount', 'No existing VM found, proceeding with creation', $e->getMessage());
+        }
+
         // Get or create customer in VirtueStack
         $customerData = virtuestack_ensureCustomer($params, $client, $clientId);
 
@@ -133,10 +257,26 @@ function virtuestack_CreateAccount(array $params): string
 
         // Validate required configuration
         if (empty($planId)) {
-            return 'Plan ID is not configured for this product';
+            return 'Plan ID is not configured for this product. Please configure the Plan UUID in product settings.';
         }
         if (empty($templateId)) {
-            return 'Template ID is not configured for this product';
+            return 'Template ID is not configured for this product. Please configure the Template UUID in product settings.';
+        }
+
+        // Validate Plan ID exists before attempting VM creation
+        $planValidation = virtuestack_validatePlanId($planId, $params);
+        if (!$planValidation['valid']) {
+            VirtueStackHelper::log('CreateAccount', 'Plan validation failed', $planValidation['error']);
+            return 'Configuration Error: ' . $planValidation['error']
+                . ' Please update the product configuration with a valid Plan ID.';
+        }
+
+        // Validate Template ID format
+        $templateValidation = virtuestack_validateTemplateId($templateId, $params);
+        if (!$templateValidation['valid']) {
+            VirtueStackHelper::log('CreateAccount', 'Template validation failed', $templateValidation['error']);
+            return 'Configuration Error: ' . $templateValidation['error']
+                . ' Please update the product configuration with a valid Template ID.';
         }
 
         // Build hostname
@@ -320,14 +460,21 @@ function virtuestack_ChangePackage(array $params): string
 
         // Get new plan ID from config options
         $newPlanId = VirtueStackHelper::getConfigValue($params, 'Plan ID', '');
-        
+
         if (empty($newPlanId)) {
-            return 'No target plan specified';
+            return 'No target plan specified. Please configure a Plan ID in product settings.';
+        }
+
+        // Validate the new plan exists before attempting resize
+        $planValidation = virtuestack_validatePlanId($newPlanId, $params);
+        if (!$planValidation['valid']) {
+            VirtueStackHelper::log('ChangePackage', 'Plan validation failed', $planValidation['error']);
+            return 'Configuration Error: ' . $planValidation['error'];
         }
 
         // Fetch plan details from Controller API
         $planDetails = $client->getPlan($newPlanId);
-        
+
         if (empty($planDetails)) {
             return 'Failed to fetch plan details for plan ID: ' . $newPlanId;
         }

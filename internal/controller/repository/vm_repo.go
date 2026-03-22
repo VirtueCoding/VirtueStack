@@ -125,6 +125,15 @@ func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]
 		args = append(args, "%"+*filter.Search+"%")
 		idx++
 	}
+	if len(filter.VMIDs) > 0 {
+		placeholders := make([]string, len(filter.VMIDs))
+		for i, vmID := range filter.VMIDs {
+			placeholders[i] = fmt.Sprintf("$%d", idx)
+			args = append(args, vmID)
+			idx++
+		}
+		where = append(where, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ",")))
+	}
 
 	clause := strings.Join(where, " AND ")
 	countQ := "SELECT COUNT(*) FROM vms WHERE " + clause
@@ -490,7 +499,6 @@ func (r *VMRepository) ListForAdminBackupTarget(ctx context.Context, filter Admi
 	if len(filter.PlanIDs) > 0 {
 		where = append(where, fmt.Sprintf("plan_id = ANY($%d)", idx))
 		args = append(args, filter.PlanIDs)
-		idx++
 	}
 
 	q := fmt.Sprintf("SELECT %s FROM vms WHERE %s", vmSelectCols, strings.Join(where, " AND "))
@@ -501,4 +509,18 @@ func (r *VMRepository) ListForAdminBackupTarget(ctx context.Context, filter Admi
 		return nil, fmt.Errorf("listing VMs for admin backup target: %w", err)
 	}
 	return vms, nil
+}
+
+// UpdatePlanID updates the plan_id for a VM.
+// This is used when a VM is upgraded to a new plan.
+func (r *VMRepository) UpdatePlanID(ctx context.Context, vmID, planID string) error {
+	const q = `UPDATE vms SET plan_id = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, planID, vmID)
+	if err != nil {
+		return fmt.Errorf("updating VM %s plan: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating VM %s plan: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
 }

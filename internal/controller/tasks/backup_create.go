@@ -148,10 +148,12 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 
 	defer func() {
 		if freezeSuccessful && frozenCount > 0 {
-			// context.Background() is intentional here: the parent task context may already
-			// be cancelled or near expiry by the time the defer runs, but we must always
-			// attempt to thaw the filesystems to avoid leaving the guest in a frozen state.
-			thawCtx, thawCancel := context.WithTimeout(context.Background(), GuestAgentFreezeTimeout)
+			// Create a detached context for the thaw operation. The parent task context
+			// may already be cancelled or near expiry by the time the defer runs, but we
+			// must always attempt to thaw the filesystems to avoid leaving the guest in
+			// a frozen state. We derive from ctx to maintain trace correlation while
+			// using a fresh timeout that is independent of parent cancellation.
+			thawCtx, thawCancel := context.WithTimeout(context.WithoutCancel(ctx), GuestAgentFreezeTimeout)
 			defer thawCancel()
 
 			thawedCount, thawErr := deps.NodeClient.GuestThawFilesystems(thawCtx, nodeID, payload.VMID)

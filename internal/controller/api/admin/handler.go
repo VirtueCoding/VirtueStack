@@ -27,6 +27,7 @@ type AdminHandlerConfig struct {
 	SettingsRepo              *repository.SettingsRepository
 	FailoverRepo              *repository.FailoverRepository
 	AdminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
+	AdminRepo                 *repository.AdminRepository
 	RDNSService               *services.RDNSService
 	JWTSecret                 string
 	Issuer                    string
@@ -52,6 +53,7 @@ type AdminHandler struct {
 	settingsRepo              *repository.SettingsRepository
 	failoverRepo              *repository.FailoverRepository
 	adminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
+	adminRepo                 *repository.AdminRepository
 	rdnsService               *services.RDNSService
 	authConfig                middleware.AuthConfig
 	logger                    *slog.Logger
@@ -74,6 +76,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		settingsRepo:            cfg.SettingsRepo,
 		failoverRepo:            cfg.FailoverRepo,
 		adminBackupScheduleRepo: cfg.AdminBackupScheduleRepo,
+		adminRepo:               cfg.AdminRepo,
 		rdnsService:             cfg.RDNSService,
 		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		logger:                  cfg.Logger.With("component", "admin-handler"),

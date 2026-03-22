@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -88,7 +89,7 @@ func (hc *HeartbeatChecker) checkAllNodes(ctx context.Context) {
 		hc.logger.Warn("failed to list degraded nodes", "error", err)
 	}
 
-	allNodes := append(onlineNodes, degradedNodes...)
+	allNodes := slices.Concat(onlineNodes, degradedNodes)
 	cutoff := time.Now().Add(-hc.config.Timeout)
 
 	for _, node := range allNodes {

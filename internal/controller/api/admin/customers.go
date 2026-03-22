@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -24,6 +25,85 @@ type CustomerDetail struct {
 	VMCount     int `json:"vm_count"`
 	ActiveVMs   int `json:"active_vms"`
 	BackupCount int `json:"backup_count"`
+}
+
+// CustomerCreateRequest represents the request body for creating a customer.
+type CustomerCreateRequest struct {
+	Name     string  `json:"name" validate:"required,max=255"`
+	Email    string  `json:"email" validate:"required,email,max=254"`
+	Password string  `json:"password" validate:"required,min=8,max=128"`
+	Phone    *string `json:"phone,omitempty" validate:"omitempty,max=20"`
+}
+
+// CreateCustomer handles POST /customers - creates a new customer.
+func (h *AdminHandler) CreateCustomer(c *gin.Context) {
+	var req CustomerCreateRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	// Check if email already exists
+	existingCustomer, err := h.customerService.GetByEmail(c.Request.Context(), req.Email)
+	if err == nil && existingCustomer != nil {
+		middleware.RespondWithError(c, http.StatusConflict, "EMAIL_EXISTS", "A customer with this email already exists")
+		return
+	}
+	if err != nil && !sharederrors.Is(err, sharederrors.ErrNotFound) {
+		h.logger.Error("failed to check existing email",
+			"email", req.Email,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_CREATE_FAILED", "Internal server error")
+		return
+	}
+
+	// Hash the password
+	passwordHash, err := h.authService.HashPassword(req.Password)
+	if err != nil {
+		h.logger.Error("failed to hash password",
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_HASH_FAILED", "Failed to process password")
+		return
+	}
+
+	// Create the customer
+	customer := &models.Customer{
+		Name:         req.Name,
+		Email:        req.Email,
+		PasswordHash: passwordHash,
+		Phone:        req.Phone,
+		Status:       models.CustomerStatusActive,
+	}
+
+	actorID := middleware.GetUserID(c)
+	actorIP := c.ClientIP()
+
+	createdCustomer, err := h.customerService.Create(c.Request.Context(), actorID, actorIP, customer)
+	if err != nil {
+		h.logger.Error("failed to create customer",
+			"email", req.Email,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_CREATE_FAILED", "Failed to create customer")
+		return
+	}
+
+	// Log audit event
+	h.logAuditEvent(c, "customer.create", "customer", createdCustomer.ID, req, true)
+
+	h.logger.Info("customer created via admin API",
+		"customer_id", createdCustomer.ID,
+		"email", createdCustomer.Email,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusCreated, models.Response{Data: createdCustomer})
 }
 
 // ListCustomers handles GET /customers - lists all customers.
@@ -147,7 +227,8 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 
 	var req CustomerUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

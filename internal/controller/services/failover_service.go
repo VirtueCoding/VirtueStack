@@ -250,6 +250,15 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		return sharederrors.ErrNoIPMIConfigured
 	}
 
+	// Validate IPMI address format to prevent command injection
+	if node.IPMIAddress == nil || *node.IPMIAddress == "" {
+		return sharederrors.ErrNoIPMIConfigured
+	}
+	ipmiAddress := *node.IPMIAddress
+	if ip := net.ParseIP(ipmiAddress); ip == nil {
+		return fmt.Errorf("invalid IPMI address format: %s", ipmiAddress)
+	}
+
 	username, err := crypto.Decrypt(*node.IPMIUsernameEncrypted, s.encryptionKey)
 	if err != nil {
 		return fmt.Errorf("decrypting IPMI username: %w", err)
@@ -259,8 +268,6 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 	if err != nil {
 		return fmt.Errorf("decrypting IPMI password: %w", err)
 	}
-
-	ipmiAddress := *node.IPMIAddress
 
 	s.logger.Info("executing STONITH via IPMI",
 		"node_id", node.ID,
@@ -276,7 +283,11 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("IPMI power off failed: %w, output: %s", err, string(output))
+		s.logger.Error("IPMI power off failed",
+			"node_id", node.ID,
+			"error", err,
+			"output", string(output))
+		return fmt.Errorf("IPMI power off failed: %w", err)
 	}
 
 	// Wait for power-off to complete
@@ -589,32 +600,19 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 			"new_node_id", targetNode.ID)
 	}
 
-	// Update allocated resources on the new node
-	newAllocatedVCPU := targetNode.AllocatedVCPU + vm.VCPU
-	newAllocatedMemory := targetNode.AllocatedMemoryMB + vm.MemoryMB
-	if err := s.nodeRepo.UpdateAllocatedResources(ctx, targetNode.ID, newAllocatedVCPU, newAllocatedMemory); err != nil {
+	// Update allocated resources on the new node atomically
+	if err := s.nodeRepo.IncrementAllocatedResources(ctx, targetNode.ID, vm.VCPU, vm.MemoryMB); err != nil {
 		s.logger.Warn("failed to update allocated resources on target node",
 			"node_id", targetNode.ID,
 			"error", err)
 	}
 
-	// Decrement allocated resources from the old (failed) node
+	// Decrement allocated resources from the old (failed) node atomically
 	if vm.NodeID != nil {
-		oldNode, err := s.nodeRepo.GetByID(ctx, *vm.NodeID)
-		if err == nil {
-			oldVCPU := oldNode.AllocatedVCPU - vm.VCPU
-			oldMemory := oldNode.AllocatedMemoryMB - vm.MemoryMB
-			if oldVCPU < 0 {
-				oldVCPU = 0
-			}
-			if oldMemory < 0 {
-				oldMemory = 0
-			}
-			if err := s.nodeRepo.UpdateAllocatedResources(ctx, *vm.NodeID, oldVCPU, oldMemory); err != nil {
-				s.logger.Warn("failed to decrement allocated resources on failed node",
-					"node_id", *vm.NodeID,
-					"error", err)
-			}
+		if err := s.nodeRepo.DecrementAllocatedResources(ctx, *vm.NodeID, vm.VCPU, vm.MemoryMB); err != nil {
+			s.logger.Warn("failed to decrement allocated resources on failed node",
+				"node_id", *vm.NodeID,
+				"error", err)
 		}
 	}
 

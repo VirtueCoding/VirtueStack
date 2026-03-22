@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -78,7 +79,8 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 	var req models.IPSetCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -92,7 +94,7 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 		Network:    req.Network,
 		Gateway:    req.Gateway,
 		VLANID:     req.VlanID,
-		IPVersion:  int16(req.IPVersion),
+		IPVersion:  int16(req.IPVersion), //nolint:gosec // IP version is always 4 or 6
 		NodeIDs:    req.NodeIDs,
 	}
 
@@ -186,7 +188,8 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 
 	var req IPSetUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

@@ -27,10 +27,17 @@ import {
   Trash2,
   Loader2,
   Eye,
+  Plus,
+  Pencil,
 } from "lucide-react";
-import { adminVMsApi, type VM } from "@/lib/api-client";
+import {
+  adminVMsApi,
+  type VM,
+} from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
+import { VMCreateDialog, type CreateVMFormData } from "@/components/vms/VMCreateDialog";
+import { VMEditDialog, type EditVMFormData } from "@/components/vms/VMEditDialog";
 
 export default function VMsPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -41,6 +48,11 @@ export default function VMsPage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewVM, setViewVM] = useState<VM | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editVM, setEditVM] = useState<VM | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -92,6 +104,48 @@ export default function VMsPage() {
     }
   };
 
+  const handleCreate = async (data: CreateVMFormData) => {
+    setIsCreating(true);
+    try {
+      const result = await adminVMsApi.createVM(data);
+      toast({
+        title: "VM Creation Started",
+        description: `VM is being provisioned. Task ID: ${result.task_id}`,
+      });
+      // Refresh the list to show the new VM
+      const updatedVMs = await adminVMsApi.getVMs();
+      setVMs(updatedVMs || []);
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleEdit = async (data: EditVMFormData) => {
+    if (!editVM) return;
+    setIsSaving(true);
+    try {
+      await adminVMsApi.updateVM(editVM.id, data);
+      toast({
+        title: "VM Updated",
+        description: `VM "${editVM.name}" has been updated.`,
+      });
+      // Refresh the list
+      const updatedVMs = await adminVMsApi.getVMs();
+      setVMs(updatedVMs || []);
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openEditDialog = (vm: VM) => {
+    setEditVM(vm);
+    setEditDialogOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
@@ -102,6 +156,10 @@ export default function VMsPage() {
               Manage all virtual machines across the cluster
             </p>
           </div>
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create VM
+          </Button>
         </div>
 
         <Card>
@@ -193,6 +251,14 @@ export default function VMsPage() {
                             <Button
                               variant="ghost"
                               size="icon"
+                              title="Edit VM"
+                              onClick={() => openEditDialog(vm)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               title="Delete VM"
                               onClick={() => {
                                 setSelectedVM(vm);
@@ -263,6 +329,24 @@ export default function VMsPage() {
                 <span className="font-mono">{viewVM?.node_id}</span>
                 <span className="text-muted-foreground">Created:</span>
                 <span>{viewVM?.created_at ? new Date(viewVM.created_at).toLocaleString() : "—"}</span>
+                {viewVM?.vcpu && (
+                  <>
+                    <span className="text-muted-foreground">vCPU:</span>
+                    <span>{viewVM.vcpu}</span>
+                  </>
+                )}
+                {viewVM?.memory_mb && (
+                  <>
+                    <span className="text-muted-foreground">Memory:</span>
+                    <span>{Math.round(viewVM.memory_mb / 1024)} GB</span>
+                  </>
+                )}
+                {viewVM?.disk_gb && (
+                  <>
+                    <span className="text-muted-foreground">Disk:</span>
+                    <span>{viewVM.disk_gb} GB</span>
+                  </>
+                )}
               </div>
             </div>
             <DialogFooter>
@@ -272,6 +356,21 @@ export default function VMsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <VMCreateDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreate={handleCreate}
+          isCreating={isCreating}
+        />
+
+        <VMEditDialog
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          vm={editVM}
+          onSave={handleEdit}
+          isSaving={isSaving}
+        />
       </div>
     </div>
   );

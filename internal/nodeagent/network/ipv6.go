@@ -392,11 +392,11 @@ func (m *IPv6Manager) GenerateEUI64Address(subnetCIDR, macAddress string) (strin
 
 	// Combine with prefix
 	prefixBytes := pfx.Addr().As16()
-	addrBytes := make([]byte, 16)
+	var addrBytes [16]byte
 	copy(addrBytes[0:8], prefixBytes[0:8])
 	copy(addrBytes[8:16], eui64)
 
-	addr := netip.AddrFrom16([16]byte(addrBytes))
+	addr := netip.AddrFrom16(addrBytes)
 	return addr.String(), nil
 }
 

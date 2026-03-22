@@ -77,3 +77,30 @@ export const createIPSetSchema = z.object({
 });
 
 export type CreateIPSetFormData = z.infer<typeof createIPSetSchema>;
+
+// Edit IP Set schema - fields are optional for partial updates
+export const editIPSetSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters").optional(),
+  gateway: z.string().optional(),
+  vlan_id: z.number().int().min(1, "VLAN ID must be between 1 and 4094").max(4094, "VLAN ID must be between 1 and 4094").optional().nullable(),
+  location_id: z.string().optional().nullable(),
+  node_ids: z.array(z.string()).optional(),
+}).superRefine((data, ctx) => {
+  // Only validate gateway if provided
+  if (data.gateway && data.gateway.length > 0) {
+    // Try IPv4 first
+    const isIPv4 = ipv4Regex.test(data.gateway) && isValidIPv4Octet(data.gateway);
+    // Then try IPv6
+    const isIPv6 = ipv6Regex.test(data.gateway) || data.gateway === "::" || data.gateway.includes("::");
+
+    if (!isIPv4 && !isIPv6) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Invalid IP address format",
+        path: ["gateway"],
+      });
+    }
+  }
+});
+
+export type EditIPSetFormData = z.infer<typeof editIPSetSchema>;

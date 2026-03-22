@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -46,8 +47,15 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		PaginationParams: pagination,
 	}
 
+	// Get vm_ids scope from API key (if any)
+	vmIDs := middleware.GetVMIDs(c)
+
 	// Optional VM ID filter
 	if vmID := c.Query("vm_id"); vmID != "" {
+		// Check if API key has access to this VM
+		if !middleware.CheckVMScope(c, vmID) {
+			return
+		}
 		// Verify VM belongs to customer
 		if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 			if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -58,6 +66,9 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 			return
 		}
 		filter.VMID = &vmID
+	} else if len(vmIDs) > 0 {
+		// API key has vm_ids restriction, filter results
+		filter.VMIDs = vmIDs
 	}
 
 	snapshots, total, err := h.backupRepo.ListSnapshotsByCustomer(c.Request.Context(), customerID, filter)
@@ -78,12 +89,14 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 
 // CreateSnapshot handles POST /snapshots - creates a snapshot for a VM.
 // Snapshots are quick point-in-time copies stored in Ceph RBD.
+// Quota enforcement is handled atomically in the service layer to prevent race conditions.
 func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	var req CreateSnapshotRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -94,6 +107,11 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	// Validate UUID
 	if _, err := uuid.Parse(req.VMID); err != nil {
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
+		return
+	}
+
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, req.VMID) {
 		return
 	}
 
@@ -108,24 +126,22 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		return
 	}
 
-	planLimit := defaultSnapshotLimit
-	plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
-	if planErr == nil && plan.SnapshotLimit > 0 {
-		planLimit = plan.SnapshotLimit
-	}
-
-	snapshotCount, countErr := h.backupRepo.CountSnapshotsByVM(c.Request.Context(), vm.ID)
-	if countErr == nil && snapshotCount >= planLimit {
-		middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
-			fmt.Sprintf("Snapshot limit reached for this VM (%d/%d). Delete existing snapshots first.", snapshotCount, planLimit))
-		return
-	}
-
-	// Create snapshot asynchronously
+	// Create snapshot asynchronously - quota is enforced atomically in the service layer
 	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
 	if err != nil {
 		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
 			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "limit exceeded") {
+			// Get plan limit for better error message
+			planLimit := defaultSnapshotLimit
+			plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
+			if planErr == nil && plan.SnapshotLimit > 0 {
+				planLimit = plan.SnapshotLimit
+			}
+			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
+				fmt.Sprintf("Snapshot limit reached for this VM (%d max). Delete existing snapshots first.", planLimit))
 			return
 		}
 		h.logger.Error("failed to create snapshot",
@@ -170,6 +186,11 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 			return
 		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Failed to retrieve snapshot")
+		return
+	}
+
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, snapshot.VMID) {
 		return
 	}
 
@@ -224,6 +245,11 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 			return
 		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Failed to retrieve snapshot")
+		return
+	}
+
+	// Check if API key has access to this VM (vm_ids scope enforcement)
+	if !middleware.CheckVMScope(c, snapshot.VMID) {
 		return
 	}
 

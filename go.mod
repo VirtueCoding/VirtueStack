@@ -1,6 +1,6 @@
 module github.com/AbuGosok/VirtueStack
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/alexedwards/argon2id v1.0.0
@@ -9,7 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-playground/validator/v10 v10.26.0
 	github.com/go-sql-driver/mysql v1.5.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3

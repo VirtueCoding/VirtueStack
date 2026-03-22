@@ -129,7 +129,11 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 				logger.Warn("failed to lookup domain for password set", "error", err)
 				return
 			}
-			defer domain.Free()
+			defer func() {
+				if err := domain.Free(); err != nil {
+					logger.Debug("failed to free domain after password set", "error", err)
+				}
+			}()
 			agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
 			if err := agent.SetUserPassword(ctx, "root", req.GetRootPasswordHash()); err != nil {
 				logger.Error("failed to set root password via guest agent", "error", err)
@@ -225,7 +229,11 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "looking up domain: %v", err)
 		}
-		defer domain.Free()
+		defer func() {
+			if err := domain.Free(); err != nil {
+				logger.Debug("failed to free domain after resize", "error", err)
+			}
+		}()
 
 		if req.GetNewVcpu() > 0 {
 			if err := domain.SetVcpusFlags(uint(req.GetNewVcpu()), libvirt.DOMAIN_VCPU_CONFIG|libvirt.DOMAIN_VCPU_MAXIMUM); err != nil {
@@ -274,7 +282,11 @@ func (h *grpcHandler) MigrateVM(ctx context.Context, req *nodeagentpb.MigrateVMR
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			logger.Debug("failed to free domain after migration", "error", err)
+		}
+	}()
 
 	destURI := fmt.Sprintf("qemu+tcp://%s/system", req.GetDestinationNodeAddress())
 
@@ -318,11 +330,17 @@ func (h *grpcHandler) AbortMigration(ctx context.Context, req *nodeagentpb.VMIde
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "abort-migration")
+
 	domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
 	}
-	defer domain.Free()
+	defer func() {
+		if err := domain.Free(); err != nil {
+			logger.Debug("failed to free domain after abort migration", "error", err)
+		}
+	}()
 
 	if err := domain.AbortJob(); err != nil {
 		return nil, status.Errorf(codes.Internal, "aborting migration: %v", err)

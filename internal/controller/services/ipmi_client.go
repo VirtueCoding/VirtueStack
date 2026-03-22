@@ -5,10 +5,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// ErrInvalidIPMIAddress indicates that the IPMI address is not a valid IP format.
+var ErrInvalidIPMIAddress = fmt.Errorf("invalid IPMI address format")
 
 type IPMIClient struct {
 	host     string
@@ -28,7 +32,20 @@ func NewIPMIClient(host, username, password string, logger *slog.Logger) *IPMICl
 	}
 }
 
+// ValidateHost checks if the host is a valid IP address.
+// This prevents command injection attacks through malformed IPMI addresses.
+func (c *IPMIClient) ValidateHost() error {
+	if ip := net.ParseIP(c.host); ip == nil {
+		return fmt.Errorf("%w: %s", ErrInvalidIPMIAddress, c.host)
+	}
+	return nil
+}
+
 func (c *IPMIClient) PowerCycle(ctx context.Context) error {
+	if err := c.ValidateHost(); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -41,17 +58,24 @@ func (c *IPMIClient) PowerCycle(ctx context.Context) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ipmitool power cycle failed: %w, output: %s", err, string(output))
+		c.logger.Error("ipmitool power cycle failed",
+			"host", c.host,
+			"error", err,
+			"output", string(output))
+		return fmt.Errorf("ipmitool power cycle failed: %w", err)
 	}
 
 	c.logger.Info("IPMI power cycle command executed successfully",
-		"host", c.host,
-		"output", string(output))
+		"host", c.host)
 
 	return nil
 }
 
 func (c *IPMIClient) PowerOn(ctx context.Context) error {
+	if err := c.ValidateHost(); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -64,13 +88,21 @@ func (c *IPMIClient) PowerOn(ctx context.Context) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ipmitool power on failed: %w, output: %s", err, string(output))
+		c.logger.Error("ipmitool power on failed",
+			"host", c.host,
+			"error", err,
+			"output", string(output))
+		return fmt.Errorf("ipmitool power on failed: %w", err)
 	}
 
 	return nil
 }
 
 func (c *IPMIClient) PowerOff(ctx context.Context) error {
+	if err := c.ValidateHost(); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -83,13 +115,21 @@ func (c *IPMIClient) PowerOff(ctx context.Context) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ipmitool power off failed: %w, output: %s", err, string(output))
+		c.logger.Error("ipmitool power off failed",
+			"host", c.host,
+			"error", err,
+			"output", string(output))
+		return fmt.Errorf("ipmitool power off failed: %w", err)
 	}
 
 	return nil
 }
 
 func (c *IPMIClient) GetPowerStatus(ctx context.Context) (bool, error) {
+	if err := c.ValidateHost(); err != nil {
+		return false, err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -102,7 +142,11 @@ func (c *IPMIClient) GetPowerStatus(ctx context.Context) (bool, error) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return false, fmt.Errorf("ipmitool power status failed: %w, output: %s", err, string(output))
+		c.logger.Error("ipmitool power status failed",
+			"host", c.host,
+			"error", err,
+			"output", string(output))
+		return false, fmt.Errorf("ipmitool power status failed: %w", err)
 	}
 
 	statusStr := string(output)

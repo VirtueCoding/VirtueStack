@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -31,7 +32,8 @@ type BackupScheduleUpdateRequest struct {
 func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 	var req BackupScheduleCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}
@@ -137,7 +139,8 @@ func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
 
 	var req BackupScheduleUpdateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
-		if apiErr, ok := err.(*sharederrors.APIError); ok {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
 			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
 			return
 		}

@@ -6,10 +6,12 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // vmDeleteCheckResult contains the result of checking VM existence for deletion.
@@ -35,7 +37,10 @@ func parseAndCheckVMDelete(
 	vm, err := deps.VMRepo.GetByID(ctx, payload.VMID)
 	if err != nil {
 		// If VM doesn't exist, consider deletion successful (idempotent).
-		return &vmDeleteCheckResult{notFound: true}, nil
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			return &vmDeleteCheckResult{notFound: true}, nil
+		}
+		return nil, fmt.Errorf("checking VM existence: %w", err)
 	}
 	return &vmDeleteCheckResult{vm: vm}, nil
 }

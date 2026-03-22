@@ -46,12 +46,14 @@ These tests only need the Docker stack running:
 
 - `auth.spec.ts` - Authentication flows
 - `admin-vm.spec.ts` - Admin VM management UI
+- `admin-vm-pom.spec.ts` - Admin VM management UI (Page Object Model pattern)
 - `admin-nodes.spec.ts` - Node management UI
 - `admin-plans.spec.ts` - Plan management UI
 - `admin-templates.spec.ts` - Template management UI
 - `admin-ip-sets.spec.ts` - IP pool management UI
 - `admin-customers.spec.ts` - Customer management UI
 - `customer-vm.spec.ts` - Customer VM operations
+- `customer-vm-pom.spec.ts` - Customer VM operations (Page Object Model pattern)
 - `customer-backup.spec.ts` - Backup management
 - `customer-snapshot.spec.ts` - Snapshot management
 - `customer-settings.spec.ts` - Settings, 2FA, API keys
@@ -167,30 +169,90 @@ docker run -d \
 
 ## Writing New Tests
 
+### Project Structure
+
+```
+tests/e2e/
+├── pages/                    # Page Object Models
+│   ├── BasePage.ts          # Base class with common methods
+│   ├── AdminLoginPage.ts    # Admin login page
+│   ├── AdminDashboardPage.ts
+│   ├── AdminVMListPage.ts
+│   ├── AdminVMDetailPage.ts
+│   ├── CustomerLoginPage.ts
+│   ├── CustomerDashboardPage.ts
+│   ├── CustomerVMListPage.ts
+│   ├── CustomerVMDetailPage.ts
+│   ├── CustomerConsolePage.ts
+│   └── index.ts             # Exports all pages
+├── utils/                    # Utilities
+│   ├── auth.ts              # TOTP generation, credentials
+│   ├── api.ts               # API client, test IDs
+│   └── index.ts             # Exports all utilities
+├── fixtures/                 # Custom Playwright fixtures
+│   └── index.ts             # adminTest, customerTest
+├── auth.setup.ts            # Authentication state setup
+└── *.spec.ts                # Test files
+```
+
 ### Page Object Model Pattern
 
+Page Objects encapsulate page-specific logic for better maintainability:
+
 ```typescript
-class MyNewPage {
-  constructor(private page: Page) {}
+// pages/MyNewPage.ts
+import { Page, expect, Locator } from '@playwright/test';
+import { BasePage } from './BasePage';
+
+export class MyNewPage extends BasePage {
+  readonly title: Locator;
+  readonly submitButton: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.title = page.locator('h1');
+    this.submitButton = page.locator('button[type="submit"]');
+  }
 
   async goto() {
-    await this.page.goto('/my-page');
-    await expect(this.page.locator('h1')).toContainText(/my page/i);
+    await this.navigate('/my-page');
+    await expect(this.title).toContainText(/my page/i);
   }
 
-  async doSomething(value: string) {
-    await this.page.fill('input[name="field"]', value);
-    await this.page.click('button[type="submit"]');
+  async submitForm(value: string) {
+    await this.fillInput('field', value);
+    await this.submitButton.click();
   }
 }
+```
+
+#### Using Custom Fixtures
+
+Use the custom fixtures for cleaner test code:
+
+```typescript
+// my-feature.spec.ts
+import { test, expect } from './fixtures';
 
 test.describe('My Feature', () => {
-  test('should work', async ({ page }) => {
-    const myPage = new MyNewPage(page);
-    await myPage.goto();
-    await myPage.doSomething('test');
-    await expect(page.locator('.success')).toBeVisible();
+  test.use({ storageState: '.auth/admin-storage.json' });
+
+  test('should work', async ({ adminDashboardPage }) => {
+    await adminDashboardPage.goto();
+    // Page object is already instantiated
   });
+});
+```
+
+#### Creating New Fixtures
+
+Add new page objects to fixtures/index.ts:
+
+```typescript
+export const adminTest = base.extend<AdminFixtures>({
+  myNewPage: async ({ page }, use) => {
+    await use(new MyNewPage(page));
+  },
 });
 ```
 
@@ -204,6 +266,42 @@ Add `data-testid` attributes to components for stable selectors:
 
 // Test
 await page.click('[data-testid="submit-btn"]');
+
+// Or use the helper from BasePage
+await myNewPage.getByTestId('submit-btn').click();
+```
+
+### Test Data IDs
+
+The seed script creates predictable UUIDs for testing:
+
+```typescript
+import { TEST_IDS } from './utils/api';
+
+// Use in tests
+await adminVMDetailPage.goto(TEST_IDS.vms.testVM1);
+```
+
+| Resource | ID Pattern |
+|----------|------------|
+| Plans | `11111111-1111-1111-1111-111111111001` - `004` |
+| Nodes | `33333333-3333-3333-3333-333333333001` - `005` |
+| Templates | `66666666-6666-6666-6666-666666666001` - `005` |
+| Customers | `88888888-8888-8888-8888-888888888001` - `003` |
+| VMs | `99999999-9999-9999-9999-999999999001` - `003` |
+
+### API Client Helpers
+
+Use the API clients for setup/teardown or direct API testing:
+
+```typescript
+import { AdminAPIClient, CustomerAPIClient } from './utils/api';
+
+test('should work', async ({ request }) => {
+  const adminApi = new AdminAPIClient(request);
+  const { data, status } = await adminApi.get('/api/v1/admin/vms');
+  expect(status).toBe(200);
+});
 ```
 
 ### Waiting for API Responses

@@ -36,6 +36,14 @@ type NWFilterManager struct {
 	logger *slog.Logger
 }
 
+// freeNWFilter safely frees a nwfilter and logs any errors.
+// This is intended for use in defer statements where error handling is not possible.
+func (m *NWFilterManager) freeNWFilter(filter *libvirt.NWFilter) {
+	if err := filter.Free(); err != nil {
+		m.logger.Warn("failed to free nwfilter", "error", err)
+	}
+}
+
 // NewNWFilterManager creates a new NWFilterManager with the given libvirt connection.
 func NewNWFilterManager(conn *libvirt.Connect, logger *slog.Logger) *NWFilterManager {
 	return &NWFilterManager{
@@ -67,7 +75,7 @@ func (m *NWFilterManager) CreateAntiSpoofFilter(ctx context.Context, vmID, vmNam
 	if err != nil {
 		return fmt.Errorf("defining nwfilter %s: %w", filterName, err)
 	}
-	defer filter.Free()
+	defer m.freeNWFilter(filter)
 
 	logger.Info("anti-spoof nwfilter created successfully")
 	return nil
@@ -89,7 +97,7 @@ func (m *NWFilterManager) RemoveFilter(ctx context.Context, vmName string) error
 		}
 		return fmt.Errorf("looking up nwfilter %s: %w", filterName, err)
 	}
-	defer filter.Free()
+	defer m.freeNWFilter(filter)
 
 	// Undefine the filter
 	if err := filter.Undefine(); err != nil {
@@ -110,7 +118,9 @@ func (m *NWFilterManager) FilterExists(ctx context.Context, vmName string) (bool
 		}
 		return false, fmt.Errorf("checking nwfilter %s existence: %w", filterName, err)
 	}
-	filter.Free()
+	if err := filter.Free(); err != nil {
+		m.logger.Warn("failed to free nwfilter during existence check", "filter", filterName, "error", err)
+	}
 	return true, nil
 }
 
@@ -203,7 +213,7 @@ func (m *NWFilterManager) EnsureBaseFilters(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("creating clean-traffic nwfilter: %w", err)
 	}
-	defer filter.Free()
+	defer m.freeNWFilter(filter)
 
 	logger.Info("clean-traffic nwfilter created successfully")
 	return nil
@@ -230,13 +240,17 @@ func (m *NWFilterManager) ListFilters(ctx context.Context) ([]NWFilterInfo, erro
 	for _, f := range filters {
 		name, err := f.GetName()
 		if err != nil {
-			f.Free()
+			if freeErr := f.Free(); freeErr != nil {
+				m.logger.Warn("failed to free nwfilter", "error", freeErr)
+			}
 			continue
 		}
 
 		// Only include VirtueStack filters
 		if !strings.HasPrefix(name, FilterNamePrefix) {
-			f.Free()
+			if freeErr := f.Free(); freeErr != nil {
+				m.logger.Warn("failed to free nwfilter", "name", name, "error", freeErr)
+			}
 			continue
 		}
 
@@ -248,7 +262,9 @@ func (m *NWFilterManager) ListFilters(ctx context.Context) ([]NWFilterInfo, erro
 			UUID: uuid,
 			XML:  xmlDesc,
 		})
-		f.Free()
+		if freeErr := f.Free(); freeErr != nil {
+			m.logger.Warn("failed to free nwfilter", "name", name, "error", freeErr)
+		}
 	}
 
 	return result, nil
@@ -265,7 +281,7 @@ func (m *NWFilterManager) GetFilter(ctx context.Context, vmName string) (*NWFilt
 		}
 		return nil, fmt.Errorf("looking up nwfilter %s: %w", filterName, err)
 	}
-	defer filter.Free()
+	defer m.freeNWFilter(filter)
 
 	uuid, _ := filter.GetUUIDString()
 	xmlDesc, err := filter.GetXMLDesc(0)

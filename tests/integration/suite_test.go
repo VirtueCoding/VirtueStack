@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -157,14 +158,14 @@ func TestMain(m *testing.M) {
 
 	// Try to run all migrations
 	err = migrator.Up()
-	if err != nil && err != migrate.ErrNoChange {
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		// Migration 31 fails due to CONCURRENTLY - force past it
 		logger.Warn("migration failed (expected for CONCURRENTLY), forcing version", "error", err)
 		if err := migrator.Force(31); err != nil {
 			logger.Error("failed to force version 31", "error", err)
 		}
 		// Continue with remaining migrations (32+)
-		if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
+		if err := migrator.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			logger.Warn("failed to run remaining migrations", "error", err)
 		}
 	}

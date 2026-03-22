@@ -123,7 +123,9 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	eg.Go(func() error {
 		<-egCtx.Done()
 		w.logger.Info("stopping task worker")
-		sub.Unsubscribe()
+		if err := sub.Unsubscribe(); err != nil {
+			w.logger.Warn("failed to unsubscribe from task stream", "error", err)
+		}
 		return nil
 	})
 
@@ -145,19 +147,21 @@ func (w *Worker) Stop() {
 func (w *Worker) handleMessage() func(msg *nats.Msg) {
 	return func(msg *nats.Msg) {
 		w.eg.Go(func() error {
-			return w.processMessage(msg)
+			return w.processMessage(w.egCtx, msg)
 		})
 	}
 }
 
-func (w *Worker) processMessage(msg *nats.Msg) error {
+func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 	var task models.Task
 	if err := json.Unmarshal(msg.Data, &task); err != nil {
 		w.logger.Error("failed to unmarshal task",
 			"error", err,
 			"subject", msg.Subject,
 		)
-		msg.Ack()
+		if err := msg.Ack(); err != nil {
+			w.logger.Warn("failed to ack malformed task message", "error", err)
+		}
 		return nil
 	}
 
@@ -170,12 +174,14 @@ func (w *Worker) processMessage(msg *nats.Msg) error {
 
 	taskStart := time.Now()
 
-	handlerCtx, handlerCancel := context.WithTimeout(w.egCtx, 5*time.Minute)
+	handlerCtx, handlerCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer handlerCancel()
 
 	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusRunning, nil, ""); err != nil {
 		logger.Error("failed to update task status to running", "error", err)
-		msg.Nak()
+		if err := msg.Nak(); err != nil {
+			logger.Warn("failed to nak task message", "error", err)
+		}
 		return err
 	}
 
@@ -192,17 +198,23 @@ func (w *Worker) processMessage(msg *nats.Msg) error {
 		_ = w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, errMsg)
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-		msg.Ack()
+		if err := msg.Ack(); err != nil {
+			logger.Warn("failed to ack task message for missing handler", "error", err)
+		}
 		return nil
 	}
 
 	err := handler(handlerCtx, &task)
 	if err != nil {
 		logger.Error("task handler failed", "error", err)
-		w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, err.Error())
+		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, err.Error()); updateErr != nil {
+			logger.Error("failed to update task status to failed", "error", updateErr)
+		}
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-		msg.Nak()
+		if err := msg.Nak(); err != nil {
+			logger.Warn("failed to nak task message after handler failure", "error", err)
+		}
 		return err
 	}
 
@@ -214,7 +226,9 @@ func (w *Worker) processMessage(msg *nats.Msg) error {
 	taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 
 	logger.Info("task completed successfully")
-	msg.Ack()
+	if err := msg.Ack(); err != nil {
+		logger.Warn("failed to ack task message after completion", "error", err)
+	}
 	return nil
 }
 

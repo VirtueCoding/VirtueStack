@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { MapPin } from "lucide-react";
+import { MapPin, Eye, Pencil } from "lucide-react";
 
 export interface IPSetDisplay {
   id: string;
@@ -54,9 +54,11 @@ function formatNumber(num: number): string {
 
 interface IPSetListProps {
   ipSets: IPSetDisplay[];
+  onView?: (ipSet: IPSetDisplay) => void;
+  onEdit?: (ipSet: IPSetDisplay) => void;
 }
 
-export function IPSetList({ ipSets }: IPSetListProps) {
+export function IPSetList({ ipSets, onView, onEdit }: IPSetListProps) {
   if (ipSets.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
@@ -121,10 +123,22 @@ export function IPSetList({ ipSets }: IPSetListProps) {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" disabled>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onView?.(ipSet)}
+                      disabled={!onView}
+                    >
+                      <Eye className="h-3 w-3 mr-1" />
                       View
                     </Button>
-                    <Button variant="outline" size="sm" disabled>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onEdit?.(ipSet)}
+                      disabled={!onEdit}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
                       Edit
                     </Button>
                   </div>

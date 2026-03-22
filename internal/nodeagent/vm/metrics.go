@@ -76,6 +76,8 @@ type NodeResources struct {
 // mapLibvirtState converts a libvirt domain state to a human-readable string.
 func mapLibvirtState(state libvirt.DomainState) string {
 	switch state {
+	case libvirt.DOMAIN_NOSTATE:
+		return "no_state"
 	case libvirt.DOMAIN_RUNNING:
 		return "running"
 	case libvirt.DOMAIN_BLOCKED:

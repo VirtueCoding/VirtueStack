@@ -159,7 +159,11 @@ func (m *RBDManager) Resize(ctx context.Context, imageName string, newSizeGB int
 	if err != nil {
 		return fmt.Errorf("opening image %s for resize: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after resize", "image", imageName, "error", err)
+		}
+	}()
 
 	newSizeBytes := uint64(newSizeGB) * gbToBytes
 	if err := img.Resize(newSizeBytes); err != nil {
@@ -187,10 +191,14 @@ func (m *RBDManager) Delete(ctx context.Context, imageName string) error {
 	}
 
 	if err := m.removeAllSnapshots(img, imageName); err != nil {
-		img.Close()
+		if closeErr := img.Close(); closeErr != nil {
+			logger.Warn("failed to close image after snapshot removal failure", "image", imageName, "error", closeErr)
+		}
 		return fmt.Errorf("deleting image %s: %w", imageName, err)
 	}
-	img.Close()
+	if err := img.Close(); err != nil {
+		logger.Warn("failed to close image after snapshot removal", "image", imageName, "error", err)
+	}
 
 	if err := rbd.RemoveImage(ioctx, imageName); err != nil {
 		return fmt.Errorf("removing image %s: %w", imageName, err)
@@ -241,7 +249,11 @@ func (m *RBDManager) CreateSnapshot(ctx context.Context, imageName, snapName str
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot creation", "image", imageName, "error", err)
+		}
+	}()
 
 	if _, err := img.CreateSnapshot(snapName); err != nil {
 		return fmt.Errorf("creating snapshot %s@%s: %w", imageName, snapName, err)
@@ -266,7 +278,11 @@ func (m *RBDManager) DeleteSnapshot(ctx context.Context, imageName, snapName str
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot deletion: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot deletion", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Remove(); err != nil {
@@ -292,7 +308,11 @@ func (m *RBDManager) ProtectSnapshot(ctx context.Context, imageName, snapName st
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot protect: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot protect", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Protect(); err != nil {
@@ -318,7 +338,11 @@ func (m *RBDManager) UnprotectSnapshot(ctx context.Context, imageName, snapName 
 	if err != nil {
 		return fmt.Errorf("opening image %s for snapshot unprotect: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after snapshot unprotect", "image", imageName, "error", err)
+		}
+	}()
 
 	snapObj := img.GetSnapshot(snapName)
 	if err := snapObj.Unprotect(); err != nil {
@@ -341,7 +365,11 @@ func (m *RBDManager) ListSnapshots(ctx context.Context, imageName string) ([]Sna
 	if err != nil {
 		return nil, fmt.Errorf("opening image %s for listing snapshots: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			m.logger.Warn("failed to close RBD image after listing snapshots", "image", imageName, "error", err)
+		}
+	}()
 
 	snaps, err := img.GetSnapshotNames()
 	if err != nil {
@@ -377,7 +405,11 @@ func (m *RBDManager) GetImageSize(ctx context.Context, imageName string) (int64,
 	if err != nil {
 		return 0, fmt.Errorf("opening image %s to get size: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			m.logger.Warn("failed to close RBD image after getting size", "image", imageName, "error", err)
+		}
+	}()
 
 	size, err := img.GetSize()
 	if err != nil {
@@ -424,7 +456,11 @@ func (m *RBDManager) FlattenImage(ctx context.Context, imageName string) error {
 	if err != nil {
 		return fmt.Errorf("opening image %s for flatten: %w", imageName, err)
 	}
-	defer img.Close()
+	defer func() {
+		if err := img.Close(); err != nil {
+			logger.Warn("failed to close RBD image after flatten", "image", imageName, "error", err)
+		}
+	}()
 
 	if err := img.Flatten(); err != nil {
 		return fmt.Errorf("flattening image %s: %w", imageName, err)
@@ -511,7 +547,11 @@ func (m *RBDManager) Rollback(ctx context.Context, imageName, snapshotName strin
 	if err := image.Open(true); err != nil {
 		return fmt.Errorf("opening image %q for rollback: %w", imageName, err)
 	}
-	defer image.Close()
+	defer func() {
+		if err := image.Close(); err != nil {
+			logger.Warn("failed to close RBD image after rollback", "image", imageName, "error", err)
+		}
+	}()
 
 	snapshot := image.GetSnapshot(snapshotName)
 	if err := snapshot.Rollback(); err != nil {

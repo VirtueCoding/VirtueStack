@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1205,7 +1206,7 @@ func (c *NodeAgentGRPCClient) TransferDisk(ctx context.Context, opts *tasks.Disk
 
 	for {
 		_, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -1320,6 +1321,8 @@ func convertProtoStatus(status nodeagentpb.VMStatus) string {
 		return models.VMStatusError
 	case nodeagentpb.VMStatus_VM_STATUS_MIGRATING:
 		return models.VMStatusMigrating
+	case nodeagentpb.VMStatus_VM_STATUS_UNKNOWN:
+		return models.VMStatusError
 	default:
 		return models.VMStatusError
 	}

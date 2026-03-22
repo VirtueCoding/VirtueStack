@@ -237,6 +237,62 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
 }
 
+// ErrBackupLimitExceeded is returned when a VM has reached its backup limit.
+var ErrBackupLimitExceeded = fmt.Errorf("backup limit exceeded")
+
+// CreateBackupWithLimitCheck creates a backup with atomic limit checking.
+// This prevents TOCTOU race conditions when multiple concurrent requests check the limit.
+// Returns ErrBackupLimitExceeded if the VM already has limit or more backups.
+func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, name string, limit int) (*models.Backup, error) {
+	vm, err := s.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, fmt.Errorf("VM not found: %s", vmID)
+		}
+		return nil, fmt.Errorf("getting VM: %w", err)
+	}
+
+	if vm.NodeID == nil {
+		return nil, fmt.Errorf("VM has no node assigned")
+	}
+
+	storageBackend := vm.StorageBackend
+	if storageBackend == "" {
+		storageBackend = storageBackendCeph
+	}
+
+	backup := &models.Backup{
+		ID:             uuid.New().String(),
+		VMID:           vmID,
+		Source:         models.BackupSourceManual,
+		Status:         models.BackupStatusCreating,
+		StorageBackend: storageBackend,
+	}
+
+	// Use atomic create with limit check to prevent TOCTOU race condition
+	if err := s.backupRepo.CreateBackupWithLimitCheck(ctx, backup, limit); err != nil {
+		if strings.Contains(err.Error(), "limit exceeded") {
+			return nil, fmt.Errorf("%w: %s", ErrBackupLimitExceeded, err.Error())
+		}
+		return nil, fmt.Errorf("creating backup record: %w", err)
+	}
+
+	snapshotName := fmt.Sprintf("backup-%s-%d", backup.ID[:8], time.Now().Unix())
+
+	if s.nodeAgent == nil {
+		s.logger.Warn("nodeAgent not configured, skipping backup storage operations",
+			"vm_id", vmID,
+			"backup_id", backup.ID)
+		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted)
+		return backup, nil
+	}
+
+	if storageBackend == storageBackendQCOW {
+		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
+	}
+	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
+}
+
 func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
 	nodeID := *vm.NodeID
 	diskPath := ""
@@ -444,10 +500,7 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 
 			if storageBackend == storageBackendQCOW && backup.FilePath != nil {
 				if err := s.nodeAgent.DeleteQCOWBackupFile(ctx, nodeID, *backup.FilePath); err != nil {
-					s.logger.Warn("failed to delete QCOW backup file",
-						"backup_id", backupID,
-						"file_path", *backup.FilePath,
-						"error", err)
+					return fmt.Errorf("deleting QCOW backup file: %w", err)
 				}
 				if backup.SnapshotName != nil {
 					diskPath := ""
@@ -458,11 +511,13 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 						diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
 					}
 					if err := s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, *backup.SnapshotName); err != nil {
-						s.logger.Warn("failed to delete QCOW snapshot",
-							"backup_id", backupID,
-							"snapshot_name", *backup.SnapshotName,
-							"error", err)
+						return fmt.Errorf("deleting QCOW snapshot: %w", err)
 					}
+				}
+			} else if backup.RBDSnapshot != nil {
+				// Ceph backup - delete RBD snapshot
+				if err := s.nodeAgent.DeleteSnapshot(ctx, nodeID, backup.VMID, *backup.RBDSnapshot); err != nil {
+					return fmt.Errorf("deleting RBD snapshot: %w", err)
 				}
 			}
 		}
@@ -544,7 +599,7 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 		}
 	}
 
-	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
+	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, DefaultSnapshotQuota); err != nil {
 		if s.nodeAgent != nil {
 			if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
 				diskPath := ""
@@ -662,6 +717,8 @@ func (s *BackupService) CheckSnapshotQuota(ctx context.Context, vmID string, quo
 }
 
 // CreateSnapshotAsync creates a snapshot asynchronously via NATS task.
+// Uses atomic limit checking to prevent race conditions when multiple concurrent
+// requests attempt to create snapshots at the limit.
 func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, customerID string) (*models.Snapshot, string, error) {
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
@@ -673,10 +730,6 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 
 	if vm.NodeID == nil {
 		return nil, "", fmt.Errorf("VM has no node assigned")
-	}
-
-	if err := s.CheckSnapshotQuota(ctx, vmID, DefaultSnapshotQuota); err != nil {
-		return nil, "", err
 	}
 
 	storageBackend := vm.StorageBackend
@@ -700,7 +753,11 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 		snapshot.QCOWSnapshot = &qcowSnap
 	}
 
-	if err := s.snapshotRepo.CreateSnapshot(ctx, snapshot); err != nil {
+	// Use atomic create with limit check to prevent TOCTOU race condition
+	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, DefaultSnapshotQuota); err != nil {
+		if strings.Contains(err.Error(), "limit exceeded") {
+			return nil, "", fmt.Errorf("%w: %s", ErrSnapshotQuotaExceeded, err.Error())
+		}
 		return nil, "", fmt.Errorf("creating snapshot record: %w", err)
 	}
 

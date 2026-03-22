@@ -7,6 +7,25 @@ export interface AdminUser {
   id: string;
   email: string;
   role: string;
+  permissions?: string[];
+}
+
+// Permission represents a single permission with its description.
+export interface Permission {
+  name: string;
+  description: string;
+}
+
+// Admin represents an admin user with full details for permission management.
+export interface Admin {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  permissions: string[];
+  totp_enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AuthTokens {
@@ -346,21 +365,64 @@ export interface Node {
   memory_allocated_gb: number;
 }
 
+export interface NodeDetail {
+  id: string;
+  hostname: string;
+  grpc_address: string;
+  management_ip: string;
+  location_id?: string;
+  status: string;
+  total_vcpu: number;
+  total_memory_mb: number;
+  allocated_vcpu: number;
+  allocated_memory_mb: number;
+  storage_backend: string;
+  storage_path?: string;
+  ceph_pool: string;
+  last_heartbeat_at?: string;
+  created_at: string;
+}
+
+export interface CreateNodeRequest {
+  hostname: string;
+  grpc_address: string;
+  management_ip: string;
+  location_id?: string;
+  total_vcpu: number;
+  total_memory_mb: number;
+  storage_backend: "ceph" | "qcow";
+  storage_path?: string;
+  ceph_pool?: string;
+  ipmi_address?: string;
+  ipmi_username?: string;
+  ipmi_password?: string;
+}
+
+export interface UpdateNodeRequest {
+  grpc_address?: string;
+  location_id?: string;
+  total_vcpu?: number;
+  total_memory_mb?: number;
+  ipmi_address?: string;
+  storage_backend?: "ceph" | "qcow";
+  storage_path?: string;
+}
+
 export const adminNodesApi = {
   async getNodes(): Promise<Node[]> {
     return apiClient.get<Node[]>("/admin/nodes");
   },
 
-  async getNode(id: string): Promise<Node> {
-    return apiClient.get<Node>(`/admin/nodes/${id}`);
+  async getNode(id: string): Promise<NodeDetail> {
+    return apiClient.get<NodeDetail>(`/admin/nodes/${id}`);
   },
 
-  async createNode(data: { hostname: string; grpc_address: string; management_ip: string; location?: string }): Promise<Node> {
-    return apiClient.post<Node>("/admin/nodes", data);
+  async createNode(data: CreateNodeRequest): Promise<NodeDetail> {
+    return apiClient.post<NodeDetail>("/admin/nodes", data);
   },
 
-  async updateNode(id: string, data: Partial<{ hostname: string; grpc_address: string; management_ip: string; status: string }>): Promise<Node> {
-    return apiClient.put<Node>(`/admin/nodes/${id}`, data);
+  async updateNode(id: string, data: UpdateNodeRequest): Promise<NodeDetail> {
+    return apiClient.put<NodeDetail>(`/admin/nodes/${id}`, data);
   },
 
   async deleteNode(id: string): Promise<void> {
@@ -385,9 +447,33 @@ export interface Customer {
   created_at: string;
 }
 
+export interface CreateCustomerRequest {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+}
+
+export interface UpdateCustomerRequest {
+  name?: string;
+  status?: "active" | "suspended";
+}
+
 export const adminCustomersApi = {
   async getCustomers(): Promise<Customer[]> {
     return apiClient.get<Customer[]>("/admin/customers");
+  },
+
+  async getCustomer(id: string): Promise<Customer> {
+    return apiClient.get<Customer>(`/admin/customers/${id}`);
+  },
+
+  async createCustomer(data: CreateCustomerRequest): Promise<Customer> {
+    return apiClient.post<Customer>("/admin/customers", data);
+  },
+
+  async updateCustomer(id: string, data: UpdateCustomerRequest): Promise<Customer> {
+    return apiClient.put<Customer>(`/admin/customers/${id}`, data);
   },
 
   async suspendCustomer(id: string): Promise<void> {
@@ -406,24 +492,38 @@ export const adminCustomersApi = {
 export interface Plan {
   id: string;
   name: string;
+  slug: string;
   vcpu: number;
   memory_mb: number;
   disk_gb: number;
-  bandwidth_mbps: number;
+  bandwidth_limit_gb: number;
+  port_speed_mbps: number;
   price_monthly: number;
+  price_hourly: number;
+  storage_backend: string;
+  is_active: boolean;
+  sort_order: number;
   status: "active" | "inactive";
   snapshot_limit: number;
   backup_limit: number;
   iso_upload_limit: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CreatePlanRequest {
   name: string;
+  slug: string;
   vcpu: number;
   memory_mb: number;
   disk_gb: number;
-  bandwidth_mbps: number;
-  price_monthly: number;
+  bandwidth_limit_gb?: number;
+  port_speed_mbps: number;
+  price_monthly?: number;
+  price_hourly?: number;
+  storage_backend?: "ceph" | "qcow";
+  is_active?: boolean;
+  sort_order?: number;
   snapshot_limit?: number;
   backup_limit?: number;
   iso_upload_limit?: number;
@@ -431,12 +531,17 @@ export interface CreatePlanRequest {
 
 export interface UpdatePlanRequest {
   name?: string;
+  slug?: string;
   vcpu?: number;
   memory_mb?: number;
   disk_gb?: number;
-  bandwidth_mbps?: number;
+  bandwidth_limit_gb?: number;
+  port_speed_mbps?: number;
   price_monthly?: number;
-  status?: "active" | "inactive";
+  price_hourly?: number;
+  storage_backend?: "ceph" | "qcow";
+  is_active?: boolean;
+  sort_order?: number;
   snapshot_limit?: number;
   backup_limit?: number;
   iso_upload_limit?: number;
@@ -451,6 +556,10 @@ export const adminPlansApi = {
     return apiClient.get<Plan>(`/admin/plans/${id}`);
   },
 
+  async getPlanUsage(id: string): Promise<{ plan_id: string; vm_count: number }> {
+    return apiClient.get<{ plan_id: string; vm_count: number }>(`/admin/plans/${id}/usage`);
+  },
+
   async deletePlan(id: string): Promise<void> {
     return apiClient.deleteVoid(`/admin/plans/${id}`);
   },
@@ -460,7 +569,7 @@ export const adminPlansApi = {
   },
 
   async updatePlan(id: string, plan: UpdatePlanRequest): Promise<Plan> {
-    return apiClient.patch<Plan>(`/admin/plans/${id}`, plan);
+    return apiClient.put<Plan>(`/admin/plans/${id}`, plan);
   },
 };
 
@@ -490,6 +599,37 @@ export interface VM {
   node_id: string;
   status: string;
   created_at: string;
+  hostname?: string;
+  vcpu?: number;
+  memory_mb?: number;
+  disk_gb?: number;
+  port_speed_mbps?: number;
+  bandwidth_limit_gb?: number;
+}
+
+export interface CreateVMRequest {
+  customer_id: string;
+  plan_id: string;
+  template_id: string;
+  hostname: string;
+  password: string;
+  ssh_keys?: string[];
+  location_id?: string;
+  node_id?: string;
+}
+
+export interface UpdateVMRequest {
+  hostname?: string;
+  vcpu?: number;
+  memory_mb?: number;
+  disk_gb?: number;
+  port_speed_mbps?: number;
+  bandwidth_limit_gb?: number;
+}
+
+export interface CreateVMResponse {
+  vm_id: string;
+  task_id: string;
 }
 
 export const adminVMsApi = {
@@ -501,11 +641,11 @@ export const adminVMsApi = {
     return apiClient.get<VM>(`/admin/vms/${id}`);
   },
 
-  async createVM(data: { customer_id: string; plan_id: string; hostname: string; node_id?: string }): Promise<VM> {
-    return apiClient.post<VM>("/admin/vms", data);
+  async createVM(data: CreateVMRequest): Promise<CreateVMResponse> {
+    return apiClient.post<CreateVMResponse>("/admin/vms", data);
   },
 
-  async updateVM(id: string, data: Partial<{ hostname: string; status: string }>): Promise<VM> {
+  async updateVM(id: string, data: UpdateVMRequest): Promise<VM> {
     return apiClient.put<VM>(`/admin/vms/${id}`, data);
   },
 
@@ -543,10 +683,34 @@ export interface Template {
   id: string;
   name: string;
   os_family: string;
-  rbd_image?: string;
-  rbd_snapshot?: string;
+  os_version: string;
+  rbd_image: string;
+  rbd_snapshot: string;
+  min_disk_gb: number;
+  supports_cloudinit: boolean;
+  is_active: boolean;
+  sort_order: number;
+  description?: string;
+  storage_backend: string;
+  file_path?: string;
   status: string;
   created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateTemplateRequest {
+  name?: string;
+  os_family?: string;
+  os_version?: string;
+  rbd_image?: string;
+  rbd_snapshot?: string;
+  min_disk_gb?: number;
+  supports_cloudinit?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+  description?: string;
+  storage_backend?: "ceph" | "qcow";
+  file_path?: string;
 }
 
 export const adminTemplatesApi = {
@@ -554,11 +718,15 @@ export const adminTemplatesApi = {
     return apiClient.get<Template[]>("/admin/templates");
   },
 
+  async getTemplate(id: string): Promise<Template> {
+    return apiClient.get<Template>(`/admin/templates/${id}`);
+  },
+
   async createTemplate(data: { name: string; os_family: string; rbd_image?: string }): Promise<Template> {
     return apiClient.post<Template>("/admin/templates", data);
   },
 
-  async updateTemplate(id: string, data: Partial<{ name: string; os_family: string }>): Promise<Template> {
+  async updateTemplate(id: string, data: UpdateTemplateRequest): Promise<Template> {
     return apiClient.put<Template>(`/admin/templates/${id}`, data);
   },
 
@@ -703,5 +871,108 @@ export const adminBackupSchedulesApi = {
 
   async runSchedule(id: string): Promise<{ message: string; next_run_at: string }> {
     return apiClient.post<{ message: string; next_run_at: string }>(`/admin/admin-backup-schedules/${id}/run`, {});
+  },
+};
+
+// ============================================================================
+// Admin Permissions API
+// ============================================================================
+
+export const adminPermissionsApi = {
+  async getPermissions(): Promise<Permission[]> {
+    const response = await apiClient.get<{ permissions: Permission[] }>("/admin/auth/permissions");
+    return response.permissions;
+  },
+
+  async updateAdminPermissions(adminId: string, permissions: string[]): Promise<Admin> {
+    const response = await apiClient.put<{ admin: Admin }>(`/admin/auth/permissions/${adminId}`, { permissions });
+    return response.admin;
+  },
+
+  async getAdmins(): Promise<Admin[]> {
+    return apiClient.get<Admin[]>("/admin/admins");
+  },
+};
+
+// ============================================================================
+// Admin IP Sets API
+// ============================================================================
+
+export interface IPSet {
+  id: string;
+  name: string;
+  location_id?: string;
+  network: string;
+  gateway: string;
+  vlan_id?: number;
+  ip_version: number;
+  node_ids?: string[];
+  created_at: string;
+  location?: string;
+  total_ips?: number;
+  available_ips?: number;
+  assigned_ips?: number;
+  reserved_ips?: number;
+  cooldown_ips?: number;
+}
+
+export interface IPSetDetail {
+  id: string;
+  name: string;
+  location_id?: string;
+  network: string;
+  gateway: string;
+  vlan_id?: number;
+  ip_version: number;
+  node_ids?: string[];
+  created_at: string;
+  total_ips: number;
+  assigned_ips: number;
+  available_ips: number;
+  reserved_ips: number;
+  cooldown_ips: number;
+}
+
+export interface UpdateIPSetRequest {
+  name?: string;
+  location_id?: string;
+  gateway?: string;
+  vlan_id?: number;
+  node_ids?: string[];
+}
+
+export const adminIPSetsApi = {
+  async getIPSets(): Promise<IPSet[]> {
+    return apiClient.get<IPSet[]>("/admin/ip-sets");
+  },
+
+  async getIPSet(id: string): Promise<IPSetDetail> {
+    return apiClient.get<IPSetDetail>(`/admin/ip-sets/${id}`);
+  },
+
+  async createIPSet(data: {
+    name: string;
+    network: string;
+    gateway: string;
+    ip_version: number;
+    location_id?: string;
+    vlan_id?: number;
+    node_ids?: string[];
+  }): Promise<IPSet> {
+    return apiClient.post<IPSet>("/admin/ip-sets", data);
+  },
+
+  async updateIPSet(id: string, data: UpdateIPSetRequest): Promise<IPSet> {
+    return apiClient.put<IPSet>(`/admin/ip-sets/${id}`, data);
+  },
+
+  async deleteIPSet(id: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/ip-sets/${id}`);
+  },
+
+  async getAvailableIPs(id: string, page = 1, perPage = 50): Promise<PaginatedResponse<{ id: string; address: string }>> {
+    return apiClient.get<PaginatedResponse<{ id: string; address: string }>>(
+      `/admin/ip-sets/${id}/available?page=${page}&per_page=${perPage}`
+    );
   },
 };

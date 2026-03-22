@@ -126,6 +126,8 @@ func getVMCreateMessage(task *models.Task) string {
 		return "VM created successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "VM creation cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -146,6 +148,8 @@ func getVMDeleteMessage(task *models.Task) string {
 		return "VM deleted successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "VM deletion cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -167,6 +171,8 @@ func getVMReinstallMessage(task *models.Task) string {
 		return "VM reinstalled successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "VM reinstallation cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -182,6 +188,8 @@ func getVMResizeMessage(task *models.Task) string {
 		return "VM resized successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "VM resize cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -197,6 +205,8 @@ func getBackupCreateMessage(task *models.Task) string {
 		return "Backup created successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Backup creation cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -212,6 +222,8 @@ func getBackupRestoreMessage(task *models.Task) string {
 		return "Backup restored successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Backup restore cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -231,6 +243,8 @@ func getSnapshotCreateMessage(task *models.Task) string {
 		return "Snapshot created successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Snapshot creation cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -250,6 +264,8 @@ func getSnapshotRevertMessage(task *models.Task) string {
 		return "Snapshot reverted successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Snapshot revert cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -268,6 +284,8 @@ func getSnapshotDeleteMessage(task *models.Task) string {
 		return "Snapshot deleted successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Snapshot deletion cancelled"
 	default:
 		return "Unknown status"
 	}
@@ -286,6 +304,8 @@ func getGenericTaskMessage(task *models.Task) string {
 		return "Task completed successfully"
 	case models.TaskStatusFailed:
 		return task.ErrorMessage
+	case models.TaskStatusCancelled:
+		return "Task cancelled"
 	default:
 		return "Unknown status"
 	}

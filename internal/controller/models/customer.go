@@ -27,17 +27,29 @@ type Customer struct {
 }
 
 // Admin represents an administrative user account with elevated privileges.
+// Permissions can be explicitly set per-admin; if empty/nil, role-based defaults apply.
 type Admin struct {
-	ID                  string    `json:"id" db:"id"`
-	Email               string    `json:"email" db:"email"`
-	PasswordHash        string    `json:"-" db:"password_hash"`
-	Name                string    `json:"name" db:"name"`
-	TOTPSecretEncrypted string    `json:"-" db:"totp_secret_encrypted"`
-	TOTPEnabled         bool      `json:"totp_enabled" db:"totp_enabled"`
-	TOTPBackupCodesHash []string  `json:"-" db:"totp_backup_codes_hash"`
-	Role                string    `json:"role" db:"role"`
-	MaxSessions         int       `json:"max_sessions" db:"max_sessions"`
-	CreatedAt           time.Time `json:"created_at" db:"created_at"`
+	ID                  string      `json:"id" db:"id"`
+	Email               string      `json:"email" db:"email"`
+	PasswordHash        string      `json:"-" db:"password_hash"`
+	Name                string      `json:"name" db:"name"`
+	TOTPSecretEncrypted string      `json:"-" db:"totp_secret_encrypted"`
+	TOTPEnabled         bool        `json:"totp_enabled" db:"totp_enabled"`
+	TOTPBackupCodesHash []string    `json:"-" db:"totp_backup_codes_hash"`
+	Role                string      `json:"role" db:"role"`
+	MaxSessions         int         `json:"max_sessions" db:"max_sessions"`
+	Permissions         []Permission `json:"permissions" db:"permissions"`
+	CreatedAt           time.Time   `json:"created_at" db:"created_at"`
+}
+
+// GetEffectivePermissions returns the admin's effective permissions.
+// If the admin has explicitly set permissions, those are returned.
+// Otherwise, the default permissions for the admin's role are returned.
+func (a *Admin) GetEffectivePermissions() []Permission {
+	if len(a.Permissions) > 0 {
+		return a.Permissions
+	}
+	return GetDefaultPermissions(a.Role)
 }
 
 // Session represents an authenticated user session stored in the database.
