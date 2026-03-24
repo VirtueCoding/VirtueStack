@@ -51,6 +51,10 @@ const (
 	defaultStorageBackend = "ceph"
 	defaultStoragePath    = "/var/lib/virtuestack"
 
+	// LVM thin pool monitoring thresholds
+	defaultLVMDataPercentThreshold     = 95
+	defaultLVMMetadataPercentThreshold   = 70
+
 	// Directory structure constants for file-based storage
 	DefaultVmsDir       = "vms"
 	DefaultTemplatesDir = "templates"
@@ -147,13 +151,24 @@ type NodeAgentConfig struct {
 	VNCHost string `yaml:"vnc_host" env:"VNC_HOST"`
 
 	// Storage configuration
-	StorageBackend string `yaml:"storage_backend" env:"STORAGE_BACKEND"` // "ceph" or "qcow"
+	StorageBackend string `yaml:"storage_backend" env:"STORAGE_BACKEND"` // "ceph", "qcow", or "lvm"
 	StoragePath    string `yaml:"storage_path" env:"STORAGE_PATH"`       // Base path for file storage (e.g., /var/lib/virtuestack)
 
 	// Ceph storage configuration (used when StorageBackend == "ceph")
 	CephPool string `yaml:"ceph_pool" env:"CEPH_POOL"`
 	CephUser string `yaml:"ceph_user" env:"CEPH_USER"`
 	CephConf string `yaml:"ceph_conf" env:"CEPH_CONF"`
+
+	// LVM thin-provisioned storage configuration (used when StorageBackend == "lvm").
+	// Both fields are required; there is no thick-LVM fallback.
+	// LVMThinPool must be the name of a pre-existing thin-pool LV within the VG.
+	LVMVolumeGroup string `yaml:"lvm_volume_group" env:"LVM_VOLUME_GROUP"` // e.g. "vgvs"
+	LVMThinPool    string `yaml:"lvm_thin_pool"    env:"LVM_THIN_POOL"`    // e.g. "thinpool"
+
+	// LVM threshold configuration for thin pool monitoring.
+	// Alerts are triggered when usage exceeds these percentages.
+	LVMDataPercentThreshold      int `yaml:"lvm_data_percent_threshold"      env:"LVM_DATA_PERCENT_THRESHOLD"`       // Default: 95
+	LVMMetadataPercentThreshold  int `yaml:"lvm_metadata_percent_threshold"  env:"LVM_METADATA_PERCENT_THRESHOLD"`   // Default: 70
 
 	// TLS configuration for gRPC
 	TLSCertFile string `yaml:"tls_cert_file" env:"TLS_CERT_FILE"`
@@ -172,8 +187,17 @@ type NodeAgentConfig struct {
 	MetricsAddr            string `yaml:"metrics_addr" env:"METRICS_ADDR"`
 	MetricsCollectInterval string `yaml:"metrics_collect_interval" env:"METRICS_COLLECT_INTERVAL"` // e.g., "60s", "5m"
 
+	// Health HTTP server for storage backend health checks
+	// Binds to localhost only for security (no external access)
+	HealthAddr string `yaml:"health_addr" env:"HEALTH_ADDR"` // e.g., "127.0.0.1:8081"
+
 	// Shutdown timeout for graceful termination (e.g., "30s", "1m")
 	ShutdownTimeout string `yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT"`
+
+	// GuestOpHMACSecret is used to verify per-operation HMAC tokens sent by the
+	// controller for sensitive guest operations (e.g., GuestSetPassword).
+	// Must be at least 32 bytes when non-empty.
+	GuestOpHMACSecret Secret `yaml:"guest_op_hmac_secret" env:"GUEST_OP_HMAC_SECRET"`
 }
 
 // LoadControllerConfig loads the controller configuration from environment variables
@@ -224,15 +248,18 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 // Required fields: ControllerGRPCAddr, NodeID, TLSCertFile, TLSKeyFile, TLSCAFile.
 func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 	cfg := &NodeAgentConfig{
-		StorageBackend: defaultStorageBackend,
-		StoragePath:    defaultStoragePath,
-		CephPool:       defaultCephPool,
-		CephUser:       defaultCephUser,
-		CephConf:       defaultCephConf,
-		CloudInitPath:  defaultCloudInitPath,
-		ISOStoragePath: defaultISOStoragePath,
-		LogLevel:       defaultLogLevel,
-		MetricsAddr:    ":9091",
+		StorageBackend:               defaultStorageBackend,
+		StoragePath:                  defaultStoragePath,
+		CephPool:                     defaultCephPool,
+		CephUser:                     defaultCephUser,
+		CephConf:                     defaultCephConf,
+		CloudInitPath:                defaultCloudInitPath,
+		ISOStoragePath:               defaultISOStoragePath,
+		LogLevel:                     defaultLogLevel,
+		MetricsAddr:                  ":9091",
+		HealthAddr:                   "127.0.0.1:8081",
+		LVMDataPercentThreshold:      defaultLVMDataPercentThreshold,
+		LVMMetadataPercentThreshold:  defaultLVMMetadataPercentThreshold,
 	}
 
 	// Load from YAML file if specified
@@ -453,8 +480,14 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	if v := os.Getenv("METRICS_COLLECT_INTERVAL"); v != "" {
 		cfg.MetricsCollectInterval = v
 	}
+	if v := os.Getenv("HEALTH_ADDR"); v != "" {
+		cfg.HealthAddr = v
+	}
 	if v := os.Getenv("SHUTDOWN_TIMEOUT"); v != "" {
 		cfg.ShutdownTimeout = v
+	}
+	if v := os.Getenv("GUEST_OP_HMAC_SECRET"); v != "" {
+		cfg.GuestOpHMACSecret = Secret(v)
 	}
 
 	applyEnvOverridesNodeAgentStorage(cfg)
@@ -512,8 +545,15 @@ func validateControllerConfig(cfg *ControllerConfig) error {
 	// exactly 32 bytes for AES-256) is validated in controller.LoadConfig after hex
 	// decoding. Presence-only check is performed here to keep validation in a single place.
 
-	if cfg.JWTSecret == "dev-jwt-secret-min-32-characters-long" {
-		slog.Warn("using default insecure JWT_SECRET; set a unique JWT_SECRET for production")
+	// F-156: Fail startup when a known-insecure JWT secret is used outside "local"/"dev".
+	knownInsecureJWT := cfg.JWTSecret == "dev-jwt-secret-min-32-characters-long"
+	if knownInsecureJWT {
+		env := strings.ToLower(cfg.Environment)
+		if env == "local" || env == "dev" || env == "" {
+			slog.Warn("using default insecure JWT_SECRET; set a unique JWT_SECRET for production")
+		} else {
+			return fmt.Errorf("JWT_SECRET matches a known insecure default; set a unique secret for environment %q", cfg.Environment)
+		}
 	}
 	if cfg.NATS.AuthToken == natsDevToken {
 		slog.Warn("using default NATS_AUTH_TOKEN 'nats-dev-token'; set a strong token for production")
@@ -598,10 +638,17 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 		if cfg.CephConf == "" {
 			missing = append(missing, "CEPH_CONF (required when storage_backend is ceph)")
 		}
+	case "lvm":
+		if cfg.LVMVolumeGroup == "" {
+			missing = append(missing, "LVM_VOLUME_GROUP (required when storage_backend is lvm)")
+		}
+		if cfg.LVMThinPool == "" {
+			missing = append(missing, "LVM_THIN_POOL (required when storage_backend is lvm)")
+		}
 	case "":
 		// Empty is valid (uses default)
 	default:
-		return fmt.Errorf("invalid storage_backend %q: must be 'ceph' or 'qcow'", cfg.StorageBackend)
+		return fmt.Errorf("invalid storage_backend %q: must be 'ceph', 'qcow', or 'lvm'", cfg.StorageBackend)
 	}
 
 	if len(missing) > 0 {

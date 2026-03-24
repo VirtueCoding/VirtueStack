@@ -100,6 +100,16 @@ type NodeAgentClient interface {
 	DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error
 	// GetQCOWDiskInfo returns information about a QCOW disk including size.
 	GetQCOWDiskInfo(ctx context.Context, nodeID, diskPath string) (*QCOWDiskInfo, error)
+	// CreateDiskSnapshot creates a disk snapshot for migration purposes.
+	CreateDiskSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName, storageBackend string) error
+	// DeleteDiskSnapshot removes a disk snapshot created for migration.
+	DeleteDiskSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName, storageBackend string) error
+	// CreateLVMBackup creates a sparse backup file from an LVM thin snapshot.
+	CreateLVMBackup(ctx context.Context, nodeID, vmID, snapshotName, backupFilePath string) (int64, error)
+	// RestoreLVMBackup restores an LVM thin LV from a backup file.
+	RestoreLVMBackup(ctx context.Context, nodeID, vmID, backupFilePath string) error
+	// DeleteLVMBackupFile deletes an LVM backup file from the backup storage.
+	DeleteLVMBackupFile(ctx context.Context, nodeID, backupPath string) error
 	// ResizeVM modifies the resource allocation (vCPU, memory, disk) for a VM on the specified node.
 	ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error
 	// TransferDisk transfers a disk from a source node to a target node via streaming gRPC.
@@ -181,11 +191,17 @@ type DiskTransferOptions struct {
 	TargetDiskPath       string    // Path where disk will be stored on target
 	SnapshotName         string    // Optional snapshot name for consistent copy
 	DiskSizeGB           int       // Size of the disk in GB
-	SourceStorageBackend string    // Storage backend of source (ceph/qcow)
-	TargetStorageBackend string    // Storage backend of target (ceph/qcow)
+	SourceStorageBackend string    // Storage backend of source (ceph/qcow/lvm)
+	TargetStorageBackend string    // Storage backend of target (ceph/qcow/lvm)
 	Compress             bool      // Enable compression during transfer
 	ConvertFormat        bool      // Convert disk format (for mixed storage)
+	IsDeltaSync          bool      // True if this is a delta sync (not initial transfer)
 	ProgressCallback     func(int) // Callback for progress updates (0-100)
+	// LVM-specific fields
+	SourceLVMVolumeGroup string // Source LVM volume group (for LVM backend)
+	SourceLVMThinPool    string // Source LVM thin pool (for LVM backend)
+	TargetLVMVolumeGroup string // Target LVM volume group (for LVM backend)
+	TargetLVMThinPool    string // Target LVM thin pool (for LVM backend)
 }
 
 // VMCreatePayload represents the payload for vm.create tasks.
@@ -244,6 +260,11 @@ type VMMigratePayload struct {
 	TargetStoragePath    string            `json:"target_storage_path,omitempty"`
 	SourceCephPool       string            `json:"source_ceph_pool,omitempty"`
 	TargetCephPool       string            `json:"target_ceph_pool,omitempty"`
+	// LVM storage backend fields for migration
+	SourceLVMVolumeGroup string `json:"source_lvm_volume_group,omitempty"`
+	SourceLVMThinPool    string `json:"source_lvm_thin_pool,omitempty"`
+	TargetLVMVolumeGroup string `json:"target_lvm_volume_group,omitempty"`
+	TargetLVMThinPool    string `json:"target_lvm_thin_pool,omitempty"`
 	MigrationStrategy    MigrationStrategy `json:"migration_strategy"`
 	Live                 bool              `json:"live"`
 	SourceDiskPath       string            `json:"source_disk_path,omitempty"`

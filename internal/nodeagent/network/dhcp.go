@@ -608,6 +608,11 @@ func (m *DHCPManager) saveLeaseStatus(vmID string, lease *DHCPLease) error {
 // monitorProcess monitors a dnsmasq process and cleans up when it exits.
 // cancel is the CancelFunc for the monitor context and is called when the goroutine
 // completes to release context resources.
+//
+// It runs cmd.Wait() in an inner goroutine and selects between the wait result
+// and ctx.Done().  This ensures that when the caller cancels the context (e.g.
+// via DHCPManager.Stop()) the dnsmasq child process is killed promptly and
+// wg.Done() is called so wg.Wait() in Stop() can return.
 func (m *DHCPManager) monitorProcess(ctx context.Context, cancel context.CancelFunc, vmID string, cmd *exec.Cmd, logFile *os.File) {
 	defer m.wg.Done()
 	defer cancel()
@@ -617,11 +622,33 @@ func (m *DHCPManager) monitorProcess(ctx context.Context, cancel context.CancelF
 		}
 	}()
 
-	err := cmd.Wait()
-	if err != nil {
-		m.logger.Warn("dnsmasq process exited with error", "vm_id", vmID, "error", err)
-	} else {
-		m.logger.Info("dnsmasq process exited normally", "vm_id", vmID)
+	// waitCh receives the result of cmd.Wait() from the inner goroutine.
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var err error
+	select {
+	case err = <-waitCh:
+		// Process exited on its own.
+		if err != nil {
+			m.logger.Warn("dnsmasq process exited with error", "vm_id", vmID, "error", err)
+		} else {
+			m.logger.Info("dnsmasq process exited normally", "vm_id", vmID)
+		}
+	case <-ctx.Done():
+		// Context was cancelled (e.g. DHCPManager.Stop() was called).
+		// Kill the dnsmasq process so cmd.Wait() in the inner goroutine returns.
+		m.logger.Info("context cancelled, killing dnsmasq process", "vm_id", vmID)
+		if cmd.Process != nil {
+			if killErr := cmd.Process.Kill(); killErr != nil {
+				m.logger.Warn("failed to kill dnsmasq process", "vm_id", vmID, "error", killErr)
+			}
+		}
+		// Drain the wait channel so the inner goroutine is not leaked.
+		<-waitCh
+		err = ctx.Err()
 	}
 
 	// Update status
@@ -641,7 +668,11 @@ func (m *DHCPManager) monitorProcess(ctx context.Context, cancel context.CancelF
 	delete(m.runningProcs, vmID)
 }
 
+// maxHostnameLen is the maximum hostname length per RFC 1123.
+const maxHostnameLen = 253
+
 // sanitizeHostname sanitizes a VM name for use as a DHCP hostname.
+// It applies character filtering and enforces the RFC 1123 limit of 253 characters.
 func sanitizeHostname(name string) string {
 	// Replace spaces and special characters
 	result := strings.ReplaceAll(name, " ", "-")
@@ -654,5 +685,10 @@ func sanitizeHostname(name string) string {
 			sb.WriteRune(r)
 		}
 	}
-	return sb.String()
+	sanitized := sb.String()
+	// Truncate to RFC 1123 maximum hostname length
+	if len(sanitized) > maxHostnameLen {
+		sanitized = sanitized[:maxHostnameLen]
+	}
+	return sanitized
 }

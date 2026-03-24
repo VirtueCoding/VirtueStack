@@ -22,6 +22,7 @@ export const adminNavItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/vms", label: "VMs", icon: Monitor },
   { href: "/nodes", label: "Nodes", icon: Server },
+  { href: "/storage-backends", label: "Storage", icon: HardDrive },
   { href: "/plans", label: "Plans", icon: FileText },
   { href: "/templates", label: "Templates", icon: HardDrive },
   { href: "/ip-sets", label: "IP Sets", icon: Network },

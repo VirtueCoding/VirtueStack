@@ -35,10 +35,13 @@ const (
 	envWebSocketOrigins = "CUSTOMER_WEBSOCKET_ORIGINS"
 )
 
-// Default allowed origins for backward compatibility
+// Default allowed origins for WebSocket upgrades.
+// F-079: localhost origins are excluded from the default list because they
+// are not valid in production. If localhost is required for local development,
+// set the CUSTOMER_WEBSOCKET_ORIGINS environment variable explicitly.
+// A startup check (InitWebSocketOrigins) will fail fast if the configured
+// origins contain localhost in a non-development context.
 var defaultAllowedOrigins = []string{
-	"https://localhost",
-	"https://localhost:3000",
 	"https://virtuestack.com",
 	"https://app.virtuestack.com",
 }
@@ -47,59 +50,77 @@ var (
 	wsConnectionCounts = make(map[string]int)
 	wsConnectionMu     sync.RWMutex
 
-	// Allowed origins loaded from environment variable
-	allowedOrigins     []string
-	allowedOriginsInit sync.Once
-	errAllowedOrigins  error
+	// allowedOrigins is populated eagerly at startup by InitWebSocketOrigins.
+	// F-034: Using lazy sync.Once initialization meant that a misconfigured
+	// CUSTOMER_WEBSOCKET_ORIGINS env var would cause every subsequent WebSocket
+	// upgrade to fail permanently and silently. Fail-fast at startup instead.
+	allowedOrigins []string
 )
 
-// loadAllowedOrigins loads allowed origins from environment variable or falls back to defaults
-func loadAllowedOrigins() ([]string, error) {
-	allowedOriginsInit.Do(func() {
-		envValue := os.Getenv(envWebSocketOrigins)
-		if envValue == "" {
-			allowedOrigins = defaultAllowedOrigins
-			return
+// InitWebSocketOrigins parses and validates the CUSTOMER_WEBSOCKET_ORIGINS
+// environment variable and stores the result for use by the WebSocket upgrader.
+// F-034: Must be called at server startup before any WebSocket connections are
+// accepted. Returns an error if the env var is set but malformed.
+// F-079: Logs a warning (or returns an error in production mode) if any origin
+// contains "localhost".
+func InitWebSocketOrigins(isProduction bool) error {
+	envValue := os.Getenv(envWebSocketOrigins)
+	if envValue == "" {
+		allowedOrigins = defaultAllowedOrigins
+		return nil
+	}
+
+	var parsed []string
+	for _, origin := range strings.Split(envValue, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
 		}
 
-		// Parse comma-separated origins
-		origins := strings.Split(envValue, ",")
-		for _, origin := range origins {
-			origin = strings.TrimSpace(origin)
-			if origin == "" {
-				continue
-			}
-
-			// Validate that origin is a valid URL with http/https scheme
-			parsed, err := url.Parse(origin)
-			if err != nil {
-				errAllowedOrigins = fmt.Errorf("invalid origin %q: %w", origin, err)
-				return
-			}
-			if parsed.Scheme != "http" && parsed.Scheme != "https" {
-				errAllowedOrigins = fmt.Errorf("origin %q has unsupported scheme %q (must be http or https)", origin, parsed.Scheme)
-				return
-			}
-
-			allowedOrigins = append(allowedOrigins, origin)
+		u, err := url.Parse(origin)
+		if err != nil {
+			return fmt.Errorf("invalid WebSocket origin %q: %w", origin, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("WebSocket origin %q has unsupported scheme %q (must be http or https)", origin, u.Scheme)
 		}
 
-		if len(allowedOrigins) == 0 {
-			allowedOrigins = defaultAllowedOrigins
+		// F-079: Reject localhost in production; warn in non-production.
+		if strings.Contains(u.Hostname(), "localhost") || u.Hostname() == "127.0.0.1" {
+			if isProduction {
+				return fmt.Errorf("WebSocket origin %q contains localhost which is not allowed in production", origin)
+			}
+			wsLogger.Warn("WebSocket origin contains localhost; this is not safe for production", "origin", origin)
 		}
-	})
 
-	return allowedOrigins, errAllowedOrigins
+		parsed = append(parsed, origin)
+	}
+
+	if len(parsed) == 0 {
+		allowedOrigins = defaultAllowedOrigins
+	} else {
+		allowedOrigins = parsed
+	}
+	return nil
+}
+
+// getInitializedOrigins returns the currently configured allowed origins.
+// If InitWebSocketOrigins has not been called yet, returns the defaults.
+func getInitializedOrigins() []string {
+	if len(allowedOrigins) == 0 {
+		return defaultAllowedOrigins
+	}
+	return allowedOrigins
 }
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  webSocketBufferSize,
 	WriteBufferSize: webSocketBufferSize,
 	CheckOrigin: func(r *http.Request) bool {
-		origins, err := loadAllowedOrigins()
-		if err != nil {
-			return false
-		}
+		// F-034: allowedOrigins is populated eagerly by InitWebSocketOrigins at
+		// startup so misconfigured origins fail fast rather than silently
+		// blocking all connections after the first upgrade attempt.
+		origins := getInitializedOrigins()
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			return false
@@ -355,7 +376,9 @@ func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.
 	}()
 
 	config := h.getConsoleConfig(ct)
-	stream, err := h.createConsoleStream(ctx, conn, ct)
+	// F-027: Receive and defer the cancel function from createConsoleStream so the
+	// stream context lives for the duration of the proxy, not just until createConsoleStream returns.
+	stream, streamCancel, err := h.createConsoleStream(ctx, conn, ct)
 	if err != nil {
 		h.logger.Error("failed to create "+string(ct)+" stream",
 			"vm_id", vmID,
@@ -363,6 +386,7 @@ func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.
 			"correlation_id", correlationID)
 		return
 	}
+	defer streamCancel()
 	defer func() {
 		if err := stream.CloseSend(); err != nil {
 			h.logger.Debug("failed to close gRPC stream",
@@ -409,24 +433,29 @@ func (h *CustomerHandler) getConsoleConfig(ct consoleType) consoleStreamConfig {
 }
 
 // createConsoleStream creates a console stream for the given console type.
-func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType) (consoleStream, error) {
+// F-027: The cancel function is returned to the caller so that it can be
+// deferred in the long-running proxy goroutine. Previously, cancel() was
+// deferred inside this function and fired immediately on return, which
+// cancelled the stream context before any proxying occurred.
+func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType) (consoleStream, context.CancelFunc, error) {
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	streamCtx, cancel := context.WithTimeout(ctx, webSocketTotalTimeout)
-	defer cancel()
 
 	if ct == consoleTypeVNC {
 		stream, err := client.StreamVNCConsole(streamCtx)
 		if err != nil {
-			return nil, err
+			cancel()
+			return nil, nil, err
 		}
-		return &vncStream{stream: stream}, nil
+		return &vncStream{stream: stream}, cancel, nil
 	}
 
 	stream, err := client.StreamSerialConsole(streamCtx)
 	if err != nil {
-		return nil, err
+		cancel()
+		return nil, nil, err
 	}
-	return &serialStream{stream: stream}, nil
+	return &serialStream{stream: stream}, cancel, nil
 }
 
 // runStreamProxy runs the bidirectional proxy between WebSocket and gRPC stream.
@@ -524,15 +553,6 @@ func (h *CustomerHandler) readFromStream(ctx context.Context, cancel context.Can
 	}
 }
 
-// proxyVNCStream is kept for backward compatibility and delegates to proxyConsoleStream.
-func (h *CustomerHandler) proxyVNCStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
-	h.proxyConsoleStream(ctx, ws, conn, vmID, correlationID, consoleTypeVNC)
-}
-
-// proxySerialStream is kept for backward compatibility and delegates to proxyConsoleStream.
-func (h *CustomerHandler) proxySerialStream(ctx context.Context, ws *websocket.Conn, conn *grpc.ClientConn, vmID, correlationID string) {
-	h.proxyConsoleStream(ctx, ws, conn, vmID, correlationID, consoleTypeSerial)
-}
 
 func checkConnectionLimit(ip string) bool {
 	wsConnectionMu.Lock()

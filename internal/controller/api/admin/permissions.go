@@ -10,7 +10,13 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
+
+// PermissionAuditLogsRead is the dedicated permission for reading audit logs.
+// It is defined here because the models package does not yet include it;
+// all admin routes and handlers in this package should reference this constant.
+const PermissionAuditLogsRead models.Permission = "audit_logs:read"
 
 // PermissionInfo represents a permission with its description.
 type PermissionInfo struct {
@@ -20,29 +26,30 @@ type PermissionInfo struct {
 
 // permissionDescriptions maps permission names to their human-readable descriptions.
 var permissionDescriptions = map[models.Permission]string{
-	models.PermissionPlansRead:      "View plans",
-	models.PermissionPlansWrite:     "Create and update plans",
-	models.PermissionPlansDelete:    "Delete plans",
-	models.PermissionNodesRead:      "View nodes",
-	models.PermissionNodesWrite:     "Create and update nodes",
-	models.PermissionNodesDelete:    "Delete nodes",
-	models.PermissionCustomersRead:  "View customers",
-	models.PermissionCustomersWrite: "Update customer accounts",
+	models.PermissionPlansRead:       "View plans",
+	models.PermissionPlansWrite:      "Create and update plans",
+	models.PermissionPlansDelete:     "Delete plans",
+	models.PermissionNodesRead:       "View nodes",
+	models.PermissionNodesWrite:      "Create and update nodes",
+	models.PermissionNodesDelete:     "Delete nodes",
+	models.PermissionCustomersRead:   "View customers",
+	models.PermissionCustomersWrite:  "Update customer accounts",
 	models.PermissionCustomersDelete: "Delete customers",
-	models.PermissionVMsRead:        "View VMs",
-	models.PermissionVMsWrite:       "Create and modify VMs",
-	models.PermissionVMsDelete:      "Delete VMs",
-	models.PermissionSettingsRead:   "View settings",
-	models.PermissionSettingsWrite:  "Modify settings",
-	models.PermissionBackupsRead:    "View backups",
-	models.PermissionBackupsWrite:   "Manage backups",
-	models.PermissionIPSetsRead:     "View IP sets",
-	models.PermissionIPSetsWrite:    "Create and update IP sets",
-	models.PermissionIPSetsDelete:   "Delete IP sets",
-	models.PermissionTemplatesRead:  "View templates",
-	models.PermissionTemplatesWrite: "Manage templates",
-	models.PermissionRDNSRead:       "View RDNS records",
-	models.PermissionRDNSWrite:      "Manage RDNS records",
+	models.PermissionVMsRead:         "View VMs",
+	models.PermissionVMsWrite:        "Create and modify VMs",
+	models.PermissionVMsDelete:       "Delete VMs",
+	models.PermissionSettingsRead:    "View settings",
+	models.PermissionSettingsWrite:   "Modify settings",
+	models.PermissionBackupsRead:     "View backups",
+	models.PermissionBackupsWrite:    "Manage backups",
+	models.PermissionIPSetsRead:      "View IP sets",
+	models.PermissionIPSetsWrite:     "Create and update IP sets",
+	models.PermissionIPSetsDelete:    "Delete IP sets",
+	models.PermissionTemplatesRead:   "View templates",
+	models.PermissionTemplatesWrite:  "Manage templates",
+	models.PermissionRDNSRead:        "View RDNS records",
+	models.PermissionRDNSWrite:       "Manage RDNS records",
+	PermissionAuditLogsRead: "View audit logs",
 }
 
 // UpdatePermissionsRequest holds the request body for updating admin permissions.
@@ -72,11 +79,26 @@ func (h *AdminHandler) ListPermissions(c *gin.Context) {
 	})
 }
 
-// ListAdmins returns a list of all admins with their permissions.
+// listAdminsMaxPerPage is the maximum number of admins returned per page.
+const listAdminsMaxPerPage = 100
+
+// ListAdmins returns a paginated list of all admins with their permissions.
 // Only super_admin can call this endpoint.
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
+	pagination := models.ParsePagination(c)
+
+	// Enforce a sensible maximum per-page for this endpoint
+	if pagination.PerPage > listAdminsMaxPerPage {
+		pagination.PerPage = listAdminsMaxPerPage
+	}
+
+	actorID := middleware.GetUserID(c)
+	h.logAuditEvent(c, "admin.list", "admin", "", map[string]any{
+		"actor_id": actorID,
+	}, true)
+
 	admins, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
-		PaginationParams: models.PaginationParams{Page: 1, PerPage: 1000},
+		PaginationParams: pagination,
 	})
 	if err != nil {
 		h.logger.Error("failed to list admins",
@@ -98,6 +120,20 @@ func (h *AdminHandler) UpdateAdminPermissions(c *gin.Context) {
 		return
 	}
 
+	// Validate admin_id as a valid UUID (F-173)
+	if _, err := uuid.Parse(adminID); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ADMIN_ID", "admin_id must be a valid UUID")
+		return
+	}
+
+	// Prevent an admin from modifying their own permissions (F-065)
+	requestingAdminID := middleware.GetUserID(c)
+	if adminID == requestingAdminID {
+		middleware.RespondWithError(c, http.StatusBadRequest, "SELF_PERMISSION_CHANGE_FORBIDDEN",
+			"admins cannot modify their own permissions")
+		return
+	}
+
 	var req UpdatePermissionsRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		var apiErr *sharederrors.APIError
@@ -106,6 +142,14 @@ func (h *AdminHandler) UpdateAdminPermissions(c *gin.Context) {
 			return
 		}
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	// Guard against excessively large permission slices (F-087).
+	// The maximum number of valid permissions is the size of the known permission universe.
+	// +1 accounts for PermissionAuditLogsRead which is defined locally in this package.
+	if len(req.Permissions) > len(models.GetAllPermissions())+1 {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "too many permissions specified")
 		return
 	}
 

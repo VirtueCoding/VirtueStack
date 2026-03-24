@@ -5,9 +5,7 @@ package nodeagent
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -24,15 +22,15 @@ func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+	diskID := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 	snapName := fmt.Sprintf("snap-%s", uuid.New().String()[:8])
 
-	if err := h.server.storageBackend.CreateSnapshot(ctx, diskName, snapName); err != nil {
+	if err := h.server.storageBackend.CreateSnapshot(ctx, diskID, snapName); err != nil {
 		return nil, status.Errorf(codes.Internal, "creating snapshot: %v", err)
 	}
 
 	// Get snapshot size
-	size, _ := h.server.storageBackend.GetImageSize(ctx, diskName)
+	size, _ := h.server.storageBackend.GetImageSize(ctx, diskID)
 
 	return &nodeagentpb.Snapshot{
 		SnapshotId:      uuid.New().String(),
@@ -50,17 +48,17 @@ func (h *grpcHandler) DeleteSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 		return nil, status.Error(codes.InvalidArgument, "vm_id and snapshot_id are required")
 	}
 
-	diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+	diskID := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 
 	// List snapshots to find by ID (use snapshot_id as the rbd snap name)
-	snapshots, err := h.server.storageBackend.ListSnapshots(ctx, diskName)
+	snapshots, err := h.server.storageBackend.ListSnapshots(ctx, diskID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "listing snapshots: %v", err)
 	}
 
 	for _, snap := range snapshots {
-		if snap.Name == req.GetSnapshotId() || strings.HasPrefix(snap.Name, "snap-") {
-			if err := h.server.storageBackend.DeleteSnapshot(ctx, diskName, snap.Name); err != nil {
+		if snap.Name == req.GetSnapshotId() {
+			if err := h.server.storageBackend.DeleteSnapshot(ctx, diskID, snap.Name); err != nil {
 				return nil, status.Errorf(codes.Internal, "deleting snapshot: %v", err)
 			}
 			return &nodeagentpb.VMOperationResponse{
@@ -89,9 +87,9 @@ func (h *grpcHandler) RevertSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 		}
 	}
 
-	diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+	diskID := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 
-	if err := h.server.storageBackend.Rollback(ctx, diskName, req.GetSnapshotId()); err != nil {
+	if err := h.server.storageBackend.Rollback(ctx, diskID, req.GetSnapshotId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "rolling back disk to snapshot: %v", err)
 	}
 
@@ -107,9 +105,9 @@ func (h *grpcHandler) ListSnapshots(ctx context.Context, req *nodeagentpb.VMIden
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
+	diskID := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 
-	snapshots, err := h.server.storageBackend.ListSnapshots(ctx, diskName)
+	snapshots, err := h.server.storageBackend.ListSnapshots(ctx, diskID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "listing snapshots: %v", err)
 	}
@@ -122,7 +120,7 @@ func (h *grpcHandler) ListSnapshots(ctx context.Context, req *nodeagentpb.VMIden
 			Name:            snap.Name,
 			RbdSnapshotName: snap.Name,
 			SizeBytes:       snap.Size,
-			CreatedAt:       timestamppb.Now(),
+			CreatedAt:       timestamppb.New(snap.CreatedAt),
 		})
 	}
 

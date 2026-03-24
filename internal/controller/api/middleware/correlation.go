@@ -2,6 +2,8 @@
 package middleware
 
 import (
+	"regexp"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -12,17 +14,32 @@ const CorrelationIDHeader = "X-Correlation-Id"
 // CorrelationIDContextKey is the context key for storing correlation IDs.
 const CorrelationIDContextKey = "correlation_id"
 
+// correlationIDPattern matches the standard UUID format (8-4-4-4-12 hex with hyphens)
+// or bounded alphanumeric strings up to 64 characters. Anything else is rejected and
+// replaced with a freshly generated UUID to prevent header injection and log pollution.
+var correlationIDPattern = regexp.MustCompile(
+	`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[a-zA-Z0-9_\-]{1,64}$`,
+)
+
+// isValidCorrelationID returns true when id matches the accepted format.
+func isValidCorrelationID(id string) bool {
+	return correlationIDPattern.MatchString(id)
+}
+
 // CorrelationID is a middleware that adds a unique correlation ID to each request.
-// If the request already has an X-Correlation-Id header, it uses that value.
-// Otherwise, it generates a new UUID.
+// If the request already has an X-Correlation-Id header containing a valid UUID or
+// bounded alphanumeric string (up to 64 chars), it uses that value to maintain
+// distributed trace continuity. Otherwise it generates a fresh UUID.
 // The correlation ID is stored in the Gin context and added to response headers.
 func CorrelationID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Propagate caller-supplied correlation ID so distributed traces remain
-		// joinable across service boundaries; generate one when absent so every
-		// request carries a traceable identity regardless of the caller.
+		// joinable across service boundaries. Validate the incoming value before
+		// accepting it to prevent header injection attacks and unbounded string
+		// values reaching log sinks. Generate a fresh UUID when the value is
+		// absent or fails validation.
 		correlationID := c.GetHeader(CorrelationIDHeader)
-		if correlationID == "" {
+		if correlationID == "" || !isValidCorrelationID(correlationID) {
 			correlationID = uuid.New().String()
 		}
 

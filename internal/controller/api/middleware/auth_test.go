@@ -613,28 +613,34 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 			wantBodyContains: "MISSING_AUTH",
 		},
 		{
-			name:         "invalid JWT falls back to valid API key",
+			// F-006: When a JWT token is present but invalid, the middleware must
+			// abort immediately with 401 and must NOT fall through to API key auth.
+			// Falling through would allow an attacker who holds an expired/tampered
+			// token to bypass JWT validation by also supplying a valid API key.
+			name:         "invalid JWT aborts immediately, does not fall through to API key",
 			keyValidator: validKeyValidator,
 			setupRequest: func(t *testing.T, req *http.Request) {
 				req.Header.Set("Authorization", "Bearer invalid.token")
 				req.Header.Set("X-API-Key", "my-api-key")
 			},
-			wantStatus:      http.StatusOK,
-			wantUserID:      "customer-api",
-			wantPermissions: []any{"vm:read"},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_TOKEN",
 		},
 		{
-			name:         "invalid JWT and invalid API key returns error",
+			// F-006: Invalid JWT aborts regardless of whether the API key is valid.
+			name:         "invalid JWT aborts with INVALID_TOKEN even when API key is also invalid",
 			keyValidator: invalidKeyValidator,
 			setupRequest: func(t *testing.T, req *http.Request) {
 				req.Header.Set("Authorization", "Bearer invalid.token")
 				req.Header.Set("X-API-Key", "bad-key")
 			},
 			wantStatus:       http.StatusUnauthorized,
-			wantBodyContains: "INVALID_API_KEY",
+			wantBodyContains: "INVALID_TOKEN",
 		},
 		{
-			name:         "temp token rejected, falls back to API key",
+			// F-006: A temp token (purpose=2fa) is an invalid access token and must
+			// abort the request immediately rather than falling through to API key auth.
+			name:         "temp token rejected with INVALID_TOKEN, does not fall through to API key",
 			keyValidator: validKeyValidator,
 			setupRequest: func(t *testing.T, req *http.Request) {
 				token, err := GenerateTempToken(config, "temp-user", "customer")
@@ -642,9 +648,8 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer "+token)
 				req.Header.Set("X-API-Key", "my-api-key")
 			},
-			wantStatus:      http.StatusOK,
-			wantUserID:      "customer-api",
-			wantPermissions: []any{"vm:read"},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_TOKEN",
 		},
 	}
 

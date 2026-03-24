@@ -246,11 +246,20 @@ func executeDiskCopyMigration(mc *MigrationContext) error {
 	mc.Logger.Info("executing disk copy migration",
 		"source_disk", mc.Payload.SourceDiskPath,
 		"target_disk", mc.Payload.TargetDiskPath,
-		"live", mc.Payload.Live)
+		"live", mc.Payload.Live,
+		"source_storage_backend", mc.Payload.SourceStorageBackend)
 
 	// Update task progress
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 20, "Preparing disk transfer..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	// Check if source is LVM - dispatch to LVM-specific handler
+	if mc.Payload.SourceStorageBackend == "lvm" {
+		if mc.Payload.Live && mc.VM.Status == models.VMStatusRunning {
+			return executeLiveLVMMigration(mc)
+		}
+		return executeColdLVMMigration(mc)
 	}
 
 	// For live migration with QCOW, we need to:
@@ -465,6 +474,154 @@ func executeColdMigration(mc *MigrationContext) error {
 
 	// Create VM on target
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 85, "Preparing VM on target node..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	if err := mc.Deps.NodeClient.PrepareMigratedVM(mc.Ctx, mc.Payload.TargetNodeID, mc.Payload.VMID, mc.Payload.TargetDiskPath, mc.VM); err != nil {
+		return fmt.Errorf("preparing VM on target: %w", err)
+	}
+
+	// Start VM on target (if it was running before)
+	if mc.Payload.PreMigrationState == models.VMStatusRunning {
+		if err := mc.Deps.NodeClient.StartVM(mc.Ctx, mc.Payload.TargetNodeID, mc.Payload.VMID); err != nil {
+			return fmt.Errorf("starting VM on target: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// executeLiveLVMMigration performs near-live LVM migration with thin snapshot and delta sync.
+func executeLiveLVMMigration(mc *MigrationContext) error {
+	vmID := mc.Payload.VMID
+	snapshotName := fmt.Sprintf("migrate-%s", shortID(vmID))
+
+	// Step 1: Create thin snapshot on source
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 25, "Creating LVM migration snapshot..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	if _, err := mc.Deps.NodeClient.CreateSnapshot(mc.Ctx, mc.Payload.SourceNodeID, vmID, snapshotName); err != nil {
+		return fmt.Errorf("creating LVM migration snapshot: %w", err)
+	}
+	defer func() {
+		_ = mc.Deps.NodeClient.DeleteSnapshot(mc.Ctx, mc.Payload.SourceNodeID, vmID, snapshotName)
+	}()
+
+	// Step 2: Transfer base disk
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30, "Transferring base disk..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	transferOpts := &DiskTransferOptions{
+		SourceNodeID:         mc.Payload.SourceNodeID,
+		TargetNodeID:         mc.Payload.TargetNodeID,
+		SourceDiskPath:       mc.Payload.SourceDiskPath,
+		TargetDiskPath:       mc.Payload.TargetDiskPath,
+		SourceStorageBackend: "lvm",
+		TargetStorageBackend: "lvm",
+		SourceLVMVolumeGroup: mc.Payload.SourceLVMVolumeGroup,
+		SourceLVMThinPool:    mc.Payload.SourceLVMThinPool,
+		TargetLVMVolumeGroup: mc.Payload.TargetLVMVolumeGroup,
+		TargetLVMThinPool:    mc.Payload.TargetLVMThinPool,
+		SnapshotName:         snapshotName,
+		DiskSizeGB:           mc.Payload.DiskSizeGB,
+		Compress:             true,
+		ProgressCallback: func(progress int) {
+			_ = mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+		},
+	}
+
+	if err := mc.Deps.NodeClient.TransferDisk(mc.Ctx, transferOpts); err != nil {
+		return fmt.Errorf("LVM disk transfer failed: %w", err)
+	}
+
+	// Step 3: Stop VM for switchover
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 80, "Stopping VM for switchover..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	if err := stopVMGracefully(mc.Ctx, mc.Deps.NodeClient, mc.Payload.SourceNodeID, vmID, 60, mc.Logger); err != nil {
+		return fmt.Errorf("stopping VM: %w", err)
+	}
+
+	// Step 4: Delete VM on source
+	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, vmID); err != nil {
+		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
+	}
+
+	// Step 5: Create VM on target
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 85, "Preparing VM on target..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	if err := mc.Deps.NodeClient.PrepareMigratedVM(mc.Ctx, mc.Payload.TargetNodeID, vmID, mc.Payload.TargetDiskPath, mc.VM); err != nil {
+		return fmt.Errorf("preparing VM on target: %w", err)
+	}
+
+	// Step 6: Start VM on target
+	if err := mc.Deps.NodeClient.StartVM(mc.Ctx, mc.Payload.TargetNodeID, vmID); err != nil {
+		return fmt.Errorf("starting VM on target: %w", err)
+	}
+
+	// Step 7: Apply post-migration setup
+	if err := mc.Deps.NodeClient.PostMigrateSetup(mc.Ctx, mc.Payload.TargetNodeID, vmID, mc.VM.PortSpeedMbps); err != nil {
+		mc.Logger.Warn("failed to apply post-migration setup", "error", err)
+	}
+
+	return nil
+}
+
+// executeColdLVMMigration performs cold LVM migration for stopped VMs.
+func executeColdLVMMigration(mc *MigrationContext) error {
+	// Ensure VM is stopped
+	if mc.VM.Status == models.VMStatusRunning {
+		if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 25, "Stopping VM..."); err != nil {
+			mc.Logger.Warn("failed to update task progress", "error", err)
+		}
+		if err := stopVMGracefully(mc.Ctx, mc.Deps.NodeClient, mc.Payload.SourceNodeID, mc.Payload.VMID, 120, mc.Logger); err != nil {
+			return fmt.Errorf("stopping VM: %w", err)
+		}
+	}
+
+	// Transfer disk
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30, "Transferring LVM disk..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	transferOpts := &DiskTransferOptions{
+		SourceNodeID:         mc.Payload.SourceNodeID,
+		TargetNodeID:         mc.Payload.TargetNodeID,
+		SourceDiskPath:       mc.Payload.SourceDiskPath,
+		TargetDiskPath:       mc.Payload.TargetDiskPath,
+		SourceStorageBackend: "lvm",
+		TargetStorageBackend: "lvm",
+		SourceLVMVolumeGroup: mc.Payload.SourceLVMVolumeGroup,
+		SourceLVMThinPool:    mc.Payload.SourceLVMThinPool,
+		TargetLVMVolumeGroup: mc.Payload.TargetLVMVolumeGroup,
+		TargetLVMThinPool:    mc.Payload.TargetLVMThinPool,
+		DiskSizeGB:           mc.Payload.DiskSizeGB,
+		Compress:             true,
+		ProgressCallback: func(progress int) {
+			_ = mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+		},
+	}
+
+	if err := mc.Deps.NodeClient.TransferDisk(mc.Ctx, transferOpts); err != nil {
+		return fmt.Errorf("LVM disk transfer failed: %w", err)
+	}
+
+	// Delete VM on source
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 80, "Cleaning up source..."); err != nil {
+		mc.Logger.Warn("failed to update task progress", "error", err)
+	}
+
+	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
+		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
+	}
+
+	// Create VM on target
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 85, "Preparing VM on target..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 

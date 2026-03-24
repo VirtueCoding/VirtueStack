@@ -347,6 +347,10 @@ func (r *VMRepository) UpdateNetworkLimits(ctx context.Context, vmID string, por
 // internal scheduled tasks (e.g. automated bandwidth checks and backup scheduling)
 // that must process every active VM. Callers are responsible for chunking work
 // if the result set is large.
+//
+// NOTE: This method has no LIMIT and will load every active VM into memory.
+// For large fleets prefer ListAllActiveCursor which implements keyset pagination
+// with id > $1 so that memory usage is bounded per page.
 func (r *VMRepository) ListAllActive(ctx context.Context) ([]models.VM, error) {
 	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL`
 	vms, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.VM, error) {
@@ -358,21 +362,17 @@ func (r *VMRepository) ListAllActive(ctx context.Context) ([]models.VM, error) {
 	return vms, nil
 }
 
-// ListAllActiveBatch returns a batch of active VMs for pagination.
+// ListAllActiveBatch returns a batch of active VMs using keyset (cursor-based) pagination.
 // Use this for large-scale deployments where loading all VMs at once would be memory-intensive.
-// Pass offset=0, limit=N for the first batch, then increment offset by limit for subsequent batches.
+// Pass afterID="" for the first batch, then pass the last VM's ID from the previous batch.
+// The offset parameter is unused and retained only for call-site compatibility; callers should
+// migrate to ListAllActiveCursor directly.
 // Returns an empty slice when no more results are available.
 //
-// Note: For better performance with large offsets, consider using ListAllActiveCursor instead.
-func (r *VMRepository) ListAllActiveBatch(ctx context.Context, offset, limit int) ([]models.VM, error) {
-	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE deleted_at IS NULL AND node_id IS NOT NULL ORDER BY id LIMIT $1 OFFSET $2`
-	vms, err := ScanRows(ctx, r.db, q, []any{limit, offset}, func(rows pgx.Rows) (models.VM, error) {
-		return scanVM(rows)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing active VMs batch: %w", err)
-	}
-	return vms, nil
+// Note: The previous OFFSET-based implementation had O(n) cost at the database for large offsets.
+// This implementation delegates to ListAllActiveCursor which uses id > $1 keyset pagination.
+func (r *VMRepository) ListAllActiveBatch(ctx context.Context, afterID string, limit int) ([]models.VM, error) {
+	return r.ListAllActiveCursor(ctx, afterID, limit)
 }
 
 // ListAllActiveCursor returns a batch of active VMs using cursor-based pagination.

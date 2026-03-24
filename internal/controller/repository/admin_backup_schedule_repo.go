@@ -181,3 +181,34 @@ func (r *AdminBackupScheduleRepository) Delete(ctx context.Context, id string) e
 	}
 	return nil
 }
+
+// CountByStorageBackend returns the count of active admin backup schedules that
+// could affect VMs using the given storage backend. A schedule is counted if:
+// - It targets all VMs (target_all = true) and the storage backend has assigned nodes
+// - It targets specific nodes that have this storage backend assigned
+// - It targets plans whose VMs use this storage backend (via node_assignment)
+func (r *AdminBackupScheduleRepository) CountByStorageBackend(ctx context.Context, storageBackendID string) (int, error) {
+	const q = `
+		SELECT COUNT(DISTINCT abs.id)
+		FROM admin_backup_schedules abs
+		WHERE abs.active = true
+		  AND (
+			-- Schedules targeting all VMs - check if any nodes have this storage backend
+			(abs.target_all = true AND EXISTS (
+				SELECT 1 FROM node_storage ns WHERE ns.storage_backend_id = $1
+			))
+			OR
+			-- Schedules targeting specific nodes with this storage backend
+			(SELECT COUNT(*) FROM jsonb_array_elements_text(abs.target_node_ids) AS node_id
+			 WHERE node_id IN (
+				SELECT ns.node_id::text FROM node_storage ns WHERE ns.storage_backend_id = $1
+			 )) > 0
+		  )
+	`
+	var count int
+	err := r.db.QueryRow(ctx, q, storageBackendID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting admin backup schedules by storage backend %s: %w", storageBackendID, err)
+	}
+	return count, nil
+}

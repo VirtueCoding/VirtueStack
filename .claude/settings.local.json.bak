@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for dir:*)",
+      "Bash(do echo:*)",
+      "Read(//home/VirtueStack/$dir/**)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(done)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(python3:*)",
+      "mcp__plugin_code-review-graph_code-review-graph__list_graph_stats_tool",
+      "mcp__plugin_code-review-graph_code-review-graph__build_or_update_graph_tool",
+      "mcp__plugin_code-review-graph_code-review-graph__get_docs_section_tool",
+      "mcp__plugin_code-review-graph_code-review-graph__get_review_context_tool",
+      "mcp__plugin_code-review-graph_code-review-graph__get_impact_radius_tool",
+      "Bash(jq -r .[0].text /root/.claude/projects/-home-VirtueStack/3700b55b-b4a1-44af-ac6b-fdbd9e7d75c7/tool-results/mcp-plugin_code-review-graph_code-review-graph-get_impact_radius_tool-1773788914533.txt)",
+      "Bash(/tmp/validation.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(go mod:*)",
+      "Bash(/tmp/final_check.sh:*)",
+      "Bash(bash /tmp/final_check.sh)",
+      "Bash(/tmp/code_quality.txt:*)",
+      "Bash(go tool:*)",
+      "Bash(__NEW_LINE_bf6dd174725fb844__ echo:*)"
+    ]
+  }
+}

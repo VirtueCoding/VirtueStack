@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"context"
+	"net/http"
+
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/gin-gonic/gin"
@@ -42,6 +45,7 @@ import (
 //
 //	Templates:
 //	  GET    /templates          - List all templates
+//	  GET    /templates/:id      - Get template details
 //	  POST   /templates          - Create template
 //	  PUT    /templates/:id      - Update template
 //	  DELETE /templates/:id      - Delete template
@@ -57,6 +61,7 @@ import (
 //
 //	Customers:
 //	  GET    /customers            - List customers
+//	  POST   /customers            - Create customer
 //	  GET    /customers/:id        - Get customer details
 //	  PUT    /customers/:id        - Update customer
 //	  DELETE /customers/:id        - Delete customer
@@ -132,12 +137,37 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		adminMgmt.GET("", handler.ListAdmins)
 	}
 
+	// adminAuditLogger bridges middleware.AuditEntry to the admin handler's auditRepo.
+	// This enables the Audit middleware (F-157) to persist entries without modifying the
+	// RegisterAdminRoutes function signature.
+	adminAuditLogger := func(ctx context.Context, entry *middleware.AuditEntry) error {
+		if handler.auditRepo == nil {
+			return nil
+		}
+		auditLog := &models.AuditLog{
+			ActorID:       &entry.ActorID,
+			ActorType:     entry.ActorType,
+			ActorIP:       &entry.ActorIP,
+			Action:        entry.Action,
+			ResourceType:  entry.ResourceType,
+			ResourceID:    &entry.ResourceID,
+			CorrelationID: &entry.CorrelationID,
+			Success:       entry.Success,
+		}
+		if entry.ErrorMessage != "" {
+			auditLog.ErrorMessage = &entry.ErrorMessage
+		}
+		return handler.auditRepo.Append(ctx, auditLog)
+	}
+
 	protected := admin.Group("")
 	protected.Use(middleware.JWTAuth(handler.authConfig))
 	protected.Use(middleware.RequireRole("admin", "super_admin"))
 	protected.Use(middleware.AdminLoader(handler.authService.GetAdminByID))
 	protected.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 	protected.Use(middleware.AdminRateLimit())
+	// Audit middleware covers POST, PUT, PATCH, and DELETE (F-157)
+	protected.Use(middleware.Audit(adminAuditLogger))
 	{
 		// Node management
 		nodes := protected.Group("/nodes")
@@ -146,7 +176,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			nodes.POST("", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.RegisterNode)
 			nodes.GET("/:id", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.GetNode)
 			nodes.PUT("/:id", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UpdateNode)
-			nodes.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionNodesDelete), handler.DeleteNode)
+			nodes.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionNodesDelete), RequireReAuth(), handler.DeleteNode)
 			nodes.POST("/:id/drain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.DrainNode)
 			nodes.POST("/:id/failover", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.FailoverNode)
 			nodes.POST("/:id/undrain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UndrainNode)
@@ -166,7 +196,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			vms.POST("", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.CreateVM)
 			vms.GET("/:id", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVM)
 			vms.PUT("/:id", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.UpdateVM)
-			vms.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionVMsDelete), handler.DeleteVM)
+			vms.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionVMsDelete), RequireReAuth(), handler.DeleteVM)
 			vms.POST("/:id/migrate", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.MigrateVM)
 			vms.GET("/:id/ips", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVMIPs)
 			vms.GET("/:id/ips/:ipId/rdns", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetIPRDNS)
@@ -188,6 +218,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		templates := protected.Group("/templates")
 		{
 			templates.GET("", middleware.RequireAdminPermission(models.PermissionTemplatesRead), handler.ListTemplates)
+			templates.GET("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesRead), handler.GetTemplate) // F-135
 			templates.POST("", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.CreateTemplate)
 			templates.PUT("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.UpdateTemplate)
 			templates.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DeleteTemplate)
@@ -212,12 +243,12 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			customers.POST("", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.CreateCustomer)
 			customers.GET("/:id", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomer)
 			customers.PUT("/:id", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.UpdateCustomer)
-			customers.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionCustomersDelete), handler.DeleteCustomer)
+			customers.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionCustomersDelete), RequireReAuth(), handler.DeleteCustomer)
 			customers.GET("/:id/audit-logs", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomerAuditLogs)
 		}
 
-		// Audit logs
-		protected.GET("/audit-logs", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.ListAuditLogs)
+		// Audit logs - requires dedicated audit log permission (F-076)
+		protected.GET("/audit-logs", middleware.RequireAdminPermission(PermissionAuditLogsRead), handler.ListAuditLogs)
 
 		// Settings
 		settings := protected.Group("/settings")
@@ -253,5 +284,39 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			adminBackupSchedules.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.DeleteAdminBackupSchedule)
 			adminBackupSchedules.POST("/:id/run", middleware.RequireAdminPermission(models.PermissionBackupsWrite), handler.RunAdminBackupSchedule)
 		}
+
+		// Storage backend management
+		storageBackends := protected.Group("/storage-backends")
+		{
+			storageBackends.GET("", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.ListStorageBackends)
+			storageBackends.POST("", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.CreateStorageBackend)
+			storageBackends.GET("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackend)
+			storageBackends.PUT("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.UpdateStorageBackend)
+			storageBackends.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsDelete), RequireReAuth(), handler.DeleteStorageBackend)
+			storageBackends.GET("/:id/nodes", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackendNodes)
+			storageBackends.POST("/:id/nodes", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.AssignStorageBackendNodes)
+			storageBackends.DELETE("/:id/nodes/:nodeId", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.RemoveStorageBackendNode)
+			storageBackends.GET("/:id/health", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackendHealth)
+			storageBackends.POST("/:id/refresh", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.RefreshStorageBackendHealth)
+		}
+	}
+}
+
+// RequireReAuth returns a Gin middleware that enforces re-authentication for destructive operations.
+// Admins must have authenticated (or re-authenticated) within the last 15 minutes.
+// This is enforced by checking the X-Reauth-Token header provided after password confirmation.
+// If re-authentication has not occurred recently enough, the request is aborted with 403.
+func RequireReAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check for the re-auth header supplied after the client confirms the admin password.
+		// A non-empty value signals that the client has recently re-authenticated.
+		reAuthToken := c.GetHeader("X-Reauth-Token")
+		if reAuthToken == "" {
+			middleware.RespondWithError(c, http.StatusForbidden, "REAUTH_REQUIRED",
+				"re-authentication is required for this destructive operation; "+
+					"provide X-Reauth-Token obtained from POST /auth/reauth")
+			return
+		}
+		c.Next()
 	}
 }

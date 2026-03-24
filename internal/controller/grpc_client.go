@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -78,8 +79,10 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	nc.mu.RUnlock()
 
 	if exists {
-		// Check if connection is still valid
-		if conn.GetState().String() != "SHUTDOWN" {
+		// Check if connection is still valid using the typed enum constant
+		// rather than a string comparison to avoid silent breakage if the
+		// string representation changes between gRPC library versions.
+		if conn.GetState() != connectivity.Shutdown {
 			return conn, nil
 		}
 		// Connection is dead, remove it
@@ -108,6 +111,14 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	return conn, nil
 }
 
+// ReleaseConnection signals that the caller is done using a connection.
+// The current implementation validates that the released connection matches the
+// pooled connection and logs mismatches, but does not perform any teardown.
+//
+// TODO: If per-caller reference counting is required in the future, this method
+// should decrement a reference count and only remove the connection from the pool
+// when the count reaches zero. Until then, connections are kept alive until
+// RemoveConnection or Close is called explicitly.
 func (nc *NodeClient) ReleaseConnection(nodeID string, conn *grpc.ClientConn) {
 	nc.mu.RLock()
 	held, exists := nc.conns[nodeID]

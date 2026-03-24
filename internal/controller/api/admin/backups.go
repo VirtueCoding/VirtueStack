@@ -24,28 +24,21 @@ type AdminBackupListFilter struct {
 func (h *AdminHandler) ListBackups(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
-	// Get query parameters
-	customerID := c.Query("customer_id")
-	vmID := c.Query("vm_id")
-	status := c.Query("status")
-	source := c.Query("source")
-	adminScheduleID := c.Query("admin_schedule_id")
-
-	// Validate UUID query parameters
-	if customerID != "" {
-		if _, err := uuid.Parse(customerID); err != nil {
+	// Validate UUID query parameters before building the filter
+	if customerIDStr := c.Query("customer_id"); customerIDStr != "" {
+		if _, err := uuid.Parse(customerIDStr); err != nil {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
 			return
 		}
 	}
-	if vmID != "" {
-		if _, err := uuid.Parse(vmID); err != nil {
+	if vmIDStr := c.Query("vm_id"); vmIDStr != "" {
+		if _, err := uuid.Parse(vmIDStr); err != nil {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "vm_id must be a valid UUID")
 			return
 		}
 	}
-	if adminScheduleID != "" {
-		if _, err := uuid.Parse(adminScheduleID); err != nil {
+	if adminScheduleIDStr := c.Query("admin_schedule_id"); adminScheduleIDStr != "" {
+		if _, err := uuid.Parse(adminScheduleIDStr); err != nil {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ADMIN_SCHEDULE_ID", "admin_schedule_id must be a valid UUID")
 			return
 		}
@@ -55,7 +48,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	validBackupStatuses := map[string]bool{
 		"creating": true, "completed": true, "failed": true, "restoring": true, "deleted": true,
 	}
-	if status != "" && !validBackupStatuses[status] {
+	if statusStr := c.Query("status"); statusStr != "" && !validBackupStatuses[statusStr] {
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_STATUS", "Invalid status value")
 		return
 	}
@@ -64,35 +57,27 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	validBackupSources := map[string]bool{
 		"manual": true, "customer_schedule": true, "admin_schedule": true,
 	}
-	if source != "" && !validBackupSources[source] {
+	if sourceStr := c.Query("source"); sourceStr != "" && !validBackupSources[sourceStr] {
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_SOURCE", "Invalid source value. Must be one of: manual, customer_schedule, admin_schedule")
 		return
 	}
 
-	// Build filter
-	filter := AdminBackupListFilter{
-		CustomerID:      &customerID,
-		VMID:            &vmID,
-		Status:          &status,
-		Source:          &source,
-		AdminScheduleID: &adminScheduleID,
+	// Build filter using single-step nil assignment (F-185)
+	var filter AdminBackupListFilter
+	if v := c.Query("customer_id"); v != "" {
+		filter.CustomerID = &v
 	}
-
-	// Clear nil pointers for empty strings
-	if customerID == "" {
-		filter.CustomerID = nil
+	if v := c.Query("vm_id"); v != "" {
+		filter.VMID = &v
 	}
-	if vmID == "" {
-		filter.VMID = nil
+	if v := c.Query("status"); v != "" {
+		filter.Status = &v
 	}
-	if status == "" {
-		filter.Status = nil
+	if v := c.Query("source"); v != "" {
+		filter.Source = &v
 	}
-	if source == "" {
-		filter.Source = nil
-	}
-	if adminScheduleID == "" {
-		filter.AdminScheduleID = nil
+	if v := c.Query("admin_schedule_id"); v != "" {
+		filter.AdminScheduleID = &v
 	}
 
 	repoFilter := repository.BackupListFilter{

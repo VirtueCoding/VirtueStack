@@ -26,11 +26,16 @@ type cpuUsageCacheEntry struct {
 	Sampling     bool
 }
 
+// cpuSamplerState bundles the CPU usage cache entry and its associated sampler
+// cancel function under a single mutex to eliminate the dual-mutex race condition.
+type cpuSamplerState struct {
+	cache  cpuUsageCacheEntry
+	cancel context.CancelFunc
+}
+
 var (
-	cpuUsageCacheMu   sync.RWMutex
-	cpuUsageCache     = make(map[string]cpuUsageCacheEntry)
-	samplerCancelMu   sync.Mutex
-	samplerCancelFuncs = make(map[string]context.CancelFunc)
+	cpuSamplerMu    sync.Mutex
+	cpuSamplerStore = make(map[string]*cpuSamplerState)
 )
 
 // Constants for VM lifecycle operations.
@@ -323,14 +328,9 @@ func (m *Manager) DeleteVM(ctx context.Context, vmID string) error {
 	// Clear the uptime data since VM is deleted
 	m.clearVMStartTime(vmID)
 
-	// Stop CPU sampler goroutine to prevent resource leak
+	// Stop CPU sampler goroutine and clear cache entry under the single mutex
 	domainName := DomainNameFromID(vmID)
 	stopCPUSampler(domainName)
-
-	// Clear CPU usage cache entry to prevent memory leak
-	cpuUsageCacheMu.Lock()
-	delete(cpuUsageCache, domainName)
-	cpuUsageCacheMu.Unlock()
 
 	logger.Info("VM deleted successfully")
 	return nil
@@ -407,6 +407,8 @@ func (m *Manager) GetMetrics(ctx context.Context, vmID string) (*VMMetrics, erro
 }
 
 // GetNodeResources returns aggregate resource information for the node.
+// It uses GetAllDomainStats for a single bulk libvirt call instead of
+// issuing per-domain GetInfo() calls in a loop (O(1) vs O(n) libvirt RPCs).
 func (m *Manager) GetNodeResources(ctx context.Context) (*NodeResources, error) {
 	logger := m.logger.With("operation", "get_node_resources")
 
@@ -416,25 +418,50 @@ func (m *Manager) GetNodeResources(ctx context.Context) (*NodeResources, error) 
 		return nil, fmt.Errorf("getting node info: %w", err)
 	}
 
-	// Get active domains
-	domains, err := m.conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE)
+	// Fetch all domain stats in a single bulk libvirt call (F-178).
+	// DOMAIN_STATS_VCPU gives the per-vCPU slice (len = number of vCPUs).
+	// DOMAIN_STATS_BALLOON gives memory allocation via Balloon.Current (KiB).
+	// Passing nil as the domain list means "all domains".
+	stats, err := m.conn.GetAllDomainStats(
+		nil,
+		libvirt.DOMAIN_STATS_VCPU|libvirt.DOMAIN_STATS_BALLOON,
+		libvirt.CONNECT_GET_ALL_DOMAINS_STATS_ACTIVE,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("listing active domains: %w", err)
+		// Fall back to listing domains without per-domain GetInfo
+		logger.Warn("GetAllDomainStats failed, falling back to domain count only", "error", err)
+		domains, listErr := m.conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE)
+		if listErr != nil {
+			return nil, fmt.Errorf("listing active domains: %w", listErr)
+		}
+		for _, dom := range domains {
+			if freeErr := dom.Free(); freeErr != nil {
+				logger.Debug("failed to free domain", "error", freeErr)
+			}
+		}
+		loadAvg := m.readLoadAverage()
+		uptime := m.readUptime()
+		return &NodeResources{
+			TotalVCPU:     int32(nodeInfo.Cores * nodeInfo.Sockets * nodeInfo.Threads),
+			TotalMemoryMB: int64(nodeInfo.Memory / 1024),
+			VMCount:       int32(len(domains)),
+			LoadAverage:   loadAvg,
+			UptimeSeconds: uptime,
+		}, nil
 	}
 
-	// Calculate used resources
+	// Aggregate resource usage from bulk stats.
+	// DomainStats.Vcpu is a []DomainStatsVcpu — its length equals the vCPU count.
+	// DomainStats.Balloon.Current is in KiB; convert to MiB.
 	var usedVCPU int32
 	var usedMemoryMB int64
-	for _, dom := range domains {
-		info, err := dom.GetInfo()
-		if err != nil {
-			logger.Warn("could not get domain info", "error", err)
-			continue
+	for _, ds := range stats {
+		usedVCPU += int32(len(ds.Vcpu))
+		if ds.Balloon != nil && ds.Balloon.CurrentSet {
+			usedMemoryMB += int64(ds.Balloon.Current / 1024) // KiB -> MiB
 		}
-		usedVCPU += int32(info.NrVirtCpu)
-		usedMemoryMB += int64(info.Memory / 1024) // Convert from KB to MB
-		if err := dom.Free(); err != nil {
-			logger.Debug("failed to free domain", "error", err)
+		if freeErr := ds.Domain.Free(); freeErr != nil {
+			logger.Debug("failed to free domain after stats", "error", freeErr)
 		}
 	}
 
@@ -449,7 +476,7 @@ func (m *Manager) GetNodeResources(ctx context.Context) (*NodeResources, error) 
 		UsedVCPU:      usedVCPU,
 		TotalMemoryMB: int64(nodeInfo.Memory / 1024), // Convert from KB to MB
 		UsedMemoryMB:  usedMemoryMB,
-		VMCount:       int32(len(domains)),
+		VMCount:       int32(len(stats)),
 		LoadAverage:   loadAvg,
 		UptimeSeconds: uptime,
 	}, nil
@@ -634,11 +661,11 @@ func (m *Manager) getCPUUsage(ctx context.Context, domain *libvirt.Domain) (floa
 
 	m.ensureCPUSampler(ctx, domainName)
 
-	cpuUsageCacheMu.RLock()
-	entry, ok := cpuUsageCache[domainName]
-	cpuUsageCacheMu.RUnlock()
+	cpuSamplerMu.Lock()
+	state, ok := cpuSamplerStore[domainName]
+	cpuSamplerMu.Unlock()
 	if ok {
-		return entry.UsagePercent, nil
+		return state.cache.UsagePercent, nil
 	}
 
 	info, err := domain.GetInfo()
@@ -649,40 +676,51 @@ func (m *Manager) getCPUUsage(ctx context.Context, domain *libvirt.Domain) (floa
 		return 0, nil
 	}
 
-	cpuUsageCacheMu.Lock()
-	cpuUsageCache[domainName] = cpuUsageCacheEntry{
-		UsagePercent: 0,
-		LastCPUTime:  info.CpuTime,
-		LastSampleAt: time.Now(),
-		Initialized:  true,
+	cpuSamplerMu.Lock()
+	if existing, exists := cpuSamplerStore[domainName]; exists {
+		existing.cache = cpuUsageCacheEntry{
+			UsagePercent: 0,
+			LastCPUTime:  info.CpuTime,
+			LastSampleAt: time.Now(),
+			Initialized:  true,
+		}
+	} else {
+		cpuSamplerStore[domainName] = &cpuSamplerState{
+			cache: cpuUsageCacheEntry{
+				UsagePercent: 0,
+				LastCPUTime:  info.CpuTime,
+				LastSampleAt: time.Now(),
+				Initialized:  true,
+			},
+		}
 	}
-	cpuUsageCacheMu.Unlock()
+	cpuSamplerMu.Unlock()
 
 	return 0, nil
 }
 
 func (m *Manager) ensureCPUSampler(ctx context.Context, domainName string) {
-	cpuUsageCacheMu.Lock()
-	entry := cpuUsageCache[domainName]
-	if entry.Sampling {
-		cpuUsageCacheMu.Unlock()
+	cpuSamplerMu.Lock()
+	state := cpuSamplerStore[domainName]
+	if state != nil && state.cache.Sampling {
+		cpuSamplerMu.Unlock()
 		return
 	}
-	entry.Sampling = true
-	cpuUsageCache[domainName] = entry
-	cpuUsageCacheMu.Unlock()
+	if state == nil {
+		state = &cpuSamplerState{}
+		cpuSamplerStore[domainName] = state
+	}
+	state.cache.Sampling = true
 
-	// Create a per-domain context that can be cancelled when the VM is deleted
-	// Derive sampler context from passed context. We use context.WithoutCancel to detach
-	// from request cancellation since the sampler should run independently of individual requests.
-	// The sampler is cancelled when the VM is deleted via stopCPUSampler.
-	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	samplerCancelMu.Lock()
-	samplerCancelFuncs[domainName] = cancel
-	samplerCancelMu.Unlock()
+	// Create a per-domain context that can be cancelled when the VM is deleted.
+	// context.WithoutCancel detaches from request cancellation so the sampler
+	// runs independently; it is stopped by stopCPUSampler on VM deletion.
+	samplerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	state.cancel = cancel
+	cpuSamplerMu.Unlock()
 
 	m.cpuWg.Add(1)
-	go m.runCPUSampler(ctx, domainName)
+	go m.runCPUSampler(samplerCtx, domainName)
 }
 
 func (m *Manager) runCPUSampler(ctx context.Context, domainName string) {
@@ -702,14 +740,16 @@ func (m *Manager) runCPUSampler(ctx context.Context, domainName string) {
 	}
 }
 
-// stopCPUSampler stops the CPU sampler goroutine for a domain.
+// stopCPUSampler stops the CPU sampler goroutine for a domain and clears its cache entry.
 func stopCPUSampler(domainName string) {
-	samplerCancelMu.Lock()
-	if cancel, ok := samplerCancelFuncs[domainName]; ok {
-		cancel()
-		delete(samplerCancelFuncs, domainName)
+	cpuSamplerMu.Lock()
+	if state, ok := cpuSamplerStore[domainName]; ok {
+		if state.cancel != nil {
+			state.cancel()
+		}
+		delete(cpuSamplerStore, domainName)
 	}
-	samplerCancelMu.Unlock()
+	cpuSamplerMu.Unlock()
 }
 
 func (m *Manager) sampleCPUUsage(domainName string) {
@@ -733,8 +773,13 @@ func (m *Manager) sampleCPUUsage(domainName string) {
 		return
 	}
 
-	cpuUsageCacheMu.Lock()
-	entry := cpuUsageCache[domainName]
+	cpuSamplerMu.Lock()
+	state := cpuSamplerStore[domainName]
+	if state == nil {
+		cpuSamplerMu.Unlock()
+		return
+	}
+	entry := state.cache
 	if entry.Initialized && !entry.LastSampleAt.IsZero() && info.CpuTime >= entry.LastCPUTime {
 		cpuDelta := info.CpuTime - entry.LastCPUTime
 		timeDelta := now.Sub(entry.LastSampleAt).Nanoseconds()
@@ -753,8 +798,8 @@ func (m *Manager) sampleCPUUsage(domainName string) {
 	entry.LastSampleAt = now
 	entry.Initialized = true
 	entry.Sampling = true
-	cpuUsageCache[domainName] = entry
-	cpuUsageCacheMu.Unlock()
+	state.cache = entry
+	cpuSamplerMu.Unlock()
 }
 
 // getMemoryUsage returns the memory usage and total for a domain.

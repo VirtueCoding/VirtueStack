@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // StorageType represents the type of storage backend.
@@ -16,6 +17,8 @@ const (
 	StorageTypeCEPH StorageType = "ceph"
 	// StorageTypeQCOW indicates a file-based QCOW2 storage backend.
 	StorageTypeQCOW StorageType = "qcow"
+	// StorageTypeLVM indicates an LVM thin-provisioned storage backend.
+	StorageTypeLVM StorageType = "lvm"
 )
 
 // StorageError represents storage-specific errors with typed codes.
@@ -43,6 +46,10 @@ const (
 	ErrCodeInternal ErrorCode = "INTERNAL_ERROR"
 	// ErrCodeConnection indicates a connection failure to storage backend.
 	ErrCodeConnection ErrorCode = "CONNECTION_FAILED"
+	// ErrCodeInUse indicates the resource is in use (e.g., VM running).
+	ErrCodeInUse ErrorCode = "IN_USE"
+	// ErrCodeNoSpace indicates the pool or volume group is full.
+	ErrCodeNoSpace ErrorCode = "NO_SPACE"
 )
 
 // Error implements the error interface for StorageError.
@@ -76,15 +83,41 @@ func NewStorageError(code ErrorCode, message string, cause error) *StorageError 
 	}
 }
 
+// ImageInfo holds metadata about a storage image.
+type ImageInfo struct {
+	// Filename is the canonical disk identifier (image name or file path).
+	Filename string
+	// Format is the storage format (e.g., "qcow2", "raw", "rbd").
+	Format string
+	// VirtualSizeBytes is the logical size of the image.
+	VirtualSizeBytes int64
+	// ActualSizeBytes is the physical space used on storage.
+	ActualSizeBytes int64
+	// DirtyFlag indicates unsaved write operations.
+	DirtyFlag bool
+	// ClusterSize is the allocation unit size (backend-specific).
+	ClusterSize int64
+	// BackingFile is the backing image path, if any.
+	BackingFile string
+}
+
 // StorageBackend defines the interface for storage operations.
 // Implementations must be safe for concurrent use by multiple goroutines.
 type StorageBackend interface {
+	// DiskIdentifier returns the canonical disk identifier for a VM.
+	// For RBD this is the image name ("vs-{vmID}-disk0").
+	// For QCOW this is the absolute file path ("{basePath}/vms/{vmID}-disk0.qcow2").
+	// This method enables storage-agnostic disk operations in handlers.
+	DiskIdentifier(vmID string) string
+
 	// CloneFromTemplate clones a template snapshot to create a new VM disk.
 	// sourcePool/sourceImage@sourceSnap -> targetPool/targetImage
 	CloneFromTemplate(ctx context.Context, sourcePool string, sourceImage string, sourceSnap string, targetImage string) error
 
 	// CloneSnapshotToPool clones a snapshot from one pool to another.
 	// Used for backup operations to clone a protected snapshot to the backup pool.
+	// This method handles any backend-specific protection internally (e.g., RBD
+	// protects snapshots before cloning; QCOW2 just copies the file).
 	CloneSnapshotToPool(ctx context.Context, sourcePool string, sourceImage string, sourceSnap string, targetPool string, targetImage string) error
 
 	// Resize changes the size of an existing image.
@@ -99,13 +132,6 @@ type StorageBackend interface {
 
 	// DeleteSnapshot removes a snapshot from an image.
 	DeleteSnapshot(ctx context.Context, imageName string, snapshotName string) error
-
-	// ProtectSnapshot marks a snapshot as protected to prevent deletion
-	// and allow cloning operations.
-	ProtectSnapshot(ctx context.Context, imageName string, snapshotName string) error
-
-	// UnprotectSnapshot removes protection from a snapshot.
-	UnprotectSnapshot(ctx context.Context, imageName string, snapshotName string) error
 
 	// ListSnapshots returns all snapshots associated with an image.
 	ListSnapshots(ctx context.Context, imageName string) ([]SnapshotInfo, error)
@@ -128,6 +154,67 @@ type StorageBackend interface {
 	// The VM must be stopped before calling this method.
 	Rollback(ctx context.Context, imageName string, snapshotName string) error
 
+	// CreateImage creates a new empty image of the specified size.
+	// This is a backend-specific helper for operations that need to create
+	// standalone images (e.g., LVM volume creation). Returns an error for
+	// backends that don't support this operation.
+	CreateImage(ctx context.Context, imageName string, sizeGB int) error
+
+	// GetImageInfo returns detailed information about an image.
+	// Returns backend-specific metadata including virtual size, actual size,
+	// and format details. Returns error if image doesn't exist.
+	GetImageInfo(ctx context.Context, imageName string) (*ImageInfo, error)
+
 	// GetStorageType returns the type of storage backend.
 	GetStorageType() StorageType
+}
+
+// TemplateInfo holds metadata about a template image.
+// This unified struct is returned by all TemplateBackend implementations.
+type TemplateInfo struct {
+	// Name is the template name (e.g., "ubuntu-2204").
+	Name string
+	// FilePath is the canonical path or RBD image name for the template.
+	FilePath string
+	// SizeBytes is the virtual size of the template in bytes.
+	SizeBytes int64
+	// CreatedAt is the creation timestamp.
+	CreatedAt time.Time
+	// OSFamily is the operating system family (e.g., "ubuntu", "debian").
+	OSFamily string
+	// OSVersion is the operating system version (e.g., "22.04", "12").
+	OSVersion string
+}
+
+// TemplateMeta contains optional metadata for template imports.
+type TemplateMeta struct {
+	OSFamily  string
+	OSVersion string
+}
+
+// TemplateBackend defines the interface for template management operations.
+// Implementations must be safe for concurrent use by multiple goroutines.
+type TemplateBackend interface {
+	// ImportTemplate imports a template from the given source path.
+	// The ref parameter is the template name/identifier.
+	// Returns the canonical path/reference and size in bytes.
+	ImportTemplate(ctx context.Context, ref, sourcePath string, meta TemplateMeta) (filePath string, sizeBytes int64, err error)
+
+	// DeleteTemplate removes a template identified by ref.
+	// ref is the template name for RBD or file path for QCOW.
+	DeleteTemplate(ctx context.Context, ref string) error
+
+	// CloneForVM clones a template to create a new VM disk.
+	// templateRef is the template name (RBD) or file path (QCOW).
+	// Returns the disk identifier (image name for RBD, file path for QCOW).
+	CloneForVM(ctx context.Context, templateRef, vmID string, sizeGB int) (diskID string, err error)
+
+	// TemplateExists checks if a template exists.
+	TemplateExists(ctx context.Context, ref string) (bool, error)
+
+	// GetTemplateSize returns the virtual size of a template in bytes.
+	GetTemplateSize(ctx context.Context, ref string) (int64, error)
+
+	// ListTemplates returns all available templates.
+	ListTemplates(ctx context.Context) ([]TemplateInfo, error)
 }

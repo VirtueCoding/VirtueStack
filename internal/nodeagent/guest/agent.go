@@ -15,6 +15,15 @@ import (
 	"libvirt.org/go/libvirt"
 )
 
+// maxConcurrentGuestAgentCalls is the maximum number of concurrent QEMU guest
+// agent commands across all QEMUGuestAgent instances. This prevents goroutine
+// explosion when many callers issue guest agent commands simultaneously.
+const maxConcurrentGuestAgentCalls = 32
+
+// guestAgentSemaphore is a package-level bounded channel that acts as a
+// semaphore to limit the total number of concurrent guest agent goroutines.
+var guestAgentSemaphore = make(chan struct{}, maxConcurrentGuestAgentCalls)
+
 // Constants for QEMU Guest Agent operations.
 const (
 	// DefaultTimeout is the maximum time to wait for guest agent responses.
@@ -142,12 +151,22 @@ func (a *QEMUGuestAgent) SetUserPassword(ctx context.Context, username, password
 }
 
 // executeCommand executes a QEMU Guest Agent command with strict timeout enforcement.
-// It wraps the libvirt call with both a context timeout and the libvirt timeout parameter
-// to ensure the operation cannot hang indefinitely on untrusted guest systems.
+// It uses a bounded semaphore to limit the total number of concurrent guest agent
+// goroutines, preventing goroutine exhaustion when callers' contexts are cancelled
+// while a blocking libvirt call is in progress.
 func (a *QEMUGuestAgent) executeCommand(ctx context.Context, command, operation string) (string, error) {
 	// Create a child context with strict 10-second timeout
 	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
+
+	// Acquire a slot from the bounded semaphore before launching the goroutine.
+	// If no slot is available and the caller's context expires, return immediately.
+	select {
+	case guestAgentSemaphore <- struct{}{}:
+	case <-ctx.Done():
+		a.logger.Warn("guest agent command timed out waiting for semaphore slot", "operation", operation)
+		return "", fmt.Errorf("guest agent %s: %w", operation, errors.ErrTimeout)
+	}
 
 	// Use a channel to receive the result asynchronously
 	type result struct {
@@ -157,8 +176,10 @@ func (a *QEMUGuestAgent) executeCommand(ctx context.Context, command, operation 
 	resultChan := make(chan result, 1)
 
 	go func() {
-		// Use DOMAIN_QEMU_AGENT_COMMAND_DEFAULT flag and 10-second timeout
-		// The timeout value (10) is passed to libvirt as seconds
+		defer func() { <-guestAgentSemaphore }()
+		// Use DOMAIN_QEMU_AGENT_COMMAND_DEFAULT flag and 10-second timeout.
+		// The timeout value (10) is passed to libvirt as seconds so the libvirt
+		// layer will also enforce a deadline independently of the Go context.
 		output, err := a.domain.QemuAgentCommand(
 			command,
 			libvirt.DOMAIN_QEMU_AGENT_COMMAND_DEFAULT,

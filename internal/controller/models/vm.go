@@ -43,6 +43,8 @@ type VM struct {
 	CephPool *string `json:"ceph_pool,omitempty" db:"ceph_pool"`
 	// RBDImage: RBD image name for ceph storage.
 	RBDImage *string `json:"rbd_image,omitempty" db:"rbd_image"`
+	// StorageBackendID: UUID of the storage backend this VM uses. Nil for legacy VMs using node defaults.
+	StorageBackendID *string `json:"storage_backend_id,omitempty" db:"storage_backend_id"`
 	// AttachedISO: UUID of the currently attached ISO, nil if none.
 	AttachedISO *string `json:"attached_iso,omitempty" db:"attached_iso"`
 	Timestamps

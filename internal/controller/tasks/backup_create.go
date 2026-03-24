@@ -19,6 +19,7 @@ const (
 	BackupPoolName              = "vs-backups"
 	storageBackendCeph          = "ceph"
 	storageBackendQCOW          = "qcow"
+	storageBackendLVM           = "lvm"
 	defaultBackupBasePath       = "/var/lib/virtuestack/backups"
 	defaultVMDiskPathTemplate   = "/var/lib/virtuestack/vms/%s-disk0.qcow2"
 )
@@ -177,10 +178,14 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 		Logger:           logger,
 	}
 
-	if storageBackend == storageBackendQCOW {
+	switch storageBackend {
+	case storageBackendQCOW:
 		return handleQCOWBackupCreate(ctx, deps, backupCtx)
+	case storageBackendLVM:
+		return handleLVMBackupCreate(ctx, deps, backupCtx)
+	default:
+		return handleCephBackupCreate(ctx, deps, backupCtx)
 	}
-	return handleCephBackupCreate(ctx, deps, backupCtx)
 }
 
 func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *BackupHandlerContext) error {
@@ -345,6 +350,20 @@ func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 		"backup_image", backupImageName,
 		"backup_pool", BackupPoolName)
 
+	// Register a cleanup defer for the cloned RBD image so that if the DB insert
+	// fails the orphaned image is removed. dbInsertSucceeded is flipped to true
+	// immediately after a successful CreateBackup call.
+	dbInsertSucceeded := false
+	defer func() {
+		if !dbInsertSucceeded {
+			if removeErr := deps.NodeClient.DeleteDisk(context.WithoutCancel(ctx), nodeID, backupImageName); removeErr != nil {
+				logger.Error("failed to cleanup orphaned RBD clone after DB insert failure",
+					"backup_image", backupImageName,
+					"error", removeErr)
+			}
+		}
+	}()
+
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 70, "Creating backup record..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
@@ -375,6 +394,7 @@ func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 		logger.Error("failed to create backup record", "error", err)
 		return fmt.Errorf("creating backup record: %w", err)
 	}
+	dbInsertSucceeded = true
 
 	result := BackupCreateResult{
 		BackupID:          backup.ID,
@@ -385,6 +405,108 @@ func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 		Consistency:       backupConsistency,
 		FrozenFilesystems: frozenCount,
 		StorageBackend:    storageBackendCeph,
+	}
+	completeBackupTask(ctx, task, deps, backup, result, logger)
+
+	return nil
+}
+
+// handleLVMBackupCreate handles LVM backup creation with thin snapshot support.
+// The backup flow:
+// 1. Create thin snapshot via CreateDiskSnapshot
+// 2. Thaw filesystems immediately (minimize freeze window)
+// 3. Use dd with conv=sparse to create backup file
+// 4. Cleanup snapshot after backup completes
+func handleLVMBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *BackupHandlerContext) error {
+	task := backupCtx.Task
+	nodeID := backupCtx.NodeID
+	payload := backupCtx.Payload
+	freezeSuccessful := backupCtx.FreezeSuccessful
+	frozenCount := backupCtx.FrozenCount
+	logger := backupCtx.Logger
+
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Creating LVM thin snapshot..."); err != nil {
+		logger.Warn("failed to update task progress", "error", err)
+	}
+
+	snapshotName := fmt.Sprintf("backup-%s-%d", payload.VMID, time.Now().Unix())
+
+	// Create LVM thin snapshot (diskPath is empty - node agent derives from vmID)
+	if err := deps.NodeClient.CreateDiskSnapshot(ctx, nodeID, payload.VMID, "", snapshotName, "lvm"); err != nil {
+		logger.Error("failed to create LVM snapshot", "error", err)
+		return fmt.Errorf("creating LVM snapshot for VM %s: %w", payload.VMID, err)
+	}
+
+	logger.Info("LVM thin snapshot created successfully", "snapshot_name", snapshotName)
+
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Creating backup file..."); err != nil {
+		logger.Warn("failed to update task progress", "error", err)
+	}
+
+	backupConfig := DefaultBackupConfig()
+	backupDir := fmt.Sprintf("%s/%s", backupConfig.BackupPath, payload.VMID)
+	backupFileName := fmt.Sprintf("%s-%s.raw", shortID(task.ID), time.Now().Format("20060102-150405"))
+	backupFilePath := fmt.Sprintf("%s/%s", backupDir, backupFileName)
+
+	sizeBytes, err := deps.NodeClient.CreateLVMBackup(ctx, nodeID, payload.VMID, snapshotName, backupFilePath)
+	if err != nil {
+		logger.Error("failed to create LVM backup file", "error", err)
+		if delErr := deps.NodeClient.DeleteDiskSnapshot(ctx, nodeID, payload.VMID, "", snapshotName, "lvm"); delErr != nil {
+			logger.Error("failed to cleanup LVM snapshot after backup failure", "operation", "DeleteDiskSnapshot", "err", delErr)
+		}
+		return fmt.Errorf("creating LVM backup file for VM %s: %w", payload.VMID, err)
+	}
+
+	logger.Info("LVM backup file created successfully",
+		"backup_file", backupFilePath,
+		"size_bytes", sizeBytes)
+
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 70, "Creating backup record..."); err != nil {
+		logger.Warn("failed to update task progress", "error", err)
+	}
+
+	backupConsistency := "crash-consistent"
+	if freezeSuccessful {
+		backupConsistency = "application-consistent"
+	}
+
+	backup := &models.Backup{
+		VMID:           payload.VMID,
+		Source:         payload.Source,
+		StorageBackend: storageBackendLVM,
+		FilePath:       &backupFilePath,
+		SnapshotName:   &snapshotName,
+		SizeBytes:      &sizeBytes,
+		Status:         models.BackupStatusCompleted,
+	}
+
+	if payload.AdminScheduleID != "" {
+		backup.AdminScheduleID = &payload.AdminScheduleID
+	}
+
+	expiresAt := time.Now().AddDate(0, 0, DefaultBackupExpirationDays)
+	backup.ExpiresAt = &expiresAt
+
+	if err := deps.BackupRepo.CreateBackup(ctx, backup); err != nil {
+		logger.Error("failed to create backup record", "error", err)
+		if delErr := deps.NodeClient.DeleteLVMBackupFile(ctx, nodeID, backupFilePath); delErr != nil {
+			logger.Error("failed to cleanup backup file after record failure", "operation", "DeleteLVMBackupFile", "err", delErr)
+		}
+		if delErr := deps.NodeClient.DeleteDiskSnapshot(ctx, nodeID, payload.VMID, "", snapshotName, "lvm"); delErr != nil {
+			logger.Error("failed to cleanup LVM snapshot after record failure", "operation", "DeleteDiskSnapshot", "err", delErr)
+		}
+		return fmt.Errorf("creating backup record: %w", err)
+	}
+
+	result := BackupCreateResult{
+		BackupID:          backup.ID,
+		VMID:              payload.VMID,
+		SnapshotName:      snapshotName,
+		Filepath:          backupFilePath,
+		SizeBytes:         sizeBytes,
+		Consistency:       backupConsistency,
+		FrozenFilesystems: frozenCount,
+		StorageBackend:    storageBackendLVM,
 	}
 	completeBackupTask(ctx, task, deps, backup, result, logger)
 

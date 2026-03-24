@@ -173,6 +173,24 @@ var (
 			Help: "Number of VMs on the node",
 		},
 	)
+
+	// LVMDataPercent tracks the data usage percentage of LVM thin pools.
+	LVMDataPercent = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "virtuestack_lvm_data_percent",
+			Help: "LVM thin pool data usage percentage",
+		},
+		[]string{"vg", "pool"},
+	)
+
+	// LVMMetadataPercent tracks the metadata usage percentage of LVM thin pools.
+	LVMMetadataPercent = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "virtuestack_lvm_metadata_percent",
+			Help: "LVM thin pool metadata usage percentage",
+		},
+		[]string{"vg", "pool"},
+	)
 )
 
 // StatusToValue converts a VM status string to a numeric value for Prometheus metrics.

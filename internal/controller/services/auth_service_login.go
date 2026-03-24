@@ -5,7 +5,6 @@ package services
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"slices"
 	"time"
@@ -30,7 +29,9 @@ func (s *AuthService) verifyLoginCredentials(ctx context.Context, email, passwor
 			// Timing attack mitigation: perform a dummy password verification
 			// to ensure consistent response time regardless of email existence.
 			// The dummy hash uses standard Argon2id parameters.
-			_, _ = s.verifyPassword(password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG")
+			// Use the pre-computed dummy hash with a random salt to prevent
+			// timing attacks (F-149). dummyArgon2idHash is initialised in auth_service.go.
+			_, _ = s.verifyPassword(password, dummyArgon2idHash)
 			return nil, sharederrors.ErrUnauthorized
 		}
 		return nil, fmt.Errorf("getting customer by email: %w", err)
@@ -98,6 +99,7 @@ func (s *AuthService) Login(ctx context.Context, email, password, ipAddress, use
 
 // validateTOTPCode decrypts the stored TOTP secret and validates the code.
 // Returns true when the code is cryptographically valid.
+// Allows a 1-step clock skew tolerance (±30 seconds) for customer accounts.
 func (s *AuthService) validateTOTPCode(encryptedSecret, totpCode string) (bool, error) {
 	totpSecret, err := crypto.Decrypt(encryptedSecret, s.encryptionKey)
 	if err != nil {
@@ -114,16 +116,37 @@ func (s *AuthService) validateTOTPCode(encryptedSecret, totpCode string) (bool, 
 	return valid, nil
 }
 
+// validateTOTPCodeStrict decrypts the stored TOTP secret and validates the code
+// with Skew=0 (no clock tolerance). Used for admin accounts where strict security
+// is preferred (F-107).
+func (s *AuthService) validateTOTPCodeStrict(encryptedSecret, totpCode string) (bool, error) {
+	totpSecret, err := crypto.Decrypt(encryptedSecret, s.encryptionKey)
+	if err != nil {
+		return false, fmt.Errorf("decrypting TOTP secret: %w", err)
+	}
+	valid, err := totp.ValidateCustom(totpCode, totpSecret, time.Now(), totp.ValidateOpts{
+		Skew:      0, // No clock skew tolerance for admin accounts
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		return false, fmt.Errorf("validating TOTP: %w", err)
+	}
+	return valid, nil
+}
+
 // consumeBackupCode checks whether totpCode matches any stored backup code hash.
 // On match it removes the code from the slice and calls updateFn to persist the
 // change. Returns true if a backup code was consumed.
+// Uses Argon2id comparison (via checkBackupCode) since backup codes are now
+// hashed with Argon2id instead of SHA-256 (F-011).
 func (s *AuthService) consumeBackupCode(ctx context.Context, userID, totpCode string, backupCodesHash []string, updateFn func(context.Context, string, []string) error) (bool, error) {
 	if len(backupCodesHash) == 0 {
 		return false, nil
 	}
-	providedHash := crypto.HashSHA256(totpCode)
 	for i, codeHash := range backupCodesHash {
-		if subtle.ConstantTimeCompare([]byte(providedHash), []byte(codeHash)) != 1 {
+		match, err := checkBackupCode(totpCode, codeHash)
+		if err != nil || !match {
 			continue
 		}
 		remaining := slices.Concat(backupCodesHash[:i], backupCodesHash[i+1:])

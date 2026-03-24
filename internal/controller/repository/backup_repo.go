@@ -97,11 +97,9 @@ func (r *BackupRepository) CreateBackupWithLimitCheck(ctx context.Context, backu
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	// Rollback is unconditional: pgx rolls back are no-ops after a successful Commit,
+	// so this is safe to always defer regardless of the outcome.
+	defer tx.Rollback(ctx) //nolint:errcheck
 
 	// Lock the VM row to prevent concurrent backup creation
 	const lockQ = `SELECT id FROM vms WHERE id = $1 FOR UPDATE`
@@ -294,9 +292,11 @@ func (r *BackupRepository) ListBackupsByVM(ctx context.Context, vmID string) ([]
 	return backups, nil
 }
 
-// CountBackupsByVM returns the number of backups for a specific VM.
+// CountBackupsByVM returns the number of non-deleted backups for a specific VM.
+// Backups with status 'deleted' are excluded so that soft-deleted records do not
+// count against the customer's backup quota.
 func (r *BackupRepository) CountBackupsByVM(ctx context.Context, vmID string) (int, error) {
-	const q = `SELECT COUNT(*) FROM backups WHERE vm_id = $1`
+	const q = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted'`
 	count, err := CountRows(ctx, r.db, q, vmID)
 	if err != nil {
 		return 0, fmt.Errorf("counting backups for VM %s: %w", vmID, err)

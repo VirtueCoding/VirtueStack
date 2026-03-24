@@ -6,12 +6,17 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	"libvirt.org/go/libvirt"
 )
+
+// validFilterNameRe restricts nwfilter name components to alphanumeric characters
+// and hyphens to prevent XML injection via filter names.
+var validFilterNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)
 
 // Constants for nwfilter management.
 const (
@@ -160,14 +165,15 @@ func (m *NWFilterManager) filterName(vmName string) string {
 }
 
 // sanitizeFilterName sanitizes a VM name for use in nwfilter names.
-// Libvirt nwfilter names must be valid XML attribute values and
-// should not contain special characters.
+// Only alphanumeric characters and hyphens are allowed; all other characters
+// are replaced with hyphens to prevent XML special character injection.
 func sanitizeFilterName(name string) string {
-	// Replace common problematic characters
+	// Replace spaces, dots, and underscores with hyphens first for readability
 	result := strings.ReplaceAll(name, " ", "-")
 	result = strings.ReplaceAll(result, ".", "-")
 	result = strings.ReplaceAll(result, "_", "-")
-	return result
+	// Strip any remaining characters that are not alphanumeric or hyphens
+	return validFilterNameRe.ReplaceAllString(result, "-")
 }
 
 // escapeXML escapes special characters for safe inclusion in XML attributes.

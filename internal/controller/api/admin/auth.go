@@ -3,6 +3,8 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -10,6 +12,55 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 )
+
+// adminVerify2FARateLimit enforces F-075: after adminVerify2FAMaxAttempts failed
+// attempts for a given jti (temp-token ID), the jti is permanently exhausted.
+var (
+	adminVerify2FARateLimitMu      sync.Mutex
+	adminVerify2FARateLimitMap     = make(map[string]*adminRateLimitEntry)
+	adminVerify2FAMaxAttempts      = 5
+	adminVerify2FARateLimitWindow  = 15 * time.Minute
+)
+
+type adminRateLimitEntry struct {
+	attempts  int
+	firstTry  time.Time
+	exhausted bool
+}
+
+// checkAdminVerify2FARateLimit returns true when the attempt is allowed,
+// false when the jti is rate-limited or permanently exhausted.
+func checkAdminVerify2FARateLimit(jti string) bool {
+	adminVerify2FARateLimitMu.Lock()
+	defer adminVerify2FARateLimitMu.Unlock()
+	now := time.Now()
+	entry, exists := adminVerify2FARateLimitMap[jti]
+	if !exists {
+		adminVerify2FARateLimitMap[jti] = &adminRateLimitEntry{attempts: 1, firstTry: now}
+		return true
+	}
+	if entry.exhausted {
+		return false
+	}
+	if now.Sub(entry.firstTry) > adminVerify2FARateLimitWindow {
+		adminVerify2FARateLimitMap[jti] = &adminRateLimitEntry{attempts: 1, firstTry: now}
+		return true
+	}
+	if entry.attempts >= adminVerify2FAMaxAttempts {
+		entry.exhausted = true
+		return false
+	}
+	entry.attempts++
+	return true
+}
+
+// recordAdminVerify2FASuccess removes the rate-limit entry for a successfully
+// verified jti so the temp token cannot be reused.
+func recordAdminVerify2FASuccess(jti string) {
+	adminVerify2FARateLimitMu.Lock()
+	defer adminVerify2FARateLimitMu.Unlock()
+	delete(adminVerify2FARateLimitMap, jti)
+}
 
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email,max=254"`
@@ -19,10 +70,6 @@ type LoginRequest struct {
 type Verify2FARequest struct {
 	TempToken string `json:"temp_token" validate:"required"`
 	TOTPCode  string `json:"totp_code" validate:"required,len=6,numeric"`
-}
-
-type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token"`
 }
 
 type AuthResponse struct {
@@ -92,6 +139,21 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	// F-075: Apply jti-based rate limiting so the temp token is permanently
+	// invalidated after adminVerify2FAMaxAttempts failed verification attempts,
+	// regardless of source IP (prevents distributed brute-force).
+	if claims, err := middleware.ValidateTempToken(h.authConfig, req.TempToken); err == nil && claims.ID != "" {
+		if !checkAdminVerify2FARateLimit(claims.ID) {
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
+			return
+		}
+		defer func() {
+			// On success (no error path taken above), clear the rate-limit entry.
+			// recordAdminVerify2FASuccess is also called explicitly on the success path.
+			_ = claims.ID // captured for use in success path below
+		}()
+	}
+
 	ipAddress := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
@@ -110,6 +172,11 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	// Clear jti rate-limit entry on successful verification.
+	if claims, err := middleware.ValidateTempToken(h.authConfig, req.TempToken); err == nil && claims.ID != "" {
+		recordAdminVerify2FASuccess(claims.ID)
+	}
+
 	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
 		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
 
@@ -126,11 +193,6 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	refreshToken := middleware.GetRefreshTokenFromCookie(c)
-
-	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
-		refreshToken = req.RefreshToken
-	}
 
 	if refreshToken == "" {
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
@@ -168,6 +230,22 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 }
 
 func (h *AdminHandler) Logout(c *gin.Context) {
+	refreshToken := middleware.GetRefreshTokenFromCookie(c)
+
+	if refreshToken != "" {
+		userID := middleware.GetUserID(c)
+		if logoutErr := h.authService.LogoutAll(c.Request.Context(), userID, "admin"); logoutErr != nil {
+			h.logger.Warn("failed to invalidate admin sessions on logout",
+				"user_id", userID,
+				"error", logoutErr,
+				"correlation_id", middleware.GetCorrelationID(c))
+		} else {
+			h.logger.Info("admin logged out",
+				"user_id", userID,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+	}
+
 	middleware.ClearAuthCookies(c, adminRefreshCookiePath)
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }

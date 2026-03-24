@@ -260,24 +260,30 @@ func (r *WebhookRepository) DeleteByCustomer(ctx context.Context, id, customerID
 // If success is true, resets fail_count. If false, increments fail_count.
 // Auto-disables webhook if fail_count reaches WebhookMaxFailCount.
 func (r *WebhookRepository) UpdateDeliveryStatus(ctx context.Context, id string, success bool) error {
-	var q string
+	var (
+		tag  interface{ RowsAffected() int64 }
+		err  error
+	)
 	if success {
-		q = `
+		const q = `
 			UPDATE webhooks
 			SET fail_count = 0,
 			    last_success_at = NOW(),
 			    active = TRUE
 			WHERE id = $1`
+		tag, err = r.db.Exec(ctx, q, id)
 	} else {
-		q = fmt.Sprintf(`
+		// WebhookMaxFailCount is passed as a bind parameter ($2) to avoid
+		// embedding a constant directly into the SQL string via fmt.Sprintf.
+		const q = `
 			UPDATE webhooks
 			SET fail_count = fail_count + 1,
 			    last_failure_at = NOW(),
-			    active = CASE WHEN fail_count + 1 >= %d THEN FALSE ELSE active END
-			WHERE id = $1`, WebhookMaxFailCount)
+			    active = CASE WHEN fail_count + 1 >= $2 THEN FALSE ELSE active END
+			WHERE id = $1`
+		tag, err = r.db.Exec(ctx, q, id, WebhookMaxFailCount)
 	}
 
-	tag, err := r.db.Exec(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("updating webhook %s delivery status: %w", id, err)
 	}

@@ -39,42 +39,6 @@ const (
 	DefaultListenAddr = ":50052"
 )
 
-// initializeStorage creates the appropriate storage backend based on configuration.
-// Returns the StorageBackend interface, storage type, and template manager.
-func initializeStorage(cfg *config.NodeAgentConfig, logger *slog.Logger) (storage.StorageBackend, storage.StorageType, any, error) {
-	storageBackend := cfg.StorageBackend
-	if storageBackend == "" {
-		storageBackend = "ceph"
-	}
-
-	switch storageBackend {
-	case "qcow":
-		qcowMgr, err := storage.NewQCOWManager(cfg.StoragePath, logger)
-		if err != nil {
-			return nil, storage.StorageTypeQCOW, nil, fmt.Errorf("creating QCOW manager: %w", err)
-		}
-
-		templatesPath := cfg.StoragePath + "/templates"
-		vmsPath := cfg.StoragePath + "/vms"
-		qcowTemplateMgr, err := storage.NewQCOWTemplateManager(templatesPath, vmsPath, logger)
-		if err != nil {
-			return nil, storage.StorageTypeQCOW, nil, fmt.Errorf("creating QCOW template manager: %w", err)
-		}
-
-		logger.Info("initialized QCOW storage backend", "path", cfg.StoragePath)
-		return qcowMgr, storage.StorageTypeQCOW, qcowTemplateMgr, nil
-
-	default:
-		rbdMgr, err := storage.NewRBDManager(cfg.CephConf, cfg.CephUser, cfg.CephPool, logger)
-		if err != nil {
-			return nil, storage.StorageTypeCEPH, nil, fmt.Errorf("connecting to ceph: %w", err)
-		}
-
-		logger.Info("initialized Ceph RBD storage backend", "pool", cfg.CephPool)
-		return rbdMgr, storage.StorageTypeCEPH, nil, nil
-	}
-}
-
 // Server represents the VirtueStack Node Agent gRPC server.
 type Server struct {
 	config             *config.NodeAgentConfig
@@ -83,11 +47,12 @@ type Server struct {
 	vmManager          *vm.Manager
 	storageBackend     storage.StorageBackend
 	storageType        storage.StorageType
-	templateMgr        any // *storage.TemplateManager for ceph, *storage.QCOWTemplateManager for qcow
+	templateMgr        storage.TemplateBackend
 	abusePreventionMgr *network.AbusePreventionManager
 	logger             *slog.Logger
 	listenAddr         string
 	metricsAddr        string
+	healthAddr         string
 	bgWg               sync.WaitGroup
 }
 
@@ -116,7 +81,7 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	vmManager := vm.NewManager(libvirtConn, logger, dataDir)
 
 	// Initialize storage backend based on configuration
-	storageBackend, storageType, templateMgr, err := initializeStorage(cfg, logger)
+	backendPair, err := storage.NewBackend(cfg, logger)
 	if err != nil {
 		if _, closeErr := libvirtConn.Close(); closeErr != nil {
 			logger.Error("error closing libvirt connection during cleanup", "error", closeErr)
@@ -135,17 +100,23 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 		metricsAddr = ":9091"
 	}
 
+	healthAddr := cfg.HealthAddr
+	if healthAddr == "" {
+		healthAddr = "127.0.0.1:8081"
+	}
+
 	s := &Server{
 		config:             cfg,
 		libvirtConn:        libvirtConn,
 		vmManager:          vmManager,
-		storageBackend:     storageBackend,
-		storageType:        storageType,
-		templateMgr:        templateMgr,
+		storageBackend:     backendPair.Storage,
+		storageType:        backendPair.Type,
+		templateMgr:        backendPair.Template,
 		abusePreventionMgr: network.NewAbusePreventionManager(logger),
 		logger:             logging.WithComponent(logger, "node-agent"),
 		listenAddr:         listenAddr,
 		metricsAddr:        metricsAddr,
+		healthAddr:         healthAddr,
 	}
 
 	// Setup gRPC server with mTLS
@@ -240,6 +211,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startMetricsCollector(ctx)
 	s.startMetricsHTTPServer(ctx)
+	s.startHealthHTTPServer(ctx)
 
 	// Start serving in a goroutine
 	errChan := make(chan error, 1)
@@ -370,6 +342,33 @@ func (s *Server) collectVMMetrics(ctx context.Context) {
 		metrics.VMNetworkRXDropsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkRXDrop))
 		metrics.VMNetworkTXDropsTotal.WithLabelValues(vmID).Set(float64(vmMetrics.NetworkTXDrop))
 	}
+
+	// Collect LVM thin pool metrics if using LVM storage backend
+	s.collectLVMMetrics(ctx)
+}
+
+// collectLVMMetrics collects LVM thin pool metrics if the storage backend is LVM.
+func (s *Server) collectLVMMetrics(ctx context.Context) {
+	if s.storageType != storage.StorageTypeLVM {
+		return
+	}
+
+	lvmMgr, ok := s.storageBackend.(*storage.LVMManager)
+	if !ok {
+		return
+	}
+
+	dataPercent, metadataPercent, err := lvmMgr.ThinPoolStats(ctx)
+	if err != nil {
+		s.logger.Warn("failed to collect LVM thin pool metrics", "error", err)
+		return
+	}
+
+	vg := lvmMgr.VolumeGroup()
+	pool := lvmMgr.ThinPoolName()
+
+	metrics.LVMDataPercent.WithLabelValues(vg, pool).Set(dataPercent)
+	metrics.LVMMetadataPercent.WithLabelValues(vg, pool).Set(metadataPercent)
 }
 
 func (s *Server) startMetricsHTTPServer(ctx context.Context) {
@@ -395,6 +394,21 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) {
 		s.logger.Info("starting metrics HTTP server", "address", s.metricsAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("metrics HTTP server error", "error", err)
+		}
+	})
+}
+
+func (s *Server) startHealthHTTPServer(ctx context.Context) {
+	s.trackBackgroundGoroutine(func() {
+		healthServer := NewHealthServer(
+			&HealthServerConfig{Addr: s.healthAddr},
+			s.storageBackend,
+			s.storageType,
+			s.logger,
+		)
+
+		if err := healthServer.Start(ctx); err != nil && err != context.Canceled {
+			s.logger.Error("health HTTP server error", "error", err)
 		}
 	})
 }
@@ -479,12 +493,43 @@ func (s *Server) isStorageConnected() bool {
 	if s.storageBackend == nil {
 		return false
 	}
-	if s.storageType == storage.StorageTypeCEPH {
+	switch s.storageType {
+	case storage.StorageTypeCEPH:
 		if rbdMgr, ok := s.storageBackend.(*storage.RBDManager); ok {
 			return rbdMgr.IsConnected()
 		}
+	case storage.StorageTypeQCOW:
+		if qcowMgr, ok := s.storageBackend.(*storage.QCOWManager); ok {
+			return qcowMgr.HealthCheck(context.Background()) == nil
+		}
+	case storage.StorageTypeLVM:
+		if lvmMgr, ok := s.storageBackend.(*storage.LVMManager); ok {
+			_, _, err := lvmMgr.ThinPoolStats(context.Background())
+			return err == nil
+		}
 	}
 	return true
+}
+
+// getLVMMetrics returns LVM thin pool metrics if the storage backend is LVM.
+// Returns -1 for both values if LVM is not applicable or an error occurs.
+func (s *Server) getLVMMetrics(ctx context.Context) (dataPercent, metadataPercent float64) {
+	if s.storageType != storage.StorageTypeLVM {
+		return -1, -1
+	}
+
+	lvmMgr, ok := s.storageBackend.(*storage.LVMManager)
+	if !ok {
+		return -1, -1
+	}
+
+	dataPercent, metadataPercent, err := lvmMgr.ThinPoolStats(ctx)
+	if err != nil {
+		s.logger.Warn("failed to get LVM thin pool stats for health response", "error", err)
+		return -1, -1
+	}
+
+	return dataPercent, metadataPercent
 }
 
 func (s *Server) isLibvirtAlive() bool {
@@ -581,17 +626,22 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 	// Get local disk usage percentage
 	diskPercent := h.server.getDiskUsage()
 
+	// Get LVM thin pool metrics if applicable
+	lvmDataPercent, lvmMetadataPercent := h.server.getLVMMetrics(ctx)
+
 	return &nodeagentpb.NodeHealthResponse{
-		NodeId:           h.server.config.NodeID,
-		Healthy:          true,
-		CpuPercent:       cpuPercent,
-		MemoryPercent:    memoryPercent,
-		DiskPercent:      diskPercent,
-		VmCount:          resources.VMCount,
-		LoadAverage:      resources.LoadAverage[:],
-		UptimeSeconds:    resources.UptimeSeconds,
-		LibvirtConnected: h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:    h.server.isStorageConnected(),
+		NodeId:            h.server.config.NodeID,
+		Healthy:           true,
+		CpuPercent:        cpuPercent,
+		MemoryPercent:     memoryPercent,
+		DiskPercent:       diskPercent,
+		VmCount:           resources.VMCount,
+		LoadAverage:       resources.LoadAverage[:],
+		UptimeSeconds:     resources.UptimeSeconds,
+		LibvirtConnected:  h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
+		CephConnected:     h.server.isStorageConnected(),
+		LvmDataPercent:    lvmDataPercent,
+		LvmMetadataPercent: lvmMetadataPercent,
 	}, nil
 }
 
@@ -679,8 +729,8 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 
 	// Validate storage_backend if provided
 	storageBackend := req.GetStorageBackend()
-	if storageBackend != "" && storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph' or 'qcow')", storageBackend)
+	if storageBackend != "" && storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow && storageBackend != vm.StorageBackendLVM {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph', 'qcow', or 'lvm')", storageBackend)
 	}
 
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "create")
@@ -747,6 +797,33 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 			}
 			logger.Info("cloned RBD template", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
 		}
+
+	case vm.StorageBackendLVM:
+		templatePath := req.GetTemplateFilePath()
+		if templatePath == "" {
+			return nil, status.Error(codes.InvalidArgument, "template_file_path is required for lvm storage backend")
+		}
+
+		// Check thin pool capacity before cloning
+		if lvmMgr, ok := h.server.storageBackend.(*storage.LVMManager); ok {
+			dataPercent, metadataPercent, err := lvmMgr.ThinPoolStats(ctx)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "checking LVM thin pool stats: %v", err)
+			}
+			if dataPercent >= 95 {
+				return nil, status.Errorf(codes.ResourceExhausted, "LVM thin pool data usage is critical (%.1f%% >= 95%%)", dataPercent)
+			}
+			if metadataPercent >= 70 {
+				return nil, status.Errorf(codes.ResourceExhausted, "LVM thin pool metadata usage is critical (%.1f%% >= 70%%)", metadataPercent)
+			}
+		}
+
+		diskPath, err := h.server.templateMgr.CloneForVM(ctx, templatePath, req.GetVmId(), int(req.GetDiskGb()))
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "cloning LVM template: %v", err)
+		}
+		cfg.LVMDiskPath = diskPath
+		logger.Info("cloned LVM template", "template", templatePath, "disk_path", diskPath)
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
@@ -874,6 +951,14 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 			logger.Warn("failed to delete RBD disk", "error", err, "name", diskName)
 		} else {
 			logger.Info("RBD disk deleted", "name", diskName)
+		}
+
+	case vm.StorageBackendLVM:
+		diskIdentifier := h.server.storageBackend.DiskIdentifier(req.GetVmId())
+		if err := h.server.storageBackend.Delete(ctx, diskIdentifier); err != nil {
+			logger.Warn("failed to delete LVM disk", "error", err, "path", diskIdentifier)
+		} else {
+			logger.Info("LVM disk deleted", "path", diskIdentifier)
 		}
 	}
 

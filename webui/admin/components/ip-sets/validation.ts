@@ -2,9 +2,11 @@ import { z } from "zod";
 
 // Custom Zod refinements for IP validation
 const ipv4CidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/;
-const ipv6CidrRegex = /^([0-9a-fA-F:]+)\/(\d{1,3})$/;
+// IPv6 CIDR: accepts any valid IPv6 address prefix (full or compressed) followed by /prefix-length
+const ipv6CidrRegex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))\/(\d{1,3})$/;
 const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+// IPv6: RFC-compliant pattern accepting full and compressed forms (including :: loopback/any)
+const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
 
 const isValidIPv4Octet = (ip: string): boolean => {
   const parts = ip.split(".").map(Number);
@@ -66,7 +68,7 @@ export const createIPSetSchema = z.object({
       }
     }
     // Validate gateway for IPv6
-    if (!ipv6Regex.test(data.gateway) && data.gateway !== "::" && !data.gateway.includes("::")) {
+    if (!ipv6Regex.test(data.gateway)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Invalid IPv6 address",
@@ -90,8 +92,8 @@ export const editIPSetSchema = z.object({
   if (data.gateway && data.gateway.length > 0) {
     // Try IPv4 first
     const isIPv4 = ipv4Regex.test(data.gateway) && isValidIPv4Octet(data.gateway);
-    // Then try IPv6
-    const isIPv6 = ipv6Regex.test(data.gateway) || data.gateway === "::" || data.gateway.includes("::");
+    // Then try IPv6 using the RFC-compliant regex (covers ::, ::1, and all compressed forms)
+    const isIPv6 = ipv6Regex.test(data.gateway);
 
     if (!isIPv4 && !isIPv6) {
       ctx.addIssue({

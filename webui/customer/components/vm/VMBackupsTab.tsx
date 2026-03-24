@@ -66,6 +66,7 @@ interface VMBackupsTabProps {
 }
 
 export function VMBackupsTab({
+  vmId,
   vmName,
   backups,
   isLoading,
@@ -104,7 +105,7 @@ export function VMBackupsTab({
 
   return (
     <>
-      <Card>
+      <Card data-vm-id={vmId}>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle className="text-lg">Backups</CardTitle>

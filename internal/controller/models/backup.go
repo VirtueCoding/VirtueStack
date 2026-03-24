@@ -27,7 +27,7 @@ type Backup struct {
 	Source string `json:"source" db:"source"`
 	// AdminScheduleID references the admin schedule that created this backup, if applicable
 	AdminScheduleID *string `json:"admin_schedule_id,omitempty" db:"admin_schedule_id"`
-	// StorageBackend indicates the storage type: "ceph" or "qcow"
+	// StorageBackend indicates the storage type: "ceph", "qcow", or "lvm"
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// RBDSnapshot is the RBD snapshot name for Ceph backups (backward compatibility)
 	RBDSnapshot *string `json:"rbd_snapshot,omitempty" db:"rbd_snapshot"`
@@ -47,7 +47,7 @@ type Snapshot struct {
 	ID   string `json:"id" db:"id"`
 	VMID string `json:"vm_id" db:"vm_id"`
 	Name string `json:"name" db:"name"`
-	// StorageBackend indicates the storage type: "ceph" or "qcow"
+	// StorageBackend indicates the storage type: "ceph", "qcow", or "lvm"
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// RBDSnapshot is the RBD snapshot name for Ceph storage
 	RBDSnapshot string `json:"rbd_snapshot" db:"rbd_snapshot"`

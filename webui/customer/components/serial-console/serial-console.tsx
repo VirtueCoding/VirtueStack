@@ -37,13 +37,17 @@ export function SerialConsole({
   const [error, setError] = useState<string>("");
   const [reconnectKey, setReconnectKey] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
+  const [isRebooting, setIsRebooting] = useState(false);
+  const rebootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build WebSocket URL
   const getWsUrl = useCallback(() => {
-    // Always use wss:// in production. ws:// only allowed in dev.
-    const protocol = process.env.NEXT_PUBLIC_ALLOW_WS === 'true' ?
-      (window.location.protocol === 'https:' ? 'wss:' : 'ws:') :
-      'wss:';
+    // Always use wss:// in production. ws:// is only permitted in non-production
+    // environments (i.e. NODE_ENV !== 'production') to support local dev without TLS.
+    const isDev = process.env.NODE_ENV !== 'production';
+    const protocol = isDev && window.location.protocol !== 'https:'
+      ? 'ws:'
+      : 'wss:';
     const host = window.location.host;
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
     return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}${tokenParam}`;
@@ -194,9 +198,6 @@ export function SerialConsole({
       terminal.current.writeln("");
     }
   };
-
-  const [isRebooting, setIsRebooting] = useState(false);
-  const rebootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleReboot = async () => {
     if (terminal.current) {

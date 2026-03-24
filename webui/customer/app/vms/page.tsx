@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Play, Square, RotateCw, Plus, Server, Loader2 } from "lucide-react";
+import { Play, Square, RotateCw, Plus, Server, Loader2, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
+import { Input } from "@/components/ui/input";
 import { vmApi, VM, ApiClientError } from "@/lib/api-client";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 import { useVMAction } from "@/lib/hooks/useVMAction";
@@ -117,6 +118,15 @@ export default function VMsPage() {
     return vm?.name || id;
   };
 
+  const filteredVMs = searchTerm.trim()
+    ? vms.filter(
+        (vm) =>
+          vm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          vm.hostname.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          vm.ipv4?.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : vms;
+
   if (isLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
@@ -171,6 +181,16 @@ export default function VMsPage() {
               </Button>
             )}
           </div>
+          <div className="relative mt-2 max-w-sm">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search by name, hostname or IP..."
+              className="pl-8"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -184,7 +204,7 @@ export default function VMsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {vms.map((vm) => (
+              {filteredVMs.map((vm) => (
                 <TableRow key={vm.id}>
                   <TableCell className="font-medium">
                     <div>

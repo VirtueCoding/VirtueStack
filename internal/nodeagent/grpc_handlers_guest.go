@@ -5,9 +5,12 @@ package nodeagent
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +18,13 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"libvirt.org/go/libvirt"
 )
+
+// guestOpTokenWindow is the maximum age of a GuestSetPassword HMAC token.
+const guestOpTokenWindow = 5 * time.Minute
 
 // GuestExecCommand executes a command inside the VM via QEMU guest agent.
 func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.GuestExecRequest) (*nodeagentpb.GuestExecResponse, error) {
@@ -28,31 +35,27 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 		return nil, status.Error(codes.InvalidArgument, "command is required")
 	}
 
-	// Whitelist allowed commands: read-only diagnostic commands only.
-	// Removed cat, ls, ip, hostname, whoami to prevent info leakage
-	// (file contents, directory listings, network config, usernames).
+	// Whitelist of allowed guest commands: exact full paths only, no symlinks,
+	// no ".." components allowed. filepath.EvalSymlinks is intentionally NOT used
+	// because it would operate on the HOST filesystem, not the guest filesystem.
 	allowedCommands := map[string]bool{
-		"df": true, "free": true, "uname": true, "date": true, "uptime": true,
+		"/usr/bin/df":     true,
+		"/usr/bin/free":   true,
+		"/usr/bin/uname":  true,
+		"/usr/bin/date":   true,
+		"/usr/bin/uptime": true,
+		"/bin/df":         true,
+		"/bin/free":       true,
+		"/bin/uname":      true,
+		"/bin/date":       true,
+		"/bin/uptime":     true,
 	}
 	fullCmd := req.GetCommand()
 	cmdBase := strings.Split(fullCmd, " ")[0]
 
-	resolvedPath, err := filepath.EvalSymlinks(cmdBase)
-	if err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "command path could not be resolved: %v", err)
-	}
-
-	allowedPaths := []string{"/usr/bin/", "/bin/"}
-	validPath := false
-	for _, prefix := range allowedPaths {
-		if strings.HasPrefix(resolvedPath, prefix) {
-			validPath = true
-			cmdBase = strings.TrimPrefix(resolvedPath, prefix)
-			break
-		}
-	}
-	if !validPath {
-		return nil, status.Errorf(codes.PermissionDenied, "command path must be in /usr/bin or /bin")
+	// Reject any path containing ".." to prevent directory traversal
+	if strings.Contains(cmdBase, "..") {
+		return nil, status.Errorf(codes.PermissionDenied, "command path must not contain '..'")
 	}
 
 	if !allowedCommands[cmdBase] {
@@ -129,6 +132,63 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	}, nil
 }
 
+// verifyGuestOpToken verifies the per-operation HMAC token for sensitive guest operations.
+// The controller must send an "x-guest-op-token" gRPC metadata value of the form
+// "<unix-timestamp-seconds>:<hmac-sha256-hex>" where the HMAC covers
+// "<vmID>:<unix-timestamp-seconds>" using GuestOpHMACSecret as the key.
+// Tokens are rejected if they are older than guestOpTokenWindow.
+func (h *grpcHandler) verifyGuestOpToken(ctx context.Context, vmID string) error {
+	secret := h.server.config.GuestOpHMACSecret.Value()
+	if secret == "" {
+		// HMAC verification is disabled when no secret is configured.
+		// Log a warning so operators are aware.
+		h.server.logger.Warn("GuestOpHMACSecret not configured; skipping per-operation token verification", "vm_id", vmID)
+		return nil
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing gRPC metadata")
+	}
+
+	vals := md.Get("x-guest-op-token")
+	if len(vals) == 0 {
+		return status.Error(codes.Unauthenticated, "missing x-guest-op-token metadata")
+	}
+
+	tokenStr := vals[0]
+	parts := strings.SplitN(tokenStr, ":", 2)
+	if len(parts) != 2 {
+		return status.Error(codes.Unauthenticated, "malformed x-guest-op-token")
+	}
+
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return status.Error(codes.Unauthenticated, "malformed x-guest-op-token timestamp")
+	}
+
+	tokenTime := time.Unix(ts, 0)
+	age := time.Since(tokenTime)
+	if age < 0 {
+		age = -age
+	}
+	if age > guestOpTokenWindow {
+		return status.Errorf(codes.Unauthenticated, "x-guest-op-token expired (age %v)", age)
+	}
+
+	// Verify HMAC: key=secret, message="<vmID>:<timestamp>"
+	message := fmt.Sprintf("%s:%d", vmID, ts)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	expectedMAC := hex.EncodeToString(mac.Sum(nil))
+
+	if !hmac.Equal([]byte(parts[1]), []byte(expectedMAC)) {
+		return status.Error(codes.Unauthenticated, "x-guest-op-token signature invalid")
+	}
+
+	return nil
+}
+
 // GuestSetPassword changes a user password inside the VM.
 func (h *grpcHandler) GuestSetPassword(ctx context.Context, req *nodeagentpb.GuestPasswordRequest) (*nodeagentpb.VMOperationResponse, error) {
 	if req.GetVmId() == "" {
@@ -136,6 +196,11 @@ func (h *grpcHandler) GuestSetPassword(ctx context.Context, req *nodeagentpb.Gue
 	}
 	if req.GetUsername() == "" || req.GetPasswordHash() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username and password_hash are required")
+	}
+
+	// Verify per-operation HMAC token to ensure the caller owns this VM
+	if err := h.verifyGuestOpToken(ctx, req.GetVmId()); err != nil {
+		return nil, err
 	}
 
 	domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))

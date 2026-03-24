@@ -47,8 +47,13 @@ const totpSchema = z.object({
   code: z.string().length(6, "Code must be 6 digits").regex(/^\d+$/, "Code must contain only numbers"),
 });
 
+const disable2FASchema = z.object({
+  password: z.string().min(12, "Password must be at least 12 characters"),
+});
+
 type PasswordFormData = z.infer<typeof passwordSchema>;
 type TOTPFormData = z.infer<typeof totpSchema>;
+type Disable2FAFormData = z.infer<typeof disable2FASchema>;
 
 interface SecurityTabProps {
   twoFactorStatus: { enabled: boolean } | null | undefined;
@@ -63,6 +68,8 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
   const [showPassword, setShowPassword] = useState(false);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [backupCodesDialogOpen, setBackupCodesDialogOpen] = useState(false);
+  const [disable2FADialogOpen, setDisable2FADialogOpen] = useState(false);
+  const [showDisablePassword, setShowDisablePassword] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
   const [totpSecret, setTotpSecret] = useState<string>("");
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
@@ -82,6 +89,13 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
     resolver: zodResolver(totpSchema),
     defaultValues: {
       code: "",
+    },
+  });
+
+  const disable2FAForm = useForm<Disable2FAFormData>({
+    resolver: zodResolver(disable2FASchema),
+    defaultValues: {
+      password: "",
     },
   });
 
@@ -127,13 +141,26 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
   const disable2FAMutation = useMutation({
     mutationFn: settingsApi.disable2FA,
     onSuccess: () => {
+      setDisable2FADialogOpen(false);
+      disable2FAForm.reset();
+      setShowDisablePassword(false);
       queryClient.invalidateQueries({ queryKey: ["2fa-status"] });
       toast({
         title: "Success",
         description: "2FA disabled successfully",
       });
     },
-    onError: createMutationOnError("Failed to disable 2FA"),
+    onError: (error: unknown) => {
+      const apiError = error as { code?: string; message?: string };
+      if (apiError?.code === "INVALID_PASSWORD") {
+        disable2FAForm.setError("password", {
+          type: "manual",
+          message: "Incorrect password. Please try again.",
+        });
+        return;
+      }
+      createMutationOnError("Failed to disable 2FA")(error);
+    },
   });
 
   const regenerateBackupCodesMutation = useMutation({
@@ -161,8 +188,14 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
     if (enabled) {
       initiate2FAMutation.mutate();
     } else {
-      disable2FAMutation.mutate();
+      disable2FAForm.reset();
+      setShowDisablePassword(false);
+      setDisable2FADialogOpen(true);
     }
+  };
+
+  const handleDisable2FASubmit = (data: Disable2FAFormData) => {
+    disable2FAMutation.mutate({ password: data.password });
   };
 
   const handleVerifyTOTP = (data: TOTPFormData) => {
@@ -423,6 +456,70 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
               Download
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disable 2FA Confirmation Dialog */}
+      <Dialog
+        open={disable2FADialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            disable2FAForm.reset();
+            setShowDisablePassword(false);
+          }
+          setDisable2FADialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
+            <DialogDescription>
+              Enter your current password to confirm disabling 2FA. This will remove the extra layer of
+              security from your account.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={disable2FAForm.handleSubmit(handleDisable2FASubmit)} className="space-y-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="disable-2fa-password">Current Password</Label>
+              <div className="relative">
+                <Input
+                  id="disable-2fa-password"
+                  type={showDisablePassword ? "text" : "password"}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  {...disable2FAForm.register("password")}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3"
+                  onClick={() => setShowDisablePassword(!showDisablePassword)}
+                >
+                  {showDisablePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              {disable2FAForm.formState.errors.password && (
+                <p className="text-sm text-destructive">
+                  {disable2FAForm.formState.errors.password.message}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDisable2FADialogOpen(false)}
+                disabled={disable2FAMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="destructive" disabled={disable2FAMutation.isPending}>
+                {disable2FAMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Disable 2FA
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </>

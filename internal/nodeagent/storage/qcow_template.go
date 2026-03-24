@@ -15,27 +15,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
-	// qemuImgTimeout is the timeout for qemu-img operations.
-	qemuImgTimeout = 60 * time.Second
 	// qcow2Extension is the file extension for QCOW2 images.
 	qcow2Extension = ".qcow2"
 )
-
-// QCOWTemplateInfo holds metadata about a QCOW2 template image.
-type QCOWTemplateInfo struct {
-	// Name is the template name (e.g., "ubuntu-2204").
-	Name string
-	// Path is the full path to the template file.
-	Path string
-	// SizeBytes is the virtual size of the template in bytes.
-	SizeBytes int64
-	// CreatedAt is the file modification time.
-	CreatedAt time.Time
-}
 
 // QCOWTemplateManager handles OS template import and management for file-based
 // QCOW2 storage. Templates are stored as qcow2 files and cloned using copy-on-write
@@ -100,35 +85,36 @@ func NewQCOWTemplateManager(templatesPath, vmsPath string, logger *slog.Logger) 
 }
 
 // ImportTemplate imports a qcow2 template image to the templates directory.
-// The source file is copied to templatesPath/{name}.qcow2 and verified with qemu-img check.
+// The source file is copied to templatesPath/{ref}.qcow2 and verified with qemu-img check.
 //
 // Parameters:
 //   - ctx: Context for cancellation
-//   - name: Template name (e.g., "ubuntu-2204")
+//   - ref: Template name/identifier (e.g., "ubuntu-2204")
 //   - sourcePath: Path to the source qcow2 file
+//   - meta: Optional metadata (OS family, version) - stored in filename convention
 //
 // Returns the file path and size in bytes of the imported template.
-func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePath string) (filePath string, sizeBytes int64, err error) {
-	logger := m.logger.With("template", name, "source", sourcePath)
+func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, ref, sourcePath string, meta TemplateMeta) (filePath string, sizeBytes int64, err error) {
+	logger := m.logger.With("template", ref, "source", sourcePath, "os_family", meta.OSFamily, "os_version", meta.OSVersion)
 	logger.Info("importing template")
 
 	// Validate source file exists
 	info, err := os.Stat(sourcePath)
 	if err != nil {
-		return "", 0, fmt.Errorf("importing template %s: source file not found: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: source file not found: %w", ref, err)
 	}
 
 	// Validate source is a regular file
 	if info.IsDir() {
-		return "", 0, fmt.Errorf("importing template %s: source path is a directory, expected file", name)
+		return "", 0, fmt.Errorf("importing template %s: source path is a directory, expected file", ref)
 	}
 
 	// Generate target path
-	targetPath := m.templatePath(name)
+	targetPath := m.templatePath(ref)
 
 	// Check if template already exists
 	if _, err := os.Stat(targetPath); err == nil {
-		return "", 0, fmt.Errorf("importing template %s: template already exists at %s", name, targetPath)
+		return "", 0, fmt.Errorf("importing template %s: template already exists at %s", ref, targetPath)
 	}
 
 	// Create a context with timeout for qemu-img operations
@@ -137,7 +123,7 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePa
 
 	// Copy the source file to templates directory
 	if err := m.copyFile(sourcePath, targetPath); err != nil {
-		return "", 0, fmt.Errorf("importing template %s: copying file: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: copying file: %w", ref, err)
 	}
 
 	// Verify the copied image
@@ -146,7 +132,7 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePa
 		if rmErr := os.Remove(targetPath); rmErr != nil {
 			logger.Warn("failed to cleanup template after verification failure", "path", targetPath, "error", rmErr)
 		}
-		return "", 0, fmt.Errorf("importing template %s: verification failed: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: verification failed: %w", ref, err)
 	}
 
 	// Get the size of the imported template
@@ -156,7 +142,7 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, name, sourcePa
 		if rmErr := os.Remove(targetPath); rmErr != nil {
 			logger.Warn("failed to cleanup template after size check failure", "path", targetPath, "error", rmErr)
 		}
-		return "", 0, fmt.Errorf("importing template %s: getting size: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: getting size: %w", ref, err)
 	}
 
 	logger.Info("template imported successfully", "path", targetPath, "size_bytes", size)
@@ -275,13 +261,13 @@ func (m *QCOWTemplateManager) TemplateExists(ctx context.Context, filePath strin
 //
 // Parameters:
 //   - ctx: Context for cancellation
-func (m *QCOWTemplateManager) ListTemplates(ctx context.Context) ([]QCOWTemplateInfo, error) {
+func (m *QCOWTemplateManager) ListTemplates(ctx context.Context) ([]TemplateInfo, error) {
 	entries, err := os.ReadDir(m.templatesPath)
 	if err != nil {
 		return nil, fmt.Errorf("listing templates in %s: %w", m.templatesPath, err)
 	}
 
-	var templates []QCOWTemplateInfo
+	var templates []TemplateInfo
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -310,9 +296,9 @@ func (m *QCOWTemplateManager) ListTemplates(ctx context.Context) ([]QCOWTemplate
 			size = info.Size() // Fall back to file size
 		}
 
-		templates = append(templates, QCOWTemplateInfo{
+		templates = append(templates, TemplateInfo{
 			Name:      templateName,
-			Path:      fullPath,
+			FilePath:  fullPath,
 			SizeBytes: size,
 			CreatedAt: info.ModTime(),
 		})

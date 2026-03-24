@@ -30,7 +30,7 @@ import { useRouter } from "next/navigation";
 export default function PermissionsPage() {
   const { toast } = useToast();
   const router = useRouter();
-  const { isSuperAdmin } = usePermissions();
+  const { isSuperAdmin, isLoading: permissionsLoading } = usePermissions();
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -54,13 +54,14 @@ export default function PermissionsPage() {
   }, [toast]);
 
   useEffect(() => {
-    // Redirect non-super-admins
+    // Wait until identity is resolved before redirecting
+    if (permissionsLoading) return;
     if (!isSuperAdmin) {
       router.push("/settings");
       return;
     }
     loadData();
-  }, [loadData, isSuperAdmin, router]);
+  }, [loadData, isSuperAdmin, permissionsLoading, router]);
 
   const handleEdit = (admin: Admin) => {
     setSelectedAdmin(admin);

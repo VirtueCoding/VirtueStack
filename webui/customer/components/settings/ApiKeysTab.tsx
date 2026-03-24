@@ -55,6 +55,8 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
   const [deleteKeyDialogOpen, setDeleteKeyDialogOpen] = useState(false);
   const [rotateKeyDialogOpen, setRotateKeyDialogOpen] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const [rotatedKeyValue, setRotatedKeyValue] = useState<string | null>(null);
+  const [rotatedKeyDialogOpen, setRotatedKeyDialogOpen] = useState(false);
 
   const apiKeyForm = useForm<ApiKeyFormData>({
     resolver: zodResolver(apiKeySchema),
@@ -82,12 +84,17 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
   const rotateApiKeyMutation = useMutation({
     mutationFn: settingsApi.rotateApiKey,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      toast({
-        title: "Success",
-        description: "API key rotated successfully",
-      });
+      if (data.key) {
+        setRotatedKeyValue(data.key);
+        setRotatedKeyDialogOpen(true);
+      } else {
+        toast({
+          title: "Success",
+          description: "API key rotated successfully",
+        });
+      }
     },
     onError: createMutationOnError("Failed to rotate API key"),
   });
@@ -393,6 +400,48 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
             >
               {rotateApiKeyMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Rotate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Key Value Dialog — shown once after rotation */}
+      <Dialog open={rotatedKeyDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setRotatedKeyDialogOpen(false);
+          setRotatedKeyValue(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>API Key Rotated</DialogTitle>
+            <DialogDescription>
+              Your new API key is shown below. Copy it now — it will not be displayed again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
+            <code className="flex-1 break-all text-sm font-mono">
+              {rotatedKeyValue}
+            </code>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => rotatedKeyValue && handleCopy(rotatedKeyValue, "rotated")}
+            >
+              {copiedId === "rotated" ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => {
+              setRotatedKeyDialogOpen(false);
+              setRotatedKeyValue(null);
+            }}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

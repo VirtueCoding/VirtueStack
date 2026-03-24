@@ -221,6 +221,16 @@ func (r *BandwidthRepository) GetSnapshots(ctx context.Context, vmID string, per
 }
 
 // getHourlySnapshots retrieves hourly bandwidth snapshots within a time range.
+//
+// NOTE (performance): The make_timestamp() expressions in the WHERE clause are
+// non-sargable — PostgreSQL cannot use an index on (year, month, day, hour) when
+// the predicate is computed at query time. For large tables this results in a
+// sequential scan.
+//
+// TODO: Migrate bandwidth_snapshots to use a single snapshot_at TIMESTAMPTZ column
+// with an index on (vm_id, snapshot_at). Replace the make_timestamp() expressions
+// with direct comparisons against snapshot_at. See also getAggregatedHourly and
+// getDailySnapshots which have the same issue.
 func (r *BandwidthRepository) getHourlySnapshots(ctx context.Context, vmID string, start, end time.Time) ([]BandwidthSnapshot, error) {
 	const q = `
 		SELECT vm_id,

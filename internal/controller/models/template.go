@@ -37,7 +37,7 @@ type TemplateCreateRequest struct {
 	IsActive          bool   `json:"is_active"`
 	SortOrder         int    `json:"sort_order" validate:"min=0"`
 	Description       string `json:"description,omitempty" validate:"max=500"`
-	StorageBackend    string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow"`
+	StorageBackend    string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow lvm"`
 	FilePath          string `json:"file_path,omitempty" validate:"omitempty,max=500"`
 }
 
@@ -54,6 +54,6 @@ type TemplateUpdateRequest struct {
 	IsActive          *bool   `json:"is_active,omitempty"`
 	SortOrder         *int    `json:"sort_order,omitempty" validate:"omitempty,min=0"`
 	Description       *string `json:"description,omitempty" validate:"omitempty,max=500"`
-	StorageBackend    *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow"`
+	StorageBackend    *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow lvm"`
 	FilePath          *string `json:"file_path,omitempty" validate:"omitempty,max=500"`
 }

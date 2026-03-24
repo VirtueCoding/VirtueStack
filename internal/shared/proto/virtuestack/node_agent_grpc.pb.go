@@ -39,6 +39,8 @@ const (
 	NodeAgentService_TransferDisk_FullMethodName              = "/virtuestack.nodeagent.NodeAgentService/TransferDisk"
 	NodeAgentService_ReceiveDisk_FullMethodName               = "/virtuestack.nodeagent.NodeAgentService/ReceiveDisk"
 	NodeAgentService_PrepareMigratedVM_FullMethodName         = "/virtuestack.nodeagent.NodeAgentService/PrepareMigratedVM"
+	NodeAgentService_CreateLVMBackup_FullMethodName           = "/virtuestack.nodeagent.NodeAgentService/CreateLVMBackup"
+	NodeAgentService_RestoreLVMBackup_FullMethodName          = "/virtuestack.nodeagent.NodeAgentService/RestoreLVMBackup"
 	NodeAgentService_StreamVNCConsole_FullMethodName          = "/virtuestack.nodeagent.NodeAgentService/StreamVNCConsole"
 	NodeAgentService_StreamSerialConsole_FullMethodName       = "/virtuestack.nodeagent.NodeAgentService/StreamSerialConsole"
 	NodeAgentService_GetVMStatus_FullMethodName               = "/virtuestack.nodeagent.NodeAgentService/GetVMStatus"
@@ -106,6 +108,12 @@ type NodeAgentServiceClient interface {
 	ReceiveDisk(ctx context.Context, opts ...grpc.CallOption) (NodeAgentService_ReceiveDiskClient, error)
 	// Prepare a VM on this node using a transferred disk.
 	PrepareMigratedVM(ctx context.Context, in *PrepareMigratedVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error)
+	// CreateLVMBackup creates a sparse backup file from an LVM thin snapshot.
+	// Used for LVM VM backup operations.
+	CreateLVMBackup(ctx context.Context, in *CreateLVMBackupRequest, opts ...grpc.CallOption) (*CreateLVMBackupResponse, error)
+	// RestoreLVMBackup restores an LVM thin LV from a backup file.
+	// The thin LV must already exist; this overwrites it in-place.
+	RestoreLVMBackup(ctx context.Context, in *RestoreLVMBackupRequest, opts ...grpc.CallOption) (*VMOperationResponse, error)
 	// StreamVNCConsole establishes a bidirectional VNC console stream.
 	// Used for graphical console access to the VM.
 	StreamVNCConsole(ctx context.Context, opts ...grpc.CallOption) (NodeAgentService_StreamVNCConsoleClient, error)
@@ -355,6 +363,26 @@ func (c *nodeAgentServiceClient) PrepareMigratedVM(ctx context.Context, in *Prep
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VMOperationResponse)
 	err := c.cc.Invoke(ctx, NodeAgentService_PrepareMigratedVM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeAgentServiceClient) CreateLVMBackup(ctx context.Context, in *CreateLVMBackupRequest, opts ...grpc.CallOption) (*CreateLVMBackupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateLVMBackupResponse)
+	err := c.cc.Invoke(ctx, NodeAgentService_CreateLVMBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeAgentServiceClient) RestoreLVMBackup(ctx context.Context, in *RestoreLVMBackupRequest, opts ...grpc.CallOption) (*VMOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VMOperationResponse)
+	err := c.cc.Invoke(ctx, NodeAgentService_RestoreLVMBackup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -641,6 +669,12 @@ type NodeAgentServiceServer interface {
 	ReceiveDisk(NodeAgentService_ReceiveDiskServer) error
 	// Prepare a VM on this node using a transferred disk.
 	PrepareMigratedVM(context.Context, *PrepareMigratedVMRequest) (*VMOperationResponse, error)
+	// CreateLVMBackup creates a sparse backup file from an LVM thin snapshot.
+	// Used for LVM VM backup operations.
+	CreateLVMBackup(context.Context, *CreateLVMBackupRequest) (*CreateLVMBackupResponse, error)
+	// RestoreLVMBackup restores an LVM thin LV from a backup file.
+	// The thin LV must already exist; this overwrites it in-place.
+	RestoreLVMBackup(context.Context, *RestoreLVMBackupRequest) (*VMOperationResponse, error)
 	// StreamVNCConsole establishes a bidirectional VNC console stream.
 	// Used for graphical console access to the VM.
 	StreamVNCConsole(NodeAgentService_StreamVNCConsoleServer) error
@@ -739,6 +773,12 @@ func (UnimplementedNodeAgentServiceServer) ReceiveDisk(NodeAgentService_ReceiveD
 }
 func (UnimplementedNodeAgentServiceServer) PrepareMigratedVM(context.Context, *PrepareMigratedVMRequest) (*VMOperationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrepareMigratedVM not implemented")
+}
+func (UnimplementedNodeAgentServiceServer) CreateLVMBackup(context.Context, *CreateLVMBackupRequest) (*CreateLVMBackupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateLVMBackup not implemented")
+}
+func (UnimplementedNodeAgentServiceServer) RestoreLVMBackup(context.Context, *RestoreLVMBackupRequest) (*VMOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RestoreLVMBackup not implemented")
 }
 func (UnimplementedNodeAgentServiceServer) StreamVNCConsole(NodeAgentService_StreamVNCConsoleServer) error {
 	return status.Errorf(codes.Unimplemented, "method StreamVNCConsole not implemented")
@@ -1087,6 +1127,42 @@ func _NodeAgentService_PrepareMigratedVM_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeAgentServiceServer).PrepareMigratedVM(ctx, req.(*PrepareMigratedVMRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeAgentService_CreateLVMBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateLVMBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeAgentServiceServer).CreateLVMBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeAgentService_CreateLVMBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeAgentServiceServer).CreateLVMBackup(ctx, req.(*CreateLVMBackupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeAgentService_RestoreLVMBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreLVMBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeAgentServiceServer).RestoreLVMBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeAgentService_RestoreLVMBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeAgentServiceServer).RestoreLVMBackup(ctx, req.(*RestoreLVMBackupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1507,6 +1583,14 @@ var NodeAgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PrepareMigratedVM",
 			Handler:    _NodeAgentService_PrepareMigratedVM_Handler,
+		},
+		{
+			MethodName: "CreateLVMBackup",
+			Handler:    _NodeAgentService_CreateLVMBackup_Handler,
+		},
+		{
+			MethodName: "RestoreLVMBackup",
+			Handler:    _NodeAgentService_RestoreLVMBackup_Handler,
 		},
 		{
 			MethodName: "GetVMStatus",

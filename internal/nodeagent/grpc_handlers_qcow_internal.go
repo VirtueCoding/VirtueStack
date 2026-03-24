@@ -13,10 +13,6 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 )
 
-const (
-	qcowBackupBasePath = "/var/lib/virtuestack/backups"
-)
-
 // createQCOWSnapshotInternal creates a qemu-img internal snapshot for QCOW-backed VMs.
 func (h *grpcHandler) createQCOWSnapshotInternal(ctx context.Context, vmID, diskPath, snapshotName string) error {
 	logger := h.server.logger.With("vm_id", vmID, "operation", "create-qcow-snapshot")
@@ -59,77 +55,6 @@ func (h *grpcHandler) deleteQCOWSnapshotInternal(ctx context.Context, vmID, disk
 		}
 	}
 
-	return nil
-}
-
-// createQCOWBackupInternal creates a backup file from a QCOW disk using qemu-img convert.
-func (h *grpcHandler) createQCOWBackupInternal(ctx context.Context, vmID, diskPath, snapshotName, backupPath string, compress bool) (int64, error) {
-	logger := h.server.logger.With("vm_id", vmID, "operation", "create-qcow-backup")
-	logger.Info("creating QCOW backup",
-		"disk_path", diskPath,
-		"backup_path", backupPath,
-		"snapshot_name", snapshotName,
-		"compress", compress)
-
-	backupDir := filepath.Dir(backupPath)
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return 0, fmt.Errorf("creating backup directory: %w", err)
-	}
-
-	args := []string{"convert", "-f", "qcow2", "-O", "qcow2"}
-
-	if snapshotName != "" {
-		args = append(args, "-l", snapshotName)
-	}
-
-	if compress {
-		args = append(args, "-c")
-	}
-
-	args = append(args, diskPath, backupPath)
-
-	cmd := exec.CommandContext(ctx, "qemu-img", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0, fmt.Errorf("creating QCOW backup: %w, output: %s", err, string(output))
-	}
-
-	fileInfo, err := os.Stat(backupPath)
-	if err != nil {
-		return 0, fmt.Errorf("getting backup file info: %w", err)
-	}
-
-	sizeBytes := fileInfo.Size()
-
-	logger.Info("QCOW backup created successfully", "size_bytes", sizeBytes)
-	return sizeBytes, nil
-}
-
-// restoreQCOWBackupInternal restores a VM from a QCOW backup file.
-func (h *grpcHandler) restoreQCOWBackupInternal(ctx context.Context, vmID, backupPath, targetPath string) error {
-	logger := h.server.logger.With("vm_id", vmID, "operation", "restore-qcow-backup")
-	logger.Info("restoring QCOW backup",
-		"backup_path", backupPath,
-		"target_path", targetPath)
-
-	if _, err := os.Stat(backupPath); err != nil {
-		return fmt.Errorf("backup file not found: %w", err)
-	}
-
-	targetDir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("creating target directory: %w", err)
-	}
-
-	args := []string{"convert", "-f", "qcow2", "-O", "qcow2", backupPath, targetPath}
-
-	cmd := exec.CommandContext(ctx, "qemu-img", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("restoring QCOW backup: %w, output: %s", err, string(output))
-	}
-
-	logger.Info("QCOW backup restored successfully")
 	return nil
 }
 

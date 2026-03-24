@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,10 +60,10 @@ export default function NodesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
-  const fetchNodes = async () => {
+  const fetchNodes = useCallback(async () => {
     try {
-      const data = await adminNodesApi.getNodes();
-      setNodes(data || []);
+      const response = await adminNodesApi.getNodes();
+      setNodes(response.data || []);
     } catch (err) {
       toast({
         title: "Error",
@@ -73,11 +73,11 @@ export default function NodesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchNodes();
-  }, [toast]);
+  }, [fetchNodes]);
 
   const filteredNodes = nodes.filter(
     (node) =>
@@ -87,13 +87,13 @@ export default function NodesPage() {
   );
 
   const handleView = async (node: Node) => {
+    // TODO: Implement a proper Node detail view/dialog instead of just navigating
+    setEditingNode(null);
     setLoadingId(node.id);
     try {
       const nodeDetails = await adminNodesApi.getNode(node.id);
-      toast({
-        title: "Node Details",
-        description: `Viewing ${nodeDetails.hostname} (${nodeDetails.grpc_address})`,
-      });
+      setEditingNode(nodeDetails);
+      setEditDialogOpen(true);
     } catch (error) {
       toast({
         title: "Error",
@@ -131,9 +131,6 @@ export default function NodesPage() {
         management_ip: data.management_ip,
         total_vcpu: data.total_vcpu,
         total_memory_mb: data.total_memory_mb,
-        storage_backend: data.storage_backend,
-        storage_path: data.storage_path || undefined,
-        ceph_pool: data.ceph_pool || undefined,
         ipmi_address: data.ipmi_address || undefined,
         ipmi_username: data.ipmi_username || undefined,
         ipmi_password: data.ipmi_password || undefined,
@@ -157,8 +154,6 @@ export default function NodesPage() {
       if (data.grpc_address) request.grpc_address = data.grpc_address;
       if (data.total_vcpu) request.total_vcpu = data.total_vcpu;
       if (data.total_memory_mb) request.total_memory_mb = data.total_memory_mb;
-      if (data.storage_backend) request.storage_backend = data.storage_backend;
-      if (data.storage_path) request.storage_path = data.storage_path;
       if (data.ipmi_address) request.ipmi_address = data.ipmi_address;
 
       await adminNodesApi.updateNode(editingNode.id, request);

@@ -91,10 +91,12 @@ type CustomerAPIKeyInfo struct {
 	VMIDs       []string // VMs this key is scoped to (empty = all VMs)
 }
 
-// CustomerAPIKeyValidator looks up a customer API key by its SHA-256 hash.
-// Returns the key's ID, the customer ID that owns it, and its permissions.
+// CustomerAPIKeyValidator looks up a customer API key by its raw value.
+// The validator is responsible for hashing the raw key (e.g., with HMAC-SHA256)
+// before performing the database lookup. This allows the customer package to control
+// the hashing algorithm without the middleware needing the server secret (F-068).
 // Returns an error if the key is not found, revoked, or expired.
-type CustomerAPIKeyValidator func(ctx context.Context, keyHash string) (CustomerAPIKeyInfo, error)
+type CustomerAPIKeyValidator func(ctx context.Context, rawKey string) (CustomerAPIKeyInfo, error)
 
 // JWTAuth returns a Gin middleware that validates JWT tokens from HttpOnly cookies.
 // Falls back to Authorization header for API clients that don't use cookies.
@@ -255,8 +257,9 @@ func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
 			return
 		}
 
-		keyHash := hashAPIKey(rawKey)
-		info, err := validator(c.Request.Context(), keyHash)
+		// F-068: Pass the raw key to the validator so it can apply HMAC-SHA256
+		// with the server secret before the database lookup.
+		info, err := validator(c.Request.Context(), rawKey)
 		if err != nil {
 			slog.Warn("customer api key validation failed",
 				"error", err,
@@ -306,12 +309,17 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 				c.Next()
 				return
 			}
-			// JWT was present but invalid - log and continue to try API key
-			slog.Debug("jwt validation failed, trying api key",
+			// JWT was present but invalid or is a temp token - abort immediately.
+			// Do NOT fall through to API key auth when a JWT token was supplied;
+			// falling through would allow an attacker with an expired/tampered token
+			// to bypass JWT validation by also supplying an API key.
+			slog.Warn("jwt validation failed, rejecting request",
 				"fingerprint", tokenFingerprint(tokenString),
 				"error", err,
 				"correlation_id", GetCorrelationID(c),
 			)
+			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "token is invalid or expired")
+			return
 		}
 
 		// Fall back to API key authentication
@@ -464,6 +472,14 @@ func RequirePermission(permission string) gin.HandlerFunc {
 
 // GenerateAccessToken creates a signed JWT access token for the given user.
 // duration controls how long the token is valid (typically 15 minutes).
+//
+// F-215 / Architecture note: Tokens are currently signed with HMAC-SHA256
+// (symmetric). This means every service that verifies tokens must share the
+// same JWTSecret. If the architecture ever evolves to multiple independent
+// services that need to verify tokens without being able to issue them, migrate
+// to RS256 (asymmetric signing): the private key stays with the auth service
+// and the public key is distributed to verifying services. See:
+// https://pkg.go.dev/github.com/golang-jwt/jwt/v5#SigningMethodRSA
 func GenerateAccessToken(config AuthConfig, userID, userType, role string, duration time.Duration) (string, error) {
 	now := time.Now()
 	claims := JWTClaims{
@@ -474,6 +490,7 @@ func GenerateAccessToken(config AuthConfig, userID, userType, role string, durat
 			Subject:   userID,
 			Issuer:    config.Issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(duration)),
 			ID:        googleuuid.New().String(),
 		},
@@ -688,14 +705,17 @@ const (
 )
 
 // SetAuthCookies sets HttpOnly, Secure, SameSite=Strict cookies for tokens.
-// Access token: 15 min expiry, path=/
+// Access token: 15 min expiry, path=/api/v1/ (restricted to avoid sending to non-API routes)
 // Refresh token: configurable expiry, path=/api/v1/{userType}/auth/refresh
 func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenMaxAge, refreshTokenMaxAge int, refreshPath string) {
-	// Set access token cookie
+	// Set access token cookie with restricted path so it is only sent with API requests.
+	// Using path="/" would cause the browser to transmit the token to every request
+	// (including static assets, WebSocket upgrades, etc.), unnecessarily widening
+	// its exposure. Restricting to /api/v1/ limits transmission to API endpoints only.
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     AccessTokenCookieName,
 		Value:    accessToken,
-		Path:     "/",
+		Path:     "/api/v1/",
 		MaxAge:   accessTokenMaxAge,
 		HttpOnly: true,
 		Secure:   true,
@@ -716,10 +736,11 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessToke
 
 // ClearAuthCookies clears both access and refresh token cookies.
 func ClearAuthCookies(c *gin.Context, refreshPath string) {
+	// Path must match the path used in SetAuthCookies for the browser to clear it.
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     AccessTokenCookieName,
 		Value:    "",
-		Path:     "/",
+		Path:     "/api/v1/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   true,
@@ -737,7 +758,17 @@ func ClearAuthCookies(c *gin.Context, refreshPath string) {
 }
 
 // GetAccessTokenFromCookie extracts the access token from the cookie.
-// Falls back to Authorization header for API clients that don't use cookies.
+// Falls back to Authorization: Bearer header for API clients that don't use cookies.
+//
+// SECURITY NOTE (F-209): The Bearer header fallback is intentional for programmatic
+// API clients (e.g., CI pipelines, WHMCS provisioning) that cannot store cookies.
+// However, browser-facing endpoints should rely exclusively on the HttpOnly cookie
+// path: any endpoint that accepts both cookies and Bearer tokens widens the attack
+// surface because the Bearer path is accessible from JavaScript (XSS risk) while the
+// cookie path is not. If an endpoint must be browser-only, use c.Cookie() directly
+// instead of this function so the Bearer fallback is not available to those flows.
+// API-key-only flows (APIKeyAuth, CustomerAPIKeyAuth) do not call this function and
+// are therefore unaffected by the Bearer fallback.
 func GetAccessTokenFromCookie(c *gin.Context) string {
 	// First try cookie
 	token, err := c.Cookie(AccessTokenCookieName)

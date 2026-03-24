@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -129,18 +128,16 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	// Create snapshot asynchronously - quota is enforced atomically in the service layer
 	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
 	if err != nil {
+		// F-106: Use errors.Is/As against the sentinel error type instead of
+		// strings.Contains(err.Error(), ...) to avoid fragile string matching.
 		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
-			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED", err.Error())
-			return
-		}
-		if strings.Contains(err.Error(), "limit exceeded") {
-			// Get plan limit for better error message
+			// Get plan limit for a clearer error message.
 			planLimit := defaultSnapshotLimit
 			plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
 			if planErr == nil && plan.SnapshotLimit > 0 {
 				planLimit = plan.SnapshotLimit
 			}
-			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_LIMIT_EXCEEDED",
+			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED",
 				fmt.Sprintf("Snapshot limit reached for this VM (%d max). Delete existing snapshots first.", planLimit))
 			return
 		}

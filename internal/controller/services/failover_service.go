@@ -26,19 +26,25 @@ const (
 	STONITHWaitDuration = 10 * time.Second
 	// CephBlocklistTimeout is the timeout for Ceph OSD blocklist commands.
 	CephBlocklistTimeout = 30 * time.Second
+	// NoIPMISafetyDelay is the mandatory wait when IPMI is not configured to give operators
+	// time to manually power off the node before VMs are migrated (F-092).
+	// Without STONITH confirmation, this delay reduces the risk of split-brain.
+	NoIPMISafetyDelay = 30 * time.Second
 )
 
 // FailoverService provides high-availability failover operations for VirtueStack.
 // It handles the complete failover workflow including STONITH, Ceph blocklisting,
 // and VM migration to surviving nodes.
 type FailoverService struct {
-	nodeRepo      *repository.NodeRepository
-	vmRepo        *repository.VMRepository
-	nodeAgent     NodeAgentClient
-	auditRepo     *repository.AuditRepository
-	failoverRepo  *repository.FailoverRepository
-	encryptionKey string
-	logger        *slog.Logger
+	nodeRepo           *repository.NodeRepository
+	vmRepo             *repository.VMRepository
+	nodeAgent          NodeAgentClient
+	auditRepo          *repository.AuditRepository
+	failoverRepo       *repository.FailoverRepository
+	storageBackendRepo *repository.StorageBackendRepository
+	nodeStorageRepo    *repository.NodeStorageRepository
+	encryptionKey      string
+	logger             *slog.Logger
 }
 
 // NewFailoverService creates a new FailoverService with the given dependencies.
@@ -48,17 +54,21 @@ func NewFailoverService(
 	nodeAgent NodeAgentClient,
 	auditRepo *repository.AuditRepository,
 	failoverRepo *repository.FailoverRepository,
+	storageBackendRepo *repository.StorageBackendRepository,
+	nodeStorageRepo *repository.NodeStorageRepository,
 	encryptionKey string,
 	logger *slog.Logger,
 ) *FailoverService {
 	return &FailoverService{
-		nodeRepo:      nodeRepo,
-		vmRepo:        vmRepo,
-		nodeAgent:     nodeAgent,
-		auditRepo:     auditRepo,
-		failoverRepo:  failoverRepo,
-		encryptionKey: encryptionKey,
-		logger:        logger.With("component", "failover-service"),
+		nodeRepo:           nodeRepo,
+		vmRepo:             vmRepo,
+		nodeAgent:          nodeAgent,
+		auditRepo:          auditRepo,
+		failoverRepo:       failoverRepo,
+		storageBackendRepo: storageBackendRepo,
+		nodeStorageRepo:    nodeStorageRepo,
+		encryptionKey:      encryptionKey,
+		logger:             logger.With("component", "failover-service"),
 	}
 }
 
@@ -178,7 +188,20 @@ func (s *FailoverService) executeFailoverSteps(ctx context.Context, node *models
 			s.logger.Info("STONITH completed successfully", "node_id", node.ID, "ipmi_address", *node.IPMIAddress)
 		}
 	} else {
-		s.logger.Info("no IPMI configured, assuming manual power-off confirmed", "node_id", node.ID)
+		// No IPMI: we cannot confirm the node is fenced. Apply a safety delay
+		// so operators have time to manually power off the node before VMs are
+		// migrated away, reducing the risk of split-brain writes (F-092).
+		s.logger.Warn("no IPMI configured; applying safety delay before failover",
+			"node_id", node.ID,
+			"safety_delay", NoIPMISafetyDelay)
+		safetyTimer := time.NewTimer(NoIPMISafetyDelay)
+		defer safetyTimer.Stop()
+		select {
+		case <-safetyTimer.C:
+			s.logger.Info("safety delay elapsed, proceeding with failover", "node_id", node.ID)
+		case <-ctx.Done():
+			s.logger.Warn("failover context cancelled during safety delay", "node_id", node.ID)
+		}
 	}
 
 	if err := s.blocklistNodeInCeph(ctx, node); err != nil {
@@ -273,13 +296,14 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		"node_id", node.ID,
 		"ipmi_address", ipmiAddress)
 
-	// Execute IPMI power off command using environment variable to avoid exposing password in process list
+	// Execute IPMI power off command using environment variable to avoid exposing password in process list.
+	// Use a minimal environment (no inherited parent env) to prevent leaking secrets.
 	cmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", ipmiAddress,
 		"-U", username,
 		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"power", "off")
-	cmd.Env = append(cmd.Environ(), "IPMITOOL_PASSWORD="+password)
+	cmd.Env = []string{"IPMITOOL_PASSWORD=" + password, "PATH=/usr/bin:/bin"}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -300,13 +324,14 @@ func (s *FailoverService) executeSTONITH(ctx context.Context, node *models.Node)
 		return fmt.Errorf("context cancelled during STONITH wait: %w", ctx.Err())
 	}
 
-	// Verify power state using environment variable to avoid exposing password
+	// Verify power state using environment variable to avoid exposing password.
+	// Use a minimal environment (no inherited parent env) to prevent leaking secrets.
 	verifyCmd := exec.CommandContext(ctx, "ipmitool",
 		"-H", ipmiAddress,
 		"-U", username,
 		"-E", // Use IPMITOOL_PASSWORD environment variable
 		"power", "status")
-	verifyCmd.Env = append(verifyCmd.Environ(), "IPMITOOL_PASSWORD="+password)
+	verifyCmd.Env = []string{"IPMITOOL_PASSWORD=" + password, "PATH=/usr/bin:/bin"}
 
 	verifyOutput, err := verifyCmd.CombinedOutput()
 	if err != nil {
@@ -550,6 +575,15 @@ func (s *FailoverService) sortNodesByLocation(nodes []models.Node, preferredLoca
 // migrateVM migrates a single VM to one of the surviving nodes.
 // Returns either a successful migration or a failure reason.
 func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivingNodes []models.Node) (*MigratedVM, *FailedMigration) {
+	// Guard against nil NodeID before proceeding (F-055).
+	if vm.NodeID == nil {
+		return nil, &FailedMigration{
+			VMID:     vm.ID,
+			Hostname: vm.Hostname,
+			Error:    "VM has no node assigned (NodeID is nil)",
+		}
+	}
+
 	// Select the best node for this VM
 	targetNode := s.selectBestNode(vm, survivingNodes)
 	if targetNode == nil {
@@ -563,7 +597,7 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 	s.logger.Info("migrating VM",
 		"vm_id", vm.ID,
 		"hostname", vm.Hostname,
-		"old_node_id", vm.NodeID,
+		"old_node_id", *vm.NodeID,
 		"new_node_id", targetNode.ID)
 
 	// Update VM's node assignment in the database
@@ -625,13 +659,49 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 	}, nil
 }
 
-// selectBestNode selects the best surviving node for a VM based on available capacity.
+// selectBestNode selects the best surviving node for a VM based on available capacity
+// and storage backend compatibility. Returns nil if no suitable node is found.
+// For QCOW/LVM VMs, returns nil because they cannot be failed over (disk is local to failed node).
 func (s *FailoverService) selectBestNode(vm *models.VM, nodes []models.Node) *models.Node {
+	// Check if VM has a storage backend assigned
+	if vm.StorageBackendID == nil {
+		s.logger.Warn("VM has no storage backend assigned, cannot determine failover eligibility",
+			"vm_id", vm.ID)
+		return nil
+	}
+
+	// Get the VM's storage backend to check type
+	sb, err := s.storageBackendRepo.GetByID(context.Background(), *vm.StorageBackendID)
+	if err != nil {
+		s.logger.Warn("failed to get storage backend for VM, cannot failover",
+			"vm_id", vm.ID,
+			"storage_backend_id", *vm.StorageBackendID,
+			"error", err)
+		return nil
+	}
+
+	// QCOW and LVM VMs cannot be failed over - their disks are local to the failed node
+	if sb.Type != models.StorageTypeCeph {
+		s.logger.Warn("VM uses local storage backend, cannot failover",
+			"vm_id", vm.ID,
+			"storage_backend_type", sb.Type)
+		return nil
+	}
+
+	// For Ceph VMs, find a node with the same storage backend assigned
 	var bestNode *models.Node
 	bestScore := -1
 
 	for i := range nodes {
 		node := &nodes[i]
+
+		// Check if node has the same storage backend assigned
+		if s.nodeStorageRepo != nil {
+			hasBackend, err := s.nodeStorageRepo.GetAssignment(context.Background(), node.ID, *vm.StorageBackendID)
+			if err != nil || hasBackend == nil || !hasBackend.Enabled {
+				continue // Node doesn't have this storage backend
+			}
+		}
 
 		// Check if node has enough capacity
 		availableVCPU := node.TotalVCPU - node.AllocatedVCPU

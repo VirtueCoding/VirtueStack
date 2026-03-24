@@ -60,19 +60,19 @@ type NodeCreateRequest struct {
 
 // NodeHeartbeat represents a periodic health report submitted by a hypervisor node agent.
 type NodeHeartbeat struct {
-	ID            int64     `json:"id" db:"id"`
-	NodeID        string    `json:"node_id" db:"node_id"`
-	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
-	CPUPercent    float32   `json:"cpu_percent" db:"cpu_percent"`
-	MemoryPercent float32   `json:"memory_percent" db:"memory_percent"`
-	DiskPercent   float32   `json:"disk_percent" db:"disk_percent"`
-	TotalDiskGB   int64     `json:"total_disk_gb" db:"total_disk_gb"`
-	UsedDiskGB    int64     `json:"used_disk_gb" db:"used_disk_gb"`
-	CephConnected bool      `json:"ceph_connected" db:"ceph_connected"`
-	CephTotalGB   int64     `json:"ceph_total_gb" db:"ceph_total_gb"`
-	CephUsedGB    int64     `json:"ceph_used_gb" db:"ceph_used_gb"`
-	VMCount       int       `json:"vm_count" db:"vm_count"`
-	LoadAverage   []float32 `json:"load_average" db:"load_average"`
+	ID               int64     `json:"id" db:"id"`
+	NodeID           string    `json:"node_id" db:"node_id"`
+	Timestamp        time.Time `json:"timestamp" db:"timestamp"`
+	CPUPercent       float32   `json:"cpu_percent" db:"cpu_percent"`
+	MemoryPercent    float32   `json:"memory_percent" db:"memory_percent"`
+	DiskPercent      float32   `json:"disk_percent" db:"disk_percent"`
+	TotalDiskGB      int64     `json:"total_disk_gb" db:"total_disk_gb"`
+	UsedDiskGB       int64     `json:"used_disk_gb" db:"used_disk_gb"`
+	StorageConnected bool      `json:"storage_connected" db:"storage_connected"`
+	StorageTotalGB   int64     `json:"storage_total_gb" db:"storage_total_gb"`
+	StorageUsedGB    int64     `json:"storage_used_gb" db:"storage_used_gb"`
+	VMCount          int       `json:"vm_count" db:"vm_count"`
+	LoadAverage      []float32 `json:"load_average" db:"load_average"`
 }
 
 // NodeListFilter holds query parameters for filtering and paginating node list results.
@@ -102,9 +102,9 @@ type NodeStatus struct {
 	DiskPercent                float32    `json:"disk_percent,omitempty"`
 	TotalDiskGB                int64      `json:"total_disk_gb,omitempty"`
 	UsedDiskGB                 int64      `json:"used_disk_gb,omitempty"`
-	CephStatus                 string     `json:"ceph_status,omitempty"`
-	CephTotalGB                int64      `json:"ceph_total_gb,omitempty"`
-	CephUsedGB                 int64      `json:"ceph_used_gb,omitempty"`
+	StorageStatus              string     `json:"storage_status,omitempty"`
+	StorageTotalGB             int64      `json:"storage_total_gb,omitempty"`
+	StorageUsedGB              int64      `json:"storage_used_gb,omitempty"`
 	LoadAverage                []float32  `json:"load_average,omitempty"`
 	IsHealthy                  bool       `json:"is_healthy"`
 }

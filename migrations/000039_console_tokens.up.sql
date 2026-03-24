@@ -9,8 +9,8 @@ CREATE TABLE console_tokens (
     expires_at TIMESTAMPTZ NOT NULL
 );
 
--- Hot path: lookup by token hash for unconsumed tokens
-CREATE INDEX idx_console_tokens_hash ON console_tokens (token_hash) WHERE expires_at > NOW();
+-- Hot path: lookup by token hash
+CREATE INDEX idx_console_tokens_hash ON console_tokens (token_hash);
 
 -- Cleanup: find expired tokens
 CREATE INDEX idx_console_tokens_expires ON console_tokens (expires_at);

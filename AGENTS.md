@@ -677,6 +677,64 @@ type StorageBackend interface {
 - VM storage: `/var/lib/virtuestack/vms/`
 - Supports same operations as RBD via interface
 
+### 7.4 LVM Thin-Provisioned Implementation
+
+**File:** `internal/nodeagent/storage/lvm.go`
+
+LVM thin provisioning provides block-level storage with efficient snapshot support:
+
+#### Architecture
+
+- **Thin Pool**: A logical volume that stores data for all thin LVs. Space is allocated on-demand (copy-on-write).
+- **Thin LV**: Virtual block devices that appear larger than actual allocated space. Multiple thin LVs can overprovision the pool.
+- **Snapshots**: Instant, zero-space snapshots via CoW. No pre-allocated size required.
+
+#### Configuration
+
+| Environment Variable | Required | Description |
+|---------------------|----------|-------------|
+| `LVM_VOLUME_GROUP` | Yes | Volume group name (e.g., `vgvs`) |
+| `LVM_THIN_POOL` | Yes | Pre-existing thin-pool LV name (e.g., `thinpool`) |
+| `STORAGE_BACKEND` | No | Must be set to `lvm` |
+
+#### Disk Naming Convention
+
+```
+/dev/{vg}/vs-{vm_uuid}-disk0        # Primary disk
+/dev/{vg}/vs-{vm_uuid}-disk0-snap1  # Snapshot
+```
+
+Example: `/dev/vgvs/vs-550e8400-e29b-41d4-a716-446655440000-disk0`
+
+#### Snapshot Semantics
+
+- **Instant creation**: Snapshots are CoW, requiring no data copy.
+- **No pre-allocated size**: Snapshots grow as blocks diverge from origin.
+- **Rollback**: Restore to snapshot state via `lvconvert --mergesnapshot`.
+- **Limitation**: Snapshots are node-local; cannot be migrated without copying.
+
+#### Overprovisioning Risk
+
+**Critical**: Thin pools can be overprovisioned (total virtual size > physical size). If the pool fills completely:
+- VMs may freeze or corrupt on write.
+- Recovery requires adding space or deleting LVs.
+
+**Mitigation**:
+- Monitor `data_percent` and `metadata_percent` via `lvs` or VirtueStack metrics.
+- Alert thresholds: `data_percent >= 90%` (warning), `>= 95%` (critical).
+- VM creation is blocked when `data_percent >= 95%` or `metadata_percent >= 70%`.
+
+#### Guest TRIM/Discard
+
+VirtueStack configures `discard='unmap'` on LVM disks, allowing guests to release unused blocks. Guests must be configured to issue TRIM:
+
+| OS | Configuration |
+|----|---------------|
+| Linux | Enable `fstrim.timer`: `systemctl enable --now fstrim.timer` |
+| Windows | Run: `fsutil behavior set DisableDeleteNotify 0` |
+
+Cloud-init can automate Linux TRIM configuration during first boot.
+
 ### 7.4 Configuration
 
 **File:** `migrations/000019_add_storage_backend.up.sql`
@@ -1147,6 +1205,15 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 ## 16. WHAT'S LEFT TO IMPLEMENT
 
 All planned features are complete. The platform is fully implemented.
+
+### Security Implementation Notes (2026-03)
+
+The following security measures are implemented:
+
+1. **CreateVM Health Validation** - VM creation is rejected when storage backend has `health_status == "critical"` (`vm_service.go`)
+2. **LVM Identifier Validation** - All LVM operations validate identifiers against `validLVMLVName` regex to prevent injection (`lvm.go`, `lvm_template.go`)
+3. **Migration Junction Table** - Migration service uses `node_storage` junction table to verify storage backend compatibility (`migration_service.go`)
+4. **LVM Threshold Validation** - Storage backend thresholds validated to 1-100 range (`storage_backend_service.go`)
 
 ### Future Enhancements (Low Priority)
 

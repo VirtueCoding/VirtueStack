@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Server, Network, Cpu, MemoryStick, HardDrive, Loader2, Shield } from "lucide-react";
+import { Server, Network, Cpu, MemoryStick, Loader2, Shield } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/components/ui/use-toast";
@@ -35,30 +35,17 @@ export const createNodeSchema = z.object({
   management_ip: z.string()
     .min(1, "Management IP is required")
     .refine((val) => {
-      // Basic IP address validation
+      // IPv4: standard dotted-quad
       const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-      const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
+      // IPv6: RFC-compliant pattern accepting full and compressed forms (including ::1, 2001:db8::1)
+      const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
       return ipv4Regex.test(val) || ipv6Regex.test(val);
-    }, "Must be a valid IP address"),
+    }, "Must be a valid IP address (IPv4 or IPv6, including abbreviated forms)"),
   total_vcpu: z.number().int().min(1, "Must be at least 1 vCPU"),
   total_memory_mb: z.number().int().min(1024, "Must be at least 1024 MB"),
-  storage_backend: z.enum(["ceph", "qcow"], {
-    required_error: "Storage backend is required",
-  }),
-  storage_path: z.string().max(500, "Storage path must be 500 characters or less").optional(),
-  ceph_pool: z.string().max(100, "Ceph pool must be 100 characters or less").optional(),
   ipmi_address: z.string().optional(),
   ipmi_username: z.string().optional(),
   ipmi_password: z.string().optional(),
-}).refine((data) => {
-  // If storage_backend is qcow, storage_path is required
-  if (data.storage_backend === "qcow" && !data.storage_path) {
-    return false;
-  }
-  return true;
-}, {
-  message: "Storage path is required when storage backend is 'qcow'",
-  path: ["storage_path"],
 });
 
 export type CreateNodeFormData = z.infer<typeof createNodeSchema>;
@@ -76,9 +63,6 @@ const defaultValues: CreateNodeFormData = {
   management_ip: "",
   total_vcpu: 32,
   total_memory_mb: 65536,
-  storage_backend: "ceph",
-  storage_path: "",
-  ceph_pool: "",
   ipmi_address: "",
   ipmi_username: "",
   ipmi_password: "",
@@ -111,8 +95,6 @@ export function NodeCreateDialog({ open, onOpenChange, onCreate, isCreating }: N
       });
     }
   };
-
-  const storageBackend = form.watch("storage_backend");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -221,72 +203,10 @@ export function NodeCreateDialog({ open, onOpenChange, onCreate, isCreating }: N
             </div>
           </div>
 
-          {/* Storage Section */}
-          <div className="space-y-4">
-            <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Storage Configuration</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="storage_backend" className="flex items-center gap-2">
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                  Storage Backend <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={form.watch("storage_backend")}
-                  onValueChange={(value: "ceph" | "qcow") => form.setValue("storage_backend", value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select backend" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ceph">Ceph (RBD)</SelectItem>
-                    <SelectItem value="qcow">Local QCOW2</SelectItem>
-                  </SelectContent>
-                </Select>
-                {form.formState.errors.storage_backend && (
-                  <p className="text-xs text-destructive">{form.formState.errors.storage_backend.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ceph_pool" className="flex items-center gap-2">
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                  Ceph Pool
-                </Label>
-                <Input
-                  id="ceph_pool"
-                  placeholder="e.g., vms"
-                  disabled={storageBackend === "qcow"}
-                  {...form.register("ceph_pool")}
-                />
-                {form.formState.errors.ceph_pool && (
-                  <p className="text-xs text-destructive">{form.formState.errors.ceph_pool.message}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {storageBackend === "qcow" ? "Not applicable for QCOW backend" : "Ceph pool name for VM disks"}
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="storage_path" className="flex items-center gap-2">
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                  Storage Path {storageBackend === "qcow" && <span className="text-destructive">*</span>}
-                </Label>
-                <Input
-                  id="storage_path"
-                  placeholder="e.g., /var/lib/libvirt/images"
-                  disabled={storageBackend === "ceph"}
-                  {...form.register("storage_path")}
-                />
-                {form.formState.errors.storage_path && (
-                  <p className="text-xs text-destructive">{form.formState.errors.storage_path.message}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {storageBackend === "ceph"
-                    ? "Not applicable for Ceph backend (uses cluster-configured path)"
-                    : "Base directory for QCOW2 disk files"}
-                </p>
-              </div>
-            </div>
+          {/* Storage Note */}
+          <div className="rounded-md bg-muted p-3 text-sm">
+            <strong>Note:</strong> Storage backends are assigned separately after node registration.
+            Navigate to the <strong>Storage</strong> page to configure Ceph, QCOW2, or LVM storage backends and assign them to this node.
           </div>
 
           {/* IPMI Section */}

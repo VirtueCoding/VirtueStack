@@ -127,6 +127,18 @@ service NodeAgentService {
   rpc PrepareMigratedVM(PrepareMigratedVMRequest) returns (VMOperationResponse);
 
   // ========================================================================
+  // Backup Operations
+  // ========================================================================
+
+  // CreateLVMBackup creates a sparse backup file from an LVM thin snapshot.
+  // Used for LVM VM backup operations.
+  rpc CreateLVMBackup(CreateLVMBackupRequest) returns (CreateLVMBackupResponse);
+
+  // RestoreLVMBackup restores an LVM thin LV from a backup file.
+  // The thin LV must already exist; this overwrites it in-place.
+  rpc RestoreLVMBackup(RestoreLVMBackupRequest) returns (VMOperationResponse);
+
+  // ========================================================================
   // Console Operations (Bidirectional Streaming)
   // ========================================================================
 
@@ -306,6 +318,10 @@ message CreateVMRequest {
   string storage_backend = 23;
   // Template file path for QCOW storage backend (e.g., /var/lib/virtuestack/templates/ubuntu-2204.qcow2)
   string template_file_path = 24;
+  // LVM volume group name (required when storage_backend is "lvm")
+  string lvm_volume_group = 25;
+  // LVM thin pool name (required when storage_backend is "lvm")
+  string lvm_thin_pool = 26;
 }
 
 // CreateVMResponse is returned after a VM creation attempt.
@@ -361,6 +377,12 @@ message ReinstallVMRequest {
   string storage_backend = 13;
   // Template file path for QCOW storage backend
   string template_file_path = 14;
+  // LVM volume group name (required when storage_backend is "lvm")
+  string lvm_volume_group = 15;
+  // LVM thin pool name (required when storage_backend is "lvm")
+  string lvm_thin_pool = 16;
+  // Disk size in GB for QCOW and LVM backends (0 to keep current size)
+  int32 disk_size_gb = 17;
 }
 
 // ResizeVMRequest contains the new resource allocation for a VM.
@@ -671,6 +693,10 @@ message NodeHealthResponse {
   bool libvirt_connected = 9;
   // Whether Ceph cluster connection is established
   bool ceph_connected = 10;
+  // LVM thin pool data usage percentage (0-100, -1 if not applicable)
+  double lvm_data_percent = 11;
+  // LVM thin pool metadata usage percentage (0-100, -1 if not applicable)
+  double lvm_metadata_percent = 12;
 }
 
 // ============================================================================
@@ -725,8 +751,20 @@ message TransferDiskRequest {
   string snapshot_name = 4;
   // Enable compression during transfer
   bool compress = 5;
-  // Storage backend type
+  // Storage backend type: "ceph", "qcow", or "lvm"
   string storage_backend = 6;
+  // Disk size in GB (required for LVM target creation)
+  int32 disk_size_gb = 7;
+  // LVM volume group for source (LVM only)
+  string source_lvm_volume_group = 8;
+  // LVM thin pool for source (LVM only)
+  string source_lvm_thin_pool = 9;
+  // LVM volume group for target (LVM only)
+  string target_lvm_volume_group = 10;
+  // LVM thin pool for target (LVM only)
+  string target_lvm_thin_pool = 11;
+  // True if this is a delta sync after initial transfer
+  bool is_delta_sync = 12;
 }
 
 // DiskChunk represents a chunk of disk data for streaming transfer.
@@ -739,6 +777,14 @@ message DiskChunk {
   int64 total = 3;
   // Target disk path (set in first message for receive)
   string target_disk_path = 4;
+  // Storage backend type: "ceph", "qcow", or "lvm" (set in first message)
+  string storage_backend = 5;
+  // Disk size in GB (required for LVM target creation)
+  int32 disk_size_gb = 6;
+  // LVM volume group for target (LVM only)
+  string target_lvm_volume_group = 7;
+  // LVM thin pool for target (LVM only)
+  string target_lvm_thin_pool = 8;
 }
 
 // ReceiveDiskResponse is returned after disk receive completes.
@@ -783,4 +829,42 @@ message PrepareMigratedVMRequest {
   string ceph_user = 13;
   // Ceph secret UUID
   string ceph_secret_uuid = 14;
+  // LVM volume group name (required when storage_backend is "lvm")
+  string lvm_volume_group = 15;
+  // LVM thin pool name (required when storage_backend is "lvm")
+  string lvm_thin_pool = 16;
+}
+
+// ============================================================================
+// BACKUP MESSAGES
+// ============================================================================
+
+// CreateLVMBackupRequest creates a sparse backup file from an LVM snapshot.
+message CreateLVMBackupRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Name of the LVM snapshot to backup
+  string snapshot_name = 2;
+  // Path where the backup file will be stored
+  string backup_file_path = 3;
+}
+
+// CreateLVMBackupResponse is returned after LVM backup creation.
+message CreateLVMBackupResponse {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Whether the operation succeeded
+  bool success = 2;
+  // Error message if operation failed
+  string error_message = 3;
+  // Size of the backup file in bytes
+  int64 size_bytes = 4;
+}
+
+// RestoreLVMBackupRequest restores an LVM thin LV from a backup file.
+message RestoreLVMBackupRequest {
+  // UUID of the virtual machine
+  string vm_id = 1;
+  // Path to the backup file to restore from
+  string backup_file_path = 2;
 }

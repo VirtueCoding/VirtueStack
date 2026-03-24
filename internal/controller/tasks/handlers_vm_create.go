@@ -100,7 +100,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		locationID = *node.LocationID
 	}
 
-	ip, err := deps.IPAMService.AllocateIPv4(ctx, payload.VMID, payload.CustomerID, locationID)
+	ip, err := deps.IPAMService.AllocateIPv4(ctx, locationID, payload.VMID, payload.CustomerID)
 	if err != nil {
 		logger.Warn("failed to allocate IPv4, using DHCP", "error", err)
 	} else if ip != nil {

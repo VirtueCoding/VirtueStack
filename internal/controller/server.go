@@ -191,18 +191,32 @@ func (s *Server) InitializeServices() error {
 
 	s.ipamService = services.NewIPAMService(ipRepo, nodeRepo, s.logger)
 
+	// Create repositories needed for storage backend and failover services
+	failoverRepo := repository.NewFailoverRepository(s.dbPool)
+	storageBackendRepo := repository.NewStorageBackendRepository(s.dbPool)
+	nodeStorageRepo := repository.NewNodeStorageRepository(s.dbPool)
+	storageBackendService := services.NewStorageBackendService(
+		storageBackendRepo,
+		nodeRepo,
+		nodeStorageRepo,
+		taskRepo,
+		repository.NewAdminBackupScheduleRepository(s.dbPool),
+		s.logger,
+	)
+
 	s.vmService = services.NewVMService(services.VMServiceConfig{
-		VMRepo:        vmRepo,
-		NodeRepo:      nodeRepo,
-		IPRepo:        ipRepo,
-		PlanRepo:      planRepo,
-		TemplateRepo:  templateRepo,
-		TaskRepo:      taskRepo,
-		TaskPublisher: taskPublisher,
-		NodeAgent:     nodeAgentClient,
-		IPAMService:   s.ipamService,
-		EncryptionKey: s.config.EncryptionKey.Value(),
-		Logger:        s.logger,
+		VMRepo:            vmRepo,
+		NodeRepo:          nodeRepo,
+		IPRepo:            ipRepo,
+		PlanRepo:          planRepo,
+		TemplateRepo:      templateRepo,
+		TaskRepo:          taskRepo,
+		TaskPublisher:     taskPublisher,
+		NodeAgent:         nodeAgentClient,
+		IPAMService:       s.ipamService,
+		StorageBackendSvc: storageBackendService,
+		EncryptionKey:     s.config.EncryptionKey.Value(),
+		Logger:            s.logger,
 	})
 
 	s.nodeService = services.NewNodeServiceWithDefaults(
@@ -238,16 +252,18 @@ func (s *Server) InitializeServices() error {
 		taskRepo,
 		taskPublisher,
 		nodeAgentClient,
+		storageBackendService,
 		s.logger,
 	)
 
-	failoverRepo := repository.NewFailoverRepository(s.dbPool)
 	failoverService := services.NewFailoverService(
 		nodeRepo,
 		vmRepo,
 		nodeAgentClient,
 		auditRepo,
 		failoverRepo,
+		storageBackendRepo,
+		nodeStorageRepo,
 		s.config.EncryptionKey.Value(),
 		s.logger,
 	)
@@ -343,6 +359,9 @@ func (s *Server) InitializeServices() error {
 		FailoverRepo:            failoverRepo,
 		AdminBackupScheduleRepo: repository.NewAdminBackupScheduleRepository(s.dbPool),
 		AdminRepo:               adminRepo,
+		StorageBackendRepo:      repository.NewStorageBackendRepository(s.dbPool),
+		NodeStorageRepo:         repository.NewNodeStorageRepository(s.dbPool),
+		NodeRepo:                nodeRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",
@@ -549,6 +568,15 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutting down HTTP server: %w", err)
+	}
+
+	// Close the PowerDNS MySQL connection if it was opened.
+	if s.powerDNSDB != nil {
+		if err := s.powerDNSDB.Close(); err != nil {
+			s.logger.Warn("failed to close PowerDNS MySQL connection", "error", err)
+		} else {
+			s.logger.Info("PowerDNS MySQL connection closed")
+		}
 	}
 
 	s.logger.Info("HTTP server stopped")

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -8,6 +9,35 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// ValidateIPAllowlistConfig validates an IPAllowlistConfig and returns an error if any
+// entry is not a valid IP address or CIDR range. Call this at server startup so that
+// misconfigured allowlists cause an immediate, visible failure rather than silently
+// permitting or denying unexpected traffic at request time.
+//
+// Example startup usage:
+//
+//	if err := middleware.ValidateIPAllowlistConfig(cfg); err != nil {
+//	    log.Fatalf("invalid IP allowlist configuration: %v", err)
+//	}
+func ValidateIPAllowlistConfig(config IPAllowlistConfig) error {
+	for _, entry := range config.AllowedIPs {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, _, err := net.ParseCIDR(entry); err != nil {
+				return fmt.Errorf("ip_allowlist: invalid CIDR entry %q: %w", entry, err)
+			}
+		} else {
+			if net.ParseIP(entry) == nil {
+				return fmt.Errorf("ip_allowlist: invalid IP entry %q", entry)
+			}
+		}
+	}
+	return nil
+}
 
 // IPAllowlistConfig configures the IP allowlist middleware.
 type IPAllowlistConfig struct {

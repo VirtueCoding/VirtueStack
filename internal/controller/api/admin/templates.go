@@ -107,8 +107,8 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 		"os_family", req.OSFamily,
 		"correlation_id", middleware.GetCorrelationID(c))
 
-	// Log audit event
-	h.logAuditEvent(c, "template.create", "template", "", map[string]interface{}{
+	// Log audit event - pass template.ID as the resource_id (F-164)
+	h.logAuditEvent(c, "template.create", "template", template.ID, map[string]interface{}{
 		"name":         req.Name,
 		"os_family":    req.OSFamily,
 		"os_version":   req.OSVersion,

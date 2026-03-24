@@ -46,10 +46,12 @@ interface VMSnapshotsTabProps {
 }
 
 export function VMSnapshotsTab({
+  vmId,
   vmName,
   snapshots,
   isLoading,
   isActionLoading,
+  onRefresh,
   onCreateSnapshot,
   onDeleteSnapshot,
   onRevertSnapshot,
@@ -83,7 +85,7 @@ export function VMSnapshotsTab({
 
   return (
     <>
-      <Card>
+      <Card data-vm-id={vmId}>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle className="text-lg">Snapshots</CardTitle>
@@ -91,6 +93,16 @@ export function VMSnapshotsTab({
               Create and restore VM snapshots for quick rollbacks
             </CardDescription>
           </div>
+          <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRefresh}
+            disabled={isLoading || isActionLoading}
+          >
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
           <Button
             onClick={() => {
               setSnapshotName(`Snapshot ${new Date().toLocaleDateString()}`);
@@ -105,6 +117,7 @@ export function VMSnapshotsTab({
             )}
             Create Snapshot
           </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

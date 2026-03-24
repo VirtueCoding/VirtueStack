@@ -4,6 +4,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -198,12 +199,44 @@ func setRateLimitHeaders(c *gin.Context, limit, remaining int, resetAt time.Time
 
 // ─── pre-built rate limit configurations ─────────────────────────────────────
 
+// WarnIfInMemoryRateLimitInProduction logs a startup warning when in-memory rate
+// limiting is used while the application is running in production mode.
+//
+// Each controller process maintains its own in-memory rate limit counters via
+// sync.Map. In a horizontally-scaled deployment (multiple controller instances
+// behind a load balancer), an attacker can bypass per-key limits by distributing
+// requests across instances. Call this function during server startup and supply
+// the Redis client when one is available to switch to RedisRateLimit instead.
+//
+// Usage:
+//
+//	middleware.WarnIfInMemoryRateLimitInProduction(isProduction, redisClient != nil)
+func WarnIfInMemoryRateLimitInProduction(isProduction bool, redisConfigured bool) {
+	if isProduction && !redisConfigured {
+		slog.Warn("SECURITY: in-memory rate limiting is active in production mode. " +
+			"Each controller process maintains independent counters, allowing distributed " +
+			"bypass across multiple instances. Configure a Redis backend and use " +
+			"RedisRateLimit() to enforce shared rate limits across all instances.")
+	}
+}
+
 // LoginRateLimit limits login attempts to 5 per 15 minutes per source IP.
 // Intended to protect authentication endpoints against brute-force attacks.
 func LoginRateLimit() gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{
 		Requests: 5,
 		Window:   15 * time.Minute,
+		KeyFunc:  keyByIP,
+	})
+}
+
+// RefreshRateLimit limits token refresh attempts to 20 per minute per source IP.
+// Provides a separate, more permissive limit than LoginRateLimit because browsers
+// silently refresh tokens in the background.
+func RefreshRateLimit() gin.HandlerFunc {
+	return RateLimit(RateLimitConfig{
+		Requests: 20,
+		Window:   time.Minute,
 		KeyFunc:  keyByIP,
 	})
 }
@@ -218,11 +251,16 @@ func PasswordChangeRateLimit() gin.HandlerFunc {
 	})
 }
 
-// ProvisioningRateLimit allows up to 1000 requests per minute per API key.
-// Suitable for high-volume WHMCS provisioning workflows with automated batch operations.
+// ProvisioningRateLimit allows up to 100 requests per minute per API key.
+// 100 rpm is sufficient for WHMCS provisioning workflows: a single WHMCS instance
+// does not realistically issue more than a handful of VM operations per second and
+// each operation maps to one API call. The previous limit of 1000 rpm provided no
+// meaningful protection against runaway automation or credential-stuffing via
+// provisioning keys. Batch jobs that legitimately exceed this threshold should be
+// redesigned to use queued/async operations rather than hammering the API.
 func ProvisioningRateLimit() gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{
-		Requests: 1000,
+		Requests: 100,
 		Window:   time.Minute,
 		KeyFunc:  keyByAPIKeyID,
 	})

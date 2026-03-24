@@ -77,7 +77,7 @@ func (s *BandwidthService) RecordUsage(ctx context.Context, vmID string, bytesIn
 
 	// Check if we need to throttle
 	if vm.NodeID != nil && !vm.IsDeleted() {
-		if err := s.checkAndThrottle(ctx, vm); err != nil {
+		if _, err := s.checkAndThrottle(ctx, vm); err != nil {
 			logger.Warn("failed to check throttle status", "error", err)
 		}
 	}
@@ -271,13 +271,14 @@ func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 		}
 
 		for i := range vms {
-			if err := s.checkAndThrottle(ctx, &vms[i]); err != nil {
+			// checkAndThrottle returns whether throttling was applied (F-174).
+			// Avoid calling GetMonthlyUsage again to prevent redundant queries.
+			throttled, err := s.checkAndThrottle(ctx, &vms[i])
+			if err != nil {
 				logger.Warn("failed to check VM bandwidth", "vm_id", vms[i].ID, "error", err)
 				continue
 			}
-
-			usage, err := s.GetMonthlyUsage(ctx, vms[i].ID, 0, 0)
-			if err == nil && usage.Throttled {
+			if throttled {
 				throttledCount++
 			}
 		}
@@ -294,25 +295,29 @@ func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 }
 
 // checkAndThrottle checks if a VM has exceeded its bandwidth limit and applies
-// throttling if necessary.
-func (s *BandwidthService) checkAndThrottle(ctx context.Context, vm *models.VM) error {
+// throttling if necessary. Returns (throttled bool, err error) so that callers
+// do not need a second GetMonthlyUsage call to determine throttle status (F-174).
+func (s *BandwidthService) checkAndThrottle(ctx context.Context, vm *models.VM) (bool, error) {
 	logger := s.logger.With("vm_id", vm.ID, "operation", "check_and_throttle")
 
 	// Skip if no bandwidth limit (unlimited)
 	if vm.BandwidthLimitGB == 0 {
-		return nil
+		return false, nil
 	}
 
 	// Check limit
 	exceeded, _, _, err := s.CheckLimit(ctx, vm.ID)
 	if err != nil {
-		return fmt.Errorf("checking bandwidth limit: %w", err)
+		return false, fmt.Errorf("checking bandwidth limit: %w", err)
 	}
 
 	if exceeded {
 		logger.Info("VM exceeded bandwidth limit, applying throttle")
-		return s.TriggerThrottling(ctx, vm.ID)
+		if err := s.TriggerThrottling(ctx, vm.ID); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }

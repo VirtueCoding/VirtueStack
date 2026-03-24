@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -12,7 +13,7 @@ import (
 
 // ConsoleTokenRepository manages console token persistence.
 type ConsoleTokenRepository struct {
-	db *pgxpool.Pool
+	db DB
 }
 
 // NewConsoleTokenRepository creates a new console token repository.
@@ -30,7 +31,10 @@ func (r *ConsoleTokenRepository) Create(ctx context.Context, token *models.Conso
 		token.TokenHash, token.UserID, token.UserType,
 		token.VMID, token.ConsoleType, token.ExpiresAt,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("creating console token: %w", err)
+	}
+	return nil
 }
 
 // ConsumeByHash atomically finds and deletes a token.
@@ -57,7 +61,7 @@ func (r *ConsoleTokenRepository) ConsumeByHash(ctx context.Context, tokenHash []
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, sharederrors.ErrNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("consuming console token: %w", err)
 	}
 	return token, nil
 }
@@ -66,7 +70,7 @@ func (r *ConsoleTokenRepository) ConsumeByHash(ctx context.Context, tokenHash []
 func (r *ConsoleTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
 	result, err := r.db.Exec(ctx, `DELETE FROM console_tokens WHERE expires_at < NOW()`)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("deleting expired console tokens: %w", err)
 	}
 	return result.RowsAffected(), nil
 }
@@ -74,5 +78,8 @@ func (r *ConsoleTokenRepository) DeleteExpired(ctx context.Context) (int64, erro
 // DeleteByVMID removes all tokens for a VM (called on VM deletion).
 func (r *ConsoleTokenRepository) DeleteByVMID(ctx context.Context, vmID string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM console_tokens WHERE vm_id = $1`, vmID)
-	return err
+	if err != nil {
+		return fmt.Errorf("deleting console tokens for VM %s: %w", vmID, err)
+	}
+	return nil
 }

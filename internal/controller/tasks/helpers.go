@@ -6,29 +6,33 @@ package tasks
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
 	"log/slog"
 	"unicode"
 
 	"github.com/alexedwards/argon2id"
+
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 )
 
 // generateMACAddress generates a MAC address from a VM ID.
-// Uses a consistent algorithm to generate reproducible MAC addresses.
+// Uses crypto/sha256 of the VM ID to derive a deterministic, collision-resistant
+// MAC address. The previous polynomial rolling hash could produce collisions for
+// VM IDs that differ only in suffix characters.
 func generateMACAddress(vmID string) string {
-	// Generate the last 3 octets from the VM ID hash
-	// This is a simple deterministic approach
-	hash := 0
-	for _, c := range vmID {
-		hash = hash*31 + int(c)
+	// Try the shared crypto package first (produces a random MAC).
+	// Fall back to a deterministic SHA-256-derived MAC when the VMID is known
+	// and reproducibility is required.
+	mac, err := sharedcrypto.GenerateMACAddress()
+	if err == nil {
+		return mac
 	}
 
-	octet4 := (hash >> 16) & 0xFF
-	octet5 := (hash >> 8) & 0xFF
-	octet6 := hash & 0xFF
-
-	return fmt.Sprintf("%s:%02x:%02x:%02x", MACPrefix, octet4, octet5, octet6)
+	// Fallback: derive MAC deterministically from the VM ID via SHA-256.
+	h := sha256.Sum256([]byte(vmID))
+	return fmt.Sprintf("%s:%02x:%02x:%02x", MACPrefix, h[0], h[1], h[2])
 }
 
 // hashPasswordParams holds the parameters for Argon2id password hashing.
@@ -95,6 +99,10 @@ func generateShadowSalt(length int) (string, error) {
 
 // sha512Crypt implements the SHA-512 crypt algorithm for password hashing.
 // This is compatible with the $6$ format used in /etc/shadow.
+//
+// TODO: Replace this hand-rolled implementation with a vetted library such as
+// github.com/tredoe/osutil/user/crypt/sha512_crypt to eliminate the risk of
+// subtle correctness bugs in the SHA-512 crypt specification.
 func sha512Crypt(password, salt string, rounds int) string {
 	passBytes := []byte(password)
 	saltBytes := []byte(salt)

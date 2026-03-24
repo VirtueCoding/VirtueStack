@@ -13,14 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Server, Network, Cpu, MemoryStick, HardDrive, Loader2, Shield } from "lucide-react";
+import { Server, Network, Cpu, MemoryStick, Loader2, Shield } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/components/ui/use-toast";
@@ -31,8 +24,6 @@ export const editNodeSchema = z.object({
     .optional(),
   total_vcpu: z.number().int().min(1, "Must be at least 1 vCPU").optional(),
   total_memory_mb: z.number().int().min(1024, "Must be at least 1024 MB").optional(),
-  storage_backend: z.enum(["ceph", "qcow"]).optional(),
-  storage_path: z.string().max(500, "Storage path must be 500 characters or less").optional(),
   ipmi_address: z.string().optional(),
 });
 
@@ -47,8 +38,6 @@ interface NodeEditDialogProps {
     grpc_address: string;
     total_vcpu: number;
     total_memory_mb: number;
-    storage_backend: string;
-    storage_path?: string;
   } | null;
   onSave: (data: EditNodeFormData) => Promise<void>;
   isSaving: boolean;
@@ -63,8 +52,6 @@ export function NodeEditDialog({ open, onOpenChange, node, onSave, isSaving }: N
       grpc_address: "",
       total_vcpu: 32,
       total_memory_mb: 65536,
-      storage_backend: "ceph",
-      storage_path: "",
       ipmi_address: "",
     },
   });
@@ -76,8 +63,6 @@ export function NodeEditDialog({ open, onOpenChange, node, onSave, isSaving }: N
         grpc_address: node.grpc_address,
         total_vcpu: node.total_vcpu,
         total_memory_mb: node.total_memory_mb,
-        storage_backend: node.storage_backend as "ceph" | "qcow",
-        storage_path: node.storage_path || "",
         ipmi_address: "",
       });
     }
@@ -97,8 +82,6 @@ export function NodeEditDialog({ open, onOpenChange, node, onSave, isSaving }: N
   };
 
   if (!node) return null;
-
-  const storageBackend = form.watch("storage_backend");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -188,52 +171,10 @@ export function NodeEditDialog({ open, onOpenChange, node, onSave, isSaving }: N
             </div>
           </div>
 
-          {/* Storage Section */}
-          <div className="space-y-4">
-            <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Storage Configuration</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-storage_backend" className="flex items-center gap-2">
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                  Storage Backend
-                </Label>
-                <Select
-                  value={form.watch("storage_backend")}
-                  onValueChange={(value: "ceph" | "qcow") => form.setValue("storage_backend", value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select backend" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ceph">Ceph (RBD)</SelectItem>
-                    <SelectItem value="qcow">Local QCOW2</SelectItem>
-                  </SelectContent>
-                </Select>
-                {form.formState.errors.storage_backend && (
-                  <p className="text-xs text-destructive">{form.formState.errors.storage_backend.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-storage_path" className="flex items-center gap-2">
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                  Storage Path {storageBackend === "qcow" && <span className="text-destructive">*</span>}
-                </Label>
-                <Input
-                  id="edit-storage_path"
-                  placeholder="e.g., /var/lib/libvirt/images"
-                  disabled={storageBackend === "ceph"}
-                  {...form.register("storage_path")}
-                />
-                {form.formState.errors.storage_path && (
-                  <p className="text-xs text-destructive">{form.formState.errors.storage_path.message}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {storageBackend === "ceph"
-                    ? "Not applicable for Ceph backend"
-                    : "Required for QCOW backend"}
-                </p>
-              </div>
-            </div>
+          {/* Storage Note */}
+          <div className="rounded-md bg-muted p-3 text-sm">
+            <strong>Note:</strong> Storage backends are managed separately on the <strong>Storage</strong> page.
+            Assign or remove storage backends from this node via the Storage Backends management interface.
           </div>
 
           {/* IPMI Section */}

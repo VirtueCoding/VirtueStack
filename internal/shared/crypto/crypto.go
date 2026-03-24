@@ -125,7 +125,8 @@ func Decrypt(ciphertext string, hexKey string) (string, error) {
 }
 
 // GenerateRandomString generates a random hex string of the given byte length.
-// Panics on failure (suitable for init-time use).
+// Deprecated: Use GenerateRandomToken which propagates errors instead of panicking.
+// This wrapper is kept for backward-compatibility with test code.
 func GenerateRandomString(byteLength int) string {
 	token, err := GenerateRandomToken(byteLength)
 	if err != nil {
@@ -166,13 +167,25 @@ func GenerateRandomBytes(length int) ([]byte, error) {
 }
 
 // GenerateRandomHex generates a random hex string of the given number of hex characters.
+// Deprecated: Use SafeGenerateRandomHex which propagates errors instead of panicking.
+// This wrapper is kept for backward-compatibility with test code.
 func GenerateRandomHex(hexChars int) string {
-	byteLen := (hexChars + 1) / 2
-	token, err := GenerateRandomToken(byteLen)
+	token, err := SafeGenerateRandomHex(hexChars)
 	if err != nil {
 		panic(fmt.Sprintf("generating random hex: %v", err))
 	}
-	return token[:hexChars]
+	return token
+}
+
+// SafeGenerateRandomHex generates a random hex string of the given number of hex
+// characters and returns an error instead of panicking on crypto/rand failure (F-031).
+func SafeGenerateRandomHex(hexChars int) (string, error) {
+	byteLen := (hexChars + 1) / 2
+	token, err := GenerateRandomToken(byteLen)
+	if err != nil {
+		return "", fmt.Errorf("generating random hex: %w", err)
+	}
+	return token[:hexChars], nil
 }
 
 // GenerateRandomDigits generates a string of n random decimal digits.

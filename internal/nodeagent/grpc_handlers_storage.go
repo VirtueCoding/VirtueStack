@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
@@ -121,7 +123,7 @@ func (h *grpcHandler) DeleteDiskSnapshot(ctx context.Context, req *nodeagentpb.D
 }
 
 // TransferDisk initiates a disk transfer from this node to a target node.
-// This is used for QCOW migrations where disk files need to be copied between nodes.
+// This is used for QCOW and LVM migrations where disk files need to be copied between nodes.
 func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream nodeagentpb.NodeAgentService_TransferDiskServer) error {
 	if req.GetSourceDiskPath() == "" {
 		return status.Error(codes.InvalidArgument, "source_disk_path is required")
@@ -130,13 +132,30 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 		return status.Error(codes.InvalidArgument, "target_node_address is required")
 	}
 
-	logger := h.server.logger.With("operation", "transfer-disk")
+	storageBackend := req.GetStorageBackend()
+	if storageBackend == "" {
+		storageBackend = string(h.server.storageType)
+	}
+
+	logger := h.server.logger.With("operation", "transfer-disk", "storage_backend", storageBackend)
 	logger.Info("initiating disk transfer",
 		"source_disk", req.GetSourceDiskPath(),
 		"target_node", req.GetTargetNodeAddress(),
-		"target_disk", req.GetTargetDiskPath())
+		"target_disk", req.GetTargetDiskPath(),
+		"disk_size_gb", req.GetDiskSizeGb())
 
 	ctx := stream.Context()
+
+	// Handle LVM source
+	if storageBackend == "lvm" {
+		return h.transferLVMDisk(ctx, req, stream, logger)
+	}
+
+	// Handle QCOW source (default)
+	// Validate source disk path against configured StoragePath to prevent traversal
+	if err := validatePath(req.GetSourceDiskPath(), h.server.config.StoragePath); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid source_disk_path: %v", err)
+	}
 
 	// Get disk info
 	sourcePath := req.GetSourceDiskPath()
@@ -183,6 +202,22 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 	}
 	totalSize := fileInfo.Size()
 
+	// Send metadata in first chunk
+	chunk := &nodeagentpb.DiskChunk{
+		Data:             nil,
+		Offset:           0,
+		Total:            totalSize,
+		TargetDiskPath:   req.GetTargetDiskPath(),
+		StorageBackend:   storageBackend,
+		DiskSizeGb:       req.GetDiskSizeGb(),
+		TargetLvmVolumeGroup: req.GetTargetLvmVolumeGroup(),
+		TargetLvmThinPool:    req.GetTargetLvmThinPool(),
+	}
+
+	if err := stream.Send(chunk); err != nil {
+		return status.Errorf(codes.Internal, "sending metadata chunk: %v", err)
+	}
+
 	// Stream the file in chunks
 	buf := make([]byte, 64*1024) // 64KB chunks
 	var bytesSent int64
@@ -214,6 +249,108 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 
 	logger.Info("disk transfer completed", "bytes_sent", bytesSent)
 	return nil
+}
+
+// transferLVMDisk handles LVM disk transfer using dd to read from block device.
+func (h *grpcHandler) transferLVMDisk(ctx context.Context, req *nodeagentpb.TransferDiskRequest, stream nodeagentpb.NodeAgentService_TransferDiskServer, logger *slog.Logger) error {
+	sourcePath := req.GetSourceDiskPath()
+	snapshotName := req.GetSnapshotName()
+
+	// If snapshot name is provided, use the snapshot LV instead of the main disk
+	if snapshotName != "" {
+		sourcePath = fmt.Sprintf("/dev/%s/%s", req.GetSourceLvmVolumeGroup(), snapshotName)
+	}
+
+	logger = logger.With("source_path", sourcePath)
+
+	// Get the size of the LV
+	// Use blockdev to get size in bytes
+	sizeCmd := exec.CommandContext(ctx, "blockdev", "--getsize64", sourcePath)
+	sizeOutput, err := sizeCmd.Output()
+	if err != nil {
+		return status.Errorf(codes.Internal, "getting LV size: %v", err)
+	}
+	totalSize, err := parseBytes(string(sizeOutput))
+	if err != nil {
+		return status.Errorf(codes.Internal, "parsing LV size: %v", err)
+	}
+
+	logger.Info("transferring LVM disk", "total_size", totalSize)
+
+	// Send metadata in first chunk
+	chunk := &nodeagentpb.DiskChunk{
+		Data:                 nil,
+		Offset:               0,
+		Total:                totalSize,
+		TargetDiskPath:       req.GetTargetDiskPath(),
+		StorageBackend:       "lvm",
+		DiskSizeGb:           req.GetDiskSizeGb(),
+		TargetLvmVolumeGroup: req.GetTargetLvmVolumeGroup(),
+		TargetLvmThinPool:    req.GetTargetLvmThinPool(),
+	}
+
+	if err := stream.Send(chunk); err != nil {
+		return status.Errorf(codes.Internal, "sending metadata chunk: %v", err)
+	}
+
+	// Use dd to read from the LV and pipe to our stream
+	// dd if=/dev/{vg}/{disk} bs=4M conv=sparse
+	ddCmd := exec.CommandContext(ctx, "dd",
+		"if="+sourcePath,
+		"bs=4M",
+		"conv=sparse")
+
+	stdout, err := ddCmd.StdoutPipe()
+	if err != nil {
+		return status.Errorf(codes.Internal, "creating dd pipe: %v", err)
+	}
+
+	if err := ddCmd.Start(); err != nil {
+		return status.Errorf(codes.Internal, "starting dd: %v", err)
+	}
+	defer func() {
+		_ = ddCmd.Wait()
+	}()
+
+	// Stream the output in chunks
+	buf := make([]byte, 64*1024) // 64KB chunks
+	var bytesSent int64
+
+	for {
+		n, err := stdout.Read(buf)
+		if err != nil && err != io.EOF {
+			return status.Errorf(codes.Internal, "reading dd output: %v", err)
+		}
+
+		if n > 0 {
+			chunk := &nodeagentpb.DiskChunk{
+				Data:   buf[:n],
+				Offset: bytesSent,
+				Total:  totalSize,
+			}
+
+			if err := stream.Send(chunk); err != nil {
+				return status.Errorf(codes.Internal, "sending disk chunk: %v", err)
+			}
+
+			bytesSent += int64(n)
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	logger.Info("LVM disk transfer completed", "bytes_sent", bytesSent)
+	return nil
+}
+
+// parseBytes parses a byte size string (with optional newline) into int64.
+func parseBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	var result int64
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
 }
 
 // ReceiveDisk receives a disk transfer from a source node and writes it to local storage.

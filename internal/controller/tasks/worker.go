@@ -27,6 +27,28 @@ const (
 	MaxDeliver    = 3
 )
 
+// nakDelays defines the exponential backoff delays applied when a task fails and
+// must be redelivered. The index corresponds to (NumDelivered - 1): first failure
+// waits 10 s, second waits 60 s, subsequent failures wait 300 s.
+var nakDelays = []time.Duration{
+	10 * time.Second,
+	60 * time.Second,
+	300 * time.Second,
+}
+
+// nakDelay returns the backoff delay for the given delivery attempt number
+// (1-based). Index 0 means first delivery, so failure index = numDelivered-1.
+func nakDelay(numDelivered uint64) time.Duration {
+	idx := int(numDelivered) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(nakDelays) {
+		idx = len(nakDelays) - 1
+	}
+	return nakDelays[idx]
+}
+
 // TaskHandler processes a task of a specific type.
 type TaskHandler func(ctx context.Context, task *models.Task) error
 
@@ -177,9 +199,16 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 	handlerCtx, handlerCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer handlerCancel()
 
-	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusRunning, nil, ""); err != nil {
+	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusRunning, nil, nil); err != nil {
 		logger.Error("failed to update task status to running", "error", err)
-		if err := msg.Nak(); err != nil {
+		// Determine backoff delay from delivery count.
+		var nakDelay_ time.Duration
+		if meta, metaErr := msg.Metadata(); metaErr == nil {
+			nakDelay_ = nakDelay(meta.NumDelivered)
+		} else {
+			nakDelay_ = nakDelays[0]
+		}
+		if err := msg.NakWithDelay(nakDelay_); err != nil {
 			logger.Warn("failed to nak task message", "error", err)
 		}
 		return err
@@ -195,7 +224,7 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 		// Error is intentionally discarded: the task is already being failed and the
 		// handler context may be near expiry; the outer Ack() below ensures the message
 		// is removed from the queue regardless of this status-update outcome.
-		_ = w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, errMsg)
+		_ = w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &errMsg)
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 		if err := msg.Ack(); err != nil {
@@ -207,18 +236,26 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 	err := handler(handlerCtx, &task)
 	if err != nil {
 		logger.Error("task handler failed", "error", err)
-		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, err.Error()); updateErr != nil {
+		handlerErrMsg := err.Error()
+		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &handlerErrMsg); updateErr != nil {
 			logger.Error("failed to update task status to failed", "error", updateErr)
 		}
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-		if err := msg.Nak(); err != nil {
+		// Use exponential backoff when NAK-ing failed tasks.
+		var nakDelay_ time.Duration
+		if meta, metaErr := msg.Metadata(); metaErr == nil {
+			nakDelay_ = nakDelay(meta.NumDelivered)
+		} else {
+			nakDelay_ = nakDelays[0]
+		}
+		if err := msg.NakWithDelay(nakDelay_); err != nil {
 			logger.Warn("failed to nak task message after handler failure", "error", err)
 		}
 		return err
 	}
 
-	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusCompleted, task.Result, ""); err != nil {
+	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusCompleted, task.Result, nil); err != nil {
 		logger.Error("failed to update task status to completed", "error", err)
 	}
 
@@ -253,12 +290,15 @@ func (w *Worker) PublishTask(ctx context.Context, task *models.Task) error {
 }
 
 // updateTaskStatus updates the task status in the database.
-func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status models.TaskStatus, result json.RawMessage, errMsg string) error {
+// errMsg must be nil when there is no error message so that COALESCE($3, error_message)
+// correctly preserves the existing column value instead of overwriting it with an
+// empty string. Pass a non-nil pointer only when there is an actual error to record.
+func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status models.TaskStatus, result json.RawMessage, errMsg *string) error {
 	now := time.Now().UTC()
 
 	query := `
-		UPDATE tasks 
-		SET status = $1, 
+		UPDATE tasks
+		SET status = $1,
 		    result = COALESCE($2, result),
 		    error_message = COALESCE($3, error_message),
 		    started_at = COALESCE($4, started_at),

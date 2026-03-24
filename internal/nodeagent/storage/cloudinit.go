@@ -4,11 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
+
+// passwordHashRe matches common Unix password hash formats:
+// SHA-512 ($6$...), SHA-256 ($5$...), bcrypt ($2b$...), Argon2id ($argon2id$...).
+var passwordHashRe = regexp.MustCompile(`^\$[0-9a-z]+\$.+`)
+
+// validatePasswordHash validates that the given string looks like a Unix password hash.
+func validatePasswordHash(hash string) error {
+	if hash == "" {
+		return nil
+	}
+	if !passwordHashRe.MatchString(hash) {
+		return fmt.Errorf("root_password_hash does not appear to be a valid Unix password hash (must start with $id$)")
+	}
+	return nil
+}
 
 // cloudInitOutputDir is the default output directory for cloud-init ISO files.
 const cloudInitOutputDir = "/var/lib/virtuestack/cloud-init"
@@ -114,6 +133,11 @@ func (g *CloudInitGenerator) writeMetaData(tmpDir string, cfg *CloudInitConfig) 
 
 // writeUserData writes the cloud-init user-data (cloud-config) file to tmpDir.
 func (g *CloudInitGenerator) writeUserData(tmpDir string, cfg *CloudInitConfig) error {
+	// Validate the root password hash format before embedding it in YAML
+	if err := validatePasswordHash(cfg.RootPasswordHash); err != nil {
+		return fmt.Errorf("invalid root_password_hash for VM %s: %w", cfg.VMID, err)
+	}
+
 	var sb strings.Builder
 	sb.WriteString("#cloud-config\n")
 	sb.WriteString(fmt.Sprintf("hostname: %s\n", cfg.Hostname))
@@ -122,12 +146,16 @@ func (g *CloudInitGenerator) writeUserData(tmpDir string, cfg *CloudInitConfig) 
 	sb.WriteString("  expire: false\n")
 	sb.WriteString("  users:\n")
 	sb.WriteString("    - name: root\n")
-	sb.WriteString(fmt.Sprintf("      password: %s\n", cfg.RootPasswordHash))
+	// Quote the hash value to prevent YAML injection via special characters
+	sb.WriteString(fmt.Sprintf("      password: %q\n", cfg.RootPasswordHash))
 	sb.WriteString("      type: HASH\n")
 
 	if len(cfg.SSHPublicKeys) > 0 {
 		sb.WriteString("ssh_authorized_keys:\n")
 		for _, key := range cfg.SSHPublicKeys {
+			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key)); err != nil {
+				return fmt.Errorf("invalid SSH public key: %w", err)
+			}
 			sb.WriteString(fmt.Sprintf("  - %s\n", key))
 		}
 	}
@@ -140,8 +168,41 @@ func (g *CloudInitGenerator) writeUserData(tmpDir string, cfg *CloudInitConfig) 
 	return os.WriteFile(filepath.Join(tmpDir, "user-data"), []byte(sb.String()), 0644)
 }
 
+// validateCIDRHost validates that s is a valid CIDR address (IP/prefix) by checking
+// the host part with net.ParseIP after stripping the prefix length.
+func validateCIDRHost(s string) error {
+	if s == "" {
+		return nil
+	}
+	// s may be "192.0.2.1/24" or "2001:db8::1/64"
+	ip, _, err := net.ParseCIDR(s)
+	if err != nil || ip == nil {
+		return fmt.Errorf("invalid CIDR address %q", s)
+	}
+	return nil
+}
+
 // writeNetworkConfig writes the Netplan v2 network-config file to tmpDir.
 func (g *CloudInitGenerator) writeNetworkConfig(tmpDir string, cfg *CloudInitConfig) error {
+	// Validate all IP addresses before embedding them in YAML
+	if err := validateCIDRHost(cfg.IPv4Address); err != nil {
+		return fmt.Errorf("invalid IPv4 address for VM %s: %w", cfg.VMID, err)
+	}
+	if err := validateCIDRHost(cfg.IPv6Address); err != nil {
+		return fmt.Errorf("invalid IPv6 address for VM %s: %w", cfg.VMID, err)
+	}
+	if cfg.IPv4Gateway != "" && net.ParseIP(cfg.IPv4Gateway) == nil {
+		return fmt.Errorf("invalid IPv4 gateway %q for VM %s", cfg.IPv4Gateway, cfg.VMID)
+	}
+	if cfg.IPv6Gateway != "" && net.ParseIP(cfg.IPv6Gateway) == nil {
+		return fmt.Errorf("invalid IPv6 gateway %q for VM %s", cfg.IPv6Gateway, cfg.VMID)
+	}
+	for _, ns := range cfg.Nameservers {
+		if net.ParseIP(ns) == nil {
+			return fmt.Errorf("invalid nameserver %q for VM %s", ns, cfg.VMID)
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString("network:\n")
 	sb.WriteString("  version: 2\n")
@@ -150,25 +211,25 @@ func (g *CloudInitGenerator) writeNetworkConfig(tmpDir string, cfg *CloudInitCon
 	sb.WriteString("    ens3:\n")
 	sb.WriteString("      addresses:\n")
 	if cfg.IPv4Address != "" {
-		sb.WriteString(fmt.Sprintf("        - %s\n", cfg.IPv4Address))
+		sb.WriteString(fmt.Sprintf("        - %q\n", cfg.IPv4Address))
 	}
 	if cfg.IPv6Address != "" {
-		sb.WriteString(fmt.Sprintf("        - \"%s\"\n", cfg.IPv6Address))
+		sb.WriteString(fmt.Sprintf("        - %q\n", cfg.IPv6Address))
 	}
 	sb.WriteString("      routes:\n")
 	if cfg.IPv4Gateway != "" {
 		sb.WriteString("        - to: 0.0.0.0/0\n")
-		sb.WriteString(fmt.Sprintf("          via: %s\n", cfg.IPv4Gateway))
+		sb.WriteString(fmt.Sprintf("          via: %q\n", cfg.IPv4Gateway))
 	}
 	if cfg.IPv6Gateway != "" {
 		sb.WriteString("        - to: \"::/0\"\n")
-		sb.WriteString(fmt.Sprintf("          via: \"%s\"\n", cfg.IPv6Gateway))
+		sb.WriteString(fmt.Sprintf("          via: %q\n", cfg.IPv6Gateway))
 	}
 	if len(cfg.Nameservers) > 0 {
 		sb.WriteString("      nameservers:\n")
 		sb.WriteString("        addresses:\n")
 		for _, ns := range cfg.Nameservers {
-			sb.WriteString(fmt.Sprintf("          - %s\n", ns))
+			sb.WriteString(fmt.Sprintf("          - %q\n", ns))
 		}
 	}
 

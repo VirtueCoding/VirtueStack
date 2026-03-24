@@ -21,7 +21,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { adminVMsApi, adminNodesApi, adminCustomersApi, adminAuditLogsApi } from "@/lib/api-client";
+import { adminVMsApi, adminNodesApi, adminCustomersApi, adminAuditLogsApi, type AuditLog } from "@/lib/api-client";
 
 interface DashboardStats {
   totalVMs: number;
@@ -57,19 +57,19 @@ export default function DashboardPage() {
         adminAuditLogsApi.getAuditLogs(),
       ]);
 
-      const vms = results[0].status === 'fulfilled' ? results[0].value : [];
-      const nodes = results[1].status === 'fulfilled' ? results[1].value : [];
-      const customers = results[2].status === 'fulfilled' ? results[2].value : [];
-      const logsResult = results[3].status === 'fulfilled' ? results[3].value : { logs: [], total: 0 };
-      const logs = logsResult.logs || [];
+      const vmsResult = results[0].status === 'fulfilled' ? results[0].value : { data: [], meta: { total: 0 } };
+      const nodesResult = results[1].status === 'fulfilled' ? results[1].value : { data: [], meta: { total: 0 } };
+      const customersResult = results[2].status === 'fulfilled' ? results[2].value : { data: [], meta: { total: 0 } };
+      const logsResult = results[3].status === 'fulfilled' ? results[3].value : { data: [], meta: { total: 0 } };
+      const logs = logsResult.data || [];
 
       setStats({
-        totalVMs: vms.length,
-        totalNodes: nodes.length,
-        totalCustomers: customers.length,
+        totalVMs: vmsResult.meta.total,
+        totalNodes: nodesResult.meta.total,
+        totalCustomers: customersResult.meta.total,
       });
 
-      const mappedActivities: ActivityItem[] = logs.slice(0, 6).map((log) => {
+      const mappedActivities: ActivityItem[] = (logs as AuditLog[]).slice(0, 6).map((log) => {
         let type: "info" | "warning" | "success" | "error" = "info";
         if (!log.success) type = "error";
         else if (log.action.includes("create") || log.action.includes("start")) type = "success";

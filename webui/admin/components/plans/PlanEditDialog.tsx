@@ -40,7 +40,7 @@ export const editPlanSchema = z.object({
   port_speed_mbps: z.number().int().min(1, "Must be at least 1 Mbps").optional(),
   price_monthly: z.number().int().min(0, "Must be 0 or greater").optional(),
   price_hourly: z.number().int().min(0, "Must be 0 or greater").optional(),
-  storage_backend: z.enum(["ceph", "qcow"]).optional(),
+  storage_backend: z.enum(["ceph", "qcow", "lvm"]).optional(),
   is_active: z.boolean().optional(),
   sort_order: z.number().int().min(0, "Must be 0 or greater").optional(),
   snapshot_limit: z.number().int().min(0, "Must be 0 or greater").optional(),
@@ -112,7 +112,7 @@ export function PlanEditDialog({ open, onOpenChange, plan, onSave, isSaving }: P
         bandwidth_limit_gb: plan.bandwidth_limit_gb,
         price_monthly: plan.price_monthly,
         price_hourly: plan.price_hourly,
-        storage_backend: plan.storage_backend as "ceph" | "qcow",
+        storage_backend: plan.storage_backend as "ceph" | "qcow" | "lvm",
         is_active: plan.is_active,
         sort_order: plan.sort_order,
         snapshot_limit: plan.snapshot_limit,
@@ -386,7 +386,7 @@ export function PlanEditDialog({ open, onOpenChange, plan, onSave, isSaving }: P
                 </Label>
                 <Select
                   value={form.watch("storage_backend")}
-                  onValueChange={(value: "ceph" | "qcow") => form.setValue("storage_backend", value)}
+                  onValueChange={(value: "ceph" | "qcow" | "lvm") => form.setValue("storage_backend", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select backend" />
@@ -394,6 +394,7 @@ export function PlanEditDialog({ open, onOpenChange, plan, onSave, isSaving }: P
                   <SelectContent>
                     <SelectItem value="ceph">Ceph (RBD)</SelectItem>
                     <SelectItem value="qcow">Local QCOW2</SelectItem>
+                    <SelectItem value="lvm">LVM Thin</SelectItem>
                   </SelectContent>
                 </Select>
                 {form.formState.errors.storage_backend && (

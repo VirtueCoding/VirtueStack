@@ -560,20 +560,20 @@ func (s *NodeService) GetNodeStatus(ctx context.Context, nodeID string) (*models
 			status.UsedDiskGB = metrics.UsedDiskGB
 			status.LoadAverage = metrics.LoadAverage
 
-			if metrics.CephConnected {
-				status.CephStatus = "connected"
-				status.CephTotalGB = metrics.CephTotalGB
-				status.CephUsedGB = metrics.CephUsedGB
+			if metrics.StorageConnected {
+				status.StorageStatus = "connected"
+				status.StorageTotalGB = metrics.StorageTotalGB
+				status.StorageUsedGB = metrics.StorageUsedGB
 			} else {
-				status.CephStatus = "disconnected"
+				status.StorageStatus = "disconnected"
 			}
 		} else {
 			s.logger.Debug("failed to get real-time metrics from node agent",
 				"node_id", nodeID, "error", err)
-			status.CephStatus = "unknown"
+			status.StorageStatus = "unknown"
 		}
 	} else {
-		status.CephStatus = "unknown"
+		status.StorageStatus = "unknown"
 	}
 
 	return status, nil

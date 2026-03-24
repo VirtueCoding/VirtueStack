@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,20 +28,22 @@ const PAGE_SIZE = 20;
 
 export default function AuditLogsPage() {
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const loadLogs = useCallback(async (currentPage: number) => {
+  const loadLogs = useCallback(async (currentPage: number, search?: string) => {
     setLoading(true);
     try {
-      const data = await adminAuditLogsApi.getAuditLogs(currentPage, PAGE_SIZE);
-      setLogs(data.logs || []);
-      setTotal(data.total || 0);
+      const data = await adminAuditLogsApi.getAuditLogs(currentPage, PAGE_SIZE, search || undefined);
+      setLogs(data.data || []);
+      setTotal(data.meta?.total || 0);
     } catch {
       toast({
         title: "Error",
@@ -53,20 +55,21 @@ export default function AuditLogsPage() {
     }
   }, [toast]);
 
-  useEffect(() => {
-    loadLogs(page);
-  }, [page, loadLogs]);
+  // Debounce search term changes and reset to page 1
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(value);
+      setPage(1);
+    }, 400);
+  };
 
-  const filteredLogs = searchTerm.trim()
-    ? logs.filter(
-        (log) =>
-          log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          log.resource_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (log.resource_id && log.resource_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          (log.actor_id && log.actor_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          log.actor_type.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : logs;
+  useEffect(() => {
+    loadLogs(page, debouncedSearch);
+  }, [page, debouncedSearch, loadLogs]);
+
+  const filteredLogs = logs;
 
   function getActionBadgeVariant(action: string): "success" | "destructive" | "warning" | "secondary" {
     if (action.includes("create") || action.includes("start")) return "success";
@@ -144,7 +147,7 @@ export default function AuditLogsPage() {
                   placeholder="Search logs..."
                   className="pl-8"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                 />
               </div>
             </div>

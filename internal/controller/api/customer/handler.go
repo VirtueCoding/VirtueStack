@@ -21,6 +21,16 @@ type consoleTokenEntry struct {
 
 // consoleTokenStore is a short-lived, single-use token cache for console access.
 // Tokens are stored until first use or expiry.
+//
+// F-080: Multi-instance limitation — this is an in-memory, per-process store.
+// In a horizontally scaled deployment where multiple controller instances sit
+// behind a load balancer, a token issued by instance A cannot be validated by
+// instance B. Options for multi-instance deployments:
+//   - Encode the token as a signed JWT (verifiable without shared state), or
+//   - Move the store to a shared Redis cache.
+//
+// TODO: Replace with JWT-based console tokens or a Redis-backed store before
+// deploying behind multiple instances.
 type consoleTokenStore struct {
 	mu     sync.Mutex
 	tokens map[string]consoleTokenEntry

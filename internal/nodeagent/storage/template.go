@@ -34,20 +34,6 @@ const (
 	TemplateSnapshotSuffix = "-snap"
 )
 
-// TemplateInfo holds metadata about an RBD template image.
-type TemplateInfo struct {
-	// Name is the template name (e.g., "ubuntu-2204").
-	Name string
-	// SizeBytes is the size of the template in bytes.
-	SizeBytes uint64
-	// CreatedAt is the creation timestamp (from image metadata if available).
-	CreatedAt time.Time
-	// OSFamily is the operating system family (e.g., "ubuntu", "debian").
-	OSFamily string
-	// OSVersion is the operating system version (e.g., "22.04", "12").
-	OSVersion string
-}
-
 // TemplateManager handles OS template import and management for VM provisioning.
 // Templates are stored as RBD images in the vs-images pool with protected snapshots
 // for efficient copy-on-write cloning.
@@ -71,28 +57,29 @@ func NewTemplateManager(rbdManager *RBDManager, conn *rados.Conn, logger *slog.L
 // ImportTemplate imports a qcow2 template image into RBD storage.
 // The import flow:
 //  1. Convert qcow2 to raw format using qemu-img
-//  2. Import raw image to RBD as vs-images/<name>-base
-//  3. Create snapshot <name>-base@<name>-snap
+//  2. Import raw image to RBD as vs-images/<ref>-base
+//  3. Create snapshot <ref>-base@<ref>-snap
 //  4. Protect snapshot for cloning
 //
 // Parameters:
-//   - name: Template name (e.g., "ubuntu-2204")
-//   - osFamily: OS family (e.g., "ubuntu", "debian", "centos")
-//   - osVersion: OS version (e.g., "22.04", "12", "9")
+//   - ref: Template name/identifier (e.g., "ubuntu-2204")
 //   - sourcePath: Path to the qcow2 source file
-func (m *TemplateManager) ImportTemplate(ctx context.Context, name, osFamily, osVersion, sourcePath string) error {
-	logger := m.logger.With("template", name, "source", sourcePath)
+//   - meta: Optional metadata (OS family, version)
+//
+// Returns the RBD image reference and size in bytes.
+func (m *TemplateManager) ImportTemplate(ctx context.Context, ref, sourcePath string, meta TemplateMeta) (filePath string, sizeBytes int64, err error) {
+	logger := m.logger.With("template", ref, "source", sourcePath)
 	logger.Info("importing template")
 
 	// Validate source file exists
 	if _, err := os.Stat(sourcePath); err != nil {
-		return fmt.Errorf("importing template %s: source file not found: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: source file not found: %w", ref, err)
 	}
 
 	// Create temporary directory for conversion
-	tmpDir, err := os.MkdirTemp("", "template-import-"+name+"-*")
+	tmpDir, err := os.MkdirTemp("", "template-import-"+ref+"-*")
 	if err != nil {
-		return fmt.Errorf("importing template %s: creating temp dir: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: creating temp dir: %w", ref, err)
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
@@ -101,23 +88,23 @@ func (m *TemplateManager) ImportTemplate(ctx context.Context, name, osFamily, os
 	}()
 
 	// Convert qcow2 to raw
-	rawPath := filepath.Join(tmpDir, name+".raw")
+	rawPath := filepath.Join(tmpDir, ref+".raw")
 	if err := m.convertToRaw(ctx, sourcePath, rawPath, logger); err != nil {
-		return fmt.Errorf("importing template %s: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: %w", ref, err)
 	}
 
 	// Import raw to RBD
-	imageName := name + TemplateImageSuffix
+	imageName := ref + TemplateImageSuffix
 	if err := m.importRawToRBD(ctx, rawPath, imageName, logger); err != nil {
-		return fmt.Errorf("importing template %s: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: %w", ref, err)
 	}
 
 	// Create snapshot
-	snapName := name + TemplateSnapshotSuffix
+	snapName := ref + TemplateSnapshotSuffix
 	if err := m.createTemplateSnapshot(ctx, imageName, snapName, logger); err != nil {
 		// Cleanup: remove imported image on failure
 		_ = m.removeImage(TemplatePool, imageName)
-		return fmt.Errorf("importing template %s: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: %w", ref, err)
 	}
 
 	// Protect snapshot (required for cloning)
@@ -125,42 +112,53 @@ func (m *TemplateManager) ImportTemplate(ctx context.Context, name, osFamily, os
 		// Cleanup: remove snapshot and image on failure
 		_ = m.removeSnapshot(TemplatePool, imageName, snapName)
 		_ = m.removeImage(TemplatePool, imageName)
-		return fmt.Errorf("importing template %s: %w", name, err)
+		return "", 0, fmt.Errorf("importing template %s: %w", ref, err)
 	}
 
-	logger.Info("template imported successfully", "image", imageName, "snapshot", snapName)
-	return nil
+	// Get the size of the imported template
+	size, err := m.getImageSize(TemplatePool, imageName)
+	if err != nil {
+		logger.Warn("failed to get template size after import", "error", err)
+		size = 0
+	}
+
+	// Return the RBD image reference (pool/image format)
+	rbdRef := TemplatePool + "/" + imageName
+	logger.Info("template imported successfully", "image", imageName, "snapshot", snapName, "size", size)
+	return rbdRef, size, nil
 }
 
 // CloneForVM clones a template snapshot to create a new VM disk.
 // This is an instant copy-on-write operation.
 //
 // Parameters:
-//   - templateName: Template name (e.g., "ubuntu-2204")
-//   - vmName: VM name/identifier for the disk
+//   - templateRef: Template name (e.g., "ubuntu-2204")
+//   - vmID: VM identifier for the disk
 //   - sizeGB: Target disk size in GB (will resize if larger than template)
-func (m *TemplateManager) CloneForVM(ctx context.Context, templateName, vmName string, sizeGB int) error {
-	logger := m.logger.With("template", templateName, "vm", vmName, "size_gb", sizeGB)
+//
+// Returns the RBD image name for the VM disk.
+func (m *TemplateManager) CloneForVM(ctx context.Context, templateRef, vmID string, sizeGB int) (string, error) {
+	logger := m.logger.With("template", templateRef, "vm", vmID, "size_gb", sizeGB)
 	logger.Info("cloning template for VM")
 
-	sourceImage := templateName + TemplateImageSuffix
-	snapName := templateName + TemplateSnapshotSuffix
-	targetImage := fmt.Sprintf(VMDiskNameFmt, vmName)
+	sourceImage := templateRef + TemplateImageSuffix
+	snapName := templateRef + TemplateSnapshotSuffix
+	targetImage := fmt.Sprintf(VMDiskNameFmt, vmID)
 
 	// Clone from template snapshot
 	if err := m.rbdManager.CloneFromTemplate(ctx, TemplatePool, sourceImage, snapName, targetImage); err != nil {
-		return fmt.Errorf("cloning template %s for VM %s: %w", templateName, vmName, err)
+		return "", fmt.Errorf("cloning template %s for VM %s: %w", templateRef, vmID, err)
 	}
 
 	// Resize if needed (VM disk is typically larger than template)
 	if err := m.rbdManager.Resize(ctx, targetImage, sizeGB); err != nil {
 		// Cleanup: remove cloned image on failure
 		_ = m.rbdManager.Delete(ctx, targetImage)
-		return fmt.Errorf("resizing cloned disk for VM %s: %w", vmName, err)
+		return "", fmt.Errorf("resizing cloned disk for VM %s: %w", vmID, err)
 	}
 
 	logger.Info("template cloned successfully", "target", targetImage)
-	return nil
+	return targetImage, nil
 }
 
 // DeleteTemplate removes a template from RBD storage.
@@ -198,13 +196,14 @@ func (m *TemplateManager) TemplateExists(ctx context.Context, templateName strin
 }
 
 // GetTemplateSize returns the size of a template in bytes.
-func (m *TemplateManager) GetTemplateSize(ctx context.Context, templateName string) (uint64, error) {
-	imageName := templateName + TemplateImageSuffix
+// ref is the template name (without suffix).
+func (m *TemplateManager) GetTemplateSize(ctx context.Context, ref string) (int64, error) {
+	imageName := ref + TemplateImageSuffix
 	size, err := m.getImageSize(TemplatePool, imageName)
 	if err != nil {
-		return 0, fmt.Errorf("getting template %s size: %w", templateName, err)
+		return 0, fmt.Errorf("getting template %s size: %w", ref, err)
 	}
-	return uint64(size), nil
+	return size, nil
 }
 
 // ListTemplates lists all available templates in RBD storage.
@@ -237,7 +236,8 @@ func (m *TemplateManager) ListTemplates(ctx context.Context) ([]TemplateInfo, er
 
 		templates = append(templates, TemplateInfo{
 			Name:      templateName,
-			SizeBytes: uint64(size),
+			FilePath:  TemplatePool + "/" + name,
+			SizeBytes: size,
 			CreatedAt: time.Time{}, // No reliable way to get creation time from RBD
 		})
 	}

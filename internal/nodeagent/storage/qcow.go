@@ -12,6 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
+)
+
+const (
+	// qemuImgTimeout is the default timeout for qemu-img commands.
+	qemuImgTimeout = 5 * time.Minute
 )
 
 // QCOWManager handles file-based QCOW2 operations for VM disk management.
@@ -88,13 +94,20 @@ func (m *QCOWManager) CloneFromTemplate(ctx context.Context, sourcePool, sourceI
 		templatePath = filepath.Join(m.basePath, sourcePool, sourceImage)
 	}
 
-	// Verify template exists
-	if _, err := os.Stat(templatePath); err != nil {
-		if os.IsNotExist(err) {
-			return NewStorageError(ErrCodeNotFound, fmt.Sprintf("template %q", templatePath), err)
-		}
-		return fmt.Errorf("checking template %q: %w", templatePath, err)
+	// Validate path to prevent directory traversal
+	cleanTemplate := filepath.Clean(templatePath)
+	if !strings.HasPrefix(cleanTemplate, m.basePath+string(filepath.Separator)) && cleanTemplate != m.basePath {
+		return fmt.Errorf("template path %q is outside the allowed base directory %q", cleanTemplate, m.basePath)
 	}
+
+	// Verify template exists
+	if _, err := os.Stat(cleanTemplate); err != nil {
+		if os.IsNotExist(err) {
+			return NewStorageError(ErrCodeNotFound, fmt.Sprintf("template %q", cleanTemplate), err)
+		}
+		return fmt.Errorf("checking template %q: %w", cleanTemplate, err)
+	}
+	templatePath = cleanTemplate
 
 	// Target disk path
 	targetPath := m.imagePath(targetImage)
@@ -127,11 +140,25 @@ func (m *QCOWManager) CloneSnapshotToPool(ctx context.Context, sourcePool, sourc
 		sourcePath = filepath.Join(m.basePath, sourcePool, sourceImage)
 	}
 
+	// Validate source path to prevent directory traversal
+	cleanSource := filepath.Clean(sourcePath)
+	if !strings.HasPrefix(cleanSource, m.basePath+string(filepath.Separator)) && cleanSource != m.basePath {
+		return fmt.Errorf("source path %q is outside the allowed base directory %q", cleanSource, m.basePath)
+	}
+	sourcePath = cleanSource
+
 	// Construct target path
 	targetPath := filepath.Join(targetPool, targetImage)
 	if !filepath.IsAbs(targetPool) {
 		targetPath = filepath.Join(m.basePath, targetPool, targetImage)
 	}
+
+	// Validate target path to prevent directory traversal
+	cleanTarget := filepath.Clean(targetPath)
+	if !strings.HasPrefix(cleanTarget, m.basePath+string(filepath.Separator)) && cleanTarget != m.basePath {
+		return fmt.Errorf("target path %q is outside the allowed base directory %q", cleanTarget, m.basePath)
+	}
+	targetPath = cleanTarget
 
 	logger := m.logger.With("source", sourcePath, "target", targetPath)
 	logger.Info("cloning disk to target pool")
@@ -271,21 +298,19 @@ func (m *QCOWManager) DeleteSnapshot(ctx context.Context, imageName, snapshotNam
 }
 
 // ProtectSnapshot marks a snapshot as protected.
-// Note: QCOW2 does not support snapshot protection natively.
-// This method returns an error indicating the limitation.
+// Note: QCOW2 does not require explicit snapshot protection for cloning.
+// This method is a no-op for compatibility with the gRPC interface.
 func (m *QCOWManager) ProtectSnapshot(ctx context.Context, imageName, snapshotName string) error {
-	return NewStorageError(ErrCodeInternal,
-		"QCOW2 does not support snapshot protection natively; consider using file permissions or external tracking",
-		nil)
+	m.logger.Debug("ProtectSnapshot called on QCOW2 backend (no-op)", "image", imageName, "snapshot", snapshotName)
+	return nil
 }
 
 // UnprotectSnapshot removes protection from a snapshot.
-// Note: QCOW2 does not support snapshot protection natively.
-// This method returns an error indicating the limitation.
+// Note: QCOW2 does not require explicit snapshot protection for cloning.
+// This method is a no-op for compatibility with the gRPC interface.
 func (m *QCOWManager) UnprotectSnapshot(ctx context.Context, imageName, snapshotName string) error {
-	return NewStorageError(ErrCodeInternal,
-		"QCOW2 does not support snapshot protection natively",
-		nil)
+	m.logger.Debug("UnprotectSnapshot called on QCOW2 backend (no-op)", "image", imageName, "snapshot", snapshotName)
+	return nil
 }
 
 // ListSnapshots returns all internal snapshots of a QCOW2 image.
@@ -501,6 +526,17 @@ func (m *QCOWManager) GetStorageType() StorageType {
 	return StorageTypeQCOW
 }
 
+// BasePath returns the base directory for QCOW images.
+func (m *QCOWManager) BasePath() string {
+	return m.basePath
+}
+
+// DiskIdentifier returns the canonical file path for a VM disk.
+// The format is "{basePath}/vms/{vmID}-disk0.qcow2".
+func (m *QCOWManager) DiskIdentifier(vmID string) string {
+	return filepath.Join(m.basePath, "vms", fmt.Sprintf("%s-disk0.qcow2", vmID))
+}
+
 // CreateImage creates a new empty QCOW2 image of the specified size.
 // This is an additional helper method not part of StorageBackend interface.
 func (m *QCOWManager) CreateImage(ctx context.Context, imageName string, sizeGB int) error {
@@ -553,8 +589,7 @@ type QCOWImageInfo struct {
 }
 
 // GetImageInfo returns detailed information about a QCOW2 image.
-// This is an additional helper method not part of StorageBackend interface.
-func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (*QCOWImageInfo, error) {
+func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (*ImageInfo, error) {
 	imagePath := m.imagePath(imageName)
 
 	// Verify image exists
@@ -577,6 +612,38 @@ func (m *QCOWManager) GetImageInfo(ctx context.Context, imageName string) (*QCOW
 		return nil, fmt.Errorf("parsing image info for %s: %w", imageName, err)
 	}
 
-	return &info, nil
+	return &ImageInfo{
+		Filename:          info.Filename,
+		Format:           info.Format,
+		VirtualSizeBytes: info.VirtualSize,
+		ActualSizeBytes:  info.ActualSize,
+		DirtyFlag:        info.DirtyFlag,
+		ClusterSize:      int64(info.ClusterSize),
+		BackingFile:      info.BackingFile,
+	}, nil
+}
+
+// HealthCheck verifies that the QCOW storage backend is accessible and has sufficient space.
+// Returns nil if healthy, or an error describing the issue.
+func (m *QCOWManager) HealthCheck(ctx context.Context) error {
+	// Check that base path is accessible
+	if _, err := os.Stat(m.basePath); err != nil {
+		return fmt.Errorf("base path %q not accessible: %w", m.basePath, err)
+	}
+
+	// Check filesystem capacity using syscall.Statfs
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(m.basePath, &stat); err != nil {
+		return fmt.Errorf("checking filesystem stats for %q: %w", m.basePath, err)
+	}
+
+	// Calculate free space in GB
+	freeGB := int64(stat.Bavail) * int64(stat.Bsize) / (1024 * 1024 * 1024)
+	if freeGB < 10 {
+		// Warn if less than 10GB free, but don't fail
+		m.logger.Warn("QCOW storage backend has low free space", "free_gb", freeGB)
+	}
+
+	return nil
 }
 

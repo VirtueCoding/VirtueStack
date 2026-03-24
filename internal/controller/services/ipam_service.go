@@ -52,23 +52,31 @@ func (s *IPAMService) AllocateIPv4(ctx context.Context, locationID, vmID, custom
 		return nil, fmt.Errorf("no IPv4 IP set found for location %s", locationID)
 	}
 
-	// Use the first available IP set
-	ipSet := ipSets[0]
+	// Iterate through all available IP sets and attempt allocation in each until
+	// one succeeds (F-060). This handles the case where a set is exhausted.
+	var lastErr error
+	for _, ipSet := range ipSets {
+		ip, err := s.ipRepo.AllocateIPv4(ctx, ipSet.ID, vmID, customerID)
+		if err != nil {
+			lastErr = err
+			s.logger.Warn("failed to allocate IPv4 from set, trying next",
+				"ip_set_id", ipSet.ID,
+				"location_id", locationID,
+				"error", err)
+			continue
+		}
 
-	// Allocate an IP from the set
-	ip, err := s.ipRepo.AllocateIPv4(ctx, ipSet.ID, vmID, customerID)
-	if err != nil {
-		return nil, fmt.Errorf("allocating IPv4 from set %s: %w", ipSet.ID, err)
+		s.logger.Info("IPv4 allocated",
+			"ip_id", ip.ID,
+			"address", ip.Address,
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"ip_set_id", ipSet.ID)
+
+		return ip, nil
 	}
 
-	s.logger.Info("IPv4 allocated",
-		"ip_id", ip.ID,
-		"address", ip.Address,
-		"vm_id", vmID,
-		"customer_id", customerID,
-		"ip_set_id", ipSet.ID)
-
-	return ip, nil
+	return nil, fmt.Errorf("all IPv4 sets exhausted for location %s: %w", locationID, lastErr)
 }
 
 // ReleaseIPv4 releases an IPv4 address and puts it into cooldown for reuse.

@@ -49,6 +49,15 @@ const (
 // DestructiveActions maps operations that require re-authentication.
 // These actions have significant or irreversible impact on resources.
 // A map is used for O(1) lookup instead of linear scan.
+//
+// MANDATORY: Any HTTP handler that performs an action listed in DestructiveActions
+// MUST call RBACService.RequireReauthForDestructive (or the CheckReAuth middleware)
+// before executing the operation. Failure to do so bypasses the re-authentication
+// guard entirely — the RBAC service cannot enforce this automatically because it
+// has no visibility into the HTTP layer (F-084).
+//
+// A future improvement would be to move this check into a RequireReAuth middleware
+// that wraps all destructive routes, eliminating per-handler enforcement.
 var DestructiveActions = map[string]bool{
 	ActionDelete:    true,
 	ActionForceStop: true,

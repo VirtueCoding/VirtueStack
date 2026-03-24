@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"net"
 	"strings"
 	"text/template"
 )
@@ -14,6 +15,8 @@ const (
 	StorageBackendCeph = "ceph"
 	// StorageBackendQcow indicates local QCOW2 file-based storage.
 	StorageBackendQcow = "qcow"
+	// StorageBackendLVM indicates LVM thin-provisioned block storage.
+	StorageBackendLVM = "lvm"
 )
 
 // DefaultCephMonitorPort is the default TCP port for Ceph monitor daemons.
@@ -45,6 +48,12 @@ type DomainConfig struct {
 	// DiskPath is the full path to the QCOW2 disk file for file-based storage.
 	// Required when StorageBackend is "qcow".
 	DiskPath string
+	// LVMDiskPath is the full path to the LVM logical volume block device.
+	// Required when StorageBackend is "lvm".
+	LVMDiskPath string
+	// LVMVolumeGroup is the LVM volume group name for the VM disk.
+	// Used for metadata tracking when StorageBackend is "lvm".
+	LVMVolumeGroup string
 	// CephPool is the Ceph pool name for the VM disk (e.g., "vs-vms").
 	// Required when StorageBackend is "ceph".
 	CephPool string
@@ -243,6 +252,8 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 		diskXML, err = generateRBDDiskXML(cfg)
 	case StorageBackendQcow:
 		diskXML, err = generateFileDiskXML(cfg)
+	case StorageBackendLVM:
+		diskXML, err = generateLVMDiskXML(cfg)
 	default:
 		return "", fmt.Errorf("unsupported storage backend: %s", backend)
 	}
@@ -253,6 +264,11 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 	tmpl, err := template.New("domain").Parse(domainXMLTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parsing domain template: %w", err)
+	}
+
+	emulatorPath := cfg.EmulatorPath
+	if emulatorPath == "" {
+		emulatorPath = DefaultEmulatorPath
 	}
 
 	data := templateData{
@@ -267,13 +283,8 @@ func GenerateDomainXML(cfg *DomainConfig) (string, error) {
 		PortSpeedKbps:     cfg.PortSpeedKbps,
 		BurstKB:           cfg.BurstKB,
 		HasBandwidthLimit: cfg.PortSpeedKbps > 0,
-		CloudInitISOPath:  cfg.CloudInitISOPath,
-		EmulatorPath:      cfg.EmulatorPath,
-	}
-
-	// Set default emulator path if not specified
-	if data.EmulatorPath == "" {
-		data.EmulatorPath = DefaultEmulatorPath
+		CloudInitISOPath:  escapeXML(cfg.CloudInitISOPath),
+		EmulatorPath:      escapeXML(emulatorPath),
 	}
 
 	var buf bytes.Buffer
@@ -319,6 +330,8 @@ func validateDomainConfig(cfg *DomainConfig) error {
 		return validateCephConfig(cfg)
 	case StorageBackendQcow:
 		return validateQcowConfig(cfg)
+	case StorageBackendLVM:
+		return validateLVMConfig(cfg)
 	default:
 		return fmt.Errorf("unsupported storage backend: %s", backend)
 	}
@@ -357,6 +370,15 @@ func validateQcowConfig(cfg *DomainConfig) error {
 	return nil
 }
 
+// validateLVMConfig validates fields required for LVM block storage.
+func validateLVMConfig(cfg *DomainConfig) error {
+	if cfg.LVMDiskPath == "" {
+		return fmt.Errorf("missing LVMDiskPath for lvm storage backend")
+	}
+
+	return nil
+}
+
 // domainName returns the libvirt domain name for a VM.
 func domainName(vmID string) string {
 	return "vs-" + vmID
@@ -387,7 +409,19 @@ func escapeXML(s string) string {
 func generateRBDDiskXML(cfg *DomainConfig) (string, error) {
 	var hostsXML strings.Builder
 	for _, monitor := range cfg.CephMonitors {
-		hostsXML.WriteString(fmt.Sprintf("\n        <host name='%s' port='%s'/>", escapeXML(monitor), DefaultCephMonitorPort))
+		// Validate each monitor address as either "host:port" or a plain IP/hostname.
+		// Accept both "ip:port" and bare "ip" forms; supply default port if absent.
+		host := monitor
+		port := DefaultCephMonitorPort
+		if h, p, err := net.SplitHostPort(monitor); err == nil {
+			host = h
+			port = p
+		}
+		// Validate the host part is a valid IP address
+		if net.ParseIP(host) == nil {
+			return "", fmt.Errorf("invalid Ceph monitor address %q: host part %q is not a valid IP address", monitor, host)
+		}
+		hostsXML.WriteString(fmt.Sprintf("\n        <host name='%s' port='%s'/>", escapeXML(host), escapeXML(port)))
 	}
 
 	return fmt.Sprintf(`    <disk type='network' device='disk'>
@@ -416,5 +450,17 @@ func generateFileDiskXML(cfg *DomainConfig) (string, error) {
       <target dev='vda' bus='virtio'/>
     </disk>`,
 		escapeXML(cfg.DiskPath),
+	), nil
+}
+
+// generateLVMDiskXML generates the disk XML element for LVM block storage.
+// Uses block device with discard support for thin pool space reclamation.
+func generateLVMDiskXML(cfg *DomainConfig) (string, error) {
+	return fmt.Sprintf(`    <disk type='block' device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
+      <source dev='%s'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>`,
+		escapeXML(cfg.LVMDiskPath),
 	), nil
 }

@@ -217,7 +217,8 @@ export default function TemplatesPage() {
       });
       closeDialog();
       // Reload templates to get updated status
-      setTimeout(loadTemplates, 2000);
+      const reloadId = setTimeout(loadTemplates, 2000);
+      return () => clearTimeout(reloadId);
     } catch (err) {
       toast({
         title: "Error",

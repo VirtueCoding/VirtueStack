@@ -190,11 +190,3 @@ func WithCustomerContextFunc(ctx context.Context, db DB, customerID string, fn f
 // the repository package.
 var ErrNoRowsAffected = apierrors.ErrNoRowsAffected
 
-// mapNotFound converts pgx.ErrNoRows to apierrors.ErrNotFound.
-// All other errors are returned as-is.
-func mapNotFound(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return apierrors.ErrNotFound
-	}
-	return err
-}

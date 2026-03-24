@@ -58,8 +58,8 @@ export default function VMsPage() {
   useEffect(() => {
     async function fetchVMs() {
       try {
-        const data = await adminVMsApi.getVMs();
-        setVMs(data || []);
+        const response = await adminVMsApi.getVMs();
+        setVMs(response.data || []);
       } catch (err) {
         toast({
           title: "Error",
@@ -113,8 +113,8 @@ export default function VMsPage() {
         description: `VM is being provisioned. Task ID: ${result.task_id}`,
       });
       // Refresh the list to show the new VM
-      const updatedVMs = await adminVMsApi.getVMs();
-      setVMs(updatedVMs || []);
+      const updatedResponse = await adminVMsApi.getVMs();
+      setVMs(updatedResponse.data || []);
     } catch (error) {
       throw error;
     } finally {
@@ -132,8 +132,8 @@ export default function VMsPage() {
         description: `VM "${editVM.name}" has been updated.`,
       });
       // Refresh the list
-      const updatedVMs = await adminVMsApi.getVMs();
-      setVMs(updatedVMs || []);
+      const updatedResponse = await adminVMsApi.getVMs();
+      setVMs(updatedResponse.data || []);
     } catch (error) {
       throw error;
     } finally {

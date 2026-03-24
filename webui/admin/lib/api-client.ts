@@ -66,10 +66,11 @@ function getCsrfToken(): string | null {
 }
 
 async function fetchCsrfToken(): Promise<void> {
-  // Use a dedicated lightweight endpoint to bootstrap the CSRF cookie.
-  // The server sets the CSRF cookie on any response; we use a cheap endpoint.
+  // Use the /admin/auth/me endpoint to bootstrap the CSRF cookie.
+  // The server sets the CSRF cookie on any response; we use this lightweight
+  // endpoint instead of the non-existent /admin/auth/csrf route.
   try {
-    await fetch(`${API_BASE_URL}/admin/auth/csrf`, {
+    await fetch(`${API_BASE_URL}/admin/auth/me`, {
       method: 'GET',
       credentials: 'include',
     });
@@ -356,7 +357,7 @@ export interface Node {
   id: string;
   name: string;
   hostname: string;
-  status: "online" | "offline" | "draining" | "failed";
+  status: "online" | "offline" | "draining" | "degraded" | "failed";
   location: string;
   vm_count: number;
   cpu_total: number;
@@ -390,9 +391,6 @@ export interface CreateNodeRequest {
   location_id?: string;
   total_vcpu: number;
   total_memory_mb: number;
-  storage_backend: "ceph" | "qcow";
-  storage_path?: string;
-  ceph_pool?: string;
   ipmi_address?: string;
   ipmi_username?: string;
   ipmi_password?: string;
@@ -404,13 +402,11 @@ export interface UpdateNodeRequest {
   total_vcpu?: number;
   total_memory_mb?: number;
   ipmi_address?: string;
-  storage_backend?: "ceph" | "qcow";
-  storage_path?: string;
 }
 
 export const adminNodesApi = {
-  async getNodes(): Promise<Node[]> {
-    return apiClient.get<Node[]>("/admin/nodes");
+  async getNodes(): Promise<PaginatedResponse<Node>> {
+    return apiClient.get<PaginatedResponse<Node>>("/admin/nodes");
   },
 
   async getNode(id: string): Promise<NodeDetail> {
@@ -429,12 +425,16 @@ export const adminNodesApi = {
     return apiClient.deleteVoid(`/admin/nodes/${id}`);
   },
 
-  async drainNode(id: string): Promise<void> {
-    return apiClient.postVoid(`/admin/nodes/${id}/drain`, {});
+  async drainNode(id: string): Promise<{ status: string }> {
+    return apiClient.post<{ status: string }>(`/admin/nodes/${id}/drain`, {});
   },
 
-  async failoverNode(id: string): Promise<void> {
-    return apiClient.postVoid(`/admin/nodes/${id}/failover`, {});
+  async failoverNode(id: string): Promise<{ status: string }> {
+    return apiClient.post<{ status: string }>(`/admin/nodes/${id}/failover`, {});
+  },
+
+  async undrainNode(id: string): Promise<{ status: string }> {
+    return apiClient.post<{ status: string }>(`/admin/nodes/${id}/undrain`, {});
   },
 };
 
@@ -460,8 +460,8 @@ export interface UpdateCustomerRequest {
 }
 
 export const adminCustomersApi = {
-  async getCustomers(): Promise<Customer[]> {
-    return apiClient.get<Customer[]>("/admin/customers");
+  async getCustomers(): Promise<PaginatedResponse<Customer>> {
+    return apiClient.get<PaginatedResponse<Customer>>("/admin/customers");
   },
 
   async getCustomer(id: string): Promise<Customer> {
@@ -476,12 +476,12 @@ export const adminCustomersApi = {
     return apiClient.put<Customer>(`/admin/customers/${id}`, data);
   },
 
-  async suspendCustomer(id: string): Promise<void> {
-    return apiClient.postVoid(`/admin/customers/${id}/suspend`, {});
+  async suspendCustomer(id: string): Promise<Customer> {
+    return apiClient.put<Customer>(`/admin/customers/${id}`, { status: 'suspended' });
   },
 
-  async unsuspendCustomer(id: string): Promise<void> {
-    return apiClient.postVoid(`/admin/customers/${id}/unsuspend`, {});
+  async unsuspendCustomer(id: string): Promise<Customer> {
+    return apiClient.put<Customer>(`/admin/customers/${id}`, { status: 'active' });
   },
 
   async deleteCustomer(id: string): Promise<void> {
@@ -521,7 +521,7 @@ export interface CreatePlanRequest {
   port_speed_mbps: number;
   price_monthly?: number;
   price_hourly?: number;
-  storage_backend?: "ceph" | "qcow";
+  storage_backend?: "ceph" | "qcow" | "lvm";
   is_active?: boolean;
   sort_order?: number;
   snapshot_limit?: number;
@@ -539,7 +539,7 @@ export interface UpdatePlanRequest {
   port_speed_mbps?: number;
   price_monthly?: number;
   price_hourly?: number;
-  storage_backend?: "ceph" | "qcow";
+  storage_backend?: "ceph" | "qcow" | "lvm";
   is_active?: boolean;
   sort_order?: number;
   snapshot_limit?: number;
@@ -552,8 +552,9 @@ export const adminPlansApi = {
     return apiClient.get<Plan[]>("/admin/plans");
   },
 
-  async getPlan(id: string): Promise<Plan> {
-    return apiClient.get<Plan>(`/admin/plans/${id}`);
+  async getPlan(id: string): Promise<Plan | undefined> {
+    const plans = await this.getPlans();
+    return plans.find((p) => p.id === id);
   },
 
   async getPlanUsage(id: string): Promise<{ plan_id: string; vm_count: number }> {
@@ -587,8 +588,13 @@ export interface AuditLog {
 }
 
 export const adminAuditLogsApi = {
-  async getAuditLogs(page = 1, perPage = 20): Promise<{ logs: AuditLog[]; total: number }> {
-    return apiClient.get<{ logs: AuditLog[]; total: number }>(`/admin/audit-logs?page=${page}&per_page=${perPage}`);
+  async getAuditLogs(page = 1, perPage = 20, search?: string): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    if (search) searchParams.set("search", search);
+    return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/audit-logs?${searchParams.toString()}`);
   },
 };
 
@@ -597,6 +603,9 @@ export interface VM {
   name: string;
   customer_id: string;
   node_id: string;
+  plan_id?: string;
+  template_id?: string;
+  ip_addresses?: string[];
   status: string;
   created_at: string;
   hostname?: string;
@@ -633,8 +642,8 @@ export interface CreateVMResponse {
 }
 
 export const adminVMsApi = {
-  async getVMs(): Promise<VM[]> {
-    return apiClient.get<VM[]>('/admin/vms');
+  async getVMs(): Promise<PaginatedResponse<VM>> {
+    return apiClient.get<PaginatedResponse<VM>>('/admin/vms');
   },
 
   async getVM(id: string): Promise<VM> {
@@ -653,8 +662,24 @@ export const adminVMsApi = {
     return apiClient.deleteVoid(`/admin/vms/${id}`);
   },
 
-  async migrateVM(id: string, data: { target_node_id: string }): Promise<{ message: string }> {
-    return apiClient.post<{ message: string }>(`/admin/vms/${id}/migrate`, data);
+  async migrateVM(id: string, data: { target_node_id: string }): Promise<{ vm_id: string; target_node_id: string; task_id: string; status: string }> {
+    return apiClient.post<{ vm_id: string; target_node_id: string; task_id: string; status: string }>(`/admin/vms/${id}/migrate`, data);
+  },
+
+  async getVMIPs(id: string): Promise<{ id: string; address: string; rdns?: string }[]> {
+    return apiClient.get<{ id: string; address: string; rdns?: string }[]>(`/admin/vms/${id}/ips`);
+  },
+
+  async getIPRDNS(vmId: string, ipId: string): Promise<{ ip_id: string; rdns: string }> {
+    return apiClient.get<{ ip_id: string; rdns: string }>(`/admin/vms/${vmId}/ips/${ipId}/rdns`);
+  },
+
+  async updateIPRDNS(vmId: string, ipId: string, rdns: string): Promise<{ ip_id: string; rdns: string }> {
+    return apiClient.put<{ ip_id: string; rdns: string }>(`/admin/vms/${vmId}/ips/${ipId}/rdns`, { rdns });
+  },
+
+  async deleteIPRDNS(vmId: string, ipId: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/vms/${vmId}/ips/${ipId}/rdns`);
   },
 };
 
@@ -669,9 +694,9 @@ export const adminSettingsApi = {
     return apiClient.get<SystemSetting[]>("/admin/settings");
   },
 
-  async getSetting(key: string): Promise<string> {
-    const result = await apiClient.get<{ key: string; value: string }>(`/admin/settings/${key}`);
-    return result.value;
+  async getSetting(key: string): Promise<string | undefined> {
+    const settings = await this.getSettings();
+    return settings.find((s) => s.key === key)?.value;
   },
 
   async putSetting(key: string, value: string): Promise<SystemSetting> {
@@ -722,7 +747,20 @@ export const adminTemplatesApi = {
     return apiClient.get<Template>(`/admin/templates/${id}`);
   },
 
-  async createTemplate(data: { name: string; os_family: string; rbd_image?: string }): Promise<Template> {
+  async createTemplate(data: {
+    name: string;
+    os_family: string;
+    os_version?: string;
+    rbd_image?: string;
+    rbd_snapshot?: string;
+    min_disk_gb?: number;
+    supports_cloudinit?: boolean;
+    is_active?: boolean;
+    sort_order?: number;
+    description?: string;
+    storage_backend?: "ceph" | "qcow";
+    file_path?: string;
+  }): Promise<Template> {
     return apiClient.post<Template>("/admin/templates", data);
   },
 
@@ -734,8 +772,13 @@ export const adminTemplatesApi = {
     return apiClient.deleteVoid(`/admin/templates/${id}`);
   },
 
-  async importTemplate(id: string): Promise<{ message: string }> {
-    return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, {});
+  async importTemplate(id: string, data: {
+    name?: string;
+    os_family?: string;
+    os_version?: string;
+    source_path?: string;
+  } = {}): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, data);
   },
 };
 
@@ -782,8 +825,8 @@ export interface PaginatedResponse<T> {
 export const adminBackupsApi = {
   async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
     const searchParams = new URLSearchParams();
-    if (params.page) searchParams.set("page", String(params.page));
-    if (params.per_page) searchParams.set("per_page", String(params.per_page));
+    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.customer_id) searchParams.set("customer_id", params.customer_id);
     if (params.vm_id) searchParams.set("vm_id", params.vm_id);
     if (params.status) searchParams.set("status", params.status);
@@ -974,5 +1017,174 @@ export const adminIPSetsApi = {
     return apiClient.get<PaginatedResponse<{ id: string; address: string }>>(
       `/admin/ip-sets/${id}/available?page=${page}&per_page=${perPage}`
     );
+  },
+};
+
+// ============================================================================
+// Admin Failover Requests API
+// ============================================================================
+
+export interface FailoverRequest {
+  id: string;
+  node_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const adminFailoverRequestsApi = {
+  async getFailoverRequests(): Promise<FailoverRequest[]> {
+    return apiClient.get<FailoverRequest[]>("/admin/failover-requests");
+  },
+
+  async getFailoverRequest(id: string): Promise<FailoverRequest> {
+    return apiClient.get<FailoverRequest>(`/admin/failover-requests/${id}`);
+  },
+};
+
+// ============================================================================
+// Per-VM Backup Schedule API
+// ============================================================================
+
+export interface VMBackupSchedule {
+  id: string;
+  vm_id: string;
+  frequency: "daily" | "weekly" | "monthly";
+  retention_count: number;
+  active: boolean;
+  next_run_at?: string;
+  last_run_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateVMBackupScheduleRequest {
+  frequency: "daily" | "weekly" | "monthly";
+  retention_count: number;
+  active?: boolean;
+}
+
+export interface UpdateVMBackupScheduleRequest {
+  frequency?: "daily" | "weekly" | "monthly";
+  retention_count?: number;
+  active?: boolean;
+}
+
+export const adminVMBackupSchedulesApi = {
+  async getVMBackupSchedules(vmId: string): Promise<VMBackupSchedule[]> {
+    return apiClient.get<VMBackupSchedule[]>(`/admin/vms/${vmId}/backup-schedules`);
+  },
+
+  async createVMBackupSchedule(vmId: string, data: CreateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
+    return apiClient.post<VMBackupSchedule>(`/admin/vms/${vmId}/backup-schedules`, data);
+  },
+
+  async updateVMBackupSchedule(vmId: string, scheduleId: string, data: UpdateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
+    return apiClient.put<VMBackupSchedule>(`/admin/vms/${vmId}/backup-schedules/${scheduleId}`, data);
+  },
+
+  async deleteVMBackupSchedule(vmId: string, scheduleId: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/vms/${vmId}/backup-schedules/${scheduleId}`);
+  },
+};
+
+// ============================================================================
+// Storage Backend API
+// ============================================================================
+
+export interface StorageBackendNode {
+  node_id: string;
+  hostname: string;
+  enabled: boolean;
+}
+
+export interface StorageBackend {
+  id: string;
+  name: string;
+  type: "ceph" | "qcow" | "lvm";
+  // Ceph-specific fields
+  ceph_pool?: string;
+  ceph_user?: string;
+  ceph_monitors?: string;
+  ceph_keyring_path?: string;
+  // QCOW-specific fields
+  storage_path?: string;
+  // LVM-specific fields
+  lvm_volume_group?: string;
+  lvm_thin_pool?: string;
+  // LVM threshold configuration (alerts trigger when usage exceeds these)
+  lvm_data_percent_threshold?: number;
+  lvm_metadata_percent_threshold?: number;
+  // Capacity metrics
+  total_gb?: number;
+  used_gb?: number;
+  available_gb?: number;
+  // Health status
+  health_status: "healthy" | "warning" | "critical" | "unknown";
+  health_message?: string;
+  // LVM-specific metrics
+  lvm_data_percent?: number;
+  lvm_metadata_percent?: number;
+  // Node assignments
+  nodes?: StorageBackendNode[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStorageBackendRequest {
+  name: string;
+  type: "ceph" | "qcow" | "lvm";
+  ceph_pool?: string;
+  ceph_user?: string;
+  ceph_monitors?: string;
+  ceph_keyring_path?: string;
+  storage_path?: string;
+  lvm_volume_group?: string;
+  lvm_thin_pool?: string;
+  lvm_data_percent_threshold?: number;
+  lvm_metadata_percent_threshold?: number;
+  node_ids?: string[];
+}
+
+export interface UpdateStorageBackendRequest {
+  name?: string;
+  ceph_pool?: string;
+  ceph_user?: string;
+  ceph_monitors?: string;
+  ceph_keyring_path?: string;
+  storage_path?: string;
+  lvm_volume_group?: string;
+  lvm_thin_pool?: string;
+  lvm_data_percent_threshold?: number;
+  lvm_metadata_percent_threshold?: number;
+}
+
+export const adminStorageBackendsApi = {
+  async getStorageBackends(): Promise<StorageBackend[]> {
+    return apiClient.get<StorageBackend[]>("/admin/storage-backends");
+  },
+
+  async getStorageBackend(id: string): Promise<StorageBackend> {
+    return apiClient.get<StorageBackend>(`/admin/storage-backends/${id}`);
+  },
+
+  async createStorageBackend(data: CreateStorageBackendRequest): Promise<StorageBackend> {
+    return apiClient.post<StorageBackend>("/admin/storage-backends", data);
+  },
+
+  async updateStorageBackend(id: string, data: UpdateStorageBackendRequest): Promise<StorageBackend> {
+    return apiClient.put<StorageBackend>(`/admin/storage-backends/${id}`, data);
+  },
+
+  async deleteStorageBackend(id: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/storage-backends/${id}`);
+  },
+
+  async assignStorageBackendNodes(id: string, nodeIds: string[]): Promise<void> {
+    return apiClient.postVoid(`/admin/storage-backends/${id}/nodes`, { node_ids: nodeIds });
+  },
+
+  async removeStorageBackendNode(id: string, nodeId: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/storage-backends/${id}/nodes/${nodeId}`);
   },
 };

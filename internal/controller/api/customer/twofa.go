@@ -15,11 +15,12 @@ import (
 // Initiate2FARequest represents an empty request body for initiating 2FA setup.
 type Initiate2FARequest struct{}
 
-// Initiate2FAResponse contains the TOTP secret, QR code URL, and backup codes for 2FA setup.
+// Initiate2FAResponse contains the TOTP secret and QR code URL for 2FA setup.
+// Backup codes are intentionally omitted here; they are returned only after
+// 2FA is successfully enabled via Enable2FA (F-066).
 type Initiate2FAResponse struct {
-	Secret      string   `json:"secret"`
-	QRURL       string   `json:"qr_url"`
-	BackupCodes []string `json:"backup_codes"`
+	Secret string `json:"secret"`
+	QRURL  string `json:"qr_url"`
 }
 
 // Enable2FARequest contains the TOTP verification code to enable 2FA.
@@ -27,9 +28,11 @@ type Enable2FARequest struct {
 	Code string `json:"code" validate:"required,len=6,numeric"`
 }
 
-// Enable2FAResponse confirms whether 2FA was successfully enabled.
+// Enable2FAResponse confirms whether 2FA was successfully enabled and includes
+// the one-time backup codes (F-066: codes are returned here, not during initiation).
 type Enable2FAResponse struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool     `json:"enabled"`
+	BackupCodes []string `json:"backup_codes"`
 }
 
 // Disable2FARequest contains the password required to disable 2FA.
@@ -60,8 +63,9 @@ type RegenerateBackupCodesResponse struct {
 
 // rateLimitEntry tracks 2FA verification attempts for rate limiting.
 type rateLimitEntry struct {
-	attempts int
-	firstTry time.Time
+	attempts  int
+	firstTry  time.Time
+	exhausted bool // F-075: marks a jti as permanently exhausted after max failures
 }
 
 var (
@@ -70,6 +74,75 @@ var (
 	twoFARateLimitMax    = 5
 	twoFARateLimitWindow = 15 * time.Minute
 )
+
+func init() {
+	// F-010: Start a background goroutine to evict stale entries from the
+	// in-memory 2FA rate limit map so it does not grow without bound.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			evict2FARateLimitEntries()
+		}
+	}()
+}
+
+// evict2FARateLimitEntries removes entries whose rate-limit window has expired.
+func evict2FARateLimitEntries() {
+	twoFARateLimitMu.Lock()
+	defer twoFARateLimitMu.Unlock()
+	now := time.Now()
+	for key, entry := range twoFARateLimitMap {
+		if now.Sub(entry.firstTry) > twoFARateLimitWindow {
+			delete(twoFARateLimitMap, key)
+		}
+	}
+}
+
+// checkVerify2FARateLimit implements jti-based rate limiting for the verify-2fa endpoint.
+// F-075: After twoFARateLimitMax failed attempts for a given jti, the entry is marked
+// exhausted and subsequent calls return false (the token is permanently invalidated).
+// Returns true when the attempt is allowed, false when rate-limited or exhausted.
+func checkVerify2FARateLimit(jti string) bool {
+	twoFARateLimitMu.Lock()
+	defer twoFARateLimitMu.Unlock()
+
+	now := time.Now()
+	entry, exists := twoFARateLimitMap["jti:"+jti]
+
+	if !exists {
+		twoFARateLimitMap["jti:"+jti] = &rateLimitEntry{attempts: 1, firstTry: now}
+		return true
+	}
+
+	// Permanently exhausted jti — always deny.
+	if entry.exhausted {
+		return false
+	}
+
+	// Window expired — reset (the JWT itself may have already expired via its exp claim,
+	// but we reset the counter defensively).
+	if now.Sub(entry.firstTry) > twoFARateLimitWindow {
+		twoFARateLimitMap["jti:"+jti] = &rateLimitEntry{attempts: 1, firstTry: now}
+		return true
+	}
+
+	if entry.attempts >= twoFARateLimitMax {
+		// Mark as exhausted so no further attempts are allowed.
+		entry.exhausted = true
+		return false
+	}
+
+	entry.attempts++
+	return true
+}
+
+// recordVerify2FASuccess clears the rate-limit entry for a successfully verified jti.
+func recordVerify2FASuccess(jti string) {
+	twoFARateLimitMu.Lock()
+	defer twoFARateLimitMu.Unlock()
+	delete(twoFARateLimitMap, "jti:"+jti)
+}
 
 // check2FARateLimit returns false if the identifier has exceeded the rate limit.
 func check2FARateLimit(identifier string) bool {
@@ -126,10 +199,11 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 	h.logger.Info("2FA setup initiated", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
 
+	// F-066: Do not return backup codes during initiation.
+	// Codes are returned only after 2FA is successfully enabled via Enable2FA.
 	c.JSON(http.StatusOK, models.Response{Data: Initiate2FAResponse{
-		Secret:      result.Secret,
-		QRURL:       result.QRURL,
-		BackupCodes: result.BackupCodes,
+		Secret: result.Secret,
+		QRURL:  result.QRURL,
 	}})
 }
 
@@ -148,9 +222,9 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	ipAddress := c.ClientIP()
 
-	if !check2FARateLimit(userID + ":" + ipAddress) {
+	// F-150: Rate limit keyed on userID alone (not userID+IP).
+	if !check2FARateLimit(userID) {
 		middleware.RespondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many verification attempts. Please try again later.")
 		return
 	}
@@ -178,11 +252,24 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 		return
 	}
 
-	cleanup2FARateLimit(userID + ":" + ipAddress)
+	// F-150: Clear rate limit by userID alone on success.
+	cleanup2FARateLimit(userID)
+
+	// F-066: Return backup codes here, after 2FA is successfully enabled.
+	// Codes were generated and stored during Initiate2FA but not exposed then.
+	backupCodes, _, err := h.authService.GetBackupCodes(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("failed to retrieve backup codes after enabling 2FA", "user_id", userID, "error", err)
+		// 2FA is enabled; failure to retrieve backup codes is non-fatal.
+		backupCodes = nil
+	}
 
 	h.logger.Info("2FA enabled", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
 
-	c.JSON(http.StatusOK, models.Response{Data: Enable2FAResponse{Enabled: true}})
+	c.JSON(http.StatusOK, models.Response{Data: Enable2FAResponse{
+		Enabled:     true,
+		BackupCodes: backupCodes,
+	}})
 }
 
 // Disable2FA handles POST /2fa/disable - disables 2FA after password verification.
@@ -281,10 +368,9 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 // Subject to rate limiting to prevent abuse.
 func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	ipAddress := c.ClientIP()
 
-	// Check rate limit for regeneration
-	if !check2FARateLimit("regen:" + userID + ":" + ipAddress) {
+	// F-150: Rate limit for regeneration keyed on userID alone.
+	if !check2FARateLimit("regen:" + userID) {
 		middleware.RespondWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many regeneration attempts. Please try again later.")
 		return
 	}

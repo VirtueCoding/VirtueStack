@@ -10,6 +10,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/alexedwards/argon2id"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -20,6 +21,17 @@ type TOTPSetupResult struct {
 	BackupCodes []string // Plain text backup codes (only shown once)
 }
 
+// hashBackupCode hashes a backup code using Argon2id with the same parameters
+// used for passwords. This replaces the previous SHA-256 hashing (F-011).
+func hashBackupCode(code string) (string, error) {
+	return argon2id.CreateHash(code, Argon2idParams)
+}
+
+// checkBackupCode verifies a backup code against an Argon2id hash.
+func checkBackupCode(code, hash string) (bool, error) {
+	return argon2id.ComparePasswordAndHash(code, hash)
+}
+
 // ValidateTOTP validates a TOTP code against an encrypted secret (utility method).
 // This is useful for backup code verification or re-auth scenarios.
 // Delegates to validateTOTPCode to avoid duplication.
@@ -27,8 +39,17 @@ func (s *AuthService) ValidateTOTP(totpCode, encryptedSecret string) (bool, erro
 	return s.validateTOTPCode(encryptedSecret, totpCode)
 }
 
+// TOTPSetupTTL is the maximum age of an unconfirmed (totp_enabled=false) TOTP
+// secret before it should be purged by the periodic cleanup job (F-159).
+const TOTPSetupTTL = 24 * time.Hour
+
 // Initiate2FA generates a new TOTP secret and backup codes for a customer.
 // Returns the secret, QR URL, and backup codes. The secret is NOT yet enabled.
+//
+// NOTE (F-159): The TOTP secret is persisted with totp_enabled=false before the
+// user completes setup. A background goroutine should periodically purge unconfirmed
+// TOTP secrets older than TOTPSetupTTL to limit database accumulation of abandoned
+// setup attempts.
 func (s *AuthService) Initiate2FA(ctx context.Context, customerID, email string) (*TOTPSetupResult, error) {
 	customer, err := s.customerRepo.GetByID(ctx, customerID)
 	if err != nil {
@@ -56,7 +77,11 @@ func (s *AuthService) Initiate2FA(ctx context.Context, customerID, email string)
 			return nil, fmt.Errorf("generating backup code: %w", err)
 		}
 		backupCodes[i] = code
-		backupCodesHash[i] = crypto.HashSHA256(code)
+		h, err := hashBackupCode(code)
+		if err != nil {
+			return nil, fmt.Errorf("hashing backup code: %w", err)
+		}
+		backupCodesHash[i] = h
 	}
 
 	encryptedSecret, err := crypto.Encrypt(key.Secret(), s.encryptionKey)
@@ -152,9 +177,10 @@ func (s *AuthService) Get2FAStatus(ctx context.Context, customerID string) (enab
 	return customer.TOTPEnabled, &customer.UpdatedAt, nil
 }
 
-// GetBackupCodes returns the plain text backup codes for a customer.
-// Returns the codes, a flag indicating if they've already been shown, and any error.
-// Codes are only returned once - subsequent calls will return alreadyShown=true.
+// GetBackupCodes returns whether backup codes exist and have already been shown.
+// Plain-text codes are only available at Initiate2FA time. This method only
+// indicates whether codes exist and whether they have already been viewed.
+// Call RegenerateBackupCodes to obtain a new set of plaintext codes.
 func (s *AuthService) GetBackupCodes(ctx context.Context, customerID string) ([]string, bool, error) {
 	customer, err := s.customerRepo.GetByID(ctx, customerID)
 	if err != nil {
@@ -165,32 +191,15 @@ func (s *AuthService) GetBackupCodes(ctx context.Context, customerID string) ([]
 		return nil, false, fmt.Errorf("2FA is not enabled")
 	}
 
-	if customer.TOTPBackupCodesHash == nil || len(customer.TOTPBackupCodesHash) == 0 {
+	if len(customer.TOTPBackupCodesHash) == 0 {
 		return nil, false, fmt.Errorf("no backup codes available")
 	}
 
-	if customer.TOTPBackupCodesShown {
-		return nil, true, nil
-	}
-
-	codes := make([]string, 10)
-	codesHash := make([]string, 10)
-	for i := range codes {
-		code, err := crypto.GenerateRandomDigits(8)
-		if err != nil {
-			return nil, false, fmt.Errorf("generating backup code: %w", err)
-		}
-		codes[i] = code
-		codesHash[i] = crypto.HashSHA256(code)
-	}
-
-	if err := s.customerRepo.UpdateBackupCodesWithShown(ctx, customerID, codesHash); err != nil {
-		return nil, false, fmt.Errorf("storing backup codes: %w", err)
-	}
-
-	s.logger.Info("backup codes retrieved and stored", "customer_id", customerID)
-
-	return codes, false, nil
+	// Backup codes are hashed and cannot be reversed. Always report as already
+	// shown so that callers know to call RegenerateBackupCodes for new codes.
+	// The only time plaintext codes are available is during Initiate2FA.
+	s.logger.Info("backup codes status retrieved", "customer_id", customerID)
+	return nil, true, nil
 }
 
 // RegenerateBackupCodes generates new backup codes for a customer.
@@ -212,7 +221,11 @@ func (s *AuthService) RegenerateBackupCodes(ctx context.Context, customerID stri
 			return nil, fmt.Errorf("generating backup code: %w", err)
 		}
 		codes[i] = code
-		codesHash[i] = crypto.HashSHA256(code)
+		h, err := hashBackupCode(code)
+		if err != nil {
+			return nil, fmt.Errorf("hashing backup code: %w", err)
+		}
+		codesHash[i] = h
 	}
 
 	if err := s.customerRepo.UpdateBackupCodesWithShown(ctx, customerID, codesHash); err != nil {

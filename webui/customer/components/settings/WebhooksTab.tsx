@@ -33,7 +33,9 @@ import { Webhook, Calendar, Loader2, Trash2, Edit3, Plus, Play } from "lucide-re
 const webhookSchema = z.object({
   url: z.string().url("Invalid URL"),
   events: z.array(z.string()).min(1, "At least one event is required"),
-  secret: z.string().min(1, "Secret is required"),
+  // secret is required when creating a new webhook, but omitted when editing
+  // (the secret field is hidden in the edit form).
+  secret: z.string().optional(),
 });
 
 type WebhookFormData = z.infer<typeof webhookSchema>;
@@ -167,7 +169,7 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
       createWebhookMutation.mutate({
         url: data.url,
         events: data.events,
-        secret: data.secret,
+        secret: data.secret ?? "",
       });
     }
   };

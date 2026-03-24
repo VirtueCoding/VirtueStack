@@ -122,7 +122,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const user: AdminUser = {
+        // Fetch the real user identity from the server instead of constructing
+        // a hardcoded object. This ensures role and permissions are authoritative.
+        const serverUser = await adminAuthApi.me();
+        const user: AdminUser = serverUser ?? {
           id: credentials.email,
           email: credentials.email,
           role: "admin",
@@ -160,7 +163,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         await adminAuthApi.verify2FA(request);
-        const user: AdminUser = {
+        // Fetch the real user identity from the server to populate role and permissions.
+        const serverUser = await adminAuthApi.me();
+        const user: AdminUser = serverUser ?? {
           id: pendingEmail || "",
           email: pendingEmail || "",
           role: "admin",

@@ -109,7 +109,11 @@ func (cb *CircuitBreaker) CanAttempt(key string) error {
 			remaining := cb.config.CooldownPeriod - timeSinceFailure
 			return errors.New("circuit breaker is in cooldown period, retry after " + remaining.String())
 		}
-		return ErrCircuitBreakerOpen
+		// Cooldown has elapsed: transition to HalfOpen and allow a probe attempt (F-183).
+		entry.State = CircuitBreakerHalfOpen
+		entry.SuccessCount = 0
+		entry.RetryCount = 0
+		return nil
 
 	case CircuitBreakerHalfOpen:
 		if entry.RetryCount >= cb.config.MaxRetries {
@@ -195,24 +199,35 @@ func (cb *CircuitBreaker) RecordFailure(key string, err error) {
 	}
 }
 
+// getEntryLocked returns the circuit breaker entry for the given key under an
+// already-held write lock. Creates a new entry if one does not exist.
+// Callers must hold cb.mu (write lock) before calling this method.
+func (cb *CircuitBreaker) getEntryLocked(key string) *CircuitBreakerEntry {
+	entry, exists := cb.entries[key]
+	if !exists {
+		entry = &CircuitBreakerEntry{
+			State: CircuitBreakerClosed,
+		}
+		cb.entries[key] = entry
+	}
+	return entry
+}
+
 // GetState returns the current state of the circuit breaker for the given key.
+// Uses a single write lock via getEntryLocked to avoid the TOCTOU race between
+// getEntry (write lock) and the subsequent RLock (F-033).
 func (cb *CircuitBreaker) GetState(key string) CircuitBreakerState {
-	entry := cb.getEntry(key)
-
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	return entry.State
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.getEntryLocked(key).State
 }
 
 // GetRetryCount returns the current retry count for the given key.
+// Uses a single write lock via getEntryLocked to avoid the TOCTOU race (F-033).
 func (cb *CircuitBreaker) GetRetryCount(key string) int {
-	entry := cb.getEntry(key)
-
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	return entry.RetryCount
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.getEntryLocked(key).RetryCount
 }
 
 // Reset resets the circuit breaker for the given key.
@@ -244,18 +259,17 @@ type CircuitBreakerStats struct {
 }
 
 // GetStats returns statistics about the circuit breaker for the given key.
+// Uses a single write lock via getEntryLocked to avoid the TOCTOU race (F-033).
 func (cb *CircuitBreaker) GetStats(key string) CircuitBreakerStats {
-	entry := cb.getEntry(key)
-
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
+	cb.mu.Lock()
+	entry := cb.getEntryLocked(key)
 
 	stats := CircuitBreakerStats{
-		State:          string(entry.State),
-		FailureCount:   entry.FailureCount,
-		SuccessCount:   entry.SuccessCount,
-		RetryCount:     entry.RetryCount,
-		LastAttemptAt:  entry.LastAttemptAt,
+		State:         string(entry.State),
+		FailureCount:  entry.FailureCount,
+		SuccessCount:  entry.SuccessCount,
+		RetryCount:    entry.RetryCount,
+		LastAttemptAt: entry.LastAttemptAt,
 	}
 
 	if !entry.LastFailureAt.IsZero() {
@@ -273,36 +287,41 @@ func (cb *CircuitBreaker) GetStats(key string) CircuitBreakerStats {
 		}
 	}
 
+	cb.mu.Unlock()
 	return stats
 }
 
 // IsInCooldown checks if the circuit breaker is in cooldown for the given key.
+// Uses a single write lock via getEntryLocked to avoid the TOCTOU race (F-033).
 func (cb *CircuitBreaker) IsInCooldown(key string) bool {
-	entry := cb.getEntry(key)
+	cb.mu.Lock()
+	entry := cb.getEntryLocked(key)
+	state := entry.State
+	lastFailureAt := entry.LastFailureAt
+	cb.mu.Unlock()
 
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	if entry.State != CircuitBreakerOpen {
+	if state != CircuitBreakerOpen {
 		return false
 	}
 
-	return time.Since(entry.LastFailureAt) < cb.config.CooldownPeriod
+	return time.Since(lastFailureAt) < cb.config.CooldownPeriod
 }
 
 // TimeUntilRetry returns the duration until the next retry attempt is allowed.
 // Returns 0 if retry is allowed immediately.
+// Uses a single write lock via getEntryLocked to avoid the TOCTOU race (F-033).
 func (cb *CircuitBreaker) TimeUntilRetry(key string) time.Duration {
-	entry := cb.getEntry(key)
+	cb.mu.Lock()
+	entry := cb.getEntryLocked(key)
+	state := entry.State
+	lastFailureAt := entry.LastFailureAt
+	cb.mu.Unlock()
 
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	if entry.State != CircuitBreakerOpen {
+	if state != CircuitBreakerOpen {
 		return 0
 	}
 
-	elapsed := time.Since(entry.LastFailureAt)
+	elapsed := time.Since(lastFailureAt)
 	if elapsed >= cb.config.CooldownPeriod {
 		return 0
 	}

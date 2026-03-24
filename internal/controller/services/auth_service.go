@@ -57,6 +57,24 @@ var Argon2idParams = &argon2id.Params{
 	KeyLength:   32,
 }
 
+// dummyArgon2idHash is a pre-computed Argon2id hash used for timing-attack
+// mitigation in login flows when the email does not exist (F-149).
+// It is generated once at startup with a random salt so that the hash is
+// realistic (same work factor as real hashes) and cannot be distinguished by
+// timing from a real password verification.
+var dummyArgon2idHash string
+
+func init() {
+	var err error
+	// Use a fixed dummy password; the randomness comes from the Argon2id salt.
+	dummyArgon2idHash, err = argon2id.CreateHash("__dummy_timing_mitigation__", Argon2idParams)
+	if err != nil {
+		// Fallback to a static hash if random salt generation fails.
+		// This is better than panicking at startup.
+		dummyArgon2idHash = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG"
+	}
+}
+
 // AuthService provides authentication business logic for VirtueStack.
 // It handles login flows, 2FA verification, token refresh, and session management.
 type AuthService struct {
@@ -90,13 +108,27 @@ func NewAuthService(
 
 // checkLoginLockout returns ErrAccountLocked when the email has exceeded the
 // failed-login threshold within LockoutWindow.
+// userType must be "admin" or "customer" so that admin and customer failed-login
+// counters are tracked independently (F-030).
 func (s *AuthService) checkLoginLockout(ctx context.Context, email string) error {
-	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, email, LockoutWindow)
+	return s.checkLoginLockoutForType(ctx, email, "customer")
+}
+
+// checkLoginLockoutForType returns ErrAccountLocked when the email+userType pair
+// has exceeded the failed-login threshold within LockoutWindow (F-030).
+// The lockout key incorporates the userType so admin and customer counters
+// are tracked separately.
+func (s *AuthService) checkLoginLockoutForType(ctx context.Context, email, userType string) error {
+	lockoutKey := userType + ":" + email
+	failedCount, err := s.customerRepo.GetFailedLoginCount(ctx, lockoutKey, LockoutWindow)
 	if err != nil {
 		return fmt.Errorf("checking login attempts: %w", err)
 	}
 	if failedCount >= MaxFailedLoginAttempts {
-		s.logger.Warn("login attempt on locked account", "email", util.MaskEmail(email), "attempts", failedCount)
+		s.logger.Warn("login attempt on locked account",
+			"email", util.MaskEmail(email),
+			"user_type", userType,
+			"attempts", failedCount)
 		return sharederrors.ErrAccountLocked
 	}
 	return nil
@@ -155,10 +187,10 @@ func (s *AuthService) verifyPassword(password, hash string) (bool, error) {
 
 // ConstantTimeCompare performs a constant-time comparison of two strings.
 // This is used to prevent timing attacks when comparing tokens.
+// The length pre-check is intentionally omitted: subtle.ConstantTimeCompare
+// already handles unequal lengths correctly and the pre-check would leak
+// length information via timing (F-151).
 func ConstantTimeCompare(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 

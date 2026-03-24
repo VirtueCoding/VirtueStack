@@ -63,6 +63,13 @@ const (
 	PermissionRDNSWrite Permission = "rdns:write"
 )
 
+// Permission constants for storage backends resource.
+const (
+	PermissionStorageBackendsRead   Permission = "storage_backends:read"
+	PermissionStorageBackendsWrite  Permission = "storage_backends:write"
+	PermissionStorageBackendsDelete Permission = "storage_backends:delete"
+)
+
 // Role constants for default permission sets.
 const (
 	RoleSuperAdmin = "super_admin"
@@ -81,6 +88,7 @@ var allPermissions = []Permission{
 	PermissionIPSetsRead, PermissionIPSetsWrite, PermissionIPSetsDelete,
 	PermissionTemplatesRead, PermissionTemplatesWrite,
 	PermissionRDNSRead, PermissionRDNSWrite,
+	PermissionStorageBackendsRead, PermissionStorageBackendsWrite, PermissionStorageBackendsDelete,
 }
 
 // defaultPermissions maps roles to their default permission sets.
@@ -96,6 +104,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionIPSetsRead, PermissionIPSetsWrite,
 		PermissionTemplatesRead, PermissionTemplatesWrite,
 		PermissionRDNSRead, PermissionRDNSWrite,
+		PermissionStorageBackendsRead, PermissionStorageBackendsWrite,
 	},
 	RoleViewer: {
 		PermissionPlansRead,
@@ -107,6 +116,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionIPSetsRead,
 		PermissionTemplatesRead,
 		PermissionRDNSRead,
+		PermissionStorageBackendsRead,
 	},
 }
 

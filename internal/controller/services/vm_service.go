@@ -37,58 +37,67 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo        *repository.VMRepository
-	nodeRepo      *repository.NodeRepository
-	ipRepo        *repository.IPRepository
-	planRepo      *repository.PlanRepository
-	templateRepo  *repository.TemplateRepository
-	taskRepo      *repository.TaskRepository
-	taskPublisher TaskPublisher
-	nodeAgent     NodeAgentClient
-	ipamService   IPAllocator
-	encryptionKey string // For encrypting root passwords
-	logger        *slog.Logger
+	vmRepo              *repository.VMRepository
+	nodeRepo            *repository.NodeRepository
+	ipRepo              *repository.IPRepository
+	planRepo            *repository.PlanRepository
+	templateRepo        *repository.TemplateRepository
+	taskRepo            *repository.TaskRepository
+	taskPublisher       TaskPublisher
+	nodeAgent           NodeAgentClient
+	ipamService         IPAllocator
+	storageBackendSvc   StorageBackendGetter
+	encryptionKey       string // For encrypting root passwords
+	logger              *slog.Logger
+}
+
+// StorageBackendGetter defines the interface for getting storage backends for a node.
+type StorageBackendGetter interface {
+	GetBackendsForNodeByType(ctx context.Context, nodeID string, backendType string) ([]models.StorageBackend, error)
 }
 
 // VMServiceConfig holds all dependencies for VMService construction.
 // Using a config struct keeps NewVMService compliant with the ≤4-parameter
 // constructor rule (QG-01) and makes future dependency additions non-breaking.
 type VMServiceConfig struct {
-	VMRepo        *repository.VMRepository
-	NodeRepo      *repository.NodeRepository
-	IPRepo        *repository.IPRepository
-	PlanRepo      *repository.PlanRepository
-	TemplateRepo  *repository.TemplateRepository
-	TaskRepo      *repository.TaskRepository
-	TaskPublisher TaskPublisher
-	NodeAgent     NodeAgentClient
-	IPAMService   IPAllocator
-	EncryptionKey string
-	Logger        *slog.Logger
+	VMRepo            *repository.VMRepository
+	NodeRepo          *repository.NodeRepository
+	IPRepo            *repository.IPRepository
+	PlanRepo          *repository.PlanRepository
+	TemplateRepo      *repository.TemplateRepository
+	TaskRepo          *repository.TaskRepository
+	TaskPublisher     TaskPublisher
+	NodeAgent         NodeAgentClient
+	IPAMService       IPAllocator
+	StorageBackendSvc StorageBackendGetter
+	EncryptionKey     string
+	Logger            *slog.Logger
 }
 
 // NewVMService creates a new VMService with the given configuration.
 func NewVMService(cfg VMServiceConfig) *VMService {
 	return &VMService{
-		vmRepo:        cfg.VMRepo,
-		nodeRepo:      cfg.NodeRepo,
-		ipRepo:        cfg.IPRepo,
-		planRepo:      cfg.PlanRepo,
-		templateRepo:  cfg.TemplateRepo,
-		taskRepo:      cfg.TaskRepo,
-		taskPublisher: cfg.TaskPublisher,
-		nodeAgent:     cfg.NodeAgent,
-		ipamService:   cfg.IPAMService,
-		encryptionKey: cfg.EncryptionKey,
-		logger:        cfg.Logger.With("component", "vm-service"),
+		vmRepo:            cfg.VMRepo,
+		nodeRepo:          cfg.NodeRepo,
+		ipRepo:            cfg.IPRepo,
+		planRepo:          cfg.PlanRepo,
+		templateRepo:      cfg.TemplateRepo,
+		taskRepo:          cfg.TaskRepo,
+		taskPublisher:     cfg.TaskPublisher,
+		nodeAgent:         cfg.NodeAgent,
+		ipamService:       cfg.IPAMService,
+		storageBackendSvc: cfg.StorageBackendSvc,
+		encryptionKey:     cfg.EncryptionKey,
+		logger:            cfg.Logger.With("component", "vm-service"),
 	}
 }
 
-// vmCreateDeps bundles the resolved plan, template, and node for VM creation.
+// vmCreateDeps bundles the resolved plan, template, node, and storage backend for VM creation.
 type vmCreateDeps struct {
-	plan     *models.Plan
-	template *models.Template
-	node     *models.Node
+	plan           *models.Plan
+	template       *models.Template
+	node           *models.Node
+	storageBackend *models.StorageBackend
 }
 
 // validateCreateVMRequest checks that the requested plan is active, the template
@@ -120,21 +129,13 @@ func (s *VMService) validateCreateVMRequest(ctx context.Context, req *models.VMC
 	return plan, template, nil
 }
 
-// selectNodeForVM picks the least-loaded online node for the given location.
+// selectNodeForVM picks the least-loaded online node that has sufficient vCPU
+// and memory capacity for the requested VM resources (F-094).
 // If locationID is empty it scans all online nodes and picks the one with the
-// most available memory.
-func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*models.Node, error) {
-	if locationID != "" {
-		node, err := s.nodeRepo.GetLeastLoadedNode(ctx, locationID)
-		if err != nil {
-			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return nil, fmt.Errorf("no available nodes in location %s", locationID)
-			}
-			return nil, fmt.Errorf("finding node: %w", err)
-		}
-		return node, nil
-	}
-
+// most available memory that meets the capacity requirements.
+// If storageBackendType is provided, it also filters nodes to those that have
+// the specified storage backend assigned.
+func (s *VMService) selectNodeForVM(ctx context.Context, locationID string, vcpu, memoryMB int, storageBackendType string) (*models.Node, error) {
 	nodes, err := s.nodeRepo.ListByStatus(ctx, models.NodeStatusOnline)
 	if err != nil {
 		return nil, fmt.Errorf("listing nodes: %w", err)
@@ -142,11 +143,56 @@ func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*mo
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("no available nodes")
 	}
-	best := &nodes[0]
+
+	var best *models.Node
 	for i := range nodes {
-		if nodes[i].TotalMemoryMB-nodes[i].AllocatedMemoryMB > best.TotalMemoryMB-best.AllocatedMemoryMB {
-			best = &nodes[i]
+		node := &nodes[i]
+
+		// Filter by location if specified.
+		if locationID != "" && (node.LocationID == nil || *node.LocationID != locationID) {
+			continue
 		}
+
+		// Skip nodes with insufficient vCPU or memory capacity (F-094).
+		if node.AllocatedVCPU+vcpu > node.TotalVCPU {
+			continue
+		}
+		if node.AllocatedMemoryMB+memoryMB > node.TotalMemoryMB {
+			continue
+		}
+
+		// Filter by storage backend compatibility if specified
+		if storageBackendType != "" && s.storageBackendSvc != nil {
+			backends, err := s.storageBackendSvc.GetBackendsForNodeByType(ctx, node.ID, storageBackendType)
+			if err != nil {
+				s.logger.Debug("failed to check storage backends for node during selection",
+					"node_id", node.ID,
+					"storage_backend", storageBackendType,
+					"error", err)
+				continue
+			}
+			if len(backends) == 0 {
+				// Node doesn't have the required storage backend type assigned
+				continue
+			}
+		}
+
+		if best == nil || (node.TotalMemoryMB-node.AllocatedMemoryMB > best.TotalMemoryMB-best.AllocatedMemoryMB) {
+			best = node
+		}
+	}
+
+	if best == nil {
+		if storageBackendType != "" {
+			if locationID != "" {
+				return nil, fmt.Errorf("no available nodes with sufficient capacity and storage backend %s in location %s", storageBackendType, locationID)
+			}
+			return nil, fmt.Errorf("no available nodes with sufficient capacity and storage backend %s", storageBackendType)
+		}
+		if locationID != "" {
+			return nil, fmt.Errorf("no available nodes with sufficient capacity in location %s", locationID)
+		}
+		return nil, fmt.Errorf("no available nodes with sufficient capacity")
 	}
 	return best, nil
 }
@@ -156,7 +202,7 @@ func (s *VMService) selectNodeForVM(ctx context.Context, locationID string) (*mo
 func buildVMRecord(req *models.VMCreateRequest, deps vmCreateDeps, customerID, macAddress, encryptedPassword string) *models.VM {
 	vmID := uuid.New().String()
 	libvirtDomainName := generateLibvirtDomainName(req.Hostname, vmID)
-	return &models.VM{
+	vm := &models.VM{
 		ID: vmID, CustomerID: customerID, NodeID: &deps.node.ID,
 		PlanID: deps.plan.ID, Hostname: req.Hostname, Status: models.VMStatusProvisioning,
 		VCPU: deps.plan.VCPU, MemoryMB: deps.plan.MemoryMB, DiskGB: deps.plan.DiskGB,
@@ -166,10 +212,16 @@ func buildVMRecord(req *models.VMCreateRequest, deps vmCreateDeps, customerID, m
 		LibvirtDomainName: &libvirtDomainName, RootPasswordEncrypted: &encryptedPassword,
 		WHMCSServiceID: req.WHMCSServiceID, StorageBackend: deps.plan.StorageBackend,
 	}
+	// Set StorageBackendID if we have a resolved storage backend
+	if deps.storageBackend != nil {
+		vm.StorageBackendID = &deps.storageBackend.ID
+	}
+	return vm
 }
 
-// persistVMRecord creates the VM row in the database, then best-effort allocates
-// an IPv4 address. It returns the created VM and any allocated IP (may be nil).
+// persistVMRecord creates the VM row in the database.
+// It returns the created VM. IPv4 allocation is handled exclusively by the async
+// task worker (handleVMCreate) to avoid double allocation (F-024).
 func (s *VMService) persistVMRecord(ctx context.Context, req *models.VMCreateRequest, deps vmCreateDeps, customerID string) (*models.VM, *models.IPAddress, error) {
 	macAddress, err := crypto.GenerateMACAddress()
 	if err != nil {
@@ -180,25 +232,14 @@ func (s *VMService) persistVMRecord(ctx context.Context, req *models.VMCreateReq
 		return nil, nil, fmt.Errorf("encrypting password: %w", err)
 	}
 
-	locationID := ""
-	if req.LocationID != nil {
-		locationID = *req.LocationID
-	}
-
 	vm := buildVMRecord(req, deps, customerID, macAddress, encryptedPassword)
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
 		return nil, nil, fmt.Errorf("creating VM record: %w", err)
 	}
 
-	var ipv4Address *models.IPAddress
-	if s.ipamService != nil && locationID != "" {
-		ipv4Address, err = s.ipamService.AllocateIPv4(ctx, locationID, vm.ID, customerID)
-		if err != nil {
-			// Non-fatal: task worker can assign IP later.
-			s.logger.Warn("failed to allocate IPv4", "vm_id", vm.ID, "error", err)
-		}
-	}
-	return vm, ipv4Address, nil
+	// IPv4 is allocated by the async task handler, not here, to prevent
+	// double allocation (F-024).
+	return vm, nil, nil
 }
 
 // publishVMCreateTask builds the task payload and publishes the vm.create task.
@@ -211,11 +252,42 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 		"template_rbd_snapshot": deps.template.RBDSnapshot,
 		"mac_address": vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
 		"bandwidth_limit_gb": vm.BandwidthLimitGB, "ssh_keys": req.SSHKeys,
-		"ceph_pool": deps.node.CephPool, "storage_backend": deps.plan.StorageBackend,
-		"storage_path": deps.node.StoragePath,
+		"storage_backend": deps.plan.StorageBackend,
 	}
 	if ipv4Address != nil {
 		taskPayload["ipv4_address"] = ipv4Address.Address
+	}
+
+	// Pass storage backend config from the resolved StorageBackend record
+	if deps.storageBackend != nil {
+		switch deps.storageBackend.Type {
+		case models.StorageTypeCeph:
+			if deps.storageBackend.CephPool != nil {
+				taskPayload["ceph_pool"] = *deps.storageBackend.CephPool
+			}
+			if deps.storageBackend.CephUser != nil {
+				taskPayload["ceph_user"] = *deps.storageBackend.CephUser
+			}
+			if deps.storageBackend.CephMonitors != nil {
+				taskPayload["ceph_monitors"] = *deps.storageBackend.CephMonitors
+			}
+		case models.StorageTypeQCOW:
+			if deps.storageBackend.StoragePath != nil {
+				taskPayload["storage_path"] = *deps.storageBackend.StoragePath
+			}
+		case models.StorageTypeLVM:
+			if deps.storageBackend.LVMVolumeGroup != nil {
+				taskPayload["lvm_volume_group"] = *deps.storageBackend.LVMVolumeGroup
+			}
+			if deps.storageBackend.LVMThinPool != nil {
+				taskPayload["lvm_thin_pool"] = *deps.storageBackend.LVMThinPool
+			}
+		}
+		taskPayload["storage_backend_id"] = deps.storageBackend.ID
+	} else {
+		// Fallback to node-level config for backward compatibility
+		taskPayload["ceph_pool"] = deps.node.CephPool
+		taskPayload["storage_path"] = deps.node.StoragePath
 	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMCreate, taskPayload)
@@ -288,12 +360,34 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		locationID = *req.LocationID
 	}
 
-	node, err := s.selectNodeForVM(ctx, locationID)
+	node, err := s.selectNodeForVM(ctx, locationID, plan.VCPU, plan.MemoryMB, plan.StorageBackend)
 	if err != nil {
 		return nil, "", err
 	}
 
 	deps := vmCreateDeps{plan: plan, template: template, node: node}
+
+	// Resolve storage backend for the node
+	if s.storageBackendSvc != nil && plan.StorageBackend != "" {
+		backends, err := s.storageBackendSvc.GetBackendsForNodeByType(ctx, node.ID, plan.StorageBackend)
+		if err != nil {
+			s.logger.Warn("failed to query storage backends for node, using node defaults",
+				"node_id", node.ID,
+				"storage_backend", plan.StorageBackend,
+				"error", err)
+		} else if len(backends) > 0 {
+			// Select the first available backend (could add preferred logic later)
+			deps.storageBackend = &backends[0]
+			// Validate storage backend health status before creating VM
+			if deps.storageBackend.HealthStatus == "critical" {
+				return nil, "", fmt.Errorf("storage backend %s is unhealthy (critical), cannot create VM", deps.storageBackend.Name)
+			}
+		} else {
+			s.logger.Warn("no storage backend of required type found for node",
+				"node_id", node.ID,
+				"storage_backend", plan.StorageBackend)
+		}
+	}
 	vm, ipv4Address, err := s.persistVMRecord(ctx, req, deps, customerID)
 	if err != nil {
 		return nil, "", err

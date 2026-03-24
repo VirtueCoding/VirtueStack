@@ -22,9 +22,6 @@ type Verify2FARequest struct {
 	TOTPCode  string `json:"totp_code" validate:"required,len=6,numeric"`
 }
 
-type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token" validate:"required,min=1"`
-}
 
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" validate:"required,min=12,max=128"`
@@ -104,6 +101,16 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	// F-075: Apply jti-based rate limiting so that a temp token is permanently
+	// invalidated after 5 failed verification attempts, regardless of IP.
+	jti := extractTempTokenJTI(req.TempToken, h.authConfig)
+	if jti != "" {
+		if !checkVerify2FARateLimit(jti) {
+			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
+			return
+		}
+	}
+
 	ipAddress := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
@@ -123,6 +130,11 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 		return
 	}
 
+	// F-075: Clear the jti rate-limit entry on successful verification.
+	if jti != "" {
+		recordVerify2FASuccess(jti)
+	}
+
 	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
 		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
 
@@ -137,13 +149,21 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
-func (h *CustomerHandler) RefreshToken(c *gin.Context) {
-	refreshToken := middleware.GetRefreshTokenFromCookie(c)
-
-	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
-		refreshToken = req.RefreshToken
+// extractTempTokenJTI extracts the jti claim from a temp token without
+// full validation. Returns an empty string if parsing fails.
+func extractTempTokenJTI(tempToken string, authConfig middleware.AuthConfig) string {
+	claims, err := middleware.ValidateJWT(authConfig, tempToken)
+	if err != nil {
+		return ""
 	}
+	return claims.ID
+}
+
+func (h *CustomerHandler) RefreshToken(c *gin.Context) {
+	// F-005: Refresh tokens are read exclusively from the HttpOnly cookie.
+	// The JSON body fallback has been removed to prevent token leakage via
+	// JavaScript-accessible request bodies.
+	refreshToken := middleware.GetRefreshTokenFromCookie(c)
 
 	if refreshToken == "" {
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "refresh token is required")
@@ -190,14 +210,16 @@ func (h *CustomerHandler) Logout(c *gin.Context) {
 			userID := middleware.GetUserID(c)
 			if session.UserID == userID {
 				// Error intentionally ignored: logout clears cookies regardless of session
-			// invalidation failure so the client is always logged out locally.
-			if logoutErr := h.authService.Logout(c.Request.Context(), session.ID); logoutErr != nil {
-				h.logger.Warn("failed to invalidate session on logout",
-					"session_id", session.ID,
-					"error", logoutErr,
-					"correlation_id", middleware.GetCorrelationID(c))
-			}
-			h.logger.Info("customer logged out",
+				// invalidation failure so the client is always logged out locally.
+				if logoutErr := h.authService.Logout(c.Request.Context(), session.ID); logoutErr != nil {
+					h.logger.Warn("failed to invalidate session on logout",
+						"session_id", session.ID,
+						"error", logoutErr,
+						"correlation_id", middleware.GetCorrelationID(c))
+				}
+				// F-152: Audit log entry for successful session logout.
+				h.logAudit(c, "session.logout", "session", session.ID, nil, true)
+				h.logger.Info("customer logged out",
 					"user_id", userID,
 					"session_id", session.ID,
 					"correlation_id", middleware.GetCorrelationID(c))
@@ -221,16 +243,8 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if len(req.CurrentPassword) < 12 {
-		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "current_password must be at least 12 characters")
-		return
-	}
-
-	if len(req.NewPassword) < 12 {
-		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "new_password must be at least 12 characters")
-		return
-	}
-
+	// F-160: Password length is enforced solely by struct tag validation (min=12,max=128).
+	// Duplicate manual len() checks have been removed.
 	userID := middleware.GetUserID(c)
 	if userID == "" {
 		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")

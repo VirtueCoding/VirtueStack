@@ -8,6 +8,8 @@ const (
 	StorageBackendCeph = "ceph"
 	// StorageBackendQcow indicates local QCOW2 file-based storage.
 	StorageBackendQcow = "qcow"
+	// StorageBackendLvm indicates LVM thin provisioning storage.
+	StorageBackendLvm = "lvm"
 )
 
 // DefaultStorageBackend is the default storage backend for plans.
@@ -51,7 +53,7 @@ type PlanCreateRequest struct {
 	PortSpeedMbps    int    `json:"port_speed_mbps" validate:"required,min=1"`
 	PriceMonthly     int64  `json:"price_monthly" validate:"min=0"`
 	PriceHourly      int64  `json:"price_hourly" validate:"min=0"`
-	StorageBackend   string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow"`
+	StorageBackend   string `json:"storage_backend" validate:"omitempty,oneof=ceph qcow lvm"`
 	IsActive         bool   `json:"is_active"`
 	SortOrder        int    `json:"sort_order" validate:"min=0"`
 	SnapshotLimit    int    `json:"snapshot_limit" validate:"min=0"`
@@ -72,7 +74,7 @@ type PlanUpdateRequest struct {
 	PortSpeedMbps    *int    `json:"port_speed_mbps,omitempty" validate:"omitempty,min=1"`
 	PriceMonthly     *int64  `json:"price_monthly,omitempty" validate:"omitempty,min=0"`
 	PriceHourly      *int64  `json:"price_hourly,omitempty" validate:"omitempty,min=0"`
-	StorageBackend   *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow"`
+	StorageBackend   *string `json:"storage_backend,omitempty" validate:"omitempty,oneof=ceph qcow lvm"`
 	IsActive         *bool   `json:"is_active,omitempty"`
 	SortOrder        *int    `json:"sort_order,omitempty" validate:"omitempty,min=0"`
 	SnapshotLimit    *int    `json:"snapshot_limit,omitempty" validate:"omitempty,min=0"`

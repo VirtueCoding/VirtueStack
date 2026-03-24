@@ -16,6 +16,8 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/notifications"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 )
 
 // AlertConfig holds configuration for notification channels.
@@ -67,6 +69,7 @@ type AlertService struct {
 	emailProvider *notifications.EmailProvider
 	webhookRepo   *repository.WebhookRepository
 	httpClient    *http.Client
+	encryptionKey string
 	logger        *slog.Logger
 }
 
@@ -74,6 +77,7 @@ type AlertService struct {
 func NewAlertService(
 	config *AlertConfig,
 	webhookRepo *repository.WebhookRepository,
+	encryptionKey string,
 	logger *slog.Logger,
 ) *AlertService {
 	emailCfg := notifications.EmailConfig{
@@ -98,25 +102,33 @@ func NewAlertService(
 		config:        config,
 		emailProvider: emailProvider,
 		webhookRepo:   webhookRepo,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		logger: logger.With("component", "notification-service"),
+		// Use the SSRF-safe HTTP client for admin webhook notifications (F-023).
+		httpClient:    tasks.DefaultHTTPClient(),
+		encryptionKey: encryptionKey,
+		logger:        logger.With("component", "notification-service"),
 	}
+}
+
+// decryptWebhookSecret decrypts a stored AES-256-GCM webhook secret.
+func (s *AlertService) decryptWebhookSecret(encryptedSecret string) (string, error) {
+	return crypto.Decrypt(encryptedSecret, s.encryptionKey)
 }
 
 // SendAlert sends an alert notification through all enabled channels.
 // This is the primary entry point for sending alerts.
-// Returns an error only if ALL channels fail; partial failures are logged but don't return error.
+// Returns an error when ALL enabled channels fail (F-105).
 func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 	if alert.Timestamp.IsZero() {
 		alert.Timestamp = time.Now()
 	}
 
 	var errs []string
+	enabledChannels := 0
 
 	// Send email notifications
-	if s.config.EnableEmail && len(s.config.AdminEmails) > 0 {
+	emailEnabled := s.config.EnableEmail && len(s.config.AdminEmails) > 0
+	if emailEnabled {
+		enabledChannels++
 		if err := s.sendEmailAlert(ctx, alert); err != nil {
 			s.logger.Error("failed to send email alert",
 				"alert_type", alert.Type,
@@ -126,7 +138,9 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 	}
 
 	// Send webhook notifications
-	if s.config.EnableWebhook && len(s.config.AdminWebhooks) > 0 {
+	webhookEnabled := s.config.EnableWebhook && len(s.config.AdminWebhooks) > 0
+	if webhookEnabled {
+		enabledChannels++
 		if err := s.sendWebhookAlert(ctx, alert); err != nil {
 			s.logger.Error("failed to send webhook alert",
 				"alert_type", alert.Type,
@@ -135,13 +149,12 @@ func (s *AlertService) SendAlert(ctx context.Context, alert *Alert) error {
 		}
 	}
 
-	// If all channels failed, return an error
-	if len(errs) > 0 && (!s.config.EnableEmail || len(s.config.AdminEmails) == 0) &&
-		(!s.config.EnableWebhook || len(s.config.AdminWebhooks) == 0) {
+	// Return error only when all enabled channels failed (F-105).
+	if enabledChannels > 0 && len(errs) == enabledChannels {
 		return fmt.Errorf("all notification channels failed: %s", strings.Join(errs, "; "))
 	}
 
-	// Log partial failures but don't return error
+	// Log partial failures but don't return error when some channels succeeded.
 	if len(errs) > 0 {
 		s.logger.Warn("some notification channels failed",
 			"alert_type", alert.Type,
@@ -312,7 +325,22 @@ func (s *AlertService) SendCustomerWebhook(ctx context.Context, event string, cu
 			continue
 		}
 
-		if err := s.sendWebhook(ctx, webhook.URL, webhook.SecretHash, payload); err != nil {
+		// webhook.SecretHash is AES-256-GCM ciphertext; decrypt to get the
+		// actual HMAC secret before passing it to sendWebhook (F-022).
+		plainSecret := ""
+		if webhook.SecretHash != "" {
+			decrypted, decErr := s.decryptWebhookSecret(webhook.SecretHash)
+			if decErr != nil {
+				s.logger.Error("failed to decrypt webhook secret, skipping delivery",
+					"webhook_id", webhook.ID,
+					"error", decErr)
+				errs = append(errs, fmt.Sprintf("webhook %s: decrypt secret: %v", webhook.ID, decErr))
+				continue
+			}
+			plainSecret = decrypted
+		}
+
+		if err := s.sendWebhook(ctx, webhook.URL, plainSecret, payload); err != nil {
 			errs = append(errs, fmt.Sprintf("webhook %s: %v", webhook.ID, err))
 			if updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, false); updateErr != nil {
 				s.logger.Error("failed to update webhook status",

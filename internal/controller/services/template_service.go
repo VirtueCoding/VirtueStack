@@ -18,6 +18,8 @@ const (
 	StorageBackendCeph = "ceph"
 	// StorageBackendQcow indicates local QCOW2 file-based storage.
 	StorageBackendQcow = "qcow"
+	// StorageBackendLvm indicates LVM thin provisioning storage.
+	StorageBackendLvm = "lvm"
 	// DefaultMinDiskGB is the default minimum disk size in GB for templates.
 	DefaultMinDiskGB = 10
 	// MinDiskSizeOverheadFactor is the multiplier applied to the actual template size.
@@ -141,6 +143,10 @@ func (s *TemplateService) Create(ctx context.Context, template *models.Template)
 	} else if storageBackend == StorageBackendQcow {
 		if template.FilePath == nil || *template.FilePath == "" {
 			return fmt.Errorf("file_path is required for qcow storage")
+		}
+	} else if storageBackend == StorageBackendLvm {
+		if template.FilePath == nil || *template.FilePath == "" {
+			return fmt.Errorf("file_path is required for lvm storage")
 		}
 	}
 

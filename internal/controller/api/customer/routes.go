@@ -61,6 +61,9 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	}
 	protected.Use(middleware.RequireUserType("customer"))
 	protected.Use(middleware.SkipCSRFForAPIKey(middleware.DefaultCSRFConfig()))
+	// F-064: Apply global rate limiting to the protected customer group.
+	protected.Use(middleware.CustomerReadRateLimit())
+	protected.Use(middleware.CustomerWriteRateLimit())
 
 	registerVMRoutes(protected, handler)
 	registerBackupRoutes(protected, handler)
@@ -76,12 +79,14 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 }
 
 // registerAuthRoutes registers authentication endpoints (no auth required).
+// F-007: LoginRateLimit is applied to /login and /verify-2fa to protect against
+// brute-force attacks. A separate refresh rate limit applies to /refresh.
 func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 	auth := customer.Group("/auth")
 	{
-		auth.POST("/login", handler.Login)
-		auth.POST("/verify-2fa", handler.Verify2FA)
-		auth.POST("/refresh", handler.RefreshToken)
+		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
+		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
+		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)
 	}
 }
 

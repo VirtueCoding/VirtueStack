@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +24,33 @@ import { Server, User, Package, FileCode, Lock, MapPin, Loader2 } from "lucide-r
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/components/ui/use-toast";
-import { adminCustomersApi, adminPlansApi, adminTemplatesApi, adminNodesApi, type Customer, type Plan, type Template, type Node } from "@/lib/api-client";
+import { Badge } from "@/components/ui/badge";
+import { adminCustomersApi, adminPlansApi, adminTemplatesApi, adminNodesApi, adminStorageBackendsApi, type Customer, type Plan, type Template, type Node, type StorageBackend } from "@/lib/api-client";
 
 // RFC 1123 hostname validation: lowercase alphanumeric with hyphens, max 63 chars
 const hostnameRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+// HealthBadge displays storage backend health status as a colored badge
+function getHealthBadgeVariant(status: string): "success" | "warning" | "destructive" | "secondary" {
+  switch (status) {
+    case "healthy":
+      return "success";
+    case "warning":
+      return "warning";
+    case "critical":
+      return "destructive";
+    default:
+      return "secondary";
+  }
+}
+
+function HealthBadge({ status }: { status: string }) {
+  return (
+    <Badge variant={getHealthBadgeVariant(status)} className="capitalize text-xs">
+      {status}
+    </Badge>
+  );
+}
 
 export const createVMSchema = z.object({
   customer_id: z.string().uuid("Must select a valid customer"),
@@ -70,6 +93,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
   const [plans, setPlans] = useState<Plan[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [storageBackends, setStorageBackends] = useState<StorageBackend[]>([]);
   const [loadingLookups, setLoadingLookups] = useState(true);
 
   const form = useForm<CreateVMFormData>({
@@ -87,12 +111,14 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
         adminPlansApi.getPlans(),
         adminTemplatesApi.getTemplates(),
         adminNodesApi.getNodes(),
+        adminStorageBackendsApi.getStorageBackends(),
       ])
-        .then(([customersData, plansData, templatesData, nodesData]) => {
-          setCustomers(customersData || []);
+        .then(([customersResponse, plansData, templatesData, nodesResponse, backendsData]) => {
+          setCustomers(customersResponse.data || []);
           setPlans((plansData || []).filter(p => p.is_active));
           setTemplates(templatesData || []);
-          setNodes((nodesData || []).filter(n => n.status === "online"));
+          setNodes((nodesResponse.data || []));
+          setStorageBackends(backendsData || []);
         })
         .catch(() => {
           toast({
@@ -104,6 +130,34 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
         .finally(() => setLoadingLookups(false));
     }
   }, [open, form, toast]);
+
+  // Filter nodes to those with a storage backend of the plan's type
+  const selectedPlanId = form.watch("plan_id");
+  const selectedPlan = plans.find(p => p.id === selectedPlanId);
+
+  const filteredNodes = useMemo(() => {
+    if (!nodes.length || !storageBackends.length || !selectedPlan) {
+      return nodes.filter(n => n.status === "online");
+    }
+
+    // Get node IDs that have a storage backend of the required type
+    const nodeIdsWithType = new Set(
+      storageBackends
+        .filter(sb => sb.type === selectedPlan.storage_backend && sb.health_status !== "critical")
+        .flatMap(sb => sb.nodes?.map(n => n.node_id) || [])
+    );
+
+    return nodes.filter(n => n.status === "online" && nodeIdsWithType.has(n.id));
+  }, [nodes, storageBackends, selectedPlan]);
+
+  // Get health status for a node from storage backends
+  const getNodeHealthStatus = (nodeId: string): "healthy" | "warning" | "critical" | "unknown" => {
+    if (!selectedPlan || !storageBackends.length) return "unknown";
+    const matchingBackend = storageBackends.find(
+      sb => sb.type === selectedPlan.storage_backend && sb.nodes?.some(n => n.node_id === nodeId)
+    );
+    return matchingBackend?.health_status || "unknown";
+  };
 
   const handleSubmit = async (data: CreateVMFormData) => {
     try {
@@ -124,13 +178,14 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
     }
   };
 
-  // Generate a random password
+  // Generate a cryptographically secure random password using the Web Crypto API
   const generatePassword = () => {
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
-    let password = "";
-    for (let i = 0; i < 16; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    const randomValues = new Uint32Array(16);
+    crypto.getRandomValues(randomValues);
+    const password = Array.from(randomValues)
+      .map((v) => chars.charAt(v % chars.length))
+      .join("");
     form.setValue("password", password);
   };
 
@@ -316,17 +371,25 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                   onValueChange={(value) => form.setValue("node_id", value)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Auto-assign" />
+                    <SelectValue placeholder={selectedPlan ? "Auto-assign" : "Select a plan first"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {nodes.map((node) => (
-                      <SelectItem key={node.id} value={node.id}>
-                        {node.name} ({node.location})
-                      </SelectItem>
-                    ))}
+                    {filteredNodes.map((node) => {
+                      const health = getNodeHealthStatus(node.id);
+                      return (
+                        <SelectItem key={node.id} value={node.id} className="flex items-center gap-2">
+                          <span>{node.name} ({node.location})</span>
+                          <HealthBadge status={health} />
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">Force placement on specific node</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedPlan
+                    ? `Only showing nodes with ${selectedPlan.storage_backend.toUpperCase()} storage`
+                    : "Select a plan to see compatible nodes"}
+                </p>
               </div>
             </div>
 

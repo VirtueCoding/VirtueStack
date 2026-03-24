@@ -117,7 +117,13 @@ func (m *IPv6Manager) Initialize(ctx context.Context) error {
 }
 
 // loadExistingAllocations loads existing subnet allocations from status files.
+// Must be called with m.mu held if concurrent access is possible; here it is
+// called only during Initialize which runs before the manager is shared, but
+// we acquire the lock defensively to satisfy the data-race requirement (F-182).
 func (m *IPv6Manager) loadExistingAllocations(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	statusDir := filepath.Join(m.configDir, "status")
 
 	entries, err := os.ReadDir(statusDir)
@@ -433,5 +439,5 @@ func (m *IPv6Manager) saveStatus(vmID string, info *IPv6Info) error {
 	if err != nil {
 		return fmt.Errorf("marshaling IPv6 status: %w", err)
 	}
-	return os.WriteFile(statusPath, data, 0644)
+	return os.WriteFile(statusPath, data, 0600)
 }

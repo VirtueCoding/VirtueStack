@@ -17,7 +17,7 @@ import {
 } from "./api-client";
 import {
   fetchCustomerProfile,
-  fetchCustomerProfileWithEmailFallback,
+  fetchCustomerProfileAfter2FA,
   type CustomerUser,
 } from "./auth-utils";
 
@@ -151,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         // Fetch the real profile to get the UUID rather than using email as ID.
-        const user = await fetchCustomerProfileWithEmailFallback(credentials.email);
+        const user = await fetchCustomerProfileAfter2FA();
         setState({
           user,
           isAuthenticated: true,
@@ -183,11 +183,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null);
       setState((prev) => ({ ...prev, isLoading: true }));
 
+      if (!pendingEmail) {
+        // This should never happen — if pendingEmail is missing the session is
+        // corrupt. Log out and redirect to login instead of constructing a fake user.
+        setError("Session expired. Please log in again.");
+        setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          requires2FA: false,
+        });
+        setTempToken(null);
+        sessionStorage.removeItem(AUTH_STATE_KEY);
+        router.push("/login");
+        return;
+      }
+
       try {
         await customerAuthApi.verify2FA(request);
 
-        // Fetch the real profile to get the UUID rather than using email as ID.
-        const user = await fetchCustomerProfileWithEmailFallback(pendingEmail || "");
+        // Fetch the real profile to get the UUID. Failure is fatal — do not
+        // construct a fake user object with the email as the id.
+        let user: CustomerUser;
+        try {
+          user = await fetchCustomerProfileAfter2FA();
+        } catch {
+          // Profile fetch failed after successful 2FA — log out and surface error.
+          setError("Unable to load your profile after verification. Please log in again.");
+          await customerAuthApi.logout();
+          setState({
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            requires2FA: false,
+          });
+          setTempToken(null);
+          setPendingEmail(null);
+          sessionStorage.removeItem(AUTH_STATE_KEY);
+          router.push("/login");
+          return;
+        }
+
         setState({
           user,
           isAuthenticated: true,

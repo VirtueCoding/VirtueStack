@@ -26,29 +26,18 @@ export async function fetchCustomerProfile(): Promise<CustomerUser | null> {
 }
 
 /**
- * Fetches the customer profile with email fallback.
- * Used when we have a pending email (e.g., during 2FA flow) and want to
- * fall back to it if the profile fetch fails.
+ * Fetches the customer profile after 2FA verification.
+ * Profile fetch failure is treated as fatal — the caller should log the user
+ * out and surface a clear error rather than constructing a fake user object.
  *
- * @param fallbackEmail - Email to use if profile fetch fails
- * @returns CustomerUser object with real profile data or fallback values
+ * @throws If the profile fetch fails
+ * @returns CustomerUser object with real profile data
  */
-export async function fetchCustomerProfileWithEmailFallback(
-  fallbackEmail: string
-): Promise<CustomerUser> {
-  try {
-    const profile = await settingsApi.getProfile();
-    return {
-      id: profile.id,
-      email: profile.email,
-      role: "customer",
-    };
-  } catch {
-    // Non-fatal: fall back to provided email as a temporary placeholder
-    return {
-      id: fallbackEmail,
-      email: fallbackEmail,
-      role: "customer",
-    };
-  }
+export async function fetchCustomerProfileAfter2FA(): Promise<CustomerUser> {
+  const profile = await settingsApi.getProfile();
+  return {
+    id: profile.id,
+    email: profile.email,
+    role: "customer",
+  };
 }

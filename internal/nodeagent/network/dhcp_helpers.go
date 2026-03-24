@@ -189,12 +189,11 @@ func (m *DHCPManager) startProcessMonitor(
 	cmd *exec.Cmd,
 	logFile *os.File,
 ) {
-	// Start goroutine to wait for process exit and clean up.
-	// We derive the monitor context from the parent context to maintain
-	// cancellation propagation while using a timeout for the cleanup phase.
-	// The cancel function is called inside the goroutine after it finishes
-	// so the context is properly released.
+	// Derive a cancellable context for the monitor goroutine.  The caller
+	// (StartDHCPForVMWithConfig) passes the node-agent's root context; when
+	// DHCPManager.Stop() cancels that context the monitor goroutine will kill
+	// the dnsmasq child and return, allowing wg.Wait() to complete promptly.
 	m.wg.Add(1)
-	monitorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	monitorCtx, cancel := context.WithCancel(ctx)
 	go m.monitorProcess(monitorCtx, cancel, cfg.VMID, cmd, logFile)
 }

@@ -420,6 +420,8 @@ func (m *RBDManager) GetImageSize(ctx context.Context, imageName string) (int64,
 }
 
 // ImageExists checks if an RBD image exists in the pool.
+// Uses rbd.OpenImage for O(1) existence check instead of the O(n) linear
+// search over GetImageNames.
 func (m *RBDManager) ImageExists(ctx context.Context, imageName string) (bool, error) {
 	ioctx, err := m.openIOContext(m.pool)
 	if err != nil {
@@ -427,18 +429,15 @@ func (m *RBDManager) ImageExists(ctx context.Context, imageName string) (bool, e
 	}
 	defer ioctx.Destroy()
 
-	names, err := rbd.GetImageNames(ioctx)
+	img, err := rbd.OpenImage(ioctx, imageName, rbd.NoSnapshot)
 	if err != nil {
-		return false, fmt.Errorf("listing images in pool %s: %w", m.pool, err)
+		// rbd returns an error when the image does not exist; treat it as not-found.
+		return false, nil
 	}
-
-	for _, name := range names {
-		if name == imageName {
-			return true, nil
-		}
+	if closeErr := img.Close(); closeErr != nil {
+		m.logger.Warn("failed to close RBD image after existence check", "image", imageName, "error", closeErr)
 	}
-
-	return false, nil
+	return true, nil
 }
 
 // FlattenImage flattens a cloned image, removing its dependency on the parent snapshot.
@@ -522,12 +521,9 @@ func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
 		}
 	}
 
-	// Pool not found in response, return cluster-wide stats as fallback
-	return &PoolStats{
-		Total: dfResp.Stats.TotalBytes,
-		Used:  dfResp.Stats.TotalUsedBytes,
-		Free:  dfResp.Stats.TotalAvailBytes,
-	}, nil
+	// Pool not found — return an explicit error rather than silently falling back
+	// to cluster-wide statistics, which could mask misconfiguration.
+	return nil, fmt.Errorf("configured pool %q not found in Ceph cluster df output", m.pool)
 }
 
 // Rollback reverts an RBD image to a previous snapshot state in-place.
@@ -575,4 +571,48 @@ func (m *RBDManager) IsConnected() bool {
 // GetStorageType returns the storage backend type.
 func (m *RBDManager) GetStorageType() StorageType {
 	return StorageTypeCEPH
+}
+
+// DiskIdentifier returns the canonical RBD image name for a VM disk.
+// The format is "vs-{vmID}-disk0".
+func (m *RBDManager) DiskIdentifier(vmID string) string {
+	return fmt.Sprintf(VMDiskNameFmt, vmID)
+}
+
+// CreateImage is not supported for RBD storage.
+// RBD images are created through CloneFromTemplate or other operations.
+// This method returns an error indicating the operation is not supported.
+func (m *RBDManager) CreateImage(ctx context.Context, imageName string, sizeGB int) error {
+	return NewStorageError(ErrCodeInvalid, "RBD does not support CreateImage; use CloneFromTemplate instead", nil)
+}
+
+// GetImageInfo returns detailed information about an RBD image.
+func (m *RBDManager) GetImageInfo(ctx context.Context, imageName string) (*ImageInfo, error) {
+	ioctx, err := m.openIOContext(m.pool)
+	if err != nil {
+		return nil, fmt.Errorf("opening IO context: %w", err)
+	}
+	defer ioctx.Destroy()
+
+	// Check if image exists
+	img, err := rbd.OpenImage(ioctx, imageName, rbd.NoSnapshot)
+	if err != nil {
+		return nil, NewStorageError(ErrCodeNotFound, fmt.Sprintf("image %q", imageName), nil)
+	}
+	defer func() { _ = img.Close() }()
+
+	virtualSize, err := img.GetSize()
+	if err != nil {
+		return nil, fmt.Errorf("getting size of image %q: %w", imageName, err)
+	}
+
+	return &ImageInfo{
+		Filename:          imageName,
+		Format:           "rbd",
+		VirtualSizeBytes: int64(virtualSize),
+		ActualSizeBytes:  0,
+		DirtyFlag:        false,
+		ClusterSize:      0,
+		BackingFile:      "",
+	}, nil
 }

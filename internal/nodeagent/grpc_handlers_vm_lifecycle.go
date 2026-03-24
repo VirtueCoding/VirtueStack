@@ -58,16 +58,32 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		}
 
 		diskPath = fmt.Sprintf("%s/vms/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+
+		// Get current disk size before deletion (similar to LVM approach)
+		currentSizeGB := 20 // Default fallback
+		if existingSize, err := h.server.storageBackend.GetImageSize(ctx, diskPath); err == nil && existingSize > 0 {
+			currentSizeGB = int(existingSize / (1024 * 1024 * 1024))
+			if currentSizeGB < 1 {
+				currentSizeGB = 20 // Minimum 20GB
+			}
+		}
+
+		// Use requested disk size if provided, otherwise use current size
+		diskSizeGB := currentSizeGB
+		if req.GetDiskSizeGb() > 0 {
+			diskSizeGB = int(req.GetDiskSizeGb())
+		}
+
 		if err := h.server.storageBackend.Delete(ctx, diskPath); err != nil {
 			logger.Warn("failed to delete old QCOW disk", "error", err)
 		}
 
-		newDiskPath, err := templateMgr.CloneForVM(ctx, templatePath, req.GetVmId(), 20)
+		newDiskPath, err := templateMgr.CloneForVM(ctx, templatePath, req.GetVmId(), diskSizeGB)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "cloning QCOW template: %v", err)
 		}
 		diskPath = newDiskPath
-		logger.Info("cloned QCOW template for reinstall", "template", templatePath, "disk_path", diskPath)
+		logger.Info("cloned QCOW template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
 
 	case vm.StorageBackendCeph:
 		if req.GetTemplateRbdImage() == "" || req.GetTemplateRbdSnapshot() == "" {
@@ -90,6 +106,41 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		}
 		logger.Info("cloned RBD template for reinstall", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
 
+	case vm.StorageBackendLVM:
+		templatePath := req.GetTemplateFilePath()
+		if templatePath == "" {
+			return nil, status.Error(codes.InvalidArgument, "template_file_path is required for lvm storage backend")
+		}
+
+		// Get current disk size before deletion
+		diskIdentifier := h.server.storageBackend.DiskIdentifier(req.GetVmId())
+		currentSizeGB := 20 // Default fallback
+		if currentSizeBytes, err := h.server.storageBackend.GetImageSize(ctx, diskIdentifier); err == nil && currentSizeBytes > 0 {
+			currentSizeGB = int(currentSizeBytes / (1024 * 1024 * 1024))
+			if currentSizeGB < 1 {
+				currentSizeGB = 20 // Minimum 20GB
+			}
+		}
+
+		// Use requested disk size if provided, otherwise use current size
+		diskSizeGB := currentSizeGB
+		if req.GetDiskSizeGb() > 0 {
+			diskSizeGB = int(req.GetDiskSizeGb())
+		}
+
+		// Delete old disk
+		if err := h.server.storageBackend.Delete(ctx, diskIdentifier); err != nil {
+			logger.Warn("failed to delete old LVM disk", "error", err)
+		}
+
+		// Clone template with determined disk size
+		newDiskPath, err := h.server.templateMgr.CloneForVM(ctx, templatePath, req.GetVmId(), diskSizeGB)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "cloning LVM template: %v", err)
+		}
+		diskPath = newDiskPath
+		logger.Info("cloned LVM template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
+
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
 	}
@@ -101,12 +152,32 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		}
 	}
 
+	// Fetch current VM domain to retrieve VCPU and MemoryMB before deleting it
+	existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
+	var vcpu int
+	var memoryMB int
+	if lookupErr == nil {
+		if info, infoErr := existingDomain.GetInfo(); infoErr == nil {
+			vcpu = int(info.NrVirtCpu)
+			memoryMB = int(info.Memory / 1024) // Convert from KB to MB
+		}
+		if freeErr := existingDomain.Free(); freeErr != nil {
+			logger.Debug("failed to free domain after info fetch", "error", freeErr)
+		}
+	}
+	if vcpu <= 0 {
+		vcpu = 1
+	}
+	if memoryMB <= 0 {
+		memoryMB = 1024
+	}
+
 	// Re-create domain from existing config with new template
 	cfg := &vm.DomainConfig{
 		VMID:           req.GetVmId(),
 		Hostname:       req.GetHostname(),
-		VCPU:           1,
-		MemoryMB:       1024,
+		VCPU:           vcpu,
+		MemoryMB:       memoryMB,
 		StorageBackend: storageBackend,
 		DiskPath:       diskPath,
 		CephPool:       h.server.config.CephPool,
@@ -171,8 +242,8 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 
 	// Validate storage_backend if provided
 	if storageBackend := req.GetStorageBackend(); storageBackend != "" {
-		if storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph' or 'qcow')", storageBackend)
+		if storageBackend != vm.StorageBackendCeph && storageBackend != vm.StorageBackendQcow && storageBackend != vm.StorageBackendLVM {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid storage_backend: %s (must be 'ceph', 'qcow', or 'lvm')", storageBackend)
 		}
 	}
 
@@ -220,6 +291,13 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 				return nil, status.Errorf(codes.Internal, "resizing RBD disk: %v", err)
 			}
 			logger.Info("RBD disk resized", "name", diskName, "size_gb", req.GetNewDiskGb())
+
+		case vm.StorageBackendLVM:
+			diskIdentifier := h.server.storageBackend.DiskIdentifier(req.GetVmId())
+			if err := h.server.storageBackend.Resize(ctx, diskIdentifier, int(req.GetNewDiskGb())); err != nil {
+				return nil, status.Errorf(codes.Internal, "resizing LVM disk: %v", err)
+			}
+			logger.Info("LVM disk resized", "path", diskIdentifier, "size_gb", req.GetNewDiskGb())
 		}
 	}
 
@@ -288,7 +366,7 @@ func (h *grpcHandler) MigrateVM(ctx context.Context, req *nodeagentpb.MigrateVMR
 		}
 	}()
 
-	destURI := fmt.Sprintf("qemu+tcp://%s/system", req.GetDestinationNodeAddress())
+	destURI := fmt.Sprintf("qemu+tls://%s/system", req.GetDestinationNodeAddress())
 
 	var flags libvirt.DomainMigrateFlags
 	flags = libvirt.MIGRATE_PERSIST_DEST | libvirt.MIGRATE_UNDEFINE_SOURCE

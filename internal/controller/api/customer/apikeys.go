@@ -2,8 +2,6 @@ package customer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
@@ -144,7 +143,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 
 	keyID := uuid.New().String()
 	rawKey := "vs_" + uuid.New().String()
-	keyHash := hashAPIKey(rawKey)
+	keyHash := h.hashAPIKey(rawKey)
 
 	key := &models.CustomerAPIKey{
 		ID:          keyID,
@@ -233,7 +232,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 	}
 
 	newRawKey := "vs_" + uuid.New().String()
-	newKeyHash := hashAPIKey(newRawKey)
+	newKeyHash := h.hashAPIKey(newRawKey)
 
 	if err := h.apiKeyRepo.Rotate(c.Request.Context(), keyID, customerID, newKeyHash); err != nil {
 		h.logger.Error("failed to rotate API key",
@@ -327,10 +326,12 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// hashAPIKey returns the hex-encoded SHA-256 hash of a raw API key.
-func hashAPIKey(rawKey string) string {
-	sum := sha256.Sum256([]byte(rawKey))
-	return hex.EncodeToString(sum[:])
+// hashAPIKey returns an HMAC-SHA256 digest of rawKey using the server's
+// encryptionKey as the HMAC secret. F-068: plain SHA-256 was replaced with
+// HMAC-SHA256 to prevent offline dictionary attacks against the stored key hashes.
+// F-207: The local thin wrapper has been consolidated here.
+func (h *CustomerHandler) hashAPIKey(rawKey string) string {
+	return crypto.GenerateHMACSignature(h.encryptionKey, []byte(rawKey))
 }
 
 // logAudit creates an audit log entry for customer operations.

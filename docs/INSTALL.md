@@ -256,6 +256,9 @@ sudo apt install -y qemu-utils cloud-image-utils dnsmasq
 # For Ceph backend, install ceph-common
 sudo apt install -y ceph-common
 
+# For LVM backend, install lvm2 (usually pre-installed)
+sudo apt install -y lvm2
+
 # Verify node-agent binary dependencies (run after copying binary)
 # This will show all required shared libraries
 ldd /usr/local/bin/virtuestack-node-agent
@@ -309,6 +312,89 @@ sudo virsh nwfilter-define - << 'EOF'
   </rule>
 </filter>
 EOF
+```
+
+#### Step 3.5: Configure LVM Thin Pool (LVM Backend Only)
+
+If using the LVM storage backend, create a volume group and thin pool before deploying VMs.
+
+**Prerequisites:**
+- A dedicated block device or partition (e.g., `/dev/sdb`, `/dev/nvme0n1`)
+- The `lvm2` package installed (`sudo apt install -y lvm2`)
+
+**Create Volume Group and Thin Pool:**
+
+```bash
+# 1. Create physical volume (replace /dev/sdb with your device)
+sudo pvcreate /dev/sdb
+
+# 2. Create volume group (replace vgvs with your preferred name)
+sudo vgcreate vgvs /dev/sdb
+
+# 3. Create thin pool LV
+# Recommended size: total planned VM virtual disk GiB × 0.3 as starting point
+# Example: For 1TB total VM storage, create ~300GB thin pool
+# The pool will expand with overprovisioning; monitor usage carefully.
+sudo lvcreate -L 300G -T vgvs/thinpool
+
+# 4. Verify thin pool
+sudo lvs -a vgvs
+# Output should show:
+#   LV        VG   Attr       LSize   Pool Origin Data%  Meta%
+#   thinpool  vgvs twi-a-tz-- 300.00g              0.00   0.00
+```
+
+**Configuration:**
+
+Add to `/etc/virtuestack/node-agent.env`:
+
+```bash
+STORAGE_BACKEND=lvm
+LVM_VOLUME_GROUP=vgvs
+LVM_THIN_POOL=thinpool
+```
+
+**Monitoring Thresholds:**
+
+| Metric | Warning | Critical | Action |
+|--------|---------|----------|--------|
+| `data_percent` | >= 90% | >= 95% | VM creation blocked at 95% |
+| `metadata_percent` | >= 60% | >= 70% | VM creation blocked at 70% |
+
+Check current usage:
+
+```bash
+sudo lvs -o lv_name,vg_name,lv_attr,lv_size,data_percent,metadata_percent vgvs
+```
+
+**Overprovisioning Risk:**
+
+Thin pools allow overprovisioning (total virtual size > physical size). If the pool fills:
+- VMs may freeze or corrupt on write
+- Recovery requires adding physical space or deleting LVs
+
+**Best Practices:**
+- Monitor pool usage daily via `lvs` or Prometheus metrics
+- Set up alerts for `data_percent >= 90%`
+- Reserve 10-20% headroom for metadata and snapshots
+- Consider thick provisioning for critical workloads
+
+**Guest TRIM Requirement:**
+
+VirtueStack configures `discard='unmap'` on LVM disks, allowing guests to release unused blocks. Guests must be configured to issue TRIM commands:
+
+| OS | Configuration |
+|----|---------------|
+| **Linux** | Enable `fstrim.timer`: `sudo systemctl enable --now fstrim.timer` |
+| **Windows** | Run as Administrator: `fsutil behavior set DisableDeleteNotify 0` |
+
+For Linux VMs, cloud-init can configure TRIM automatically during first boot by including this in user-data:
+
+```yaml
+#cloud-config
+runcmd:
+  - systemctl enable fstrim.timer
+  - systemctl start fstrim.timer
 ```
 
 #### Step 4: Build Node Agent Binary
@@ -708,15 +794,20 @@ The E2E seed script creates predictable test data:
 |----------|----------|---------|-------------|
 | CONTROLLER_GRPC_ADDR | Yes | - | Controller gRPC address |
 | NODE_ID | Yes | - | Unique node identifier (UUID) |
-| STORAGE_BACKEND | No | ceph | Storage backend: "ceph" or "qcow" |
+| STORAGE_BACKEND | No | ceph | Storage backend: "ceph", "qcow", or "lvm" |
 | STORAGE_PATH | No | /var/lib/virtuestack/vms | QCOW2 VM storage path |
 | TEMPLATE_PATH | No | /var/lib/virtuestack/templates | QCOW2 template path |
 | CEPH_POOL | No | vs-vms | Ceph pool for VMs |
 | CEPH_USER | No | virtuestack | Ceph auth user |
+| CEPH_CONF | No | /etc/ceph/ceph.conf | Ceph configuration file path |
+| LVM_VOLUME_GROUP | Conditional* | - | LVM volume group name (required if STORAGE_BACKEND=lvm) |
+| LVM_THIN_POOL | Conditional* | - | LVM thin pool LV name (required if STORAGE_BACKEND=lvm) |
 | TLS_CERT_FILE | Yes | - | mTLS client certificate |
 | TLS_KEY_FILE | Yes | - | mTLS client key |
 | TLS_CA_FILE | Yes | - | CA certificate |
 | LOG_LEVEL | No | info | Logging level |
+
+*Both `LVM_VOLUME_GROUP` and `LVM_THIN_POOL` are required when `STORAGE_BACKEND=lvm`. The thin pool must be pre-existing within the volume group.
 
 ### Security Considerations
 

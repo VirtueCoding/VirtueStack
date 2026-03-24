@@ -61,12 +61,8 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken, ipAddress,
 		return nil, "", fmt.Errorf("generating refresh token: %w", err)
 	}
 
-	// Delete old session
-	if err := s.customerRepo.DeleteSession(ctx, session.ID); err != nil {
-		s.logger.Warn("failed to delete old session", "session_id", session.ID, "error", err)
-	}
-
-	// Create new session with new refresh token
+	// Create new session BEFORE deleting the old one to prevent the user from
+	// being permanently logged out if CreateSession fails (F-057).
 	newRefreshTokenHash := crypto.HashSHA256(newRefreshToken)
 	newSession := &models.Session{
 		ID:               uuid.New().String(),
@@ -80,6 +76,11 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken, ipAddress,
 
 	if err := s.customerRepo.CreateSession(ctx, newSession); err != nil {
 		return nil, "", fmt.Errorf("creating new session: %w", err)
+	}
+
+	// Delete old session only after the new one is confirmed created.
+	if err := s.customerRepo.DeleteSession(ctx, session.ID); err != nil {
+		s.logger.Warn("failed to delete old session", "session_id", session.ID, "error", err)
 	}
 
 	s.logger.Info("token refreshed", "user_id", session.UserID, "new_session_id", newSession.ID)

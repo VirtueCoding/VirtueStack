@@ -303,55 +303,34 @@ func (r *IPRepository) CountIPsByStatus(ctx context.Context, ipSetID string) (ma
 }
 
 // AllocateIPv4 atomically allocates an available IPv4 address from an IP set.
-// This operation uses a transaction with SELECT FOR UPDATE to prevent race conditions.
+// A single UPDATE ... WHERE id = (SELECT id ... FOR UPDATE SKIP LOCKED) RETURNING
+// statement is used to reduce from two round-trips to one, eliminating the window
+// between the SELECT and the UPDATE that existed in the previous implementation.
 // Returns the allocated IP address or an error if no addresses are available.
 func (r *IPRepository) AllocateIPv4(ctx context.Context, ipSetID, vmID, customerID string) (*models.IPAddress, error) {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("starting IP allocation transaction: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	// Rollback error is ignored intentionally: if Commit succeeds, Rollback is a no-op.
-	// If Commit fails, the original error is already being returned and is more important.
-	// This is standard Go idiom for transaction defer - rollback is a safety net.
+	now := time.Now().UTC()
+	const q = `
+		UPDATE ip_addresses SET
+			status = 'assigned',
+			vm_id = $2,
+			customer_id = $3,
+			assigned_at = $4
+		WHERE id = (
+			SELECT id FROM ip_addresses
+			WHERE ip_set_id = $1 AND status = 'available'
+			ORDER BY address ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING ` + ipAddressSelectCols
 
-	// Find an available IP address and lock it for update
-	const selectQ = `
-		SELECT ` + ipAddressSelectCols + `
-		FROM ip_addresses
-		WHERE ip_set_id = $1 AND status = 'available'
-		ORDER BY address ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED`
-
-	row := tx.QueryRow(ctx, selectQ, ipSetID)
-	ip, err := scanIPAddress(row)
+	row := r.db.QueryRow(ctx, q, ipSetID, vmID, customerID, now)
+	updated, err := scanIPAddress(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("no available IPv4 addresses in IP set %s", ipSetID)
 		}
-		return nil, fmt.Errorf("finding available IP: %w", err)
-	}
-
-	// Update the IP address to assigned status
-	now := time.Now().UTC()
-	const updateQ = `
-		UPDATE ip_addresses SET
-			status = 'assigned',
-			vm_id = $1,
-			customer_id = $2,
-			assigned_at = $3
-		WHERE id = $4
-		RETURNING ` + ipAddressSelectCols
-
-	updateRow := tx.QueryRow(ctx, updateQ, vmID, customerID, now, ip.ID)
-	updated, err := scanIPAddress(updateRow)
-	if err != nil {
-		return nil, fmt.Errorf("updating IP address %s: %w", ip.ID, err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("committing IP allocation: %w", err)
+		return nil, fmt.Errorf("allocating IPv4 address from IP set %s: %w", ipSetID, err)
 	}
 
 	return &updated, nil
@@ -360,15 +339,6 @@ func (r *IPRepository) AllocateIPv4(ctx context.Context, ipSetID, vmID, customer
 // ReleaseIPv4 sets an IP address to cooldown status and schedules it for reuse.
 // The cooldown_until is set to the current time plus the cooldown period.
 func (r *IPRepository) ReleaseIPv4(ctx context.Context, ipID string) error {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("starting IP release transaction: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	// Rollback error is ignored intentionally: if Commit succeeds, Rollback is a no-op.
-	// If Commit fails, the original error is already being returned and is more important.
-	// This is standard Go idiom for transaction defer - rollback is a safety net.
-
 	// Get current time and calculate cooldown end.
 	now := time.Now().UTC()
 	cooldownEnd := now.Add(IPCooldownDuration)
@@ -383,16 +353,12 @@ func (r *IPRepository) ReleaseIPv4(ctx context.Context, ipID string) error {
 			is_primary = FALSE
 		WHERE id = $3 AND status = 'assigned'`
 
-	tag, err := tx.Exec(ctx, q, now, cooldownEnd, ipID)
+	tag, err := r.db.Exec(ctx, q, now, cooldownEnd, ipID)
 	if err != nil {
 		return fmt.Errorf("releasing IP address %s: %w", ipID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("releasing IP address %s: %w", ipID, ErrNoRowsAffected)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing IP release: %w", err)
 	}
 
 	return nil
@@ -575,6 +541,16 @@ func (r *IPRepository) DeleteVMIPv6SubnetByID(ctx context.Context, id string) er
 // concurrent requests try to allocate subnets from the same prefix.
 // The prefix string is queried within the transaction to compute the actual subnet.
 // Returns an error if the prefix is exhausted (65536 subnets max for a /48).
+//
+// NOTE: Even with the FOR UPDATE lock on the prefix row, two concurrent transactions
+// that both read the same max(subnet_index) before either inserts can assign duplicate
+// subnet_index values if the lock on the prefix row is not held consistently.
+// A UNIQUE constraint on (ipv6_prefix_id, subnet_index) in the database would
+// provide a safety-net that causes one of the concurrent inserts to fail with a
+// unique-violation error rather than silently storing a duplicate.
+// TODO: Add migration: ALTER TABLE vm_ipv6_subnets ADD CONSTRAINT
+//
+//	uq_ipv6_subnets_prefix_index UNIQUE (ipv6_prefix_id, subnet_index);
 func (r *IPRepository) CreateVMIPv6SubnetWithIndexCheck(ctx context.Context, vmID, prefixID string) (*models.VMIPv6Subnet, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

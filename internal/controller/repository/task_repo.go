@@ -215,7 +215,13 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status mod
 	return nil
 }
 
-// UpdateProgress updates the progress (0-100) and optional message for a task.
+// UpdateProgress updates the progress (0-100) for a task.
+// The message parameter is accepted for call-site readability but is not
+// currently persisted — the underlying query only updates the progress column.
+//
+// TODO: Either add a progress_message column to the tasks table and include it
+// in the UPDATE, or remove the message parameter from this signature and all
+// call sites to avoid misleading callers into believing the message is stored.
 func (r *TaskRepository) UpdateProgress(ctx context.Context, id string, progress int, message string) error {
 	const q = `UPDATE tasks SET progress = $1 WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, progress, id)
@@ -305,4 +311,42 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("deleting task %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
+}
+
+// CountByStorageBackend returns the count of in-flight tasks (pending or running) that
+// reference the given storage backend. Tasks may reference the storage backend through:
+// - VM migration tasks (payload contains source_node_id or target_node_id from nodes using this backend)
+// - Backup tasks for VMs using this backend
+// - Snapshot tasks for VMs using this backend
+func (r *TaskRepository) CountByStorageBackend(ctx context.Context, storageBackendID string) (int, error) {
+	const q = `
+		SELECT COUNT(*)
+		FROM tasks t
+		WHERE t.status IN ('pending', 'running')
+		  AND (
+			-- Tasks referencing VMs that use this storage backend
+			t.payload::jsonb ? 'vm_id'
+			AND EXISTS (
+				SELECT 1 FROM vms v WHERE v.id = (t.payload::jsonb->>'vm_id')::uuid AND v.storage_backend_id = $1
+			)
+			OR
+			-- Tasks referencing source node that has this storage backend
+			t.payload::jsonb ? 'source_node_id'
+			AND EXISTS (
+				SELECT 1 FROM node_storage ns WHERE ns.node_id = (t.payload::jsonb->>'source_node_id')::uuid AND ns.storage_backend_id = $1
+			)
+			OR
+			-- Tasks referencing target node that has this storage backend
+			t.payload::jsonb ? 'target_node_id'
+			AND EXISTS (
+				SELECT 1 FROM node_storage ns WHERE ns.node_id = (t.payload::jsonb->>'target_node_id')::uuid AND ns.storage_backend_id = $1
+			)
+		  )
+	`
+	var count int
+	err := r.db.QueryRow(ctx, q, storageBackendID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting tasks by storage backend %s: %w", storageBackendID, err)
+	}
+	return count, nil
 }

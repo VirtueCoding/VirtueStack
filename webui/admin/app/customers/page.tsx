@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { adminCustomersApi, type Customer } from "@/lib/api-client";
+import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/use-toast";
 import { CustomerCreateDialog, type CreateCustomerFormData } from "@/components/customers/CustomerCreateDialog";
 import { CustomerEditDialog, type EditCustomerFormData } from "@/components/customers/CustomerEditDialog";
@@ -41,6 +42,7 @@ import { CustomerEditDialog, type EditCustomerFormData } from "@/components/cust
 type DialogAction = "suspend" | "unsuspend" | "delete" | null;
 
 export default function CustomersPage() {
+  const router = useRouter();
   const [searchTerm, setSearchTerm] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,10 +57,10 @@ export default function CustomersPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
-  const loadCustomers = async () => {
+  const loadCustomers = useCallback(async () => {
     try {
-      const data = await adminCustomersApi.getCustomers();
-      setCustomers(data || []);
+      const response = await adminCustomersApi.getCustomers();
+      setCustomers(response.data || []);
     } catch (err) {
       toast({
         title: "Error",
@@ -66,7 +68,7 @@ export default function CustomersPage() {
         variant: "destructive",
       });
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     async function loadData() {
@@ -74,7 +76,7 @@ export default function CustomersPage() {
       setLoading(false);
     }
     loadData();
-  }, [toast]);
+  }, [loadCustomers]);
 
   const filteredCustomers = customers.filter(
     (customer) =>
@@ -83,10 +85,7 @@ export default function CustomersPage() {
   );
 
   const handleView = (customer: Customer) => {
-    toast({
-      title: "View Customer",
-      description: `Navigating to profile for ${customer.name}...`,
-    });
+    router.push(`/customers/${customer.id}`);
   };
 
   const openConfirmDialog = (customer: Customer, action: DialogAction) => {

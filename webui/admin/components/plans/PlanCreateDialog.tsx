@@ -39,7 +39,7 @@ export const createPlanSchema = z.object({
   port_speed_mbps: z.number().int().min(1, "Must be at least 1 Mbps"),
   price_monthly: z.number().int().min(0, "Must be 0 or greater").optional(),
   price_hourly: z.number().int().min(0, "Must be 0 or greater").optional(),
-  storage_backend: z.enum(["ceph", "qcow"]).optional(),
+  storage_backend: z.enum(["ceph", "qcow", "lvm"]).optional(),
   is_active: z.boolean().optional(),
   sort_order: z.number().int().min(0, "Must be 0 or greater").optional(),
   snapshot_limit: z.number().int().min(0, "Must be 0 or greater").optional(),
@@ -276,7 +276,7 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                   <p className="text-xs text-destructive">{form.formState.errors.price_monthly.message}</p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  {form.watch("price_monthly") ? `$${(form.watch("price_monthly") || 0 / 100).toFixed(2)}` : "Enter cents, e.g., 999 = $9.99"}
+                  {form.watch("price_monthly") ? `$${((form.watch("price_monthly") || 0) / 100).toFixed(2)}` : "Enter cents, e.g., 999 = $9.99"}
                 </p>
               </div>
               <div className="space-y-2">
@@ -364,7 +364,7 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                 </Label>
                 <Select
                   value={form.watch("storage_backend")}
-                  onValueChange={(value: "ceph" | "qcow") => form.setValue("storage_backend", value)}
+                  onValueChange={(value: "ceph" | "qcow" | "lvm") => form.setValue("storage_backend", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select backend" />
@@ -372,6 +372,7 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                   <SelectContent>
                     <SelectItem value="ceph">Ceph (RBD)</SelectItem>
                     <SelectItem value="qcow">Local QCOW2</SelectItem>
+                    <SelectItem value="lvm">LVM Thin</SelectItem>
                   </SelectContent>
                 </Select>
                 {form.formState.errors.storage_backend && (

@@ -58,16 +58,18 @@ type cachedMetrics struct {
 // NodeHealthResponse represents the health response from node agent.
 // This mirrors the node agent's response structure.
 type NodeHealthResponse struct {
-	NodeID           string
-	Healthy          bool
-	CPUPercent       float64
-	MemoryPercent    float64
-	DiskPercent      float64
-	VMCount          int32
-	LoadAverage      []float64
-	UptimeSeconds    int64
-	LibvirtConnected bool
-	CephConnected    bool
+	NodeID            string
+	Healthy           bool
+	CPUPercent        float64
+	MemoryPercent     float64
+	DiskPercent       float64
+	VMCount           int32
+	LoadAverage       []float64
+	UptimeSeconds     int64
+	LibvirtConnected  bool
+	StorageConnected  bool
+	StorageTotalGB    int64
+	StorageUsedGB     int64
 }
 
 // NodeResourcesResponse represents the resources response from node agent.
@@ -317,15 +319,22 @@ func (c *NodeAgentGRPCClient) GetNodeResources(ctx context.Context, nodeID strin
 
 func (mc *metricsCache) get(nodeID string) *models.NodeHeartbeat {
 	mc.mutex.RLock()
-	defer mc.mutex.RUnlock()
-
 	cached, exists := mc.data[nodeID]
+	mc.mutex.RUnlock()
+
 	if !exists {
 		return nil
 	}
 
-	// Check if expired
+	// Check if expired.
 	if time.Now().After(cached.expiresAt) {
+		// Lazily evict the stale entry so deregistered nodes don't accumulate
+		// in memory indefinitely (F-208).
+		mc.mutex.Lock()
+		if entry, ok := mc.data[nodeID]; ok && time.Now().After(entry.expiresAt) {
+			delete(mc.data, nodeID)
+		}
+		mc.mutex.Unlock()
 		return nil
 	}
 
@@ -340,6 +349,37 @@ func (mc *metricsCache) set(nodeID string, metrics *models.NodeHeartbeat) {
 		metrics:   metrics,
 		expiresAt: time.Now().Add(mc.ttl),
 	}
+}
+
+// evictExpired removes all expired entries from the cache.
+// Called by the background eviction goroutine to handle deregistered nodes (F-208).
+func (mc *metricsCache) evictExpired() {
+	now := time.Now()
+	mc.mutex.Lock()
+	defer mc.mutex.Unlock()
+	for nodeID, cached := range mc.data {
+		if now.After(cached.expiresAt) {
+			delete(mc.data, nodeID)
+		}
+	}
+}
+
+// StartEvictionLoop starts a background goroutine that periodically evicts
+// stale cache entries for deregistered nodes (F-208). The goroutine exits when
+// ctx is cancelled.
+func (c *NodeAgentGRPCClient) StartEvictionLoop(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				c.cache.evictExpired()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // ClearCache clears the metrics cache for a specific node or all nodes if nodeID is empty.
@@ -364,12 +404,14 @@ func convertHealthResponse(resp *NodeHealthResponse) *models.NodeHeartbeat {
 	}
 
 	return &models.NodeHeartbeat{
-		CPUPercent:    float32(resp.CPUPercent),
-		MemoryPercent: float32(resp.MemoryPercent),
-		DiskPercent:   float32(resp.DiskPercent),
-		CephConnected: resp.CephConnected,
-		VMCount:       int(resp.VMCount),
-		LoadAverage:   loadAvg,
+		CPUPercent:       float32(resp.CPUPercent),
+		MemoryPercent:    float32(resp.MemoryPercent),
+		DiskPercent:      float32(resp.DiskPercent),
+		StorageConnected: resp.StorageConnected,
+		StorageTotalGB:   resp.StorageTotalGB,
+		StorageUsedGB:    resp.StorageUsedGB,
+		VMCount:          int(resp.VMCount),
+		LoadAverage:      loadAvg,
 	}
 }
 
@@ -1123,6 +1165,151 @@ func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmI
 	return nil
 }
 
+// RestoreLVMBackup restores an LVM thin LV from a backup file.
+// The thin LV must already exist; this uses dd to overwrite it in-place.
+// The VM must be stopped before calling this method.
+func (c *NodeAgentGRPCClient) RestoreLVMBackup(ctx context.Context, nodeID, vmID, backupFilePath string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.RestoreLVMBackup(ctx, &nodeagentpb.RestoreLVMBackupRequest{
+		VmId:           vmID,
+		BackupFilePath: backupFilePath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling RestoreLVMBackup: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to restore LVM backup for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+// CreateDiskSnapshot creates a disk snapshot for migration purposes.
+// The storageBackend parameter determines the snapshot type (qcow internal snapshot, rbd snapshot, or lvm thin snapshot).
+func (c *NodeAgentGRPCClient) CreateDiskSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName, storageBackend string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
+		VmId:           vmID,
+		DiskPath:       diskPath,
+		SnapshotName:   snapshotName,
+		StorageBackend: storageBackend,
+	})
+	if err != nil {
+		return fmt.Errorf("calling CreateDiskSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to create disk snapshot for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+// DeleteDiskSnapshot removes a disk snapshot created for migration.
+func (c *NodeAgentGRPCClient) DeleteDiskSnapshot(ctx context.Context, nodeID, vmID, diskPath, snapshotName, storageBackend string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteDiskSnapshot(ctx, &nodeagentpb.DeleteDiskSnapshotRequest{
+		VmId:           vmID,
+		DiskPath:       diskPath,
+		SnapshotName:   snapshotName,
+		StorageBackend: storageBackend,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteDiskSnapshot: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete disk snapshot for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+// CreateLVMBackup creates a sparse backup file from an LVM thin snapshot.
+// The node agent uses dd with conv=sparse to efficiently copy the snapshot
+// to a backup file, skipping zero blocks to minimize backup size.
+func (c *NodeAgentGRPCClient) CreateLVMBackup(ctx context.Context, nodeID, vmID, snapshotName, backupFilePath string) (int64, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.CreateLVMBackup(ctx, &nodeagentpb.CreateLVMBackupRequest{
+		VmId:           vmID,
+		SnapshotName:   snapshotName,
+		BackupFilePath: backupFilePath,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("calling CreateLVMBackup: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return 0, fmt.Errorf("failed to create LVM backup for VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return resp.GetSizeBytes(), nil
+}
+
+// DeleteLVMBackupFile deletes an LVM backup file from the backup storage.
+func (c *NodeAgentGRPCClient) DeleteLVMBackupFile(ctx context.Context, nodeID, backupPath string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	defer c.connPool.ReleaseConnection(nodeID, conn)
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
+		StorageBackend: "lvm",
+		DiskPath:       backupPath,
+	})
+	if err != nil {
+		return fmt.Errorf("calling DeleteVM for LVM backup file cleanup: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to delete LVM backup file %s: %s", backupPath, resp.GetErrorMessage())
+	}
+	return nil
+}
+
 func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, backupPath string) error {
 	node, err := c.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
@@ -1279,12 +1466,12 @@ func convertProtoHealthToHeartbeat(resp *nodeagentpb.NodeHealthResponse) *models
 	}
 
 	return &models.NodeHeartbeat{
-		CPUPercent:    float32(resp.GetCpuPercent()),
-		MemoryPercent: float32(resp.GetMemoryPercent()),
-		DiskPercent:   float32(resp.GetDiskPercent()),
-		CephConnected: resp.GetCephConnected(),
-		VMCount:       int(resp.GetVmCount()),
-		LoadAverage:   loadAvg,
+		CPUPercent:       float32(resp.GetCpuPercent()),
+		MemoryPercent:    float32(resp.GetMemoryPercent()),
+		DiskPercent:      float32(resp.GetDiskPercent()),
+		StorageConnected: resp.GetCephConnected(), // Proto still uses ceph_connected for wire compatibility
+		VMCount:          int(resp.GetVmCount()),
+		LoadAverage:      loadAvg,
 	}
 }
 

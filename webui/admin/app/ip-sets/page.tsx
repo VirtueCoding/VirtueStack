@@ -6,25 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Network, Database, HardDrive, FileSpreadsheet, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { apiClient, adminIPSetsApi, IPSetDetail } from "@/lib/api-client";
+import { adminIPSetsApi, IPSetDetail } from "@/lib/api-client";
 import { IPSetCreateDialog } from "@/components/ip-sets/IPSetCreateDialog";
 import { IPSetEditDialog } from "@/components/ip-sets/IPSetEditDialog";
 import { IPSetDetailDialog } from "@/components/ip-sets/IPSetDetailDialog";
 import { IPSetImportDialog } from "@/components/ip-sets/IPSetImportDialog";
 import { IPSetList, IPSetDisplay } from "@/components/ip-sets/IPSetList";
 import { CreateIPSetFormData, EditIPSetFormData } from "@/components/ip-sets/validation";
-
-function mapApiIPSet(raw: Record<string, unknown>): IPSetDisplay {
-  return {
-    id: typeof raw.id === 'string' ? raw.id : '',
-    name: typeof raw.name === 'string' ? raw.name : '',
-    type: raw.ip_version === 6 ? "ipv6" : "ipv4",
-    location: typeof raw.location === 'string' ? raw.location : "Unassigned",
-    total_ips: typeof raw.total_ips === 'number' ? raw.total_ips : 0,
-    available_ips: typeof raw.available_ips === 'number' ? raw.available_ips : 0,
-    cidr: typeof raw.network === 'string' ? raw.network : "",
-  };
-}
 
 function formatNumber(num: number): string {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
@@ -56,8 +44,16 @@ export default function IPSetsPage() {
 
   const fetchIPSets = async () => {
     try {
-      const data = await apiClient.get<Record<string, unknown>[]>("/admin/ip-sets");
-      setIPSets((data || []).map(mapApiIPSet));
+      const data = await adminIPSetsApi.getIPSets();
+      setIPSets((data || []).map((ipSet) => ({
+        id: ipSet.id,
+        name: ipSet.name,
+        type: ipSet.ip_version === 6 ? "ipv6" as const : "ipv4" as const,
+        location: ipSet.location || "Unassigned",
+        total_ips: ipSet.total_ips || 0,
+        available_ips: ipSet.available_ips || 0,
+        cidr: ipSet.network,
+      })));
     } catch (err) {
       toast({
         title: "Error",

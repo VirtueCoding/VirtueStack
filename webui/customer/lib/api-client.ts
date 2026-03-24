@@ -39,9 +39,13 @@ function getCsrfToken(): string | null {
 
 async function fetchCsrfToken(): Promise<void> {
   try {
-    await fetch(`${API_BASE_URL}/customer/profile`, { method: "GET", credentials: "include" });
+    // Use the dedicated public CSRF endpoint so this works on the login page
+    // without requiring JWT auth. Falls back silently on any failure (e.g.
+    // server unreachable, 401 on unauthenticated pages).
+    await fetch(`${API_BASE_URL}/customer/auth/csrf`, { method: "GET", credentials: "include" });
   } catch (err) {
-    // Log for debugging - non-fatal, the request may fail if server is unreachable
+    // Non-fatal — silently ignore. The CSRF cookie may already be set, or the
+    // subsequent state-changing request will fail with a clear error.
     console.warn('fetchCsrfToken: Failed (non-fatal):', err);
   }
 }
@@ -336,6 +340,10 @@ export const vmApi = {
   async getBandwidth(vmId: string): Promise<VMBandwidth> {
     return apiClient.get<VMBandwidth>(`/customer/vms/${vmId}/bandwidth`);
   },
+
+  async getNetworkHistory(vmId: string): Promise<VMBandwidth[]> {
+    return apiClient.get<VMBandwidth[]>(`/customer/vms/${vmId}/network`);
+  },
 };
 
 export interface Backup {
@@ -381,6 +389,7 @@ export interface CreateSnapshotResponse {
   id: string;
   vm_id: string;
   status: "creating";
+  task_id?: string;
 }
 
 export const backupApi = {
@@ -397,8 +406,10 @@ export const backupApi = {
     return apiClient.delete<void>(`/customer/backups/${backupId}`);
   },
 
-  async restoreBackup(backupId: string): Promise<{ message: string }> {
-    return apiClient.post<{ message: string }>(`/customer/backups/${backupId}/restore`, {});
+  async restoreBackup(backupId: string): Promise<{ message: string; task_id?: string }> {
+    // Returns 202 Accepted. task_id is included for future task-tracking support.
+    // TODO: implement task tracking to poll restore completion status via task_id.
+    return apiClient.post<{ message: string; task_id?: string }>(`/customer/backups/${backupId}/restore`, {});
   },
 };
 
@@ -412,12 +423,14 @@ export const snapshotApi = {
     return apiClient.post<CreateSnapshotResponse>("/customer/snapshots", request);
   },
 
-  async deleteSnapshot(snapshotId: string): Promise<void> {
-    return apiClient.delete<void>(`/customer/snapshots/${snapshotId}`);
+  async deleteSnapshot(snapshotId: string): Promise<{ task_id?: string }> {
+    // Returns 202 Accepted with optional task_id for async deletion tracking.
+    return apiClient.delete<{ task_id?: string }>(`/customer/snapshots/${snapshotId}`);
   },
 
-  async restoreSnapshot(snapshotId: string): Promise<{ message: string }> {
-    return apiClient.post<{ message: string }>(`/customer/snapshots/${snapshotId}/restore`, {});
+  async restoreSnapshot(snapshotId: string): Promise<{ message: string; task_id?: string }> {
+    // Returns 202 Accepted with optional task_id for async restore tracking.
+    return apiClient.post<{ message: string; task_id?: string }>(`/customer/snapshots/${snapshotId}/restore`, {});
   },
 };
 
@@ -429,6 +442,18 @@ export interface CustomerProfile {
   name: string;
   phone?: string;
   created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The backend's UpdateProfile response does not include created_at.
+ * Use this type for the return value of updateProfile() instead of CustomerProfile.
+ */
+export interface UpdateProfileResponse {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
   updated_at: string;
 }
 
@@ -454,6 +479,10 @@ export interface Enable2FARequest {
 
 export interface Enable2FAResponse {
   backup_codes: string[];
+}
+
+export interface Disable2FARequest {
+  password: string;
 }
 
 export interface BackupCodesResponse {
@@ -516,11 +545,18 @@ export const settingsApi = {
     return apiClient.get<CustomerProfile>("/customer/profile");
   },
 
-  async updateProfile(request: UpdateProfileRequest): Promise<CustomerProfile> {
-    return apiClient.put<CustomerProfile>("/customer/profile", request);
+  async updateProfile(request: UpdateProfileRequest): Promise<UpdateProfileResponse> {
+    return apiClient.put<UpdateProfileResponse>("/customer/profile", request);
   },
 
   async updatePassword(request: UpdatePasswordRequest): Promise<{ message: string }> {
+    if (request.new_password.length < 12) {
+      throw new ApiClientError(
+        "New password must be at least 12 characters",
+        "VALIDATION_ERROR",
+        400
+      );
+    }
     return apiClient.put<{ message: string }>("/customer/password", request);
   },
 
@@ -532,8 +568,8 @@ export const settingsApi = {
     return apiClient.post<Enable2FAResponse>("/customer/2fa/enable", request);
   },
 
-  async disable2FA(): Promise<{ message: string }> {
-    return apiClient.post<{ message: string }>("/customer/2fa/disable", {});
+  async disable2FA(request: Disable2FARequest): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/customer/2fa/disable", request);
   },
 
   async getBackupCodes(): Promise<BackupCodesResponse> {
@@ -752,6 +788,13 @@ export interface NotificationEventType {
   events: string[];
 }
 
+export interface NotificationEvent {
+  id: string;
+  type: string;
+  payload?: Record<string, unknown>;
+  created_at: string;
+}
+
 export const notificationApi = {
   async getPreferences(): Promise<NotificationPreferences> {
     return apiClient.get<NotificationPreferences>("/customer/notifications/preferences");
@@ -763,5 +806,9 @@ export const notificationApi = {
 
   async getEventTypes(): Promise<NotificationEventType> {
     return apiClient.get<NotificationEventType>("/customer/notifications/events/types");
+  },
+
+  async listEvents(): Promise<NotificationEvent[]> {
+    return apiClient.get<NotificationEvent[]>("/customer/notifications/events");
   },
 };

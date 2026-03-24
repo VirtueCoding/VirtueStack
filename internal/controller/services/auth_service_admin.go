@@ -23,9 +23,10 @@ func (s *AuthService) verifyAdminCredentials(ctx context.Context, email, passwor
 			s.logger.Warn("admin login attempt for non-existent email", "email", util.MaskEmail(email))
 			// Timing attack mitigation: perform a dummy password verification
 			// to ensure consistent response time regardless of email existence.
-			// The dummy hash uses standard Argon2id parameters.
-			_, _ = s.verifyPassword(password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG")
-			_ = s.customerRepo.RecordFailedLogin(ctx, email)
+			// Use the pre-computed dummy hash with a random salt (F-149).
+			_, _ = s.verifyPassword(password, dummyArgon2idHash)
+			// Use "admin:" prefix for the lockout key to separate admin and customer counters (F-030).
+			_ = s.customerRepo.RecordFailedLogin(ctx, "admin:"+email)
 			return nil, sharederrors.ErrUnauthorized
 		}
 		return nil, fmt.Errorf("getting admin by email: %w", err)
@@ -37,7 +38,8 @@ func (s *AuthService) verifyAdminCredentials(ctx context.Context, email, passwor
 	}
 	if !match {
 		s.logger.Warn("invalid admin password attempt", "admin_id", admin.ID)
-		_ = s.customerRepo.RecordFailedLogin(ctx, email)
+		// Use "admin:" prefix for the lockout key to separate admin and customer counters (F-030).
+		_ = s.customerRepo.RecordFailedLogin(ctx, "admin:"+email)
 		return nil, sharederrors.ErrUnauthorized
 	}
 	return admin, nil
@@ -48,7 +50,7 @@ func (s *AuthService) verifyAdminCredentials(ctx context.Context, email, passwor
 // Account lockout is enforced: after MaxFailedLoginAttempts failures within LockoutWindow
 // the account is locked and ErrAccountLocked is returned.
 func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*models.AuthTokens, error) {
-	if err := s.checkLoginLockout(ctx, email); err != nil {
+	if err := s.checkLoginLockoutForType(ctx, email, "admin"); err != nil {
 		return nil, err
 	}
 
@@ -57,13 +59,13 @@ func (s *AuthService) AdminLogin(ctx context.Context, email, password string) (*
 		return nil, err
 	}
 
-	// Clear failed login counter on success.
-	_ = s.customerRepo.ClearFailedLogins(ctx, email)
+	// Clear failed login counter on success (use "admin:" prefix to match the admin-specific key).
+	_ = s.customerRepo.ClearFailedLogins(ctx, "admin:"+email)
 
 	// 2FA is MANDATORY for admins - always require verification.
 	if !admin.TOTPEnabled {
-		s.logger.Error("admin account does not have 2FA enabled", "admin_id", admin.ID)
-		return nil, fmt.Errorf("admin account must have 2FA enabled")
+		s.logger.Error("admin account does not have 2FA enabled; denying login", "admin_id", admin.ID)
+		return nil, sharederrors.ErrUnauthorized
 	}
 
 	tempToken, err := middleware.GenerateTempToken(s.authConfig, admin.ID, "admin")
@@ -106,7 +108,7 @@ func (s *AuthService) AdminVerify2FA(ctx context.Context, tempToken, totpCode, i
 	if !admin.TOTPEnabled {
 		return nil, "", fmt.Errorf("2FA not enabled for this admin")
 	}
-	valid, err := s.validateTOTPCode(admin.TOTPSecretEncrypted, totpCode)
+	valid, err := s.validateTOTPCodeStrict(admin.TOTPSecretEncrypted, totpCode)
 	if err != nil {
 		return nil, "", err
 	}

@@ -14,16 +14,20 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
+// StorageBackendGetter is defined in vm_service.go.
+// This interface is used for getting storage backends for a node.
+
 // MigrationService provides live migration operations for VirtueStack.
 // It handles VM migration between hypervisor nodes, including pre-checks,
 // target node selection, and coordination of the migration process.
 type MigrationService struct {
-	vmRepo        *repository.VMRepository
-	nodeRepo      *repository.NodeRepository
-	taskRepo      *repository.TaskRepository
-	taskPublisher TaskPublisher
-	nodeClient    NodeAgentClient
-	logger        *slog.Logger
+	vmRepo           *repository.VMRepository
+	nodeRepo         *repository.NodeRepository
+	taskRepo         *repository.TaskRepository
+	taskPublisher    TaskPublisher
+	nodeClient       NodeAgentClient
+	storageBackendSvc StorageBackendGetter
+	logger           *slog.Logger
 }
 
 // NewMigrationService creates a new MigrationService with the given dependencies.
@@ -33,15 +37,17 @@ func NewMigrationService(
 	taskRepo *repository.TaskRepository,
 	taskPublisher TaskPublisher,
 	nodeClient NodeAgentClient,
+	storageBackendSvc StorageBackendGetter,
 	logger *slog.Logger,
 ) *MigrationService {
 	return &MigrationService{
-		vmRepo:        vmRepo,
-		nodeRepo:      nodeRepo,
-		taskRepo:      taskRepo,
-		taskPublisher: taskPublisher,
-		nodeClient:    nodeClient,
-		logger:        logger.With("component", "migration-service"),
+		vmRepo:           vmRepo,
+		nodeRepo:         nodeRepo,
+		taskRepo:         taskRepo,
+		taskPublisher:    taskPublisher,
+		nodeClient:       nodeClient,
+		storageBackendSvc: storageBackendSvc,
+		logger:          logger.With("component", "migration-service"),
 	}
 }
 
@@ -242,7 +248,7 @@ func (s *MigrationService) determineMigrationStrategy(storageBackend string, liv
 		return tasks.MigrationStrategyLiveSharedStorage
 	}
 
-	// QCOW: need disk copy between nodes
+	// QCOW and LVM: need disk copy between nodes
 	return tasks.MigrationStrategyDiskCopy
 }
 
@@ -250,7 +256,7 @@ func (s *MigrationService) determineMigrationStrategy(storageBackend string, liv
 // The VM's storage backend is immutable — cross-backend migration is not allowed.
 func (s *MigrationService) validateStorageBackend(storageBackend string) error {
 	switch storageBackend {
-	case models.StorageBackendCeph, models.StorageBackendQcow:
+	case models.StorageBackendCeph, models.StorageBackendQcow, models.StorageBackendLvm:
 		return nil
 	default:
 		return fmt.Errorf("unknown storage backend %q: VM must be migrated from a node with the same backend", storageBackend)
@@ -336,7 +342,13 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 	}
 
 	candidates := s.filterCandidateNodes(nodes, sourceNodeID, vm)
+
+	// Provide clear error message based on storage backend type
 	if len(candidates) == 0 {
+		vmStorageBackend := s.getNodeStorageBackend(vm)
+		if vmStorageBackend != models.StorageBackendCeph {
+			return nil, fmt.Errorf("VMs with %s storage backend cannot be migrated between nodes (disk is local to source node); only Ceph VMs support cross-node migration", vmStorageBackend)
+		}
 		return nil, fmt.Errorf("no suitable target nodes available with sufficient capacity (need %d vCPU, %d MB RAM)", vm.VCPU, vm.MemoryMB)
 	}
 
@@ -344,13 +356,63 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 }
 
 // filterCandidateNodes filters nodes with sufficient capacity for the VM.
+// It also ensures storage backend compatibility - Ceph VMs can only migrate to
+// nodes with access to the same Ceph cluster; QCOW/LVM VMs cannot migrate
+// (disk is local to the source node).
 func (s *MigrationService) filterCandidateNodes(nodes []models.Node, sourceNodeID string, vm *models.VM) []models.Node {
 	var candidates []models.Node
+	vmStorageBackend := s.getNodeStorageBackend(vm)
+
 	for i := range nodes {
 		node := &nodes[i]
 		if node.ID == sourceNodeID {
 			continue
 		}
+
+		// Check storage backend compatibility
+		// Ceph VMs can only migrate to nodes with Ceph storage
+		// QCOW/LVM VMs cannot migrate (disk is local)
+		if vmStorageBackend != models.StorageBackendCeph {
+			// QCOW and LVM VMs cannot migrate between nodes
+			// (disk is local to the source node)
+			continue
+		}
+
+		// For Ceph VMs, verify the target node also has Ceph storage via junction table
+		// This checks the node_storage junction table for proper backend assignment
+		if s.storageBackendSvc != nil && vm.StorageBackendID != nil {
+			// Use junction table to verify node has access to the same storage backend
+			backends, err := s.storageBackendSvc.GetBackendsForNodeByType(context.Background(), node.ID, models.StorageBackendCeph)
+			if err != nil {
+				s.logger.Debug("failed to check storage backends for node during migration",
+					"node_id", node.ID,
+					"error", err)
+				continue
+			}
+
+			// Check if the node has access to the same storage backend as the VM
+			hasSameBackend := false
+			for _, backend := range backends {
+				if backend.ID == *vm.StorageBackendID {
+					hasSameBackend = true
+					break
+				}
+			}
+			if !hasSameBackend {
+				continue
+			}
+		} else {
+			// Fallback to legacy node.StorageBackend field for backward compatibility
+			nodeStorageBackend := node.StorageBackend
+			if nodeStorageBackend == "" {
+				nodeStorageBackend = models.StorageBackendCeph // Default
+			}
+			if nodeStorageBackend != models.StorageBackendCeph {
+				continue
+			}
+		}
+
+		// Check CPU and memory capacity
 		availableVCPU := node.TotalVCPU - node.AllocatedVCPU
 		availableMemory := node.TotalMemoryMB - node.AllocatedMemoryMB
 		if availableVCPU >= vm.VCPU && availableMemory >= vm.MemoryMB {

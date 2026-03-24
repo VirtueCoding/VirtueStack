@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -68,7 +69,11 @@ func (s *WebhookService) SetHTTPClient(client *http.Client) {
 
 // SetSkipURLValidation enables or disables URL validation for testing.
 // When true, private IP checks are skipped (use with caution - test only).
+// Panics if called in a production environment (APP_ENV=production) (F-071).
 func (s *WebhookService) SetSkipURLValidation(skip bool) {
+	if os.Getenv("APP_ENV") == "production" {
+		panic("SetSkipURLValidation must not be called in production")
+	}
 	s.skipURLValidation = skip
 }
 

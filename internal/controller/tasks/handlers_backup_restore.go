@@ -17,9 +17,8 @@ import (
 //  1. Parse payload
 //  2. Get backup and VM records
 //  3. Stop target VM
-//  4. Delete current RBD volume
-//  5. Clone from backup snapshot
-//  6. Start VM
+//  4. Restore disk from backup (storage-backend-specific)
+//  5. Start VM
 func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
 	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeBackupRestore)
 
@@ -57,12 +56,19 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 	}
 	nodeID := *vm.NodeID
 
+	// Determine storage backend from backup record (fallback to VM storage backend)
+	storageBackend := backup.StorageBackend
+	if storageBackend == "" {
+		storageBackend = vm.StorageBackend
+	}
+	logger = logger.With("storage_backend", storageBackend)
+
 	// Update task progress: Stopping VM
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Stopping virtual machine..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// Stop VM
+	// Stop VM (required for all backends before restore)
 	if vm.Status == models.VMStatusRunning {
 		if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 120, logger); err != nil {
 			logger.Error("failed to stop VM for backup restore", "error", err)
@@ -70,30 +76,72 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 		}
 	}
 
-	// Update task progress: Deleting current disk
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Removing current disk..."); err != nil {
+	// Update task progress: Restoring from backup
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Restoring from backup..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// Delete current disk
-	if err := deps.NodeClient.DeleteDisk(ctx, nodeID, payload.VMID); err != nil {
-		logger.Warn("failed to delete current disk", "error", err)
-		// Continue anyway
-	}
+	// Restore based on storage backend
+	switch storageBackend {
+	case "ceph":
+		// Ceph: delete current disk, then clone from backup snapshot
+		if backup.RBDSnapshot == nil {
+			return fmt.Errorf("backup %s has no RBD snapshot", payload.BackupID)
+		}
 
-	// Update task progress: Cloning from backup
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Restoring from backup..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
+		// Delete current disk
+		if err := deps.NodeClient.DeleteDisk(ctx, nodeID, payload.VMID); err != nil {
+			logger.Warn("failed to delete current disk", "error", err)
+			// Continue anyway
+		}
 
-	// Clone from backup snapshot
-	if backup.RBDSnapshot == nil {
-		return fmt.Errorf("backup %s has no RBD snapshot", payload.BackupID)
-	}
+		// Update task progress
+		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Cloning from backup snapshot..."); err != nil {
+			logger.Warn("failed to update task progress", "error", err)
+		}
 
-	if err := deps.NodeClient.CloneFromBackup(ctx, nodeID, payload.VMID, *backup.RBDSnapshot, vm.DiskGB); err != nil {
-		logger.Error("failed to clone from backup", "error", err)
-		return fmt.Errorf("cloning from backup %s: %w", payload.BackupID, err)
+		// Clone from backup snapshot
+		if err := deps.NodeClient.CloneFromBackup(ctx, nodeID, payload.VMID, *backup.RBDSnapshot, vm.DiskGB); err != nil {
+			logger.Error("failed to clone from backup", "error", err)
+			return fmt.Errorf("cloning from backup %s: %w", payload.BackupID, err)
+		}
+
+	case "qcow":
+		// QCOW: restore using PrepareMigratedVM with the backup file as disk source
+		if backup.FilePath == nil {
+			return fmt.Errorf("backup %s has no file_path", payload.BackupID)
+		}
+
+		// Update task progress
+		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Restoring QCOW backup..."); err != nil {
+			logger.Warn("failed to update task progress", "error", err)
+		}
+
+		// Restore QCOW backup (PrepareMigratedVM handles disk setup)
+		if err := deps.NodeClient.RestoreQCOWBackup(ctx, nodeID, payload.VMID, *backup.FilePath, ""); err != nil {
+			logger.Error("failed to restore QCOW backup", "error", err)
+			return fmt.Errorf("restoring QCOW backup %s: %w", payload.BackupID, err)
+		}
+
+	case "lvm":
+		// LVM: restore by overwriting the existing thin LV in-place with dd
+		if backup.FilePath == nil {
+			return fmt.Errorf("backup %s has no file_path", payload.BackupID)
+		}
+
+		// Update task progress
+		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Restoring LVM backup..."); err != nil {
+			logger.Warn("failed to update task progress", "error", err)
+		}
+
+		// Restore LVM backup (dd overwrites the existing thin LV in-place)
+		if err := deps.NodeClient.RestoreLVMBackup(ctx, nodeID, payload.VMID, *backup.FilePath); err != nil {
+			logger.Error("failed to restore LVM backup", "error", err)
+			return fmt.Errorf("restoring LVM backup %s: %w", payload.BackupID, err)
+		}
+
+	default:
+		return fmt.Errorf("unsupported storage backend: %s", storageBackend)
 	}
 
 	// Update task progress: Starting VM
@@ -124,9 +172,10 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 
 	// Set task result
 	result := map[string]any{
-		"backup_id": payload.BackupID,
-		"vm_id":     payload.VMID,
-		"status":    "restored",
+		"backup_id":       payload.BackupID,
+		"vm_id":           payload.VMID,
+		"storage_backend": storageBackend,
+		"status":          "restored",
 	}
 	// json.Marshal error is intentionally suppressed: the map contains only
 	// primitive types (string, int, bool) whose marshaling cannot fail.
@@ -137,7 +186,8 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 
 	logger.Info("backup.restore task completed successfully",
 		"backup_id", payload.BackupID,
-		"vm_id", payload.VMID)
+		"vm_id", payload.VMID,
+		"storage_backend", storageBackend)
 
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"libvirt.org/go/libvirt"
@@ -29,10 +30,13 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 		return status.Errorf(codes.InvalidArgument, "receiving initial frame: %v", err)
 	}
 
-	// Parse VM ID from first frame data
+	// Parse VM ID from first frame data and validate as UUID
 	vmID := string(firstFrame.GetData())
 	if vmID == "" {
 		return status.Error(codes.InvalidArgument, "first frame must contain vm_id")
+	}
+	if _, err := uuid.Parse(vmID); err != nil {
+		return status.Errorf(codes.InvalidArgument, "vm_id must be a valid UUID: %v", err)
 	}
 
 	logger := h.server.logger.With("vm_id", vmID, "operation", "vnc-console")
@@ -138,6 +142,9 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 	vmID := string(firstFrame.GetData())
 	if vmID == "" {
 		return status.Error(codes.InvalidArgument, "first frame must contain vm_id")
+	}
+	if _, err := uuid.Parse(vmID); err != nil {
+		return status.Errorf(codes.InvalidArgument, "vm_id must be a valid UUID: %v", err)
 	}
 
 	logger := h.server.logger.With("vm_id", vmID, "operation", "serial-console")

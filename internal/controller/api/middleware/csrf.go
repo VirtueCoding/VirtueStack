@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -90,30 +91,39 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 		if c.Request.Method == http.MethodGet ||
 			c.Request.Method == http.MethodHead ||
 			c.Request.Method == http.MethodOptions {
-			// Generate new token for GET requests
-			token, err := generateToken()
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{
-					Error: ErrorDetail{Code: "CSRF_TOKEN_ERROR", Message: "Failed to generate CSRF token"},
+			// Only generate a new CSRF token when no valid token cookie already exists.
+			// Regenerating on every GET causes race conditions in SPAs that may issue
+			// multiple concurrent GET requests: the first response overwrites the cookie
+			// seen by subsequent responses, leaving the SPA with an inconsistent token.
+			existingToken, cookieErr := c.Cookie(config.CookieName)
+			if cookieErr != nil || existingToken == "" {
+				var err error
+				existingToken, err = generateToken()
+				if err != nil {
+					c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{
+						Error: ErrorDetail{Code: "CSRF_TOKEN_ERROR", Message: "Failed to generate CSRF token"},
+					})
+					return
+				}
+
+				// Set cookie with HttpOnly=false so JavaScript can read it for the double-submit pattern.
+				// The CSRF token is not secret; its security relies on Same-Origin Policy.
+				http.SetCookie(c.Writer, &http.Cookie{
+					Name:     config.CookieName,
+					Value:    existingToken,
+					Path:     config.CookiePath,
+					Domain:   config.CookieDomain,
+					MaxAge:   config.MaxAge,
+					Secure:   config.Secure,
+					HttpOnly: false,
+					SameSite: http.SameSiteStrictMode,
 				})
-				return
 			}
 
-			// Set cookie with HttpOnly=false so JavaScript can read it for the double-submit pattern.
-			// The CSRF token is not secret; its security relies on Same-Origin Policy.
-			http.SetCookie(c.Writer, &http.Cookie{
-				Name:     config.CookieName,
-				Value:    token,
-				Path:     config.CookiePath,
-				Domain:   config.CookieDomain,
-				MaxAge:   config.MaxAge,
-				Secure:   config.Secure,
-				HttpOnly: false,
-				SameSite: http.SameSiteStrictMode,
-			})
-
-			// Set in header for SPA consumption
-			c.Header(config.HeaderName, token)
+			// Always echo the current token in the response header so the SPA
+			// can pick it up on the initial page load regardless of whether the
+			// cookie was just created or already existed.
+			c.Header(config.HeaderName, existingToken)
 
 			c.Next()
 			return
@@ -139,8 +149,15 @@ func CSRF(config CSRFConfig) gin.HandlerFunc {
 			return
 		}
 
-		// Use constant-time comparison to prevent timing attacks
-		cookieValid := subtle.ConstantTimeCompare([]byte(cookieToken), []byte(headerToken)) == 1
+		// Use constant-time comparison to prevent timing attacks.
+		// subtle.ConstantTimeCompare returns 0 immediately when lengths differ,
+		// leaking the length of the expected token via a timing side-channel.
+		// To prevent this, hash both tokens to a fixed-length SHA-256 digest
+		// before comparing so that the comparison always operates on equal-length
+		// values regardless of the input lengths.
+		cookieSHA := sha256.Sum256([]byte(cookieToken))
+		headerSHA := sha256.Sum256([]byte(headerToken))
+		cookieValid := subtle.ConstantTimeCompare(cookieSHA[:], headerSHA[:]) == 1
 
 		if !cookieValid {
 			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{
@@ -194,7 +211,15 @@ func SkipCSRFForAPIKey(config CSRFConfig) gin.HandlerFunc {
 	csrfHandler := CSRF(config)
 
 	return func(c *gin.Context) {
-		// Check if API key authentication was used
+		// F-158: Use actor_type as the authoritative indicator for API key auth.
+		// actor_type == "customer_api_key" is set exclusively by CustomerAPIKeyAuth
+		// and JWTOrCustomerAPIKeyAuth when customer API key authentication succeeds.
+		if actorType, _ := c.Get("actor_type"); actorType == "customer_api_key" {
+			c.Next()
+			return
+		}
+
+		// Also skip if api_key_id is present (covers provisioning API key flows).
 		apiKeyID, hasAPIKey := c.Get("api_key_id")
 		if hasAPIKey && apiKeyID != "" {
 			// Skip CSRF for API key authenticated requests

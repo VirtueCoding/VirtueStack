@@ -333,7 +333,7 @@ func (h *AdminHandler) RunAdminBackupSchedule(c *gin.Context) {
 	// Update the next run time to now to trigger execution
 	now := time.Now()
 	nextRun := models.CalculateNextRunTime(schedule.Frequency, now)
-	if err := h.adminBackupScheduleRepo.UpdateNextRunAt(c.Request.Context(), scheduleID, now, now); err != nil {
+	if err := h.adminBackupScheduleRepo.UpdateNextRunAt(c.Request.Context(), scheduleID, now, nextRun); err != nil {
 		h.logger.Error("failed to trigger admin backup schedule run",
 			"schedule_id", scheduleID,
 			"error", err,
