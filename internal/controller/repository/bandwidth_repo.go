@@ -227,20 +227,20 @@ func (r *BandwidthRepository) GetSnapshots(ctx context.Context, vmID string, per
 // the predicate is computed at query time. For large tables this results in a
 // sequential scan.
 //
-// TODO: Migrate bandwidth_snapshots to use a single snapshot_at TIMESTAMPTZ column
-// with an index on (vm_id, snapshot_at). Replace the make_timestamp() expressions
-// with direct comparisons against snapshot_at. See also getAggregatedHourly and
-// getDailySnapshots which have the same issue.
+// Migration 000059 adds a snapshot_at TIMESTAMPTZ column with an index on (vm_id, snapshot_at).
+// The queries below use COALESCE to prefer snapshot_at when available, falling back to
+// make_timestamp() for backward compatibility with existing rows.
 func (r *BandwidthRepository) getHourlySnapshots(ctx context.Context, vmID string, start, end time.Time) ([]BandwidthSnapshot, error) {
+	// Use snapshot_at if available (migration 000059), fall back to make_timestamp for legacy rows
 	const q = `
 		SELECT vm_id,
-			   make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') AS timestamp,
 			   bytes_in, bytes_out
 		FROM bandwidth_snapshots
 		WHERE vm_id = $1
 		  AND snapshot_type = 'hourly'
-		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' >= $2
-		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' <= $3
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') >= $2
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') <= $3
 		ORDER BY timestamp ASC`
 
 	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {
@@ -256,15 +256,16 @@ func (r *BandwidthRepository) getHourlySnapshots(ctx context.Context, vmID strin
 
 // getDailySnapshots retrieves daily bandwidth snapshots within a time range.
 func (r *BandwidthRepository) getDailySnapshots(ctx context.Context, vmID string, start, end time.Time) ([]BandwidthSnapshot, error) {
+	// Use snapshot_at if available (migration 000059), fall back to make_timestamp for legacy rows
 	const q = `
 		SELECT vm_id,
-			   make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   COALESCE(snapshot_at, make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC') AS timestamp,
 			   bytes_in, bytes_out
 		FROM bandwidth_snapshots
 		WHERE vm_id = $1
 		  AND snapshot_type = 'daily'
-		  AND make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' >= $2
-		  AND make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC' <= $3
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC') >= $2
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, 0, 0, 0) AT TIME ZONE 'UTC') <= $3
 		ORDER BY timestamp ASC`
 
 	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {
@@ -281,15 +282,16 @@ func (r *BandwidthRepository) getDailySnapshots(ctx context.Context, vmID string
 // getAggregatedHourly retrieves and aggregates hourly snapshots into larger intervals.
 func (r *BandwidthRepository) getAggregatedHourly(ctx context.Context, vmID string, start, end time.Time, interval time.Duration) ([]BandwidthSnapshot, error) {
 	// Query all hourly snapshots in range
+	// Use snapshot_at if available (migration 000059), fall back to make_timestamp for legacy rows
 	const q = `
 		SELECT vm_id,
-			   make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' AS timestamp,
+			   COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') AS timestamp,
 			   bytes_in, bytes_out
 		FROM bandwidth_snapshots
 		WHERE vm_id = $1
 		  AND snapshot_type = 'hourly'
-		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' >= $2
-		  AND make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC' <= $3
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') >= $2
+		  AND COALESCE(snapshot_at, make_timestamp(year, month, day, hour, 0, 0) AT TIME ZONE 'UTC') <= $3
 		ORDER BY timestamp ASC`
 
 	snapshots, err := ScanRows(ctx, r.db, q, []any{vmID, start, end}, func(rows pgx.Rows) (BandwidthSnapshot, error) {

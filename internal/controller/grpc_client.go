@@ -95,8 +95,16 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// Double-check after acquiring write lock - another goroutine may have
+	// created the connection while we waited for the lock.
 	if conn, exists := nc.conns[nodeID]; exists {
+		// Another goroutine beat us - close the connection we just created
+		// to prevent a leak.
+		if err := conn.Close(); err != nil {
+			nc.logger.Warn("failed to close leaked gRPC connection",
+				"node_id", nodeID,
+				"error", err)
+		}
 		return conn, nil
 	}
 

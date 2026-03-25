@@ -524,3 +524,14 @@ func (r *VMRepository) UpdatePlanID(ctx context.Context, vmID, planID string) er
 	}
 	return nil
 }
+
+// CountByStorageBackend returns the count of active (non-deleted) VMs using a storage backend.
+// This is used to prevent deletion of storage backends that are in use.
+func (r *VMRepository) CountByStorageBackend(ctx context.Context, storageBackendID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM vms WHERE storage_backend_id = $1 AND deleted_at IS NULL`
+	count, err := CountRows(ctx, r.db, q, storageBackendID)
+	if err != nil {
+		return 0, fmt.Errorf("counting VMs by storage backend %s: %w", storageBackendID, err)
+	}
+	return count, nil
+}

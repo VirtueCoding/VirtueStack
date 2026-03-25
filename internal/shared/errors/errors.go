@@ -59,6 +59,9 @@ var (
 
 	// ErrNoRowsAffected is returned when an UPDATE or DELETE affects zero rows.
 	ErrNoRowsAffected = stderrors.New("no rows affected")
+
+	// ErrLimitExceeded indicates that a resource limit has been reached.
+	ErrLimitExceeded = stderrors.New("resource limit exceeded")
 )
 
 // ValidationDetail represents a single validation error detail.

@@ -77,6 +77,35 @@ func (r *NodeRepository) GetByID(ctx context.Context, id string) (*models.Node, 
 	return &node, nil
 }
 
+// GetAllNodeIDs returns all nodes matching the given IDs.
+// Returns a slice of IDs that were found. If any IDs are not found, the returned
+// slice will have fewer elements than the input slice.
+// Use len(result) != len(ids) to detect missing nodes.
+func (r *NodeRepository) GetAllNodeIDs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT id FROM nodes WHERE id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("getting nodes by IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var foundIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning node row: %w", err)
+		}
+		foundIDs = append(foundIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating node rows: %w", err)
+	}
+	return foundIDs, nil
+}
+
 // GetByHostname returns a node by its hostname. Returns ErrNotFound if no node matches.
 func (r *NodeRepository) GetByHostname(ctx context.Context, hostname string) (*models.Node, error) {
 	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE hostname = $1`

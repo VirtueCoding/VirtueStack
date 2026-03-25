@@ -42,6 +42,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { NodeCreateDialog, type CreateNodeFormData } from "@/components/nodes/NodeCreateDialog";
 import { NodeEditDialog, type EditNodeFormData } from "@/components/nodes/NodeEditDialog";
+import { NodeDetailDialog } from "@/components/nodes/NodeDetailDialog";
 
 type DialogAction = "drain" | "failover" | null;
 
@@ -56,6 +57,7 @@ export default function NodesPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<NodeDetail | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
@@ -87,13 +89,11 @@ export default function NodesPage() {
   );
 
   const handleView = async (node: Node) => {
-    // TODO: Implement a proper Node detail view/dialog instead of just navigating
-    setEditingNode(null);
     setLoadingId(node.id);
     try {
       const nodeDetails = await adminNodesApi.getNode(node.id);
       setEditingNode(nodeDetails);
-      setEditDialogOpen(true);
+      setDetailDialogOpen(true);
     } catch (error) {
       toast({
         title: "Error",
@@ -468,6 +468,13 @@ export default function NodesPage() {
           node={editingNode}
           onSave={handleSave}
           isSaving={isSaving}
+        />
+
+        {/* Node Detail Dialog (View Only) */}
+        <NodeDetailDialog
+          open={detailDialogOpen}
+          onOpenChange={setDetailDialogOpen}
+          node={editingNode}
         />
       </div>
     </div>

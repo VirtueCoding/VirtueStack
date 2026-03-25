@@ -392,6 +392,79 @@ export interface CreateSnapshotResponse {
   task_id?: string;
 }
 
+export interface TaskStatusResponse {
+  id: string;
+  type: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  progress: number;
+  progress_message?: string;
+  error_message?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export const taskApi = {
+  async getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
+    return apiClient.get<TaskStatusResponse>(`/customer/tasks/${taskId}`);
+  },
+
+  async pollTaskCompletion(
+    taskId: string,
+    onProgress?: (progress: number, message?: string) => void,
+    intervalMs: number = 2000,
+    timeoutMs: number = 600000,
+  ): Promise<TaskStatusResponse> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const task = await this.getTaskStatus(taskId);
+
+        if (onProgress) {
+          onProgress(task.progress, task.progress_message || undefined);
+        }
+
+        if (task.status === "completed") {
+          return task;
+        }
+
+        if (task.status === "failed") {
+          throw new ApiClientError(
+            task.error_message || "Task failed",
+            "TASK_FAILED",
+            500,
+          );
+        }
+
+        if (task.status === "cancelled") {
+          throw new ApiClientError(
+            "Task was cancelled",
+            "TASK_CANCELLED",
+            500,
+          );
+        }
+
+        // Wait before polling again
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      } catch (error) {
+        // Re-throw ApiClientError instances
+        if (error instanceof ApiClientError) {
+          throw error;
+        }
+        // For network errors, wait and retry
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+
+    throw new ApiClientError(
+      "Task polling timed out",
+      "TASK_TIMEOUT",
+      0,
+    );
+  },
+};
+
 export const backupApi = {
   async listBackups(vmId?: string): Promise<Backup[]> {
     const params = vmId ? `?vm_id=${vmId}` : "";
@@ -406,10 +479,27 @@ export const backupApi = {
     return apiClient.delete<void>(`/customer/backups/${backupId}`);
   },
 
-  async restoreBackup(backupId: string): Promise<{ message: string; task_id?: string }> {
-    // Returns 202 Accepted. task_id is included for future task-tracking support.
-    // TODO: implement task tracking to poll restore completion status via task_id.
-    return apiClient.post<{ message: string; task_id?: string }>(`/customer/backups/${backupId}/restore`, {});
+  async restoreBackup(
+    backupId: string,
+    onProgress?: (progress: number, message?: string) => void,
+  ): Promise<{ message: string; task_id?: string }> {
+    const response = await apiClient.post<{ message: string; task_id?: string }>(
+      `/customer/backups/${backupId}/restore`,
+      {},
+    );
+
+    // If a task_id is returned, poll for completion
+    if (response.task_id && onProgress) {
+      try {
+        await taskApi.pollTaskCompletion(response.task_id, onProgress);
+      } catch (error) {
+        // Log the polling error but don't fail the restore request
+        // The restore has been initiated successfully
+        console.warn("Failed to poll restore task:", error);
+      }
+    }
+
+    return response;
   },
 };
 

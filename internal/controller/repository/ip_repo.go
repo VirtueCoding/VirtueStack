@@ -545,12 +545,10 @@ func (r *IPRepository) DeleteVMIPv6SubnetByID(ctx context.Context, id string) er
 // NOTE: Even with the FOR UPDATE lock on the prefix row, two concurrent transactions
 // that both read the same max(subnet_index) before either inserts can assign duplicate
 // subnet_index values if the lock on the prefix row is not held consistently.
-// A UNIQUE constraint on (ipv6_prefix_id, subnet_index) in the database would
-// provide a safety-net that causes one of the concurrent inserts to fail with a
+// A UNIQUE constraint on (ipv6_prefix_id, subnet_index) in the database provides
+// a safety-net that causes one of the concurrent inserts to fail with a
 // unique-violation error rather than silently storing a duplicate.
-// TODO: Add migration: ALTER TABLE vm_ipv6_subnets ADD CONSTRAINT
-//
-//	uq_ipv6_subnets_prefix_index UNIQUE (ipv6_prefix_id, subnet_index);
+// Migration 000058 adds this constraint: uq_ipv6_subnets_prefix_index.
 func (r *IPRepository) CreateVMIPv6SubnetWithIndexCheck(ctx context.Context, vmID, prefixID string) (*models.VMIPv6Subnet, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

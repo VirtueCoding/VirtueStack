@@ -373,8 +373,11 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 // CustomerAPIKeyValidator returns a function that validates customer API keys.
 // It returns the key ID, customer ID, permissions, allowed IPs, and VM IDs for valid keys.
 // Returns an error if the key is not found, revoked, or expired.
-func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository) middleware.CustomerAPIKeyValidator {
-	return func(ctx context.Context, keyHash string) (middleware.CustomerAPIKeyInfo, error) {
+// The validator computes HMAC-SHA256 of the raw key using the encryptionKey before lookup.
+func CustomerAPIKeyValidator(repo *repository.CustomerAPIKeyRepository, encryptionKey string) middleware.CustomerAPIKeyValidator {
+	return func(ctx context.Context, rawKey string) (middleware.CustomerAPIKeyInfo, error) {
+		// Compute HMAC-SHA256 of the raw key before lookup
+		keyHash := crypto.GenerateHMACSignature(encryptionKey, []byte(rawKey))
 		key, err := repo.GetByHash(ctx, keyHash)
 		if err != nil {
 			return middleware.CustomerAPIKeyInfo{}, err

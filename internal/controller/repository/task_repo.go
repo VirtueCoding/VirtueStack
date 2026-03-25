@@ -215,16 +215,12 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status mod
 	return nil
 }
 
-// UpdateProgress updates the progress (0-100) for a task.
-// The message parameter is accepted for call-site readability but is not
-// currently persisted — the underlying query only updates the progress column.
-//
-// TODO: Either add a progress_message column to the tasks table and include it
-// in the UPDATE, or remove the message parameter from this signature and all
-// call sites to avoid misleading callers into believing the message is stored.
+// UpdateProgress updates the progress (0-100) and optional message for a task.
+// The progress_message column (added by migration 000060) stores a human-readable
+// description of the current progress stage (e.g., "Copying disk 3 of 5").
 func (r *TaskRepository) UpdateProgress(ctx context.Context, id string, progress int, message string) error {
-	const q = `UPDATE tasks SET progress = $1 WHERE id = $2`
-	tag, err := r.db.Exec(ctx, q, progress, id)
+	const q = `UPDATE tasks SET progress = $1, progress_message = NULLIF($2, '') WHERE id = $3`
+	tag, err := r.db.Exec(ctx, q, progress, message, id)
 	if err != nil {
 		return fmt.Errorf("updating task %s progress: %w", id, err)
 	}

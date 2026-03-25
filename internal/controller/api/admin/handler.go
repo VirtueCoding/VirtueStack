@@ -31,6 +31,7 @@ type AdminHandlerConfig struct {
 	StorageBackendRepo        *repository.StorageBackendRepository
 	NodeStorageRepo           *repository.NodeStorageRepository
 	NodeRepo                  *repository.NodeRepository
+	VMRepo                    *repository.VMRepository
 	RDNSService               *services.RDNSService
 	JWTSecret                 string
 	Issuer                    string
@@ -60,6 +61,7 @@ type AdminHandler struct {
 	storageBackendRepo        *repository.StorageBackendRepository
 	nodeStorageRepo           *repository.NodeStorageRepository
 	nodeRepo                  *repository.NodeRepository
+	vmRepo                    *repository.VMRepository
 	rdnsService               *services.RDNSService
 	authConfig                middleware.AuthConfig
 	logger                    *slog.Logger
@@ -86,6 +88,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		storageBackendRepo:      cfg.StorageBackendRepo,
 		nodeStorageRepo:         cfg.NodeStorageRepo,
 		nodeRepo:                cfg.NodeRepo,
+		vmRepo:                  cfg.VMRepo,
 		rdnsService:             cfg.RDNSService,
 		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		logger:                  cfg.Logger.With("component", "admin-handler"),

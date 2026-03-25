@@ -43,7 +43,7 @@ func TestHashPassword(t *testing.T) {
 		},
 		{
 			name:        "missing special character",
-			password:    "NoSpecial1234",
+			password:    "TestNoSpecial123",
 			wantErr:     true,
 			errContains: "special character",
 		},

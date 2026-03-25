@@ -115,6 +115,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 	{
 		protectedAuth.GET("/me", handler.Me)
 		protectedAuth.GET("/permissions", handler.ListPermissions)
+		protectedAuth.POST("/reauth", handler.Reauth)
 	}
 
 	// Permission management - super_admin only
@@ -176,7 +177,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			nodes.POST("", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.RegisterNode)
 			nodes.GET("/:id", middleware.RequireAdminPermission(models.PermissionNodesRead), handler.GetNode)
 			nodes.PUT("/:id", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UpdateNode)
-			nodes.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionNodesDelete), RequireReAuth(), handler.DeleteNode)
+			nodes.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionNodesDelete), RequireReAuth(handler.authConfig), handler.DeleteNode)
 			nodes.POST("/:id/drain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.DrainNode)
 			nodes.POST("/:id/failover", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.FailoverNode)
 			nodes.POST("/:id/undrain", middleware.RequireAdminPermission(models.PermissionNodesWrite), handler.UndrainNode)
@@ -196,7 +197,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			vms.POST("", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.CreateVM)
 			vms.GET("/:id", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVM)
 			vms.PUT("/:id", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.UpdateVM)
-			vms.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionVMsDelete), RequireReAuth(), handler.DeleteVM)
+			vms.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionVMsDelete), RequireReAuth(handler.authConfig), handler.DeleteVM)
 			vms.POST("/:id/migrate", middleware.RequireAdminPermission(models.PermissionVMsWrite), handler.MigrateVM)
 			vms.GET("/:id/ips", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetVMIPs)
 			vms.GET("/:id/ips/:ipId/rdns", middleware.RequireAdminPermission(models.PermissionVMsRead), handler.GetIPRDNS)
@@ -243,7 +244,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			customers.POST("", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.CreateCustomer)
 			customers.GET("/:id", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomer)
 			customers.PUT("/:id", middleware.RequireAdminPermission(models.PermissionCustomersWrite), handler.UpdateCustomer)
-			customers.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionCustomersDelete), RequireReAuth(), handler.DeleteCustomer)
+			customers.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionCustomersDelete), RequireReAuth(handler.authConfig), handler.DeleteCustomer)
 			customers.GET("/:id/audit-logs", middleware.RequireAdminPermission(models.PermissionCustomersRead), handler.GetCustomerAuditLogs)
 		}
 
@@ -292,7 +293,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			storageBackends.POST("", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.CreateStorageBackend)
 			storageBackends.GET("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackend)
 			storageBackends.PUT("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.UpdateStorageBackend)
-			storageBackends.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsDelete), RequireReAuth(), handler.DeleteStorageBackend)
+			storageBackends.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionStorageBackendsDelete), RequireReAuth(handler.authConfig), handler.DeleteStorageBackend)
 			storageBackends.GET("/:id/nodes", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackendNodes)
 			storageBackends.POST("/:id/nodes", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.AssignStorageBackendNodes)
 			storageBackends.DELETE("/:id/nodes/:nodeId", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.RemoveStorageBackendNode)
@@ -303,20 +304,38 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 }
 
 // RequireReAuth returns a Gin middleware that enforces re-authentication for destructive operations.
-// Admins must have authenticated (or re-authenticated) within the last 15 minutes.
-// This is enforced by checking the X-Reauth-Token header provided after password confirmation.
-// If re-authentication has not occurred recently enough, the request is aborted with 403.
-func RequireReAuth() gin.HandlerFunc {
+// Admins must have re-authenticated within the last 15 minutes via a valid re-auth JWT token.
+// The token must be supplied in the X-Reauth-Token header and is validated for signature, expiry,
+// and purpose="reauth" claim. This protects destructive operations (DELETE nodes, VMs, customers,
+// storage backends) from being performed with a stolen admin JWT alone.
+func RequireReAuth(authConfig middleware.AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check for the re-auth header supplied after the client confirms the admin password.
-		// A non-empty value signals that the client has recently re-authenticated.
 		reAuthToken := c.GetHeader("X-Reauth-Token")
 		if reAuthToken == "" {
 			middleware.RespondWithError(c, http.StatusForbidden, "REAUTH_REQUIRED",
 				"re-authentication is required for this destructive operation; "+
-					"provide X-Reauth-Token obtained from POST /auth/reauth")
+					"obtain X-Reauth-Token from POST /api/v1/admin/auth/reauth")
 			return
 		}
+
+		// Validate the re-auth token: must be a signed JWT with purpose="reauth".
+		claims, err := middleware.ValidateReauthToken(authConfig, reAuthToken)
+		if err != nil {
+			middleware.RespondWithError(c, http.StatusForbidden, "REAUTH_REQUIRED",
+				"re-authentication is required for this destructive operation; "+
+					"obtain X-Reauth-Token from POST /api/v1/admin/auth/reauth")
+			return
+		}
+
+		// Verify the re-auth token belongs to the current admin user.
+		currentUserID := middleware.GetUserID(c)
+		if claims.UserID != currentUserID {
+			middleware.RespondWithError(c, http.StatusForbidden, "REAUTH_REQUIRED",
+				"re-authentication is required for this destructive operation; "+
+					"obtain X-Reauth-Token from POST /api/v1/admin/auth/reauth")
+			return
+		}
+
 		c.Next()
 	}
 }

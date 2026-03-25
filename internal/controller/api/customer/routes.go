@@ -54,7 +54,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	// VM/backup/snapshot routes - support both JWT and API key authentication
 	protected := customer.Group("")
 	if apiKeyRepo != nil {
-		keyValidator := CustomerAPIKeyValidator(apiKeyRepo)
+		keyValidator := CustomerAPIKeyValidator(apiKeyRepo, handler.encryptionKey)
 		protected.Use(middleware.JWTOrCustomerAPIKeyAuth(handler.authConfig, keyValidator))
 	} else {
 		protected.Use(middleware.JWTAuth(handler.authConfig))
@@ -62,8 +62,8 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	protected.Use(middleware.RequireUserType("customer"))
 	protected.Use(middleware.SkipCSRFForAPIKey(middleware.DefaultCSRFConfig()))
 	// F-064: Apply global rate limiting to the protected customer group.
-	protected.Use(middleware.CustomerReadRateLimit())
-	protected.Use(middleware.CustomerWriteRateLimit())
+	// Uses method-based rate limiting to prevent write operations from consuming read quota.
+	protected.Use(middleware.CustomerRateLimits())
 
 	registerVMRoutes(protected, handler)
 	registerBackupRoutes(protected, handler)
@@ -84,6 +84,10 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 	auth := customer.Group("/auth")
 	{
+		// GET /auth/csrf sets the CSRF cookie and returns the token in the X-CSRF-Token header.
+		// This endpoint is used by the customer portal frontend to bootstrap CSRF protection
+		// before the user logs in (the login page needs CSRF protection too).
+		auth.GET("/csrf", middleware.CSRF(middleware.DefaultCSRFConfig()), handler.CSRF)
 		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
 		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
 		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)

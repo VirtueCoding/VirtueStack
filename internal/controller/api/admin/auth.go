@@ -259,6 +259,17 @@ type MeResponse struct {
 	Permissions []string `json:"permissions,omitempty"`
 }
 
+// ReauthRequest contains the admin's current password for re-authentication.
+type ReauthRequest struct {
+	Password string `json:"password" validate:"required,min=12,max=128"`
+}
+
+// ReauthResponse contains the re-auth token.
+type ReauthResponse struct {
+	ReauthToken string `json:"reauth_token"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
 // Me returns the current authenticated admin user's identity.
 // This is a lightweight endpoint used for session validation that returns
 // only the essential user fields (id, email, role) without any heavy queries.
@@ -296,4 +307,67 @@ func (h *AdminHandler) Me(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+// Reauth handles POST /api/v1/admin/auth/reauth.
+// It verifies the admin's password and issues a short-lived re-auth token
+// that can be used to authorize destructive operations within 15 minutes.
+func (h *AdminHandler) Reauth(c *gin.Context) {
+	var req ReauthRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated")
+		return
+	}
+
+	// Verify the admin's password
+	admin, err := h.authService.GetAdminByID(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Warn("failed to get admin for reauth",
+			"admin_id", userID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to verify identity")
+		return
+	}
+
+	// Verify password matches
+	match, err := h.authService.VerifyPassword(req.Password, admin.PasswordHash)
+	if err != nil || !match {
+		h.logger.Warn("reauth failed: invalid password",
+			"admin_id", userID,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusForbidden, "INVALID_PASSWORD", "password is incorrect")
+		return
+	}
+
+	// Generate re-auth token with purpose="reauth" and 15-minute expiry
+	reauthToken, err := middleware.GenerateReauthToken(h.authConfig, admin.ID, "admin")
+	if err != nil {
+		h.logger.Error("failed to generate reauth token",
+			"admin_id", userID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate re-auth token")
+		return
+	}
+
+	h.logger.Info("admin reauth successful",
+		"admin_id", userID,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusOK, models.Response{Data: ReauthResponse{
+		ReauthToken: reauthToken,
+		ExpiresIn:   int(middleware.ReauthTokenDuration.Seconds()),
+	}})
 }

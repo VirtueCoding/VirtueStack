@@ -135,12 +135,21 @@ func (rl *rateLimiter) allow(key string) (bool, int, time.Time) {
 }
 
 // pruneOlderThan removes timestamps before cutoff, preserving order.
+// When the backing array capacity is significantly larger than the slice length
+// (more than 2x), the slice is compacted to avoid unbounded memory growth.
 func pruneOlderThan(ts []time.Time, cutoff time.Time) []time.Time {
 	idx := 0
 	for idx < len(ts) && ts[idx].Before(cutoff) {
 		idx++
 	}
-	return ts[idx:]
+	result := ts[idx:]
+	// If capacity is more than 2x the length, compact to avoid memory waste.
+	if cap(result) > 2*len(result) {
+		compacted := make([]time.Time, len(result))
+		copy(compacted, result)
+		return compacted
+	}
+	return result
 }
 
 // RateLimit returns a Gin middleware that enforces sliding-window rate limiting.
@@ -286,6 +295,25 @@ func CustomerWriteRateLimit() gin.HandlerFunc {
 	})
 }
 
+// CustomerRateLimits returns a middleware that applies both read and write rate limits
+// based on the HTTP method. Read limit (100/min) applies to GET/HEAD requests,
+// write limit (30/min) applies to POST/PUT/PATCH/DELETE requests.
+// This prevents write operations from consuming read quota.
+func CustomerRateLimits() gin.HandlerFunc {
+	readLimiter := CustomerReadRateLimit()
+	writeLimiter := CustomerWriteRateLimit()
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead:
+			readLimiter(c)
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			writeLimiter(c)
+		default:
+			c.Next()
+		}
+	}
+}
+
 // AdminRateLimit allows up to 500 requests per minute per admin user.
 // Relaxed limit befitting internal tooling and administrative operations.
 func AdminRateLimit() gin.HandlerFunc {
@@ -341,72 +369,7 @@ func GetRateLimitForUser(c *gin.Context, customerConfig, adminConfig RateLimitCo
 	return customerConfig
 }
 
-// ─── Per-endpoint rate limit configurations ───────────────────────────────────
-
-// VMCreateRateLimit limits VM creation: Customer 10/min, Admin 100/min.
-// Endpoint: POST /vms
-func VMCreateRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 100, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 10, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// VMDeleteRateLimit limits VM deletion: Customer 5/min, Admin 50/min.
-// Endpoint: DELETE /vms/{id}
-func VMDeleteRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 50, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 5, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// VMStartRateLimit limits VM start operations: Customer 20/min, Admin 200/min.
-// Endpoint: POST /vms/{id}/start
-func VMStartRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 200, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 20, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// VMStopRateLimit limits VM stop operations: Customer 20/min, Admin 200/min.
-// Endpoint: POST /vms/{id}/stop
-func VMStopRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 200, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 20, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// VMListRateLimit limits VM listing: Customer 60/min, Admin 300/min.
-// Endpoint: GET /vms
-func VMListRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 300, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 60, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// ConsoleTokenRateLimit limits console token requests: Customer 10/min, Admin 50/min.
-// Endpoint: POST /vms/{id}/console-token
-func ConsoleTokenRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 50, Window: time.Minute, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 10, Window: time.Minute, KeyFunc: keyByUserID})
-}
-
-// BackupCreateRateLimit limits backup creation: Customer 5/hour, Admin 50/hour.
-// Endpoint: POST /backups
-func BackupCreateRateLimit(isAdmin bool) gin.HandlerFunc {
-	if isAdmin {
-		return RateLimit(RateLimitConfig{Requests: 50, Window: time.Hour, KeyFunc: keyByUserID})
-	}
-	return RateLimit(RateLimitConfig{Requests: 5, Window: time.Hour, KeyFunc: keyByUserID})
-}
-
-// RDNSUpdateRateLimit limits rDNS update operations: Customer 10/hour, Admin unlimited.
+// RDNSUpdateRateLimit limits rDNS update operations to 10 per hour per customer.
 // Endpoint: PUT /vms/:id/ips/:ipId/rdns
 func RDNSUpdateRateLimit() gin.HandlerFunc {
 	return RateLimit(RateLimitConfig{
@@ -417,14 +380,6 @@ func RDNSUpdateRateLimit() gin.HandlerFunc {
 }
 
 // ─── Redis-backed distributed rate limiter ───────────────────────────────────
-
-// RateLimiterBackend defines the interface for rate limiting backends.
-// Both in-memory and Redis implementations must satisfy this interface.
-type RateLimiterBackend interface {
-	// Allow checks if a request is allowed under the rate limit.
-	// Returns (allowed, remaining, resetAt).
-	Allow(ctx context.Context, key string) (bool, int, time.Time)
-}
 
 // RedisClient is a minimal interface for Redis operations needed by rate limiting.
 // This allows the rate limiter to work with any Redis client implementation.

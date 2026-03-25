@@ -185,6 +185,12 @@ func (s *AuthService) verifyPassword(password, hash string) (bool, error) {
 	return match, nil
 }
 
+// VerifyPassword verifies a password against an Argon2id hash.
+// This is the public version for use by other services.
+func (s *AuthService) VerifyPassword(password, hash string) (bool, error) {
+	return s.verifyPassword(password, hash)
+}
+
 // ConstantTimeCompare performs a constant-time comparison of two strings.
 // This is used to prevent timing attacks when comparing tokens.
 // The length pre-check is intentionally omitted: subtle.ConstantTimeCompare

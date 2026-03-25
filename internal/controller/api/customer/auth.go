@@ -37,6 +37,12 @@ type AuthResponse struct {
 
 const customerRefreshCookiePath = "/api/v1/customer/auth/refresh"
 
+// CSRF handles GET /customer/auth/csrf - returns the CSRF token in the response header.
+// The CSRF middleware sets the cookie before this handler runs.
+func (h *CustomerHandler) CSRF(c *gin.Context) {
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "CSRF token set"}})
+}
+
 func (h *CustomerHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {

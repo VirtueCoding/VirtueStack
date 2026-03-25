@@ -18,7 +18,6 @@ import (
 const (
 	defaultSnapshotLimit = 2
 	defaultBackupLimit   = 2
-	defaultISOLimit      = 2
 )
 
 // CreateSnapshotRequest represents the request body for creating a snapshot.

@@ -28,6 +28,10 @@ const (
 	// isoMagicReadBytes is the number of bytes read at the start of the file
 	// to detect ISO 9660 / UDF magic identifiers (F-074).
 	isoMagicReadBytes = 32 * 1024
+
+	// defaultISOLimit is the default maximum number of ISO files per VM
+	// when the plan does not specify a limit.
+	defaultISOLimit = 2
 )
 
 // isoLimitMu serialises the per-VM ISO count check-and-create operation
@@ -366,8 +370,10 @@ func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath
 	hasher := sha256.New()
 
 	// Tee the first isoMagicReadBytes into a buffer for magic-byte validation.
-	var magicBuf bytes.Buffer
-	teeReader := io.TeeReader(src, &magicBuf)
+	// Pre-allocate magicBuf with fixed capacity to avoid confusion about buffer growth.
+	// The buffer only ever needs isoMagicReadBytes worth of data.
+	magicBuf := bytes.NewBuffer(make([]byte, 0, isoMagicReadBytes))
+	teeReader := io.TeeReader(src, magicBuf)
 	limitedMagic := io.LimitReader(teeReader, isoMagicReadBytes)
 
 	// Write the first isoMagicReadBytes through hasher and dst.

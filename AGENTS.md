@@ -8,9 +8,9 @@
 **Last Updated:** March 2026
 **Purpose:** Machine-readable single source of truth for LLM agents working on VirtueStack
 
-> **Companion document:** [`CODING_STANDARD.md`](CODING_STANDARD.md) defines the rules all generated code must follow — prohibitions, error handling patterns, security requirements, testing rules, and quality gates. This document describes *what exists in the project* (architecture, APIs, data models, config).  
+> **Companion document:** [`docs/CODING_STANDARD.md`](docs/CODING_STANDARD.md) defines the rules all generated code must follow — prohibitions, error handling patterns, security requirements, testing rules, and quality gates. This document describes *what exists in the project* (architecture, APIs, data models, config).  
 >  
-> **Boundary:** If it describes *what exists in the project*, it goes here. If it prescribes *how to write code*, it goes in `CODING_STANDARD.md`.
+> **Boundary:** If it describes *what exists in the project*, it goes here. If it prescribes *how to write code*, it goes in `docs/CODING_STANDARD.md`.
 
 ---
 
@@ -114,7 +114,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── load/                            # k6 load tests (1 file)
 │
 ├── docs/                                   # Documentation
-│   ├── ARCHITECTURE.md                  # Architecture specification (2292 lines)
+│   ├── docs/ARCHITECTURE.md                  # Architecture specification (2292 lines)
 │   ├── API.md                           # API reference
 │   ├── INSTALL.md                       # Installation guide (production & test)
 │   ├── USAGE.md                         # Usage documentation
@@ -126,7 +126,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │       └── dependencies.md              # External deps (~600 tokens)
 │
 ├── AGENTS.md                              # AI Agent reference (this document)
-├── CODING_STANDARD.md                     # Quality gates and coding rules
+├── docs/CODING_STANDARD.md                     # Quality gates and coding rules
 │
 ├── docker-compose.yml                      # Docker Compose configuration
 ├── Makefile                               # Build automation
@@ -180,7 +180,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 
 ## 4. DATABASE SCHEMA
 
-> **Database rules** (indexing, migrations, connection pooling, zero-downtime migrations) are defined in [`CODING_STANDARD.md §7`](CODING_STANDARD.md#7-database).
+> **Database rules** (indexing, migrations, connection pooling, zero-downtime migrations) are defined in [`docs/CODING_STANDARD.md §7`](docs/CODING_STANDARD.md#7-database).
 
 ### 4.1 Core Tables (22 tables)
 
@@ -292,7 +292,7 @@ CREATE POLICY customer_sessions ON sessions FOR ALL TO app_customer
 
 ## 5. API ARCHITECTURE
 
-> **API design rules** (versioning, rate limiting, HTTP status codes) are defined in [`CODING_STANDARD.md §15`](CODING_STANDARD.md#15-api-design).
+> **API design rules** (versioning, rate limiting, HTTP status codes) are defined in [`docs/CODING_STANDARD.md §15`](docs/CODING_STANDARD.md#15-api-design).
 
 ### 5.1 Three-Tier API System
 
@@ -508,7 +508,7 @@ GET /tasks/:id
 
 ## 6. AUTHENTICATION SYSTEM
 
-> **Security and auth rules** (cryptography standards, session hardening, secrets management, zero-trust) are defined in [`CODING_STANDARD.md §4`](CODING_STANDARD.md#4-security).
+> **Security and auth rules** (cryptography standards, session hardening, secrets management, zero-trust) are defined in [`docs/CODING_STANDARD.md §4`](docs/CODING_STANDARD.md#4-security).
 
 ### 6.1 Authentication Methods
 
@@ -896,7 +896,7 @@ Key features:
 
 ## 9. ASYNC TASK SYSTEM
 
-> **Task coding rules** (error handling, resilience, multi-step operations) are defined in [`CODING_STANDARD.md §3`](CODING_STANDARD.md#3-error-handling).
+> **Task coding rules** (error handling, resilience, multi-step operations) are defined in [`docs/CODING_STANDARD.md §3`](docs/CODING_STANDARD.md#3-error-handling).
 
 ### 9.1 Architecture
 
@@ -1072,7 +1072,7 @@ $webuiUrl = VirtueStackHelper::buildWebuiUrl($webuiBaseUrl, $vmId, $ssoToken);
 
 ## 13. IMPLEMENTATION PATTERNS
 
-> **Coding rules for these patterns** (error wrapping, validation, naming, structure) are defined in [`CODING_STANDARD.md`](CODING_STANDARD.md) — see §2 (Structural Rules), §3 (Error Handling), §5 (Input Validation).
+> **Coding rules for these patterns** (error wrapping, validation, naming, structure) are defined in [`docs/CODING_STANDARD.md`](docs/CODING_STANDARD.md) — see §2 (Structural Rules), §3 (Error Handling), §5 (Input Validation).
 
 ### 13.1 Error Handling
 
@@ -1136,7 +1136,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 
 ## 14. QUALITY GATES COMPLIANCE
 
-**Reference:** `CODING_STANDARD.md`
+**Reference:** `docs/CODING_STANDARD.md`
 
 | QG | Status | Implementation |
 |----|--------|----------------|
@@ -1227,7 +1227,7 @@ The following security measures are implemented:
 
 1. **Quick Context:** Read `docs/CODEMAPS/` (~4K tokens total) for token-efficient architecture overview
 2. **Check Architecture Plan:** Reference `docs/ARCHITECTURE.md` for detailed specs
-3. **Follow Coding Standard:** Reference `CODING_STANDARD.md`
+3. **Follow Coding Standard:** Reference `docs/CODING_STANDARD.md`
 4. **Use Existing Patterns:**
    - Storage: Add to `StorageBackend` interface, implement for both backends
    - APIs: Add handler in appropriate tier (`api/admin/`, `api/customer/`, `api/provisioning/`)
@@ -1349,5 +1349,5 @@ docker compose up -d
 **END OF LLM SCOPE DOCUMENT**
 
 *This document is a living reference. Update as implementation progresses.*
-*For architecture details, see `ARCHITECTURE.md`.*
-*For coding standards, see `CODING_STANDARD.md`.*
+*For architecture details, see `docs/ARCHITECTURE.md`.*
+*For coding standards, see `docs/CODING_STANDARD.md`.*

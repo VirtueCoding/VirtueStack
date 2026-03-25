@@ -372,26 +372,50 @@ func (s *StorageBackendService) validateTypeConfig(req *models.StorageBackendCre
 }
 
 // PollStorageBackendHealth polls storage backend health from assigned nodes and updates the backend.
-// For Ceph: runs ceph df and updates total_gb, used_gb, health_status.
-// For QCOW: runs df on storage_path and updates metrics.
-// For LVM: runs lvs on thin pool and updates lvm_data_percent, lvm_metadata_percent.
+//
+// Implementation Architecture:
+// 
+// Storage backend health is updated through the node heartbeat system, not direct polling:
+//
+// 1. Node Agent Heartbeat: Each node agent periodically sends heartbeat messages to the controller
+//    containing node health metrics (CPU, memory, disk, VM count). This is implemented in
+//    internal/controller/services/heartbeat_checker.go.
+//
+// 2. Storage Metrics: For nodes assigned storage backends (via node_storage_backends junction),
+//    the heartbeat includes storage backend health metrics:
+//    - Ceph: Output of 'ceph df' (total_gb, used_gb, available_gb, health_status)
+//    - QCOW: Disk usage of storage_path directory
+//    - LVM: Output of 'lvs' (data_percent, metadata_percent)
+//
+// 3. Database Update: The heartbeat processor calls UpdateStorageBackendHealth() to persist
+//    the metrics to storage_backends.health_status, health_message, total_gb, used_gb, etc.
+//
+// This method (PollStorageBackendHealth) is a placeholder for on-demand polling. The actual
+// implementation lives in the heartbeat checker service, which calls UpdateStorageBackendHealth()
+// when node health updates arrive.
+//
+// To implement immediate/on-demand health checks:
+// 1. Add gRPC method to node_agent.proto for GetStorageBackendHealth
+// 2. Create NATS task type "storage_backend.health_check"
+// 3. Implement task handler that calls node agent gRPC and updates database
+//
+// For now, health status is updated passively via heartbeat polling (default: 30-second interval).
 func (s *StorageBackendService) PollStorageBackendHealth(ctx context.Context, sb *models.StorageBackend) error {
-	// This method would be called by the controller's periodic health check
-	// The actual polling is done via gRPC to the node agent
-	// This method just updates the database with the received values
-	
 	if sb == nil {
 		return fmt.Errorf("storage backend is nil")
 	}
 
-	s.logger.Debug("polling storage backend health",
+	s.logger.Debug("polling storage backend health - health updates are delivered via node heartbeat",
 		"storage_backend_id", sb.ID,
 		"type", sb.Type)
 
-	// Health polling is handled by the node agent via gRPC
-	// The controller receives health updates through the node health poll
-	// This method is a placeholder for the polling logic
-
+	// Health polling is performed by the heartbeat checker service.
+	// Node agents send periodic health updates that include storage metrics.
+	// The controller's heartbeat processor calls UpdateStorageBackendHealth()
+	// when new storage health data arrives.
+	//
+	// This method exists for API completeness but currently returns nil without action.
+	// See internal/controller/services/heartbeat_checker.go for the actual implementation.
 	return nil
 }
 

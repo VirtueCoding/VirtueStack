@@ -1,6 +1,6 @@
 // Package vm provides helper functions for VM lifecycle metrics collection.
 // These functions decompose the GetMetrics function to comply with
-// CODING_STANDARD.md QG-01 (functions <= 40 lines).
+// docs/CODING_STANDARD.md QG-01 (functions <= 40 lines).
 package vm
 
 import (

@@ -18,7 +18,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-virtuestack}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # SECURITY: POSTGRES_PASSWORD must be set in .env - no default fallback.
+      # Failing to set this will cause the service to fail to start.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
     volumes:
       - postgres_data:/var/lib/postgresql/data

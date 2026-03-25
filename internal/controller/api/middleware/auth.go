@@ -49,6 +49,12 @@ const (
 
 	// tempTokenDuration is the lifetime of a temp (2FA) token.
 	tempTokenDuration = 5 * time.Minute
+
+	// reauthTokenPurposeValue is the expected value of the purpose claim on re-auth tokens.
+	reauthTokenPurposeValue = "reauth"
+
+	// ReauthTokenDuration is the lifetime of a re-auth token.
+	ReauthTokenDuration = 15 * time.Minute
 )
 
 // AuthConfig holds JWT configuration for the VirtueStack Controller.
@@ -330,8 +336,9 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 			return
 		}
 
-		keyHash := hashAPIKey(rawKey)
-		info, err := keyValidator(c.Request.Context(), keyHash)
+		// Pass the raw key to the validator, which computes HMAC-SHA256 internally
+		// before the database lookup. This matches the behavior of CustomerAPIKeyAuth.
+		info, err := keyValidator(c.Request.Context(), rawKey)
 		if err != nil {
 			slog.Warn("customer api key validation failed",
 				"error", err,
@@ -551,6 +558,49 @@ func ValidateTempToken(config AuthConfig, tokenString string) (*JWTClaims, error
 
 	if claims.Purpose != tempTokenPurposeValue {
 		return nil, fmt.Errorf("token is not a temp token")
+	}
+
+	return claims, nil
+}
+
+// GenerateReauthToken creates a short-lived re-auth token for destructive admin operations.
+// The token carries a "purpose"="reauth" claim and a 15-minute expiry so it cannot be
+// used as a regular access token. This is issued after successful password confirmation
+// for operations like DELETE node/VM/customer/storage-backend.
+func GenerateReauthToken(config AuthConfig, userID, userType string) (string, error) {
+	now := time.Now()
+	claims := JWTClaims{
+		UserID:   userID,
+		UserType: userType,
+		Purpose:  reauthTokenPurposeValue,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			Issuer:    config.Issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ReauthTokenDuration)),
+			ID:        googleuuid.New().String(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(config.JWTSecret))
+	if err != nil {
+		return "", fmt.Errorf("signing reauth token: %w", err)
+	}
+
+	return signed, nil
+}
+
+// ValidateReauthToken validates a re-auth token and returns its claims.
+// Returns an error if the token is invalid, expired, or is not a re-auth token.
+func ValidateReauthToken(config AuthConfig, tokenString string) (*JWTClaims, error) {
+	claims, err := parseAndValidateJWT(config, tokenString)
+	if err != nil {
+		return nil, fmt.Errorf("parsing reauth token: %w", err)
+	}
+
+	if claims.Purpose != reauthTokenPurposeValue {
+		return nil, fmt.Errorf("token is not a reauth token")
 	}
 
 	return claims, nil

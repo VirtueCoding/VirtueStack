@@ -7,12 +7,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/sha512"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"unicode"
 
 	"github.com/alexedwards/argon2id"
+	crypt_sha512 "github.com/tredoe/osutil/user/crypt/sha512_crypt"
 
 	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 )
@@ -85,13 +86,25 @@ func generateShadowSalt(length int) (string, error) {
 
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./"
 	buf := make([]byte, length)
-	randBytes := make([]byte, length)
-	if _, err := rand.Read(randBytes); err != nil {
-		return "", fmt.Errorf("reading random bytes: %w", err)
-	}
 
-	for i, b := range randBytes {
-		buf[i] = alphabet[int(b)%len(alphabet)]
+	// Use rejection sampling to avoid modulo bias regardless of alphabet length.
+	// maxAcceptable is the largest byte value that won't cause bias when doing modulo.
+	// For alphabet length 64: 256 % 64 = 0, so maxAcceptable = 256 (all values accepted).
+	// This approach is correct even if the alphabet changes to a length that doesn't divide 256.
+	maxAcceptable := 256 - 256%len(alphabet)
+
+	for i := 0; i < length; i++ {
+		for {
+			var b byte
+			if err := binary.Read(rand.Reader, binary.LittleEndian, &b); err != nil {
+				return "", fmt.Errorf("reading random byte: %w", err)
+			}
+			if b < byte(maxAcceptable) {
+				buf[i] = alphabet[int(b)%len(alphabet)]
+				break
+			}
+			// Reject and retry - this is the rejection sampling loop
+		}
 	}
 
 	return string(buf), nil
@@ -99,142 +112,16 @@ func generateShadowSalt(length int) (string, error) {
 
 // sha512Crypt implements the SHA-512 crypt algorithm for password hashing.
 // This is compatible with the $6$ format used in /etc/shadow.
-//
-// TODO: Replace this hand-rolled implementation with a vetted library such as
-// github.com/tredoe/osutil/user/crypt/sha512_crypt to eliminate the risk of
-// subtle correctness bugs in the SHA-512 crypt specification.
+// Uses the vetted github.com/tredoe/osutil/user/crypt/sha512_crypt library
+// to ensure compliance with the SHA-512 crypt specification.
 func sha512Crypt(password, salt string, rounds int) string {
-	passBytes := []byte(password)
-	saltBytes := []byte(salt)
-
-	altCtx := sha512.New()
-	altCtx.Write(passBytes)
-	altCtx.Write(saltBytes)
-	altCtx.Write(passBytes)
-	altSum := altCtx.Sum(nil)
-
-	ctx := sha512.New()
-	ctx.Write(passBytes)
-	ctx.Write(saltBytes)
-
-	for i := len(passBytes); i > 0; i -= len(altSum) {
-		n := len(altSum)
-		if i < n {
-			n = i
-		}
-		ctx.Write(altSum[:n])
+	crypt := crypt_sha512.New()
+	hash, err := crypt.Generate([]byte(password), []byte(fmt.Sprintf("$6$rounds=%d$%s$", rounds, salt)))
+	if err != nil {
+		// Fallback to empty hash on error (should never happen with valid inputs)
+		return ""
 	}
-
-	for i := len(passBytes); i > 0; i >>= 1 {
-		if i&1 != 0 {
-			ctx.Write(altSum)
-		} else {
-			ctx.Write(passBytes)
-		}
-	}
-
-	sum := ctx.Sum(nil)
-
-	dpCtx := sha512.New()
-	for i := 0; i < len(passBytes); i++ {
-		dpCtx.Write(passBytes)
-	}
-	dpSum := dpCtx.Sum(nil)
-	pSeq := repeatToLength(dpSum, len(passBytes))
-
-	dsCtx := sha512.New()
-	for i := 0; i < 16+int(sum[0]); i++ {
-		dsCtx.Write(saltBytes)
-	}
-	dsSum := dsCtx.Sum(nil)
-	sSeq := repeatToLength(dsSum, len(saltBytes))
-
-	for i := 0; i < rounds; i++ {
-		rCtx := sha512.New()
-
-		if i&1 != 0 {
-			rCtx.Write(pSeq)
-		} else {
-			rCtx.Write(sum)
-		}
-
-		if i%3 != 0 {
-			rCtx.Write(sSeq)
-		}
-
-		if i%7 != 0 {
-			rCtx.Write(pSeq)
-		}
-
-		if i&1 != 0 {
-			rCtx.Write(sum)
-		} else {
-			rCtx.Write(pSeq)
-		}
-
-		sum = rCtx.Sum(nil)
-	}
-
-	return fmt.Sprintf("$6$rounds=%d$%s$%s", rounds, salt, sha512CryptEncode(sum))
-}
-
-// repeatToLength repeats a byte slice to reach the specified length.
-func repeatToLength(src []byte, length int) []byte {
-	out := make([]byte, 0, length)
-	for len(out) < length {
-		remaining := length - len(out)
-		if remaining >= len(src) {
-			out = append(out, src...)
-		} else {
-			out = append(out, src[:remaining]...)
-		}
-	}
-	return out
-}
-
-// sha512CryptEncode encodes the SHA-512 hash to the crypt format.
-func sha512CryptEncode(sum []byte) string {
-	const alphabet = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	encode24 := func(b2, b1, b0 byte, n int) string {
-		v := uint32(b2)<<16 | uint32(b1)<<8 | uint32(b0)
-		out := make([]byte, n)
-		for i := 0; i < n; i++ {
-			out[i] = alphabet[v&0x3f]
-			v >>= 6
-		}
-		return string(out)
-	}
-
-	pairs := [][4]int{
-		{0, 21, 42, 4},
-		{22, 43, 1, 4},
-		{44, 2, 23, 4},
-		{3, 24, 45, 4},
-		{25, 46, 4, 4},
-		{47, 5, 26, 4},
-		{6, 27, 48, 4},
-		{28, 49, 7, 4},
-		{50, 8, 29, 4},
-		{9, 30, 51, 4},
-		{31, 52, 10, 4},
-		{53, 11, 32, 4},
-		{12, 33, 54, 4},
-		{34, 55, 13, 4},
-		{56, 14, 35, 4},
-		{15, 36, 57, 4},
-		{37, 58, 16, 4},
-		{59, 17, 38, 4},
-		{18, 39, 60, 4},
-		{40, 61, 19, 4},
-		{62, 20, 41, 4},
-	}
-
-	out := ""
-	for _, p := range pairs {
-		out += encode24(sum[p[0]], sum[p[1]], sum[p[2]], p[3])
-	}
-	out += encode24(0, 0, sum[63], 2)
-	return out
+	return hash
 }
 
 // verifyPassword verifies a password against an Argon2id hash.

@@ -29,17 +29,52 @@ type consoleTokenEntry struct {
 //   - Encode the token as a signed JWT (verifiable without shared state), or
 //   - Move the store to a shared Redis cache.
 //
-// TODO: Replace with JWT-based console tokens or a Redis-backed store before
-// deploying behind multiple instances.
+// A background cleanup goroutine runs every 60 seconds to remove expired tokens,
+// preventing unbounded memory growth from tokens that were never validated.
 type consoleTokenStore struct {
 	mu     sync.Mutex
 	tokens map[string]consoleTokenEntry
+	stopCh chan struct{}
 }
 
 func newConsoleTokenStore() *consoleTokenStore {
-	return &consoleTokenStore{
+	s := &consoleTokenStore{
 		tokens: make(map[string]consoleTokenEntry),
+		stopCh: make(chan struct{}),
 	}
+	go s.cleanupLoop()
+	return s
+}
+
+// cleanupLoop periodically removes expired tokens to prevent memory growth.
+func (s *consoleTokenStore) cleanupLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			s.removeExpired()
+		}
+	}
+}
+
+// removeExpired deletes all expired tokens from the store.
+func (s *consoleTokenStore) removeExpired() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for token, entry := range s.tokens {
+		if now.After(entry.expiresAt) {
+			delete(s.tokens, token)
+		}
+	}
+}
+
+// Stop stops the cleanup goroutine. Called during graceful shutdown.
+func (s *consoleTokenStore) Stop() {
+	close(s.stopCh)
 }
 
 // Store inserts a token into the store. Any existing token with the same key is overwritten.

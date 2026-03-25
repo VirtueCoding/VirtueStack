@@ -266,7 +266,7 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 | [docs/CODEMAPS/](docs/CODEMAPS/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
 | [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
 | [docs/API.md](docs/API.md) | API reference |
-| [CODING_STANDARD.md](CODING_STANDARD.md) | Quality gates and coding rules |
+| [docs/CODING_STANDARD.md](docs/CODING_STANDARD.md) | Quality gates and coding rules |
 | [failure.md](failure.md) | Implementation tasks and backend-frontend gap tracking |
 
 ---
@@ -289,7 +289,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - TypeScript: Use ESLint configuration in the repo
 - Tests: Maintain >80% coverage
 
-See [CODING_STANDARD.md](CODING_STANDARD.md) for complete quality gates.
+See [docs/CODING_STANDARD.md](docs/CODING_STANDARD.md) for complete quality gates.
 
 ---
 

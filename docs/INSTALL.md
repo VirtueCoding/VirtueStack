@@ -997,5 +997,5 @@ docker compose up -d
 - [Architecture Documentation](ARCHITECTURE.md)
 - [API Reference](API.md)
 - [E2E Testing Guide](../tests/e2e/README.md)
-- [Coding Standards](../CODING_STANDARD.md)
+- [Coding Standards](CODING_STANDARD.md)
 - [Agent Reference (AGENTS.md)](../AGENTS.md)

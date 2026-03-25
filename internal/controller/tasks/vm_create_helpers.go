@@ -1,6 +1,6 @@
 // Package tasks provides helper functions for VM creation task handling.
 // These functions decompose the large handleVMCreate function to comply with
-// CODING_STANDARD.md QG-01 (functions <= 40 lines).
+// docs/CODING_STANDARD.md QG-01 (functions <= 40 lines).
 package tasks
 
 import (

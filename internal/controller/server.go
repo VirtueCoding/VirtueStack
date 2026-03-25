@@ -362,6 +362,7 @@ func (s *Server) InitializeServices() error {
 		StorageBackendRepo:      repository.NewStorageBackendRepository(s.dbPool),
 		NodeStorageRepo:         repository.NewNodeStorageRepository(s.dbPool),
 		NodeRepo:                nodeRepo,
+		VMRepo:                  vmRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",

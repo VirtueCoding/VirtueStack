@@ -99,6 +99,13 @@ deps:
 vuln:
 	govulncheck ./...
 
+## npm-audit: Run npm audit for all frontends
+npm-audit:
+	@echo "Auditing admin webui dependencies..."
+	@cd webui/admin && npm audit --audit-level=moderate
+	@echo "Auditing customer webui dependencies..."
+	@cd webui/customer && npm audit --audit-level=moderate
+
 ## clean: Remove build artifacts
 clean:
 	rm -rf $(BIN_DIR) coverage.out coverage.html
