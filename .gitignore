@@ -53,6 +53,8 @@ iso/
 
 # Backup artifacts
 backups/
+!webui/admin/components/backups/
+!webui/admin/components/backups/*.tsx
 
 # Coverage
 coverage.out
