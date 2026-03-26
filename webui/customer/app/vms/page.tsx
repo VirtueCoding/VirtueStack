@@ -131,12 +131,10 @@ export default function VMsPage() {
           <Server className="mx-auto h-16 w-16 text-muted-foreground" />
           <CardTitle className="mt-4">No Virtual Machines</CardTitle>
           <CardDescription>
-            You don&apos;t have any virtual machines yet. Create your first VM to get
-            started.
+            You don&apos;t have any virtual machines assigned to your account yet.
+            Contact your hosting provider if you expected to see one here.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-        </CardContent>
       </Card>
     );
   }
