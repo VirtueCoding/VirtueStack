@@ -55,8 +55,8 @@ admin_backup_schedules (mass backup campaigns)
 | `customers` | id, email, password_hash, totp_*, status | Customer accounts |
 | `admins` | id, email, password_hash, totp_*, role | Admin users |
 | `sessions` | id, user_id, user_type, refresh_token_hash, expires_at | JWT refresh |
-| `customer_api_keys` | id, customer_id, key_hash, vm_ids, permissions, allowed_ips | API auth |
-| `provisioning_keys` | id, key_hash, allowed_ips | WHMCS auth |
+| `customer_api_keys` | id, customer_id, key_hash, vm_ids, permissions, allowed_ips, expires_at | API auth |
+| `provisioning_keys` | id, key_hash, allowed_ips, expires_at | WHMCS auth |
 | `console_tokens` | id, admin_id, vm_id, type, expires_at | Console access (NEW) |
 | `admin_permissions` | id, admin_id, permissions (jsonb) | RBAC (NEW) |
 
