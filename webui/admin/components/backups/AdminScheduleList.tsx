@@ -416,7 +416,7 @@ export function AdminScheduleList({
                         <div className="space-y-2 text-sm">
                           <div className="flex items-center gap-2">
                             <Users className="h-4 w-4 text-muted-foreground" />
-                            <span>{summary.total > 0 ? `${schedule.active ? "Enabled" : "Paused"}` : "Unknown"}</span>
+                            <span>{schedule.active ? "Enabled" : "Paused"}</span>
                           </div>
                           {schedule.last_run_at ? (
                             <p className="text-xs text-muted-foreground">
