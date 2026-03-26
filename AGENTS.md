@@ -285,7 +285,7 @@ CREATE POLICY customer_sessions ON sessions FOR ALL TO app_customer
 | 000028_add_customer_table_rls | RLS on customer_api_keys, ip_addresses, backups, snapshots, backup_schedules, sessions |
 | 000029_add_tasks_status_created_at_index | Composite index on tasks(status, created_at DESC) for pending/running task queries |
 | 000030_bandwidth_view_grants | GRANT SELECT on v_bandwidth_current and v_bandwidth_throttled to app_user and app_customer |
-| 000031_concurrent_indexes | Rebuild early indexes (000003-000007) using CONCURRENTLY to avoid write-blocking on large tables |
+| 000031_concurrent_indexes | Compatibility no-op; legacy concurrent index rebuild must be performed manually outside golang-migrate if needed |
 | 000032_plans_slug_not_null | Backfill NULL plan slugs and enforce NOT NULL on plans.slug |
 
 ---

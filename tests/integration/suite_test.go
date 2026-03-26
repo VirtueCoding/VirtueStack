@@ -160,9 +160,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Run migrations - skip migration 31 which uses CONCURRENTLY that cannot run
-	// inside golang-migrate's transaction wrapper.
-	// Strategy: run all, force version 31 on error, then continue to 34.
+	// Run migrations.
 	migrator, err := migrate.New(
 		"file://../../migrations",
 		connStr,
@@ -173,23 +171,19 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Try to run all migrations
 	err = migrator.Up()
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		// Migration 31 fails due to CONCURRENTLY - force past it
-		logger.Warn("migration failed (expected for CONCURRENTLY), forcing version", "error", err)
-		if err := migrator.Force(31); err != nil {
-			logger.Error("failed to force version 31", "error", err)
-		}
-		// Continue with remaining migrations (32+)
-		if err := migrator.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			logger.Warn("failed to run remaining migrations", "error", err)
-		}
+		logger.Warn("failed to run all migrations", "error", err)
 	}
 	_, _ = migrator.Close()
 
 	// Create connection pool
 	dbPool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		logger.Error("failed to create database pool", "error", err)
+		_ = pgContainer.Terminate(ctx)
+		os.Exit(1)
+	}
 
 	// Start NATS container
 	natsContainer, err := natsmodule.Run(ctx, "nats:2.10-alpine")

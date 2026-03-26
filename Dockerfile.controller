@@ -96,16 +96,15 @@ CMD ["air", "-c", ".air.toml"]
 # -----------------------------------------------------------------------------
 # Runtime Stage
 # -----------------------------------------------------------------------------
-# Production: Pin to digest, e.g., FROM alpine:3.22.2@sha256:...
+# Production: Pin to digest, e.g., FROM alpine:3.22.3@sha256:...
 # Alternative: gcr.io/distroless/static-debian12:latest for zero attack surface
 # (requires external health monitoring since no shell/curl available)
-FROM alpine:3.22.2 AS runtime
+FROM alpine:3.22.3 AS runtime
 
 # Install runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
-    curl \
     && rm -rf /var/cache/apk/*
 
 # Create non-root user
@@ -128,7 +127,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD wget -q -T 5 -O /dev/null http://localhost:8080/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/controller"]
