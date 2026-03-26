@@ -469,11 +469,11 @@ func TeardownTest(t *testing.T) {
 // CreateTestVM creates a test VM and returns its ID.
 func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (string, error) {
 	vmID := crypto.GenerateUUID()
-	hostname := fmt.Sprintf("test-vm-%s", vmID[:8])
+	testHostname := fmt.Sprintf("test-vm-%s", vmID[:8])
 	// Generate MAC address in proper format: 52:54:00:XX:XX:XX (QEMU default prefix + random suffix)
 	macSuffix := crypto.GenerateRandomHex(6)
 	macAddr := fmt.Sprintf("52:54:00:%s:%s:%s", macSuffix[0:2], macSuffix[2:4], macSuffix[4:6])
-	storageBackendID := TestStorageBackendID
+	resolvedStorageBackendID := TestStorageBackendID
 
 	// Handle nullable node_id - pass NULL if empty string
 	var nodeIDArg interface{}
@@ -487,7 +487,7 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 			WHERE node_id = $1 AND enabled = true
 			ORDER BY preferred DESC, created_at ASC
 			LIMIT 1
-		`, nodeID).Scan(&storageBackendID); err != nil {
+		`, nodeID).Scan(&resolvedStorageBackendID); err != nil {
 			return "", fmt.Errorf("resolving test storage backend: %w", err)
 		}
 	}
@@ -499,7 +499,7 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 		RETURNING id
 	`
 
-	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeIDArg, planID, hostname, macAddr, storageBackendID).Scan(&vmID)
+	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeIDArg, planID, testHostname, macAddr, resolvedStorageBackendID).Scan(&vmID)
 	if err != nil {
 		return "", fmt.Errorf("creating test vm: %w", err)
 	}
