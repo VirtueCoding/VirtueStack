@@ -1170,6 +1170,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | NATS_URL | Yes | NATS server URL |
 | JWT_SECRET | Yes | HMAC secret for JWT signing |
 | ENCRYPTION_KEY | Yes | AES-256 key for secret encryption |
+| REDIS_URL | No | Redis connection URL for shared production rate limiting (required when `APP_ENV=production`) |
 | PDNS_MYSQL_DSN | No | PowerDNS MySQL connection |
 | SMTP_HOST | No | SMTP server hostname |
 | SMTP_PORT | No | SMTP server port (default: 587) |
