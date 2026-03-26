@@ -24,7 +24,30 @@ export default function SettingsPage() {
 
   const { data: vms, isLoading: vmsLoading } = useQuery({
     queryKey: ["vms", "api-key-scope"],
-    queryFn: () => vmApi.getVMs(100),
+    queryFn: async () => {
+      const perPage = 100;
+      let page = 1;
+      const allVms: any[] = [];
+
+      // Fetch all pages of VMs until a page returns fewer than perPage items
+      // to ensure the scope selector sees all VMs, even when there are >100.
+      // Assumes vmApi.getVMs(perPage, page) returns an array of VMs.
+      // If vmApi.getVMs returns an object, adapt this to use its `.items` (or similar) field.
+      // We avoid changing vmApi itself to keep this fix localized to the VM scope selector.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const pageVms: any[] = await vmApi.getVMs(perPage, page);
+        allVms.push(...pageVms);
+
+        if (pageVms.length < perPage) {
+          break;
+        }
+
+        page += 1;
+      }
+
+      return allVms;
+    },
   });
 
   const { data: webhooks, isLoading: webhooksLoading } = useQuery({
