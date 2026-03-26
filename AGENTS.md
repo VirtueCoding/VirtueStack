@@ -92,7 +92,7 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 │   └── 000044_admin_permissions.up.sql        # Fine-grained admin permissions
 │
 ├── webui/                                  # Web UIs (82+ TSX files)
-│   ├── admin/                            # Admin panel (9 pages)
+│   ├── admin/                            # Admin panel (11 pages)
 │   └── customer/                         # Customer portal (3 pages)
 │
 ├── modules/                                # WHMCS module (7 PHP files)
@@ -200,8 +200,8 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 | `tasks` | Async task queue | id, type, status, payload, result, progress |
 | `backups` | Backup records | id, vm_id, type, status, storage_path, size_bytes |
 | `snapshots` | VM snapshots | id, vm_id, name, rbd_snapshot |
-| `provisioning_keys` | WHMCS API keys | id, name, key_hash, allowed_ips |
-| `customer_api_keys` | Customer API keys | id, customer_id, name, key_hash, permissions |
+| `provisioning_keys` | WHMCS API keys | id, name, key_hash, allowed_ips, expires_at |
+| `customer_api_keys` | Customer API keys | id, customer_id, name, key_hash, permissions, vm_ids, allowed_ips, expires_at |
 | `customer_webhooks` | Webhook configurations | id, customer_id, url, secret, events |
 | `webhook_deliveries` | Webhook delivery log | id, webhook_id, event_type, status, attempt |
 | `audit_logs` | Immutable audit trail | id, timestamp, actor_id, action, resource_type, changes |
@@ -375,6 +375,13 @@ GET    /backup-schedules/:id
 PUT    /backup-schedules/:id
 DELETE /backup-schedules/:id
 POST   /backup-schedules/:id/run    # Trigger immediate execution
+
+// Provisioning Key Management (API key lifecycle for WHMCS integration)
+GET    /provisioning-keys
+POST   /provisioning-keys
+GET    /provisioning-keys/:id
+PUT    /provisioning-keys/:id
+DELETE /provisioning-keys/:id       # Requires re-auth (X-Reauth-Token)
 ```
 
 ### 5.3 Customer API Endpoints
@@ -529,6 +536,8 @@ Customer API keys enable programmatic access to the Customer API with scoped per
 |---------|----------|------------------|
 | Access | Full access to all endpoints | Limited to granted permissions |
 | Account management | Yes (profile, 2FA, webhooks) | No (JWT-only endpoints) |
+| VM scoping | All customer VMs | Optionally restricted to specific VMs via `vm_ids` |
+| IP restriction | None | Optional `allowed_ips` whitelist (IPv4, IPv6, CIDR) |
 | CSRF protection | Required | Skipped |
 | Storage | Token hash in PostgreSQL | Key hash in PostgreSQL |
 | Creation | Via login flow | Via JWT-authenticated POST /api-keys |
@@ -600,6 +609,12 @@ Customer API keys use a simplified permission system with 7 scopes:
 - API key requests are limited to granted permissions
 - Missing permission returns HTTP 403 Forbidden
 - Account management endpoints are JWT-only (no API key access)
+
+**VM scope enforcement:**
+- If `vm_ids` is set on the API key, the key can only access the listed VMs
+- Out-of-scope VM access returns HTTP 403 with `VM_NOT_IN_SCOPE` error code
+- `RequireVMScope()` middleware and `CheckVMScope()` handler helper enforce this on all VM-touching routes
+- `ListVMs` automatically filters results to in-scope VMs only
 
 ### 6.6 Error Response Handling
 
@@ -980,6 +995,8 @@ Three-layer approach:
 | Customers | `app/customers/page.tsx` | Customer management |
 | Plans | `app/plans/page.tsx` | Plan management with resource limit editing (snapshot, backup, ISO) |
 | IP Sets | `app/ip-sets/page.tsx` | IP pool management |
+| Provisioning Keys | `app/provisioning-keys/page.tsx` | WHMCS API key lifecycle (create, update, revoke with re-auth) |
+| Failover Requests | `app/failover-requests/page.tsx` | Failover request viewer with status/node filtering |
 | Audit Logs | `app/audit-logs/page.tsx` | Audit trail viewer |
 | Settings | `app/settings/page.tsx` | System settings management |
 

@@ -28,6 +28,8 @@ app/
         ├── settings/
         │   ├── page.tsx            # System settings
         │   └── permissions/page.tsx # Permission management (super_admin) (NEW)
+        ├── provisioning-keys/page.tsx # Provisioning key lifecycle (create, update, revoke)
+        ├── failover-requests/page.tsx # Failover request viewer with status/node filtering
         ├── templates/page.tsx
         └── vms/page.tsx
 ```
@@ -178,6 +180,8 @@ useMutation({ mutationFn: (id) => api.post(`customer/vms/${id}/start`) })
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Permissions Page | `app/settings/permissions/` | Super-admin permission management |
+| Provisioning Keys Page | `app/provisioning-keys/` | WHMCS API key lifecycle management |
+| Failover Requests Page | `app/failover-requests/` | Failover request viewer with debounced filtering |
 | CustomerCreateDialog | `components/customers/` | Create customer modal |
 | CustomerEditDialog | `components/customers/` | Edit customer modal |
 | PlanCreateDialog | `components/plans/` | Create plan modal |

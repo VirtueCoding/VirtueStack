@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { settingsApi } from "@/lib/api-client";
+import { settingsApi, vmApi, VM } from "@/lib/api-client";
 import { RequireAuth } from "@/lib/require-auth";
 import { User, Shield, Key, Webhook, Bell } from "lucide-react";
 import { ProfileTab } from "@/components/settings/ProfileTab";
@@ -20,6 +20,25 @@ export default function SettingsPage() {
   const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => settingsApi.getApiKeys(),
+  });
+
+  const { data: vms, isLoading: vmsLoading } = useQuery({
+    queryKey: ["vms", "api-key-scope"],
+    queryFn: async () => {
+      const perPage = 100;
+      let page = 1;
+      const allVms: VM[] = [];
+      let hasMore = true;
+
+      while (hasMore) {
+        const pageVms = await vmApi.getVMs(perPage, page);
+        allVms.push(...pageVms);
+        hasMore = pageVms.length >= perPage;
+        page += 1;
+      }
+
+      return allVms;
+    },
   });
 
   const { data: webhooks, isLoading: webhooksLoading } = useQuery({
@@ -98,7 +117,9 @@ export default function SettingsPage() {
           <TabsContent value="api-keys" className="space-y-6">
             <ApiKeysTab
               apiKeys={apiKeys}
+              vms={vms}
               isLoading={apiKeysLoading}
+              isVMsLoading={vmsLoading}
             />
           </TabsContent>
 

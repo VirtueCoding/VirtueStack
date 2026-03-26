@@ -349,6 +349,18 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 			return
 		}
 
+		if len(info.AllowedIPs) > 0 {
+			if err := checkAllowedIP(c, info.AllowedIPs); err != nil {
+				slog.Warn("customer api key ip check failed",
+					"key_id", info.KeyID,
+					"error", err,
+					"correlation_id", GetCorrelationID(c),
+				)
+				abortWithAuthError(c, http.StatusForbidden, "IP_NOT_ALLOWED", "source IP is not permitted for this API key")
+				return
+			}
+		}
+
 		// Set the standard auth context keys for customer API key auth.
 		c.Set(userIDContextKey, info.CustomerID)
 		c.Set(userTypeContextKey, "customer")
@@ -426,6 +438,9 @@ func CheckVMScope(c *gin.Context, vmID string) bool {
 func RequireVMScope() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		vmID := c.Param("id")
+		if vmID == "" {
+			vmID = c.Param("vmId")
+		}
 		if vmID == "" {
 			// No VM ID in path, let the handler deal with it
 			c.Next()

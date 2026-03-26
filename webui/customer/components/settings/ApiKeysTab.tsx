@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,34 +19,74 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { settingsApi, ApiKey } from "@/lib/api-client";
+import { settingsApi, ApiKey, VM } from "@/lib/api-client";
 import { useMutationToast } from "@/lib/utils/toast-helpers";
-import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check, Globe } from "lucide-react";
+import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check, Globe, Server } from "lucide-react";
 
 const apiKeySchema = z.object({
   name: z.string().min(1, "Name is required"),
   permissions: z.array(z.string()).min(1, "At least one permission is required"),
   allowed_ips: z.string().optional(),
+  restrict_vm_scope: z.boolean(),
+  vm_ids: z.array(z.string()),
   expires_at: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.restrict_vm_scope && data.vm_ids.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["vm_ids"],
+      message: "Select at least one VM to scope this key",
+    });
+  }
 });
 
 type ApiKeyFormData = z.infer<typeof apiKeySchema>;
 
 const AVAILABLE_PERMISSIONS = [
-  "vms:read",
-  "vms:write",
-  "backups:read",
-  "backups:write",
-  "snapshots:read",
-  "snapshots:write",
+  { value: "vm:read", label: "vm:read — view VM details, metrics, bandwidth, and IPs" },
+  { value: "vm:write", label: "vm:write — manage rDNS and ISO operations" },
+  { value: "vm:power", label: "vm:power — start, stop, restart, and request console access" },
+  { value: "backup:read", label: "backup:read — view backup inventory" },
+  { value: "backup:write", label: "backup:write — create, restore, and remove backups" },
+  { value: "snapshot:read", label: "snapshot:read — view snapshot inventory" },
+  { value: "snapshot:write", label: "snapshot:write — create, restore, and remove snapshots" },
 ];
+
+const MAX_VM_NAMES_TO_DISPLAY = 2;
 
 interface ApiKeysTabProps {
   apiKeys: ApiKey[] | null | undefined;
+  vms: VM[] | null | undefined;
   isLoading: boolean;
+  isVMsLoading: boolean;
 }
 
-export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
+function formatVMLabel(vm: VM) {
+  return vm.name || vm.hostname;
+}
+
+function describeVMScope(vmIDs: string[] | undefined, vms: VM[] | null | undefined) {
+  if (!vmIDs || vmIDs.length === 0) {
+    return "All VMs";
+  }
+
+  const names = vmIDs
+    .map((vmID) => vms?.find((vm) => vm.id === vmID))
+    .filter((vm): vm is VM => Boolean(vm))
+    .map(formatVMLabel);
+
+  if (
+    names.length === vmIDs.length &&
+    names.length > 0 &&
+    names.length <= MAX_VM_NAMES_TO_DISPLAY
+  ) {
+    return names.join(", ");
+  }
+
+  return `${vmIDs.length} selected VM${vmIDs.length === 1 ? "" : "s"}`;
+}
+
+export function ApiKeysTab({ apiKeys, vms, isLoading, isVMsLoading }: ApiKeysTabProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { createMutationOnError } = useMutationToast();
@@ -57,6 +97,9 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
   const [rotatedKeyValue, setRotatedKeyValue] = useState<string | null>(null);
   const [rotatedKeyDialogOpen, setRotatedKeyDialogOpen] = useState(false);
+  const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null);
+  const [createdKeyDialogOpen, setCreatedKeyDialogOpen] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   const apiKeyForm = useForm<ApiKeyFormData>({
     resolver: zodResolver(apiKeySchema),
@@ -64,20 +107,35 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       name: "",
       permissions: [],
       allowed_ips: "",
+      restrict_vm_scope: false,
+      vm_ids: [],
       expires_at: "",
     },
   });
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const createApiKeyMutation = useMutation({
     mutationFn: settingsApi.createApiKey,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       setApiKeyDialogOpen(false);
       apiKeyForm.reset();
-      toast({
-        title: "Success",
-        description: "API key created successfully",
-      });
+      if (data.key) {
+        setCreatedKeyValue(data.key);
+        setCreatedKeyDialogOpen(true);
+      } else {
+        toast({
+          title: "Success",
+          description: "API key created successfully",
+        });
+      }
     },
     onError: createMutationOnError("Failed to create API key"),
   });
@@ -107,7 +165,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       setSelectedKeyId(null);
       toast({
         title: "Success",
-        description: "API key deleted successfully",
+        description: "API key revoked successfully",
       });
     },
     onError: createMutationOnError("Failed to delete API key"),
@@ -141,8 +199,27 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       name: data.name,
       permissions: data.permissions,
       allowed_ips: allowedIps,
-      expires_at: data.expires_at || undefined,
+      vm_ids: data.restrict_vm_scope ? data.vm_ids : undefined,
+      expires_at: data.expires_at ? new Date(data.expires_at).toISOString() : undefined,
     });
+  };
+
+  const restrictVMScope = useWatch({ control: apiKeyForm.control, name: "restrict_vm_scope" });
+  const selectedVMIDs = useWatch({ control: apiKeyForm.control, name: "vm_ids" }) || [];
+
+  const handleRestrictVMScopeChange = (checked: boolean) => {
+    apiKeyForm.setValue("restrict_vm_scope", checked, { shouldValidate: true });
+    if (!checked) {
+      apiKeyForm.setValue("vm_ids", [], { shouldValidate: true });
+    }
+  };
+
+  const handleScopedVMToggle = (vmID: string, checked: boolean) => {
+    const currentVMIDs = apiKeyForm.getValues("vm_ids");
+    const nextVMIDs = checked
+      ? [...currentVMIDs, vmID]
+      : currentVMIDs.filter((currentID) => currentID !== vmID);
+    apiKeyForm.setValue("vm_ids", nextVMIDs, { shouldValidate: true });
   };
 
   const handleRotateKey = (keyId: string) => {
@@ -154,6 +231,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
     if (selectedKeyId) {
       rotateApiKeyMutation.mutate(selectedKeyId);
       setRotateKeyDialogOpen(false);
+      setSelectedKeyId(null);
     }
   };
 
@@ -216,8 +294,11 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                       ) : (
                         <Badge variant="secondary">Inactive</Badge>
                       )}
+                      {apiKey.expires_at && new Date(apiKey.expires_at).getTime() <= currentTime && (
+                        <Badge variant="secondary">Expired</Badge>
+                      )}
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
                         Created: {new Date(apiKey.created_at).toLocaleDateString()}
@@ -232,6 +313,10 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                           IPs: {apiKey.allowed_ips.length} whitelisted
                         </div>
                       )}
+                      <div className="flex items-center gap-1">
+                        <Server className="h-3 w-3" />
+                        Scope: {describeVMScope(apiKey.vm_ids, vms)}
+                      </div>
                       {apiKey.expires_at && (
                         <div className="flex items-center gap-1">
                           <Calendar className="h-3 w-3" />
@@ -276,7 +361,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                       onClick={() => handleDeleteKey(apiKey.id)}
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
+                      Revoke
                     </Button>
                   </div>
                 </div>
@@ -288,7 +373,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
       {/* API Key Dialog */}
       <Dialog open={apiKeyDialogOpen} onOpenChange={setApiKeyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
@@ -311,16 +396,16 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               <Label>Permissions</Label>
               <div className="space-y-2 border rounded-md p-3">
                 {AVAILABLE_PERMISSIONS.map((permission) => (
-                  <div key={permission} className="flex items-center space-x-2">
+                  <div key={permission.value} className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      id={permission}
-                      value={permission}
+                      id={permission.value}
+                      value={permission.value}
                       {...apiKeyForm.register("permissions")}
                       className="rounded border-gray-300"
                     />
-                    <Label htmlFor={permission} className="text-sm font-normal cursor-pointer">
-                      {permission}
+                    <Label htmlFor={permission.value} className="text-sm font-normal cursor-pointer">
+                      {permission.label}
                     </Label>
                   </div>
                 ))}
@@ -342,6 +427,76 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                 One IP address or CIDR range per line. Leave empty to allow all IPs.
               </p>
             </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Server className="h-4 w-4" />
+                VM Scope (Optional)
+              </Label>
+              <div className="space-y-3 rounded-md border p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={restrictVMScope}
+                    onChange={(event) => handleRestrictVMScopeChange(event.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Restrict this key to selected VMs only
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Leave this disabled to allow the key to access every VM on your account.
+                </p>
+                {restrictVMScope && (
+                  <div className="space-y-2">
+                    {isVMsLoading ? (
+                      <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading your VMs…
+                      </div>
+                    ) : !vms || vms.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                        No VMs are available to scope yet.
+                      </div>
+                    ) : (
+                      <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-2">
+                        {vms.map((vm) => (
+                          <label
+                            key={vm.id}
+                            className="flex items-start gap-2 rounded-md p-2 text-sm hover:bg-muted/50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedVMIDs.includes(vm.id)}
+                              onChange={(event) => handleScopedVMToggle(vm.id, event.target.checked)}
+                              className="mt-0.5 rounded border-gray-300"
+                            />
+                            <span className="space-y-1">
+                              <span className="block font-medium">{formatVMLabel(vm)}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {vm.hostname}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {apiKeyForm.formState.errors.vm_ids && (
+                      <p className="text-sm text-destructive">{apiKeyForm.formState.errors.vm_ids.message}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="expires-at">Expiration (Optional)</Label>
+              <Input
+                id="expires-at"
+                type="datetime-local"
+                {...apiKeyForm.register("expires_at")}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave empty to keep the key valid until it is manually revoked.
+              </p>
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setApiKeyDialogOpen(false)}>
                 Cancel
@@ -359,9 +514,9 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       <Dialog open={deleteKeyDialogOpen} onOpenChange={setDeleteKeyDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete API Key</DialogTitle>
+            <DialogTitle>Revoke API Key</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this API key? This action cannot be undone.
+              Are you sure you want to revoke this API key? It will stop working immediately and cannot be used again.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -375,7 +530,48 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               disabled={deleteApiKeyMutation.isPending}
             >
               {deleteApiKeyMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Delete
+              Revoke
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createdKeyDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setCreatedKeyDialogOpen(false);
+          setCreatedKeyValue(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>API Key Created</DialogTitle>
+            <DialogDescription>
+              Your new API key is shown below. Copy it now — it will not be displayed again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
+            <code className="flex-1 break-all text-sm font-mono">
+              {createdKeyValue}
+            </code>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => createdKeyValue && handleCopy(createdKeyValue, "created")}
+            >
+              {copiedId === "created" ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => {
+              setCreatedKeyDialogOpen(false);
+              setCreatedKeyValue(null);
+            }}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

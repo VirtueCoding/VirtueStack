@@ -67,8 +67,9 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
 | JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
 | RBAC | ✅ Role-based permissions (customer and admin) |
-| API Keys | ✅ Secure API access with expiration and IP whitelist |
+| API Keys | ✅ Secure API access with expiration, IP whitelist, and VM scoping |
 | API Key IP Whitelist | ✅ IPv4, IPv6, CIDR support for customer and provisioning keys |
+| VM-Scoped API Keys | ✅ Restrict customer API keys to specific VMs |
 | Audit Logging | ✅ Immutable operation logs with partitioning |
 | Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
 | Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
@@ -87,7 +88,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Portal | Technology | Pages |
 |--------|------------|-------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Audit Logs, Settings |
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Provisioning Keys, Failover Requests, Audit Logs, Settings |
 | Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, RDNS), Settings (profile, 2FA, API keys, webhooks, notifications) |
 
 ### API System

@@ -1585,6 +1585,8 @@ CREATE TABLE customer_api_keys (
     key_hash TEXT NOT NULL,
     vm_ids UUID[],  -- Which VMs this key can access (empty = all)
     permissions TEXT[],  -- Subset of customer permissions
+    allowed_ips TEXT[],  -- IP/CIDR whitelist (empty = allow all)
+    expires_at TIMESTAMPTZ,  -- Optional expiration
     last_used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     revoked_at TIMESTAMPTZ

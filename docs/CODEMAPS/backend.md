@@ -69,6 +69,11 @@ GET    /admin-backup-schedules, /admin-backup-schedules/:id
 POST   /admin-backup-schedules, /admin-backup-schedules/:id/run
 DELETE /admin-backup-schedules/:id
 PUT    /admin-backup-schedules/:id
+
+GET    /provisioning-keys, /provisioning-keys/:id
+POST   /provisioning-keys
+PUT    /provisioning-keys/:id
+DELETE /provisioning-keys/:id       # Requires re-auth
 ```
 
 ## Customer API Routes

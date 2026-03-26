@@ -80,7 +80,7 @@ func (h *CustomerHandler) verifyTaskOwnership(c *gin.Context, task *models.Task,
 			"TASK_NOT_FOUND", "Task not found")
 		return false
 	}
-	return true
+	return middleware.CheckVMScope(c, vmID)
 }
 
 // extractVMIDFromPayload attempts to extract the vm_id field from a task payload.

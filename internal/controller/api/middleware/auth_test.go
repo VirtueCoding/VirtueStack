@@ -555,6 +555,7 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 		return CustomerAPIKeyInfo{
 			KeyID:       "key-1",
 			CustomerID:  "customer-api",
+			AllowedIPs:  []string{"198.51.100.0/24"},
 			Permissions: []string{"vm:read"},
 		}, nil
 	}
@@ -587,10 +588,21 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 			keyValidator: validKeyValidator,
 			setupRequest: func(t *testing.T, req *http.Request) {
 				req.Header.Set("X-API-Key", "my-api-key")
+				req.RemoteAddr = "198.51.100.10:1234"
 			},
 			wantStatus:      http.StatusOK,
 			wantUserID:      "customer-api",
 			wantPermissions: []any{"vm:read"},
+		},
+		{
+			name:         "API key rejected when source IP is not allowed",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				req.Header.Set("X-API-Key", "my-api-key")
+				req.RemoteAddr = "203.0.113.10:1234"
+			},
+			wantStatus:       http.StatusForbidden,
+			wantBodyContains: "IP_NOT_ALLOWED",
 		},
 		{
 			name:         "JWT preferred over API key",
@@ -689,6 +701,43 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 	}
 }
 
+func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
+	t.Run("allows scoped vmId path parameter", func(t *testing.T) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(vmIDsContextKey, []string{"vm-1"})
+			c.Next()
+		})
+		r.GET("/ws/:vmId", RequireVMScope(), func(c *gin.Context) {
+			c.Status(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/ws/vm-1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("rejects vmId outside API key scope", func(t *testing.T) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(vmIDsContextKey, []string{"vm-1"})
+			c.Next()
+		})
+		r.GET("/ws/:vmId", RequireVMScope(), func(c *gin.Context) {
+			c.Status(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/ws/vm-2", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "VM_NOT_IN_SCOPE")
+	})
+}
+
 func TestPermissions(t *testing.T) {
 	t.Run("GetPermissions returns nil for JWT auth", func(t *testing.T) {
 		r := gin.New()
@@ -735,7 +784,7 @@ func TestPermissions(t *testing.T) {
 
 func TestHasPermission(t *testing.T) {
 	tests := []struct {
-		name        string
+		name         string
 		setupContext func(c *gin.Context)
 		permission   string
 		wantResult   bool

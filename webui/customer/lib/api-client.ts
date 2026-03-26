@@ -325,8 +325,12 @@ export const vmApi = {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/restart`, {});
   },
 
-  async getVMs(): Promise<VM[]> {
-    return apiClient.get<VM[]>("/customer/vms");
+  async getVMs(perPage?: number, page?: number): Promise<VM[]> {
+    const params = new URLSearchParams();
+    if (perPage) params.set("per_page", String(perPage));
+    if (page) params.set("page", String(page));
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return apiClient.get<VM[]>(`/customer/vms${query}`);
   },
 
   async getVM(vmId: string): Promise<VM> {
@@ -589,6 +593,7 @@ export interface ApiKey {
   key?: string;
   permissions: string[];
   allowed_ips?: string[];
+  vm_ids?: string[];
   is_active: boolean;
   expires_at?: string;
   created_at: string;
@@ -611,6 +616,7 @@ export interface CreateApiKeyRequest {
   name: string;
   permissions: string[];
   allowed_ips?: string[];
+  vm_ids?: string[];
   expires_at?: string;
 }
 
