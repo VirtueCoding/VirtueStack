@@ -355,6 +355,7 @@ func (s *Server) InitializeServices() error {
 		PlanRepo:        planRepo,
 		ISOUploadRepo:   isoUploadRepo,
 		SSOTokenRepo:    ssoTokenRepo,
+		TaskRepo:        taskRepo,
 		RDNSService:     s.rdnsService,
 		NodeAgent:       s.nodeClient,
 		JWTSecret:       s.config.JWTSecret.Value(),

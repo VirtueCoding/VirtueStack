@@ -278,6 +278,11 @@ function decodeJWTPayload(token: string): { exp?: number } | null {
 
 let tokenValidUntil = 0;
 
+export interface ReauthResponse {
+  reauth_token: string;
+  expires_in: number;
+}
+
 export const adminAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
     await fetchCsrfToken();
@@ -321,6 +326,13 @@ export const adminAuthApi = {
       // Re-throw unexpected errors so the caller can handle them.
       throw err;
     }
+  },
+
+  // reauth() re-authenticates the admin by verifying their password.
+  // Returns a short-lived re-auth token to include in the X-Reauth-Token
+  // header when performing destructive operations (DELETE nodes, VMs, etc.).
+  async reauth(password: string): Promise<ReauthResponse> {
+    return apiClient.post<ReauthResponse>("/admin/auth/reauth", { password });
   },
 
   async ensureValidToken(): Promise<boolean> {
@@ -486,6 +498,14 @@ export const adminCustomersApi = {
 
   async deleteCustomer(id: string): Promise<void> {
     return apiClient.deleteVoid(`/admin/customers/${id}`);
+  },
+
+  async getCustomerAuditLogs(id: string, page = 1, perPage = 20): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/customers/${id}/audit-logs?${searchParams.toString()}`);
   },
 };
 
@@ -1072,19 +1092,19 @@ export interface UpdateVMBackupScheduleRequest {
 
 export const adminVMBackupSchedulesApi = {
   async getVMBackupSchedules(vmId: string): Promise<VMBackupSchedule[]> {
-    return apiClient.get<VMBackupSchedule[]>(`/admin/vms/${vmId}/backup-schedules`);
+    return apiClient.get<VMBackupSchedule[]>(`/admin/backup-schedules?vm_id=${vmId}`);
   },
 
   async createVMBackupSchedule(vmId: string, data: CreateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
-    return apiClient.post<VMBackupSchedule>(`/admin/vms/${vmId}/backup-schedules`, data);
+    return apiClient.post<VMBackupSchedule>(`/admin/backup-schedules`, { ...data, vm_id: vmId });
   },
 
-  async updateVMBackupSchedule(vmId: string, scheduleId: string, data: UpdateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
-    return apiClient.put<VMBackupSchedule>(`/admin/vms/${vmId}/backup-schedules/${scheduleId}`, data);
+  async updateVMBackupSchedule(_vmId: string, scheduleId: string, data: UpdateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
+    return apiClient.put<VMBackupSchedule>(`/admin/backup-schedules/${scheduleId}`, data);
   },
 
-  async deleteVMBackupSchedule(vmId: string, scheduleId: string): Promise<void> {
-    return apiClient.deleteVoid(`/admin/vms/${vmId}/backup-schedules/${scheduleId}`);
+  async deleteVMBackupSchedule(_vmId: string, scheduleId: string): Promise<void> {
+    return apiClient.deleteVoid(`/admin/backup-schedules/${scheduleId}`);
   },
 };
 
@@ -1180,11 +1200,23 @@ export const adminStorageBackendsApi = {
     return apiClient.deleteVoid(`/admin/storage-backends/${id}`);
   },
 
+  async getStorageBackendNodes(id: string): Promise<StorageBackendNode[]> {
+    return apiClient.get<StorageBackendNode[]>(`/admin/storage-backends/${id}/nodes`);
+  },
+
   async assignStorageBackendNodes(id: string, nodeIds: string[]): Promise<void> {
     return apiClient.postVoid(`/admin/storage-backends/${id}/nodes`, { node_ids: nodeIds });
   },
 
   async removeStorageBackendNode(id: string, nodeId: string): Promise<void> {
     return apiClient.deleteVoid(`/admin/storage-backends/${id}/nodes/${nodeId}`);
+  },
+
+  async getStorageBackendHealth(id: string): Promise<{ health_status: string; health_message?: string }> {
+    return apiClient.get<{ health_status: string; health_message?: string }>(`/admin/storage-backends/${id}/health`);
+  },
+
+  async refreshStorageBackendHealth(id: string): Promise<StorageBackend> {
+    return apiClient.post<StorageBackend>(`/admin/storage-backends/${id}/refresh`, {});
   },
 };

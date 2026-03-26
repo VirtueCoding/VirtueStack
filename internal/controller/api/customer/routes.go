@@ -69,6 +69,9 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 	registerBackupRoutes(protected, handler)
 	registerSnapshotRoutes(protected, handler)
 
+	// Task status polling - allows customers to track async operations
+	protected.GET("/tasks/:id", handler.GetTaskStatus)
+
 	protected.GET("/templates", handler.ListTemplates)
 	protected.GET("/ws/vnc/:vmId", middleware.RequireVMScope(), handler.HandleVNCWebSocket)
 	protected.GET("/ws/serial/:vmId", middleware.RequireVMScope(), handler.HandleSerialWebSocket)

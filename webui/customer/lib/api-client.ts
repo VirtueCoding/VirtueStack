@@ -471,6 +471,10 @@ export const backupApi = {
     return apiClient.get<Backup[]>(`/customer/backups${params}`);
   },
 
+  async getBackup(backupId: string): Promise<Backup> {
+    return apiClient.get<Backup>(`/customer/backups/${backupId}`);
+  },
+
   async createBackup(request: CreateBackupRequest): Promise<CreateBackupResponse> {
     return apiClient.post<CreateBackupResponse>("/customer/backups", request);
   },
@@ -630,6 +634,28 @@ export interface TestWebhookResponse {
   error?: string;
 }
 
+export interface WebhookDelivery {
+  id: string;
+  event: string;
+  attempt_count: number;
+  response_status?: number;
+  success: boolean;
+  next_retry_at?: string;
+  delivered_at?: string;
+  created_at: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  os_family: string;
+  os_version?: string;
+  min_disk_gb: number;
+  supports_cloudinit: boolean;
+  description?: string;
+  storage_backend: string;
+}
+
 export const settingsApi = {
   async getProfile(): Promise<CustomerProfile> {
     return apiClient.get<CustomerProfile>("/customer/profile");
@@ -694,6 +720,10 @@ export const settingsApi = {
     return apiClient.get<Webhook[]>("/customer/webhooks");
   },
 
+  async getWebhook(webhookId: string): Promise<Webhook> {
+    return apiClient.get<Webhook>(`/customer/webhooks/${webhookId}`);
+  },
+
   async createWebhook(request: CreateWebhookRequest): Promise<Webhook> {
     return apiClient.post<Webhook>("/customer/webhooks", request);
   },
@@ -708,7 +738,12 @@ export const settingsApi = {
 
   async testWebhook(webhookId: string): Promise<TestWebhookResponse> {
     return apiClient.post<TestWebhookResponse>(`/customer/webhooks/${webhookId}/test`, {});
-  }
+  },
+
+  async listWebhookDeliveries(webhookId: string, page = 1, perPage = 20): Promise<WebhookDelivery[]> {
+    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+    return apiClient.get<WebhookDelivery[]>(`/customer/webhooks/${webhookId}/deliveries?${params.toString()}`);
+  },
 };
 
 export interface ISORecord {
@@ -900,5 +935,12 @@ export const notificationApi = {
 
   async listEvents(): Promise<NotificationEvent[]> {
     return apiClient.get<NotificationEvent[]>("/customer/notifications/events");
+  },
+};
+
+export const templateApi = {
+  async listTemplates(osFamily?: string): Promise<Template[]> {
+    const params = osFamily ? `?os_family=${encodeURIComponent(osFamily)}` : "";
+    return apiClient.get<Template[]>(`/customer/templates${params}`);
   },
 };

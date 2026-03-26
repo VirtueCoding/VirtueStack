@@ -125,6 +125,7 @@ type CustomerHandler struct {
 	planRepo        *repository.PlanRepository
 	isoUploadRepo   *repository.ISOUploadRepository
 	ssoTokenRepo    *repository.SSOTokenRepository
+	taskRepo        *repository.TaskRepository
 	rdnsService     *services.RDNSService
 	nodeAgent       nodeAgentConnPool
 	authConfig      middleware.AuthConfig
@@ -159,6 +160,7 @@ type CustomerHandlerConfig struct {
 	PlanRepo        *repository.PlanRepository
 	ISOUploadRepo   *repository.ISOUploadRepository
 	SSOTokenRepo    *repository.SSOTokenRepository
+	TaskRepo        *repository.TaskRepository
 	RDNSService     *services.RDNSService
 	NodeAgent       nodeAgentConnPool
 	JWTSecret       string
@@ -189,6 +191,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		planRepo:        cfg.PlanRepo,
 		isoUploadRepo:   cfg.ISOUploadRepo,
 		ssoTokenRepo:    cfg.SSOTokenRepo,
+		taskRepo:        cfg.TaskRepo,
 		rdnsService:     cfg.RDNSService,
 		nodeAgent:       cfg.NodeAgent,
 		authConfig:      middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
