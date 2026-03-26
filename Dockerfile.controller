@@ -96,10 +96,10 @@ CMD ["air", "-c", ".air.toml"]
 # -----------------------------------------------------------------------------
 # Runtime Stage
 # -----------------------------------------------------------------------------
-# Production: Pin to digest, e.g., FROM alpine:3.19.4@sha256:...
+# Production: Pin to digest, e.g., FROM alpine:3.22.2@sha256:...
 # Alternative: gcr.io/distroless/static-debian12:latest for zero attack surface
 # (requires external health monitoring since no shell/curl available)
-FROM alpine:3.19.4 AS runtime
+FROM alpine:3.22.2 AS runtime
 
 # Install runtime dependencies
 RUN apk add --no-cache \
