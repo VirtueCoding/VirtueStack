@@ -12,16 +12,6 @@ import { Cpu, MemoryStick, HardDrive, Network } from "lucide-react";
 import type { VM } from "@/lib/api-client";
 import { formatMemory } from "@/lib/vm-utils";
 
-function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
-  if (value === undefined) return defaultValue;
-  return value.toLowerCase() === "true";
-}
-
-const FEATURE_FLAGS = {
-  enableResourceConfig: parseBooleanEnv(process.env.NEXT_PUBLIC_ENABLE_RESOURCE_CONFIG, true),
-  enableNetworkConfig: parseBooleanEnv(process.env.NEXT_PUBLIC_ENABLE_NETWORK_CONFIG, true),
-};
-
 interface VMSettingsTabProps {
   vm: VM;
 }
@@ -52,8 +42,7 @@ export function VMSettingsTab({ vm }: VMSettingsTabProps) {
         </div>
 
         {/* Resource Configuration */}
-        {FEATURE_FLAGS.enableResourceConfig && (
-          <div className="space-y-4 border-t pt-6">
+        <div className="space-y-4 border-t pt-6">
             <h3 className="text-sm font-medium">Resource Configuration</h3>
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-lg border p-4">
@@ -79,11 +68,9 @@ export function VMSettingsTab({ vm }: VMSettingsTabProps) {
               </div>
             </div>
           </div>
-        )}
 
         {/* Network Configuration */}
-        {FEATURE_FLAGS.enableNetworkConfig && (
-          <div className="space-y-4 border-t pt-6">
+        <div className="space-y-4 border-t pt-6">
             <h3 className="text-sm font-medium">Network Configuration</h3>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-lg border p-4">
@@ -102,7 +89,6 @@ export function VMSettingsTab({ vm }: VMSettingsTabProps) {
               </div>
             </div>
           </div>
-        )}
       </CardContent>
     </Card>
   );

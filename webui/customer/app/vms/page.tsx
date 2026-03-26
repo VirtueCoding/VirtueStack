@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Play, Square, RotateCw, Plus, Server, Loader2, Search } from "lucide-react";
+import { Play, Square, RotateCw, Server, Loader2, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,16 +30,9 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
 import { Input } from "@/components/ui/input";
-import { vmApi, VM, ApiClientError } from "@/lib/api-client";
+import { vmApi, VM } from "@/lib/api-client";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 import { useVMAction } from "@/lib/hooks/useVMAction";
-
-function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
-  if (value === undefined) return defaultValue;
-  return value.toLowerCase() === "true";
-}
-
-const ENABLE_VM_CREATION = parseBooleanEnv(process.env.NEXT_PUBLIC_ENABLE_VM_CREATION, false);
 
 export default function VMsPage() {
   const [vms, setVms] = useState<VM[]>([]);
@@ -49,7 +42,7 @@ export default function VMsPage() {
   const searchParams = useSearchParams();
   const searchFromUrl = searchParams.get("search") || "";
   const [searchTerm, setSearchTerm] = useState(searchFromUrl);
-  const { executeAction, isVMLoading, loadingVMId } = useVMAction();
+  const { executeAction, isVMLoading } = useVMAction();
 
   const fetchVMs = useCallback(async () => {
     try {
@@ -102,13 +95,6 @@ export default function VMsPage() {
     });
   };
 
-  const handleCreateVM = () => {
-    toast({
-      title: "VM Provisioning",
-      description: "New VMs can be provisioned through your hosting provider's control panel or API.",
-    });
-  };
-
   const confirmStop = (id: string) => {
     setVmToStop(id);
   };
@@ -150,14 +136,6 @@ export default function VMsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex justify-center">
-            {ENABLE_VM_CREATION && (
-              <Button onClick={handleCreateVM}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create VM
-              </Button>
-            )}
-          </div>
         </CardContent>
       </Card>
     );
@@ -174,12 +152,6 @@ export default function VMsPage() {
                 Manage and monitor your virtual machines
               </CardDescription>
             </div>
-            {ENABLE_VM_CREATION && (
-              <Button onClick={handleCreateVM}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create VM
-              </Button>
-            )}
           </div>
           <div className="relative mt-2 max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
