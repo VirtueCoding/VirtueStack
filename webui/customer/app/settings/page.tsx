@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { settingsApi, vmApi } from "@/lib/api-client";
+import { settingsApi, vmApi, VM } from "@/lib/api-client";
 import { RequireAuth } from "@/lib/require-auth";
 import { User, Shield, Key, Webhook, Bell } from "lucide-react";
 import { ProfileTab } from "@/components/settings/ProfileTab";
@@ -27,22 +27,13 @@ export default function SettingsPage() {
     queryFn: async () => {
       const perPage = 100;
       let page = 1;
-      const allVms: any[] = [];
+      const allVms: VM[] = [];
+      let hasMore = true;
 
-      // Fetch all pages of VMs until a page returns fewer than perPage items
-      // to ensure the scope selector sees all VMs, even when there are >100.
-      // Assumes vmApi.getVMs(perPage, page) returns an array of VMs.
-      // If vmApi.getVMs returns an object, adapt this to use its `.items` (or similar) field.
-      // We avoid changing vmApi itself to keep this fix localized to the VM scope selector.
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const pageVms: any[] = await vmApi.getVMs(perPage, page);
+      while (hasMore) {
+        const pageVms = await vmApi.getVMs(perPage, page);
         allVms.push(...pageVms);
-
-        if (pageVms.length < perPage) {
-          break;
-        }
-
+        hasMore = pageVms.length >= perPage;
         page += 1;
       }
 

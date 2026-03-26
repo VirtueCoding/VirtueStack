@@ -325,8 +325,11 @@ export const vmApi = {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/restart`, {});
   },
 
-  async getVMs(perPage?: number): Promise<VM[]> {
-    const query = perPage ? `?per_page=${perPage}` : "";
+  async getVMs(perPage?: number, page?: number): Promise<VM[]> {
+    const params = new URLSearchParams();
+    if (perPage) params.set("per_page", String(perPage));
+    if (page) params.set("page", String(page));
+    const query = params.toString() ? `?${params.toString()}` : "";
     return apiClient.get<VM[]>(`/customer/vms${query}`);
   },
 
