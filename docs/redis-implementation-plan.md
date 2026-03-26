@@ -18,11 +18,10 @@ This document outlines the plan to implement Redis-backed distributed rate limit
 - **Implementation**: Both in-memory and Redis rate limiters are already implemented in `middleware/ratelimit.go`
 - **Warning**: `WarnIfInMemoryRateLimitInProduction()` logs a warning when running multi-instance without Redis
 
-### Target State
+### Target State (document in docs/INSTALL.md and README.md)
 
 - **Single controller**: No change - in-memory rate limiting continues to work
 - **Multi controller with Redis**: Coordinated rate limiting across all instances
-- **Multi controller without Redis**: Graceful degradation with per-instance limits (explicit opt-out)
 
 ---
 
