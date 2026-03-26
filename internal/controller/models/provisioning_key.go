@@ -19,11 +19,17 @@ type ProvisioningKey struct {
 	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
 	CreatedBy   string     `json:"created_by" db:"created_by"`
 	Description string     `json:"description,omitempty" db:"description"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty" db:"expires_at"`
 }
 
-// IsActive returns true if the key has not been revoked.
+// IsActive returns true if the key has not been revoked and has not expired.
 func (k *ProvisioningKey) IsActive() bool {
-	return k.RevokedAt == nil
+	return k.RevokedAt == nil && !k.IsExpired()
+}
+
+// IsExpired returns true if the key has a set expiry that is in the past.
+func (k *ProvisioningKey) IsExpired() bool {
+	return k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now())
 }
 
 // IsAllowedIP checks if the given IP is in the allowed list.
@@ -56,10 +62,19 @@ func (k *ProvisioningKey) IsAllowedIP(ip string) bool {
 
 // ProvisioningKeyCreateRequest represents a request to create a new provisioning key.
 type ProvisioningKeyCreateRequest struct {
-	Name        string   `json:"name" validate:"required,min=1,max=100"`
-	AllowedIPs  []string `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
-	Description string   `json:"description,omitempty" validate:"max=500"`
-	CreatedBy   string   `json:"created_by" validate:"required,uuid"`
+	Name        string     `json:"name" validate:"required,min=1,max=100"`
+	AllowedIPs  []string   `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
+	Description string     `json:"description,omitempty" validate:"max=500"`
+	CreatedBy   string     `json:"-"` // Server-set from authenticated admin; excluded from JSON binding.
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+}
+
+// ProvisioningKeyUpdateRequest represents a request to update an existing provisioning key.
+type ProvisioningKeyUpdateRequest struct {
+	Name        *string    `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	AllowedIPs  *[]string  `json:"allowed_ips,omitempty" validate:"omitempty,max=50,dive,ip|cidr"`
+	Description *string    `json:"description,omitempty" validate:"omitempty,max=500"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 // ProvisioningKeyResponse is returned when creating a new key.

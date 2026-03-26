@@ -2,6 +2,7 @@ package models
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -166,6 +167,60 @@ func TestProvisioningKeyIsAllowedIP(t *testing.T) {
 
 			result := key.IsAllowedIP(tt.clientIP)
 			assert.Equal(t, tt.wantResult, result, "IsAllowedIP(%q) with whitelist %v", tt.clientIP, tt.allowedIPs)
+		})
+	}
+}
+
+// TestProvisioningKeyIsExpired tests the IsExpired method.
+func TestProvisioningKeyIsExpired(t *testing.T) {
+	now := time.Now()
+	pastTime := now.Add(-1 * time.Hour)
+	futureTime := now.Add(1 * time.Hour)
+
+	tests := []struct {
+		name      string
+		expiresAt *time.Time
+		want      bool
+	}{
+		{"nil expires_at is not expired", nil, false},
+		{"future expires_at is not expired", &futureTime, false},
+		{"past expires_at is expired", &pastTime, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := &ProvisioningKey{ExpiresAt: tt.expiresAt}
+			assert.Equal(t, tt.want, key.IsExpired())
+		})
+	}
+}
+
+// TestProvisioningKeyIsActive tests IsActive with revocation and expiry.
+func TestProvisioningKeyIsActive(t *testing.T) {
+	now := time.Now()
+	pastTime := now.Add(-1 * time.Hour)
+	futureTime := now.Add(1 * time.Hour)
+
+	tests := []struct {
+		name      string
+		revokedAt *time.Time
+		expiresAt *time.Time
+		want      bool
+	}{
+		{"active key (no revoke, no expiry)", nil, nil, true},
+		{"active key (no revoke, future expiry)", nil, &futureTime, true},
+		{"revoked key", &pastTime, nil, false},
+		{"expired key", nil, &pastTime, false},
+		{"revoked and expired key", &pastTime, &pastTime, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := &ProvisioningKey{
+				RevokedAt: tt.revokedAt,
+				ExpiresAt: tt.expiresAt,
+			}
+			assert.Equal(t, tt.want, key.IsActive())
 		})
 	}
 }

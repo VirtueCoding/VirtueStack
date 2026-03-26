@@ -300,6 +300,16 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			storageBackends.GET("/:id/health", middleware.RequireAdminPermission(models.PermissionStorageBackendsRead), handler.GetStorageBackendHealth)
 			storageBackends.POST("/:id/refresh", middleware.RequireAdminPermission(models.PermissionStorageBackendsWrite), handler.RefreshStorageBackendHealth)
 		}
+
+		// Provisioning key management (API key lifecycle for WHMCS integration)
+		provisioningKeys := protected.Group("/provisioning-keys")
+		{
+			provisioningKeys.GET("", middleware.RequireAdminPermission(models.PermissionSettingsRead), handler.ListProvisioningKeys)
+			provisioningKeys.POST("", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.CreateProvisioningKey)
+			provisioningKeys.GET("/:id", middleware.RequireAdminPermission(models.PermissionSettingsRead), handler.GetProvisioningKey)
+			provisioningKeys.PUT("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdateProvisioningKey)
+			provisioningKeys.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.RevokeProvisioningKey)
+		}
 	}
 }
 
