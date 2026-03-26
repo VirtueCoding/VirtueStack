@@ -252,6 +252,10 @@ export const apiClient = {
   deleteVoid(endpoint: string): Promise<void> {
     return apiRequest(endpoint, { method: "DELETE", expectNoContent: true });
   },
+
+  deleteVoidWithHeaders(endpoint: string, headers: HeadersInit): Promise<void> {
+    return apiRequest(endpoint, { method: "DELETE", headers, expectNoContent: true });
+  },
 };
 
 function getAccessTokenFromCookie(): string | null {
@@ -1047,18 +1051,98 @@ export const adminIPSetsApi = {
 export interface FailoverRequest {
   id: string;
   node_id: string;
+  requested_by: string;
   status: string;
+  reason?: string;
+  result?: Record<string, unknown> | string | null;
+  approved_at?: string;
+  completed_at?: string;
   created_at: string;
   updated_at: string;
 }
 
 export const adminFailoverRequestsApi = {
-  async getFailoverRequests(): Promise<FailoverRequest[]> {
-    return apiClient.get<FailoverRequest[]>("/admin/failover-requests");
+  async getFailoverRequests(params: {
+    page?: number;
+    per_page?: number;
+    node_id?: string;
+    status?: string;
+  } = {}): Promise<PaginatedResponse<FailoverRequest>> {
+    const searchParams = new URLSearchParams();
+    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.node_id) searchParams.set("node_id", params.node_id);
+    if (params.status) searchParams.set("status", params.status);
+
+    const query = searchParams.toString();
+    const endpoint = query ? `/admin/failover-requests?${query}` : "/admin/failover-requests";
+    return apiClient.get<PaginatedResponse<FailoverRequest>>(endpoint);
   },
 
   async getFailoverRequest(id: string): Promise<FailoverRequest> {
     return apiClient.get<FailoverRequest>(`/admin/failover-requests/${id}`);
+  },
+};
+
+// ============================================================================
+// Admin Provisioning Keys API
+// ============================================================================
+
+export interface AdminProvisioningKey {
+  id: string;
+  name: string;
+  allowed_ips?: string[];
+  last_used_at?: string;
+  revoked_at?: string;
+  created_at: string;
+  created_by: string;
+  description?: string;
+  expires_at?: string;
+}
+
+export interface CreateProvisioningKeyRequest {
+  name: string;
+  allowed_ips?: string[];
+  description?: string;
+  expires_at?: string;
+}
+
+export interface UpdateProvisioningKeyRequest {
+  name?: string;
+  allowed_ips?: string[];
+  description?: string;
+  expires_at?: string | null;
+}
+
+export interface ProvisioningKeySecretResponse {
+  id: string;
+  name: string;
+  key: string;
+  created_at: string;
+}
+
+export const adminProvisioningKeysApi = {
+  async getProvisioningKeys(includeRevoked = false): Promise<AdminProvisioningKey[]> {
+    const query = includeRevoked ? "?include_revoked=true" : "";
+    return apiClient.get<AdminProvisioningKey[]>(`/admin/provisioning-keys${query}`);
+  },
+
+  async getProvisioningKey(id: string): Promise<AdminProvisioningKey> {
+    return apiClient.get<AdminProvisioningKey>(`/admin/provisioning-keys/${id}`);
+  },
+
+  async createProvisioningKey(data: CreateProvisioningKeyRequest): Promise<ProvisioningKeySecretResponse> {
+    return apiClient.post<ProvisioningKeySecretResponse>("/admin/provisioning-keys", data);
+  },
+
+  async updateProvisioningKey(id: string, data: UpdateProvisioningKeyRequest): Promise<AdminProvisioningKey> {
+    return apiClient.put<AdminProvisioningKey>(`/admin/provisioning-keys/${id}`, data);
+  },
+
+  async revokeProvisioningKey(id: string, reauthToken: string): Promise<void> {
+    return apiClient.deleteVoidWithHeaders(`/admin/provisioning-keys/${id}`, {
+      "X-Reauth-Token": reauthToken,
+    });
   },
 };
 
