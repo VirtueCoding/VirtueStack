@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
-	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -352,8 +352,7 @@ func TestValidOSFamilies(t *testing.T) {
 	assert.False(t, validOSFamilies[""])
 }
 
-// TestConsoleTokenDuration verifies the token duration constant.
+// TestConsoleTokenDuration_Value verifies the token duration constant.
 func TestConsoleTokenDuration_Value(t *testing.T) {
-	// Verify 1 hour duration as documented
-	assert.Equal(t, middleware.AuthConfig{}.JWTSecret, "")
+	assert.Equal(t, 1*time.Hour, ConsoleTokenDuration)
 }

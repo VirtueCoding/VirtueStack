@@ -337,7 +337,7 @@ func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID st
 	for _, vmID := range normalized {
 		if err := middleware.ValidateUUID(vmID); err != nil {
 			return nil, sharederrors.NewAPIError("INVALID_VM_ID",
-				fmt.Sprintf("invalid VM ID: %s", vmID), http.StatusBadRequest)
+				"vm_ids contains an invalid UUID", http.StatusBadRequest)
 		}
 	}
 
