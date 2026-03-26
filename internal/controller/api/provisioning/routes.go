@@ -63,7 +63,7 @@ func requireProvisioningAuth(c *gin.Context) {
 	keyID, exists := c.Get("api_key_id")
 	if !exists || keyID == "" {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "MISSING_API_KEY",
+			"error":   "MISSING_API_KEY",
 			"message": "provisioning API key authentication is required",
 		})
 		return
@@ -101,6 +101,8 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 	{
 		tasks.GET("/:id", handler.GetTask)
 	}
+
+	group.POST("/sso-tokens", handler.CreateSSOToken)
 
 	plans := group.Group("/plans")
 	{

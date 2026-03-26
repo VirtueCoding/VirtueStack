@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/admin"
@@ -16,6 +17,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
 	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	controllerredis "github.com/AbuGosok/VirtueStack/internal/controller/redis"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
@@ -71,19 +73,19 @@ type Server struct {
 	nodeClient *NodeClient
 	storage    services.TemplateStorage
 	// Services
-	vmService                 *services.VMService
-	authService               *services.AuthService
-	nodeService               *services.NodeService
-	ipamService               *services.IPAMService
-	planService               *services.PlanService
-	templateService           *services.TemplateService
-	customerService           *services.CustomerService
-	backupService             *services.BackupService
-	migrationService          *services.MigrationService
-	failoverMonitor           *services.FailoverMonitor
-	heartbeatChecker          *services.HeartbeatChecker
-	rdnsService               *services.RDNSService
-	bandwidthRepo             *repository.BandwidthRepository
+	vmService                  *services.VMService
+	authService                *services.AuthService
+	nodeService                *services.NodeService
+	ipamService                *services.IPAMService
+	planService                *services.PlanService
+	templateService            *services.TemplateService
+	customerService            *services.CustomerService
+	backupService              *services.BackupService
+	migrationService           *services.MigrationService
+	failoverMonitor            *services.FailoverMonitor
+	heartbeatChecker           *services.HeartbeatChecker
+	rdnsService                *services.RDNSService
+	bandwidthRepo              *repository.BandwidthRepository
 	adminBackupScheduleService *services.AdminBackupScheduleService
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
@@ -98,6 +100,20 @@ type Server struct {
 func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetStreamContext, logger *slog.Logger) (*Server, error) {
 	// Set Gin to release mode always
 	gin.SetMode(gin.ReleaseMode)
+
+	var redisClient *controllerredis.Client
+	if cfg.Redis.URL != "" {
+		client, err := controllerredis.NewClient(context.Background(), cfg.Redis.URL)
+		if err != nil {
+			return nil, fmt.Errorf("initializing redis rate limit backend: %w", err)
+		}
+		redisClient = client
+	}
+
+	if err := middleware.ValidateDistributedRateLimitConfiguration(strings.EqualFold(cfg.Environment, "production"), redisClient != nil); err != nil {
+		return nil, err
+	}
+	middleware.ConfigureDistributedRateLimitBackend(redisClient)
 
 	// Create router
 	router := gin.New()
@@ -156,6 +172,8 @@ func (s *Server) InitializeServices() error {
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
+	isoUploadRepo := repository.NewISOUploadRepository(s.dbPool)
+	ssoTokenRepo := repository.NewSSOTokenRepository(s.dbPool)
 
 	s.bandwidthRepo = bandwidthRepo
 	s.customerAPIKeyRepo = apiKeyRepo
@@ -304,6 +322,8 @@ func (s *Server) InitializeServices() error {
 		TaskRepo:      taskRepo,
 		VMRepo:        vmRepo,
 		IPRepo:        ipRepo,
+		SSOTokenRepo:  ssoTokenRepo,
+		AuditRepo:     auditRepo,
 		PlanService:   s.planService,
 		JWTSecret:     s.config.JWTSecret.Value(),
 		Issuer:        "virtuestack",
@@ -333,6 +353,8 @@ func (s *Server) InitializeServices() error {
 		BandwidthRepo:   bandwidthRepo,
 		IPRepo:          ipRepo,
 		PlanRepo:        planRepo,
+		ISOUploadRepo:   isoUploadRepo,
+		SSOTokenRepo:    ssoTokenRepo,
 		RDNSService:     s.rdnsService,
 		NodeAgent:       s.nodeClient,
 		JWTSecret:       s.config.JWTSecret.Value(),

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,33 +26,37 @@ func NewISOUploadRepository(db DB) *ISOUploadRepository {
 
 // ISOUpload represents an uploaded ISO file tracked in the database.
 type ISOUpload struct {
-	ID         string    `json:"id"`
-	VMID       string    `json:"vm_id"`
-	CustomerID string    `json:"customer_id"`
-	FileName   string    `json:"file_name"`
-	FileSize   int64     `json:"file_size"`
-	SHA256     string    `json:"sha256"`
-	StoragePath string   `json:"storage_path"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	VMID        string    `json:"vm_id"`
+	CustomerID  string    `json:"customer_id"`
+	FileName    string    `json:"file_name"`
+	FileSize    int64     `json:"file_size"`
+	SHA256      string    `json:"sha256"`
+	StoragePath string    `json:"storage_path"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Create inserts a new ISO upload record and returns the ID.
 // This operation is atomic with the ISO limit check when wrapped in a transaction
 // with FOR UPDATE lock on the VM's Plan.
 func (r *ISOUploadRepository) Create(ctx context.Context, upload *ISOUpload) error {
+	if upload.ID == "" {
+		upload.ID = uuid.NewString()
+	}
 	const q = `
-		INSERT INTO iso_uploads (vm_id, customer_id, file_name, file_size, sha256, storage_path)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at`
+		INSERT INTO iso_uploads (id, vm_id, customer_id, file_name, file_size, sha256, storage_path)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at`
 
 	err := r.db.QueryRow(ctx, q,
+		upload.ID,
 		upload.VMID,
 		upload.CustomerID,
 		upload.FileName,
 		upload.FileSize,
 		upload.SHA256,
 		upload.StoragePath,
-	).Scan(&upload.ID, &upload.CreatedAt)
+	).Scan(&upload.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("creating ISO upload: %w", err)
@@ -157,6 +162,9 @@ func (r *ISOUploadRepository) ListByCustomer(ctx context.Context, customerID str
 // This operation is atomic: it counts existing uploads and creates the new one in a transaction.
 // Returns LimitExceededError if the limit would be exceeded.
 func (r *ISOUploadRepository) CreateIfUnderLimit(ctx context.Context, upload *ISOUpload, planLimit int) error {
+	if upload.ID == "" {
+		upload.ID = uuid.NewString()
+	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -192,18 +200,19 @@ func (r *ISOUploadRepository) CreateIfUnderLimit(ctx context.Context, upload *IS
 
 	// Create the upload record
 	const insertQ = `
-		INSERT INTO iso_uploads (vm_id, customer_id, file_name, file_size, sha256, storage_path)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at`
+		INSERT INTO iso_uploads (id, vm_id, customer_id, file_name, file_size, sha256, storage_path)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at`
 
 	err = tx.QueryRow(ctx, insertQ,
+		upload.ID,
 		upload.VMID,
 		upload.CustomerID,
 		upload.FileName,
 		upload.FileSize,
 		upload.SHA256,
 		upload.StoragePath,
-	).Scan(&upload.ID, &upload.CreatedAt)
+	).Scan(&upload.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("creating ISO upload: %w", err)

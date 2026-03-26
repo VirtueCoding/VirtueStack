@@ -91,6 +91,7 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
 		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
 		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)
+		auth.GET("/sso-exchange", handler.ExchangeSSOToken)
 	}
 }
 

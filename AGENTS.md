@@ -1029,7 +1029,7 @@ virtuestack_ChangePackage()   // Resize VM
 virtuestack_ChangePassword()  // Reset password
 virtuestack_ClientArea()      // Embed Customer WebUI
 virtuestack_UsageUpdate()       // Usage metering (stub)
-virtuestack_SingleSignOn()      // WebUI SSO (stub)
+virtuestack_SingleSignOn()      // WebUI SSO (opaque token exchange)
 virtuestack_AdminServicesTabFieldsSave()  // Admin tab save (stub)
 ```
 
@@ -1042,22 +1042,20 @@ For WHMCS → Customer WebUI SSO:
 ```php
 use VirtueStack\WHMCS\VirtueStackHelper;
 
-// Generate SSO token with customer identity
-$ssoToken = VirtueStackHelper::generateSSOToken($customerId, $apiId, $jwtSecret, $issuer);
+// Create one-time opaque SSO token via Provisioning API
+$sso = $apiClient->createSSOToken($serviceId, $vmId);
+$ssoToken = $sso['token'];
 
 // Build WebUI URL with token
 $webuiUrl = VirtueStackHelper::buildWebuiUrl($webuiBaseUrl, $vmId, $ssoToken);
-// Returns: https://webui.example.com/vm/{vmId}?sso_token={jwt}
+// Returns: https://webui.example.com/api/v1/customer/auth/sso-exchange?token={opaque}
 ```
 
-**Security Note:** The SSO token is passed in the URL query parameter, which exposes it to browser history and logs. This is acceptable because:
-- The token has a short expiry (default 1 hour, recommend shorter for production)
-- It's used for customer self-service access, not administrative functions
-- The attack window is limited by token expiry
+**Security Note:** The WHMCS module now uses one-time opaque tokens stored server-side. The browser only receives a short-lived bootstrap token that is consumed by the controller's SSO exchange endpoint, which then sets the standard HttpOnly session cookies before redirecting to the clean customer UI URL.
 
 **Methods:**
-- `generateSSOToken()` — Creates JWT with customer identity claims
-- `buildWebuiUrl()` — Builds URL with SSO token for VM access
+- `createSSOToken()` — Requests a one-time opaque browser SSO token from the Provisioning API
+- `buildWebuiUrl()` — Builds the controller exchange URL that redeems the opaque token into a session
 - `buildConsoleUrl()` — Builds URL for console access (VNC/serial)
 
 **Why use opaque tokens via API?**

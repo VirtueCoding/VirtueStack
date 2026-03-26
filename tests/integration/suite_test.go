@@ -94,20 +94,36 @@ func getEnvOrDefault(key, defaultValue string) string {
 // init generates random credentials if not provided via environment variables
 func init() {
 	if TestDBPassword == "" {
-		TestDBPassword = crypto.GenerateRandomString(16)
+		TestDBPassword = mustGenerateRandomToken(16)
 	}
 	if TestCustomerPass == "" {
-		TestCustomerPass = crypto.GenerateRandomString(16)
+		TestCustomerPass = mustGenerateRandomToken(16)
 	}
 	if TestAdminPass == "" {
-		TestAdminPass = crypto.GenerateRandomString(16)
+		TestAdminPass = mustGenerateRandomToken(16)
 	}
 	if TestWebhookSecret == "" {
-		TestWebhookSecret = crypto.GenerateRandomString(32)
+		TestWebhookSecret = mustGenerateRandomToken(32)
 	}
 	if TestVMPassword == "" {
-		TestVMPassword = crypto.GenerateRandomString(16)
+		TestVMPassword = mustGenerateRandomToken(16)
 	}
+}
+
+func mustGenerateRandomToken(byteLength int) string {
+	token, err := crypto.GenerateRandomToken(byteLength)
+	if err != nil {
+		panic(err)
+	}
+	return token
+}
+
+func mustGenerateRandomHex(hexChars int) string {
+	token, err := crypto.SafeGenerateRandomHex(hexChars)
+	if err != nil {
+		panic(err)
+	}
+	return token
 }
 
 var suite *TestSuite
@@ -224,7 +240,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Generate test secrets
-	jwtSecret := crypto.GenerateRandomString(32)
+	jwtSecret := mustGenerateRandomToken(32)
 	encryptionKey, err := crypto.GenerateEncryptionKey()
 	if err != nil {
 		logger.Error("failed to generate encryption key", "error", err)
@@ -471,7 +487,7 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 	vmID := crypto.GenerateUUID()
 	testHostname := fmt.Sprintf("test-vm-%s", vmID[:8])
 	// Generate MAC address in proper format: 52:54:00:XX:XX:XX (QEMU default prefix + random suffix)
-	macSuffix := crypto.GenerateRandomHex(6)
+	macSuffix := mustGenerateRandomHex(6)
 	macAddr := fmt.Sprintf("52:54:00:%s:%s:%s", macSuffix[0:2], macSuffix[2:4], macSuffix[4:6])
 	resolvedStorageBackendID := TestStorageBackendID
 

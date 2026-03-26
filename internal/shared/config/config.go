@@ -53,7 +53,7 @@ const (
 
 	// LVM thin pool monitoring thresholds
 	defaultLVMDataPercentThreshold     = 95
-	defaultLVMMetadataPercentThreshold   = 70
+	defaultLVMMetadataPercentThreshold = 70
 
 	// Directory structure constants for file-based storage
 	DefaultVmsDir       = "vms"
@@ -112,6 +112,11 @@ type PowerDNSConfig struct {
 	MySQLURL string `yaml:"mysql_url" env:"POWERDNS_MYSQL_URL"` // MySQL connection string for direct database integration
 }
 
+// RedisConfig holds Redis connection settings used for distributed rate limiting.
+type RedisConfig struct {
+	URL string `yaml:"url" env:"REDIS_URL"`
+}
+
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
 	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
@@ -135,9 +140,9 @@ type ControllerConfig struct {
 	Telegram    TelegramConfig    `yaml:"telegram"`
 	Backup      BackupConfig      `yaml:"backup"`
 	PowerDNS    PowerDNSConfig    `yaml:"powerdns"`
+	Redis       RedisConfig       `yaml:"redis"`
 	FileStorage FileStorageConfig `yaml:"file_storage"`
 }
-
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
 type NodeAgentConfig struct {
@@ -167,8 +172,8 @@ type NodeAgentConfig struct {
 
 	// LVM threshold configuration for thin pool monitoring.
 	// Alerts are triggered when usage exceeds these percentages.
-	LVMDataPercentThreshold      int `yaml:"lvm_data_percent_threshold"      env:"LVM_DATA_PERCENT_THRESHOLD"`       // Default: 95
-	LVMMetadataPercentThreshold  int `yaml:"lvm_metadata_percent_threshold"  env:"LVM_METADATA_PERCENT_THRESHOLD"`   // Default: 70
+	LVMDataPercentThreshold     int `yaml:"lvm_data_percent_threshold"      env:"LVM_DATA_PERCENT_THRESHOLD"`     // Default: 95
+	LVMMetadataPercentThreshold int `yaml:"lvm_metadata_percent_threshold"  env:"LVM_METADATA_PERCENT_THRESHOLD"` // Default: 70
 
 	// TLS configuration for gRPC
 	TLSCertFile string `yaml:"tls_cert_file" env:"TLS_CERT_FILE"`
@@ -248,18 +253,18 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 // Required fields: ControllerGRPCAddr, NodeID, TLSCertFile, TLSKeyFile, TLSCAFile.
 func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 	cfg := &NodeAgentConfig{
-		StorageBackend:               defaultStorageBackend,
-		StoragePath:                  defaultStoragePath,
-		CephPool:                     defaultCephPool,
-		CephUser:                     defaultCephUser,
-		CephConf:                     defaultCephConf,
-		CloudInitPath:                defaultCloudInitPath,
-		ISOStoragePath:               defaultISOStoragePath,
-		LogLevel:                     defaultLogLevel,
-		MetricsAddr:                  ":9091",
-		HealthAddr:                   "127.0.0.1:8081",
-		LVMDataPercentThreshold:      defaultLVMDataPercentThreshold,
-		LVMMetadataPercentThreshold:  defaultLVMMetadataPercentThreshold,
+		StorageBackend:              defaultStorageBackend,
+		StoragePath:                 defaultStoragePath,
+		CephPool:                    defaultCephPool,
+		CephUser:                    defaultCephUser,
+		CephConf:                    defaultCephConf,
+		CloudInitPath:               defaultCloudInitPath,
+		ISOStoragePath:              defaultISOStoragePath,
+		LogLevel:                    defaultLogLevel,
+		MetricsAddr:                 ":9091",
+		HealthAddr:                  "127.0.0.1:8081",
+		LVMDataPercentThreshold:     defaultLVMDataPercentThreshold,
+		LVMMetadataPercentThreshold: defaultLVMMetadataPercentThreshold,
 	}
 
 	// Load from YAML file if specified
@@ -366,6 +371,9 @@ func applyEnvOverridesCore(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("POWERDNS_API_KEY"); v != "" {
 		cfg.PowerDNS.APIKey = v
+	}
+	if v := os.Getenv("REDIS_URL"); v != "" {
+		cfg.Redis.URL = v
 	}
 }
 

@@ -39,7 +39,6 @@ type NodeAgentGRPCClient struct {
 // GRPCConnectionPool defines the interface for managing gRPC connections to nodes.
 type GRPCConnectionPool interface {
 	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
-	ReleaseConnection(nodeID string, conn *grpc.ClientConn)
 }
 
 // metricsCache holds cached node metrics with expiration.
@@ -125,7 +124,6 @@ func (c *NodeAgentGRPCClient) GetNodeMetrics(ctx context.Context, nodeID string)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	// Fetch metrics from node agent
 	metrics, err := c.fetchMetricsFromNode(ctx, conn, nodeID)
@@ -160,7 +158,6 @@ func (c *NodeAgentGRPCClient) PingNode(ctx context.Context, nodeID string) error
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	_, err = client.Ping(ctx, &nodeagentpb.Empty{})
@@ -294,7 +291,6 @@ func (c *NodeAgentGRPCClient) GetNodeResources(ctx context.Context, nodeID strin
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetNodeResources(ctx, &nodeagentpb.Empty{})
@@ -425,7 +421,6 @@ func (c *NodeAgentGRPCClient) StartVM(ctx context.Context, nodeID, vmID string) 
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.StartVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -448,7 +443,6 @@ func (c *NodeAgentGRPCClient) StopVM(ctx context.Context, nodeID, vmID string, t
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.StopVM(ctx, &nodeagentpb.StopVMRequest{
@@ -474,7 +468,6 @@ func (c *NodeAgentGRPCClient) ForceStopVM(ctx context.Context, nodeID, vmID stri
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.ForceStopVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -497,7 +490,6 @@ func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string)
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{VmId: vmID})
@@ -520,7 +512,6 @@ func (c *NodeAgentGRPCClient) ResizeVM(ctx context.Context, nodeID, vmID string,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.ResizeVM(ctx, &nodeagentpb.ResizeVMRequest{
@@ -548,7 +539,6 @@ func (c *NodeAgentGRPCClient) GetVMMetrics(ctx context.Context, nodeID, vmID str
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetVMMetrics(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -569,7 +559,6 @@ func (c *NodeAgentGRPCClient) GetVMStatus(ctx context.Context, nodeID, vmID stri
 	if err != nil {
 		return "", fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetVMStatus(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -593,7 +582,6 @@ func (c *NodeAgentGRPCClient) MigrateVM(ctx context.Context, sourceNodeID, targe
 	if err != nil {
 		return fmt.Errorf("connecting to source node %s: %w", sourceNodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(sourceNodeID, conn)
 
 	// Get target node details for address
 	targetNode, err := c.nodeRepo.GetByID(ctx, targetNodeID)
@@ -627,7 +615,6 @@ func (c *NodeAgentGRPCClient) AbortMigration(ctx context.Context, nodeID, vmID s
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.AbortMigration(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -651,7 +638,6 @@ func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 
@@ -695,7 +681,6 @@ func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
@@ -740,7 +725,6 @@ func (c *NodeAgentGRPCClient) CreateSnapshot(ctx context.Context, nodeID, vmID, 
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{VmId: vmID, Name: snapshotName})
@@ -765,7 +749,6 @@ func (c *NodeAgentGRPCClient) DeleteSnapshot(ctx context.Context, nodeID, vmID, 
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
@@ -788,7 +771,6 @@ func (c *NodeAgentGRPCClient) RestoreSnapshot(ctx context.Context, nodeID, vmID,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.RevertSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{VmId: vmID, SnapshotId: snapshotName})
@@ -811,7 +793,6 @@ func (c *NodeAgentGRPCClient) CloneFromBackup(ctx context.Context, nodeID, vmID,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.RevertSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{
@@ -837,7 +818,6 @@ func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID strin
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	vm, err := c.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
@@ -873,7 +853,6 @@ func (c *NodeAgentGRPCClient) CloneFromTemplate(ctx context.Context, nodeID, vmI
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
@@ -909,7 +888,6 @@ func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GuestFreezeFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -932,7 +910,6 @@ func (c *NodeAgentGRPCClient) GuestThawFilesystems(ctx context.Context, nodeID, 
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GuestThawFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
@@ -955,7 +932,6 @@ func (c *NodeAgentGRPCClient) ProtectSnapshot(ctx context.Context, nodeID, vmID,
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	_, err = client.CreateSnapshot(ctx, &nodeagentpb.SnapshotRequest{
@@ -978,7 +954,6 @@ func (c *NodeAgentGRPCClient) UnprotectSnapshot(ctx context.Context, nodeID, vmI
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteSnapshot(ctx, &nodeagentpb.SnapshotIdentifier{
@@ -1002,7 +977,6 @@ func (c *NodeAgentGRPCClient) CloneSnapshot(ctx context.Context, nodeID, vmID, s
 	if err != nil {
 		return "", fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	cloneName := fmt.Sprintf("vs-%s-clone-%d", vmID, time.Now().Unix())
@@ -1037,7 +1011,6 @@ func (c *NodeAgentGRPCClient) CreateQCOWSnapshot(ctx context.Context, nodeID, vm
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
@@ -1065,7 +1038,6 @@ func (c *NodeAgentGRPCClient) DeleteQCOWSnapshot(ctx context.Context, nodeID, vm
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteDiskSnapshot(ctx, &nodeagentpb.DeleteDiskSnapshotRequest{
@@ -1099,7 +1071,6 @@ func (c *NodeAgentGRPCClient) CreateQCOWBackup(ctx context.Context, nodeID, vmID
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
@@ -1135,7 +1106,6 @@ func (c *NodeAgentGRPCClient) RestoreQCOWBackup(ctx context.Context, nodeID, vmI
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	vm, err := c.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
@@ -1178,7 +1148,6 @@ func (c *NodeAgentGRPCClient) RestoreLVMBackup(ctx context.Context, nodeID, vmID
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.RestoreLVMBackup(ctx, &nodeagentpb.RestoreLVMBackupRequest{
@@ -1206,7 +1175,6 @@ func (c *NodeAgentGRPCClient) CreateDiskSnapshot(ctx context.Context, nodeID, vm
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateDiskSnapshot(ctx, &nodeagentpb.CreateDiskSnapshotRequest{
@@ -1235,7 +1203,6 @@ func (c *NodeAgentGRPCClient) DeleteDiskSnapshot(ctx context.Context, nodeID, vm
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteDiskSnapshot(ctx, &nodeagentpb.DeleteDiskSnapshotRequest{
@@ -1266,7 +1233,6 @@ func (c *NodeAgentGRPCClient) CreateLVMBackup(ctx context.Context, nodeID, vmID,
 	if err != nil {
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.CreateLVMBackup(ctx, &nodeagentpb.CreateLVMBackupRequest{
@@ -1294,7 +1260,6 @@ func (c *NodeAgentGRPCClient) DeleteLVMBackupFile(ctx context.Context, nodeID, b
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
@@ -1320,7 +1285,6 @@ func (c *NodeAgentGRPCClient) DeleteQCOWBackupFile(ctx context.Context, nodeID, 
 	if err != nil {
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
@@ -1346,7 +1310,6 @@ func (c *NodeAgentGRPCClient) GetQCOWDiskInfo(ctx context.Context, nodeID, diskP
 	if err != nil {
 		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(nodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.GetNodeResources(ctx, &nodeagentpb.Empty{})
@@ -1376,7 +1339,6 @@ func (c *NodeAgentGRPCClient) TransferDisk(ctx context.Context, opts *tasks.Disk
 	if err != nil {
 		return fmt.Errorf("connecting to source node %s: %w", opts.SourceNodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(opts.SourceNodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	stream, err := client.TransferDisk(ctx, &nodeagentpb.TransferDiskRequest{
@@ -1414,7 +1376,6 @@ func (c *NodeAgentGRPCClient) PrepareMigratedVM(ctx context.Context, targetNodeI
 	if err != nil {
 		return fmt.Errorf("connecting to target node %s: %w", targetNodeID, err)
 	}
-	defer c.connPool.ReleaseConnection(targetNodeID, conn)
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.PrepareMigratedVM(ctx, &nodeagentpb.PrepareMigratedVMRequest{

@@ -69,9 +69,12 @@ func NewNodeClientWithCert(caCertPath, clientCertPath, clientKeyPath string, log
 	return nc, nil
 }
 
-// GetConnection returns or creates a gRPC connection to a node.
+// GetConnection returns or creates a pooled gRPC connection to a node.
 // If a connection already exists for the nodeID, it returns the existing connection.
 // Otherwise, it creates a new connection using mTLS.
+//
+// The returned connection remains owned by NodeClient; callers must not close it.
+// Pooled connections stay alive until RemoveConnection or Close is called.
 func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error) {
 	// Check for existing connection
 	nc.mu.RLock()
@@ -117,29 +120,6 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	nc.logger.Info("created gRPC connection to node", "node_id", nodeID, "address", address)
 
 	return conn, nil
-}
-
-// ReleaseConnection signals that the caller is done using a connection.
-// The current implementation validates that the released connection matches the
-// pooled connection and logs mismatches, but does not perform any teardown.
-//
-// TODO: If per-caller reference counting is required in the future, this method
-// should decrement a reference count and only remove the connection from the pool
-// when the count reaches zero. Until then, connections are kept alive until
-// RemoveConnection or Close is called explicitly.
-func (nc *NodeClient) ReleaseConnection(nodeID string, conn *grpc.ClientConn) {
-	nc.mu.RLock()
-	held, exists := nc.conns[nodeID]
-	nc.mu.RUnlock()
-
-	if !exists {
-		nc.logger.Warn("released connection not found in pool", "node_id", nodeID)
-		return
-	}
-	if held != conn {
-		nc.logger.Warn("released connection does not match pooled connection", "node_id", nodeID)
-		return
-	}
 }
 
 // createConnection creates a new gRPC connection with mTLS.

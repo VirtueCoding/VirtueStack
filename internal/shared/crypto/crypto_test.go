@@ -162,9 +162,10 @@ func TestGenerateRandomToken(t *testing.T) {
 	})
 }
 
-func TestGenerateRandomString(t *testing.T) {
+func TestGenerateRandomToken_LengthMatchesRequestedBytes(t *testing.T) {
 	t.Run("correct length", func(t *testing.T) {
-		s := GenerateRandomString(32)
+		s, err := GenerateRandomToken(32)
+		require.NoError(t, err)
 		assert.Len(t, s, 64)
 	})
 }

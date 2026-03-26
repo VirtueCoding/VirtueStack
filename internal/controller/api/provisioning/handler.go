@@ -21,6 +21,8 @@ type ProvisioningHandler struct {
 	taskRepo      *repository.TaskRepository
 	vmRepo        *repository.VMRepository
 	ipRepo        *repository.IPRepository
+	ssoTokenRepo  *repository.SSOTokenRepository
+	auditRepo     *repository.AuditRepository
 	planService   *services.PlanService
 	authConfig    middleware.AuthConfig
 	encryptionKey string
@@ -34,6 +36,8 @@ type ProvisioningHandlerConfig struct {
 	TaskRepo      *repository.TaskRepository
 	VMRepo        *repository.VMRepository
 	IPRepo        *repository.IPRepository
+	SSOTokenRepo  *repository.SSOTokenRepository
+	AuditRepo     *repository.AuditRepository
 	PlanService   *services.PlanService
 	JWTSecret     string
 	Issuer        string
@@ -49,6 +53,8 @@ func NewProvisioningHandler(cfg ProvisioningHandlerConfig) *ProvisioningHandler 
 		taskRepo:      cfg.TaskRepo,
 		vmRepo:        cfg.VMRepo,
 		ipRepo:        cfg.IPRepo,
+		ssoTokenRepo:  cfg.SSOTokenRepo,
+		auditRepo:     cfg.AuditRepo,
 		planService:   cfg.PlanService,
 		authConfig:    middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		encryptionKey: cfg.EncryptionKey,
@@ -71,16 +77,16 @@ type CreateVMResponse struct {
 
 // TaskStatusResponse represents the response for task status queries.
 type TaskStatusResponse struct {
-	ID        string            `json:"id"`
-	Type      string            `json:"type"`
-	Status    models.TaskStatus `json:"status"`
-	Progress  int               `json:"progress"`
-	Message   string            `json:"message,omitempty"`
+	ID       string            `json:"id"`
+	Type     string            `json:"type"`
+	Status   models.TaskStatus `json:"status"`
+	Progress int               `json:"progress"`
+	Message  string            `json:"message,omitempty"`
 	// Result holds task-type-specific output (e.g. CreateVMResponse for vm.create tasks).
 	// It is populated only when Status == TaskStatusCompleted and the task produced output.
 	// Callers should type-assert or unmarshal based on the Type field.
-	Result    any               `json:"result,omitempty"`
-	CreatedAt string            `json:"created_at"`
+	Result    any    `json:"result,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 // VMStatusResponse represents the response for VM status queries.

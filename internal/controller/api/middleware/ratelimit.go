@@ -41,6 +41,11 @@ type rateLimiter struct {
 	cancel  context.CancelFunc
 }
 
+var configuredRateLimitBackend struct {
+	sync.RWMutex
+	redisClient RedisClient
+}
+
 // newRateLimiter constructs a rateLimiter and starts a background cleanup goroutine.
 // The goroutine is stopped by calling Stop() on the returned limiter.
 //
@@ -208,56 +213,70 @@ func setRateLimitHeaders(c *gin.Context, limit, remaining int, resetAt time.Time
 
 // ─── pre-built rate limit configurations ─────────────────────────────────────
 
+// ValidateDistributedRateLimitConfiguration rejects production startup when the
+// server would otherwise fall back to process-local in-memory rate limiting.
+func ValidateDistributedRateLimitConfiguration(isProduction bool, redisConfigured bool) error {
+	if isProduction && !redisConfigured {
+		return fmt.Errorf("distributed rate limiting requires REDIS_URL in production; refusing to start with in-memory-only rate limiting")
+	}
+	return nil
+}
+
+// ConfigureDistributedRateLimitBackend selects the shared Redis backend used by the
+// pre-built middleware helpers. Passing nil resets the middleware to in-memory mode.
+func ConfigureDistributedRateLimitBackend(client RedisClient) {
+	configuredRateLimitBackend.Lock()
+	defer configuredRateLimitBackend.Unlock()
+	configuredRateLimitBackend.redisClient = client
+}
+
+func selectedRateLimit(config RateLimitConfig, prefix string) gin.HandlerFunc {
+	configuredRateLimitBackend.RLock()
+	client := configuredRateLimitBackend.redisClient
+	configuredRateLimitBackend.RUnlock()
+	if client != nil {
+		return RedisRateLimit(client, prefix, config)
+	}
+	return RateLimit(config)
+}
+
 // WarnIfInMemoryRateLimitInProduction logs a startup warning when in-memory rate
 // limiting is used while the application is running in production mode.
-//
-// Each controller process maintains its own in-memory rate limit counters via
-// sync.Map. In a horizontally-scaled deployment (multiple controller instances
-// behind a load balancer), an attacker can bypass per-key limits by distributing
-// requests across instances. Call this function during server startup and supply
-// the Redis client when one is available to switch to RedisRateLimit instead.
-//
-// Usage:
-//
-//	middleware.WarnIfInMemoryRateLimitInProduction(isProduction, redisClient != nil)
 func WarnIfInMemoryRateLimitInProduction(isProduction bool, redisConfigured bool) {
-	if isProduction && !redisConfigured {
-		slog.Warn("SECURITY: in-memory rate limiting is active in production mode. " +
-			"Each controller process maintains independent counters, allowing distributed " +
-			"bypass across multiple instances. Configure a Redis backend and use " +
-			"RedisRateLimit() to enforce shared rate limits across all instances.")
+	if err := ValidateDistributedRateLimitConfiguration(isProduction, redisConfigured); err != nil {
+		slog.Warn(err.Error())
 	}
 }
 
 // LoginRateLimit limits login attempts to 5 per 15 minutes per source IP.
 // Intended to protect authentication endpoints against brute-force attacks.
 func LoginRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 5,
 		Window:   15 * time.Minute,
 		KeyFunc:  keyByIP,
-	})
+	}, "ratelimit:login:")
 }
 
 // RefreshRateLimit limits token refresh attempts to 20 per minute per source IP.
 // Provides a separate, more permissive limit than LoginRateLimit because browsers
 // silently refresh tokens in the background.
 func RefreshRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 20,
 		Window:   time.Minute,
 		KeyFunc:  keyByIP,
-	})
+	}, "ratelimit:refresh:")
 }
 
 // PasswordChangeRateLimit limits password change attempts to 5 per 15 minutes per source IP.
 // Intended to protect the password change endpoint against brute-force attacks.
 func PasswordChangeRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 5,
 		Window:   15 * time.Minute,
 		KeyFunc:  keyByIP,
-	})
+	}, "ratelimit:password-change:")
 }
 
 // ProvisioningRateLimit allows up to 100 requests per minute per API key.
@@ -268,31 +287,31 @@ func PasswordChangeRateLimit() gin.HandlerFunc {
 // provisioning keys. Batch jobs that legitimately exceed this threshold should be
 // redesigned to use queued/async operations rather than hammering the API.
 func ProvisioningRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 100,
 		Window:   time.Minute,
 		KeyFunc:  keyByAPIKeyID,
-	})
+	}, "ratelimit:provisioning:")
 }
 
 // CustomerReadRateLimit limits read operations to 100 per minute per customer.
 // Applies to GET endpoints consumed by end customers.
 func CustomerReadRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 100,
 		Window:   time.Minute,
 		KeyFunc:  keyByUserID,
-	})
+	}, "ratelimit:customer-read:")
 }
 
 // CustomerWriteRateLimit limits write operations to 30 per minute per customer.
 // Applies to mutation endpoints consumed by end customers.
 func CustomerWriteRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 30,
 		Window:   time.Minute,
 		KeyFunc:  keyByUserID,
-	})
+	}, "ratelimit:customer-write:")
 }
 
 // CustomerRateLimits returns a middleware that applies both read and write rate limits
@@ -317,11 +336,11 @@ func CustomerRateLimits() gin.HandlerFunc {
 // AdminRateLimit allows up to 500 requests per minute per admin user.
 // Relaxed limit befitting internal tooling and administrative operations.
 func AdminRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 500,
 		Window:   time.Minute,
 		KeyFunc:  keyByUserID,
-	})
+	}, "ratelimit:admin:")
 }
 
 // ─── KeyFunc implementations ─────────────────────────────────────────────────
@@ -372,32 +391,19 @@ func GetRateLimitForUser(c *gin.Context, customerConfig, adminConfig RateLimitCo
 // RDNSUpdateRateLimit limits rDNS update operations to 10 per hour per customer.
 // Endpoint: PUT /vms/:id/ips/:ipId/rdns
 func RDNSUpdateRateLimit() gin.HandlerFunc {
-	return RateLimit(RateLimitConfig{
+	return selectedRateLimit(RateLimitConfig{
 		Requests: 10,
 		Window:   time.Hour,
 		KeyFunc:  keyByUserID,
-	})
+	}, "ratelimit:rdns:")
 }
 
 // ─── Redis-backed distributed rate limiter ───────────────────────────────────
 
-// RedisClient is a minimal interface for Redis operations needed by rate limiting.
-// This allows the rate limiter to work with any Redis client implementation.
+// RedisClient is the minimal interface needed by the Redis-backed rate limiter.
 type RedisClient interface {
-	// ZAdd adds a member with score to a sorted set.
-	ZAdd(ctx context.Context, key string, members ...RedisZMember) (int64, error)
-	// ZRemRangeByScore removes members with scores between min and max.
-	ZRemRangeByScore(ctx context.Context, key string, min, max string) (int64, error)
-	// ZCard returns the cardinality (number of elements) of a sorted set.
-	ZCard(ctx context.Context, key string) (int64, error)
 	// Eval executes a Lua script.
 	Eval(ctx context.Context, script string, keys []string, args ...any) (any, error)
-}
-
-// RedisZMember represents a member in a Redis sorted set.
-type RedisZMember struct {
-	Score  float64
-	Member string
 }
 
 // slidingWindowScript is a Lua script that implements atomic sliding window rate limiting.
