@@ -179,6 +179,11 @@ func TestMain(m *testing.M) {
 
 	// Create connection pool
 	dbPool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		logger.Error("failed to create database pool", "error", err)
+		_ = pgContainer.Terminate(ctx)
+		os.Exit(1)
+	}
 
 	// Start NATS container
 	natsContainer, err := natsmodule.Run(ctx, "nats:2.10-alpine")
