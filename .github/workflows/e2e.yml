@@ -86,18 +86,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: tests/e2e/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: tests/e2e/pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
 
       - name: Install dependencies
         run: |
           cd tests/e2e
-          npm ci
+          pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: |
           cd tests/e2e
-          npx playwright install --with-deps ${{ inputs.browsers || 'chromium' }}
+          pnpm exec playwright install --with-deps ${{ inputs.browsers || 'chromium' }}
 
       - name: Generate test secrets
         run: |
@@ -197,7 +200,7 @@ jobs:
       - name: Run E2E tests
         run: |
           cd tests/e2e
-          npx playwright test --project=${{ inputs.browsers || 'chromium' }}
+          pnpm exec playwright test --project=${{ inputs.browsers || 'chromium' }}
         env:
           ADMIN_URL: http://localhost:3000
           CUSTOMER_URL: http://localhost:3001
