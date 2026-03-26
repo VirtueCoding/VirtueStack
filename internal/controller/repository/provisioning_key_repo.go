@@ -30,6 +30,7 @@ func scanProvisioningKey(row pgx.Row) (models.ProvisioningKey, error) {
 		&key.ID, &key.Name, &key.KeyHash,
 		&allowedIPs, &key.LastUsedAt, &key.RevokedAt,
 		&key.CreatedAt, &key.CreatedBy, &key.Description,
+		&key.ExpiresAt,
 	)
 
 	// Convert []string to proper type
@@ -41,18 +42,19 @@ func scanProvisioningKey(row pgx.Row) (models.ProvisioningKey, error) {
 const provisioningKeySelectCols = `
 	id, name, key_hash,
 	allowed_ips, last_used_at, revoked_at,
-	created_at, created_by, description`
+	created_at, created_by, description,
+	expires_at`
 
 // Create inserts a new provisioning key into the database.
 func (r *ProvisioningKeyRepository) Create(ctx context.Context, key *models.ProvisioningKey) error {
 	const q = `
 		INSERT INTO provisioning_keys (
-			id, name, key_hash, allowed_ips, created_by, description
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			id, name, key_hash, allowed_ips, created_by, description, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + provisioningKeySelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		key.ID, key.Name, key.KeyHash, key.AllowedIPs, key.CreatedBy, key.Description,
+		key.ID, key.Name, key.KeyHash, key.AllowedIPs, key.CreatedBy, key.Description, key.ExpiresAt,
 	)
 
 	created, err := scanProvisioningKey(row)
@@ -73,11 +75,11 @@ func (r *ProvisioningKeyRepository) GetByID(ctx context.Context, id string) (*mo
 	return &key, nil
 }
 
-// GetByHash returns an active provisioning key by its SHA-256 hash.
+// GetByHash returns an active, non-expired provisioning key by its SHA-256 hash.
 // This is used by the APIKeyAuth middleware for key validation.
-// Returns ErrNotFound if the key doesn't exist or is revoked.
+// Returns ErrNotFound if the key doesn't exist, is revoked, or has expired.
 func (r *ProvisioningKeyRepository) GetByHash(ctx context.Context, keyHash string) (*models.ProvisioningKey, error) {
-	const q = `SELECT ` + provisioningKeySelectCols + ` FROM provisioning_keys WHERE key_hash = $1 AND revoked_at IS NULL`
+	const q = `SELECT ` + provisioningKeySelectCols + ` FROM provisioning_keys WHERE key_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`
 	key, err := ScanRow(ctx, r.db, q, []any{keyHash}, scanProvisioningKey)
 	if err != nil {
 		return nil, fmt.Errorf("getting provisioning key by hash: %w", err)
@@ -156,4 +158,36 @@ func (r *ProvisioningKeyRepository) UpdateAllowedIPs(ctx context.Context, id str
 		return fmt.Errorf("updating allowed IPs for key %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
+}
+
+// Update updates the mutable fields of a provisioning key (name, description,
+// allowed_ips, expires_at). Only non-nil fields in the request are applied.
+func (r *ProvisioningKeyRepository) Update(ctx context.Context, id string, req *models.ProvisioningKeyUpdateRequest) (*models.ProvisioningKey, error) {
+	const q = `
+		UPDATE provisioning_keys
+		SET name        = COALESCE($1, name),
+		    description = COALESCE($2, description),
+		    allowed_ips = COALESCE($3, allowed_ips),
+		    expires_at  = $4
+		WHERE id = $5 AND revoked_at IS NULL
+		RETURNING ` + provisioningKeySelectCols
+
+	var nameArg, descArg *string
+	var ipsArg *[]string
+	if req.Name != nil {
+		nameArg = req.Name
+	}
+	if req.Description != nil {
+		descArg = req.Description
+	}
+	if req.AllowedIPs != nil {
+		ipsArg = req.AllowedIPs
+	}
+
+	row := r.db.QueryRow(ctx, q, nameArg, descArg, ipsArg, req.ExpiresAt, id)
+	key, err := scanProvisioningKey(row)
+	if err != nil {
+		return nil, fmt.Errorf("updating provisioning key %s: %w", id, err)
+	}
+	return &key, nil
 }
