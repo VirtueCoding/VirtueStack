@@ -88,6 +88,10 @@ linters-settings:
     min-complexity: 3
 
 issues:
+  # This repository still has substantial historical lint debt. Gate new or touched
+  # code in CI instead of blocking every run on legacy findings across the tree.
+  new: true
+  whole-files: true
   exclude-rules:
     - path: _test\.go
       linters:

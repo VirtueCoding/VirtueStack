@@ -31,8 +31,6 @@ func TestValidateDistributedRateLimitConfiguration(t *testing.T) {
 }
 
 func TestSelectedRateLimitUsesRedisBackendWhenConfigured(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 
 	client := &mockRedisRateLimitClient{result: int64(4)}
@@ -56,8 +54,6 @@ func TestSelectedRateLimitUsesRedisBackendWhenConfigured(t *testing.T) {
 }
 
 func TestSelectedRateLimitFallsBackToInMemoryLimiter(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	ConfigureDistributedRateLimitBackend(nil)
 

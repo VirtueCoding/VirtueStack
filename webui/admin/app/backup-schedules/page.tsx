@@ -9,6 +9,7 @@ import { AdminBackupSchedule } from "@/lib/api-client";
 export default function BackupSchedulesPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editSchedule, setEditSchedule] = useState<AdminBackupSchedule | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const handleEditSchedule = (schedule: AdminBackupSchedule) => {
     setEditSchedule(schedule);
@@ -75,12 +76,14 @@ export default function BackupSchedulesPage() {
         <AdminScheduleList
           onEditSchedule={handleEditSchedule}
           onCreateSchedule={handleCreateSchedule}
+          refreshKey={refreshKey}
         />
 
         <CreateScheduleModal
           open={createModalOpen}
           onOpenChange={handleModalClose}
           editSchedule={editSchedule}
+          onSaved={() => setRefreshKey((current) => current + 1)}
         />
       </div>
     </div>
