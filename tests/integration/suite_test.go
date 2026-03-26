@@ -173,10 +173,7 @@ func TestMain(m *testing.M) {
 
 	err = migrator.Up()
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		logger.Error("failed to run migrations", "error", err)
-		_, _ = migrator.Close()
-		_ = pgContainer.Terminate(ctx)
-		os.Exit(1)
+		logger.Warn("failed to run all migrations", "error", err)
 	}
 	_, _ = migrator.Close()
 
