@@ -341,12 +341,14 @@ func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID st
 	}
 
 	// Validate all scoped VM IDs in a single repository call to avoid N+1 queries.
-	opts := repository.VMListOptions{
+	filter := models.VMListFilter{
 		CustomerID: &customerID,
-		IDs:        normalized,
+		VMIDs:      normalized,
 	}
+	filter.Page = 1
+	filter.PerPage = len(normalized)
 
-	vms, err := h.vmRepo.List(ctx, opts)
+	vms, _, err := h.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs for api key scope: %w", err)
 	}
