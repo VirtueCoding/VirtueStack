@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -60,7 +60,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
   const [rotatedKeyDialogOpen, setRotatedKeyDialogOpen] = useState(false);
   const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null);
   const [createdKeyDialogOpen, setCreatedKeyDialogOpen] = useState(false);
-  const [renderedAt] = useState(() => Date.now());
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   const apiKeyForm = useForm<ApiKeyFormData>({
     resolver: zodResolver(apiKeySchema),
@@ -71,6 +71,14 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       expires_at: "",
     },
   });
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const createApiKeyMutation = useMutation({
     mutationFn: settingsApi.createApiKey,
@@ -226,7 +234,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                       ) : (
                         <Badge variant="secondary">Inactive</Badge>
                       )}
-                      {apiKey.expires_at && new Date(apiKey.expires_at).getTime() <= renderedAt && (
+                      {apiKey.expires_at && new Date(apiKey.expires_at).getTime() <= currentTime && (
                         <Badge variant="secondary">Expired</Badge>
                       )}
                     </div>
