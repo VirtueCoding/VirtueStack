@@ -26,8 +26,11 @@ type TaskStatusResponse struct {
 }
 
 // GetTaskStatus handles GET /tasks/:id - retrieves the status of an async task.
+// Enforces customer isolation by verifying the task's vm_id belongs to the
+// requesting customer. Tasks without a vm_id in the payload are not accessible.
 func (h *CustomerHandler) GetTaskStatus(c *gin.Context) {
 	taskID := c.Param("id")
+	customerID := middleware.GetUserID(c)
 
 	if _, err := uuid.Parse(taskID); err != nil {
 		middleware.RespondWithError(c, http.StatusBadRequest,
@@ -50,17 +53,57 @@ func (h *CustomerHandler) GetTaskStatus(c *gin.Context) {
 		return
 	}
 
+	// Verify the task belongs to the requesting customer by checking
+	// whether the vm_id in the payload is owned by this customer.
+	if !h.verifyTaskOwnership(c, task, customerID) {
+		return
+	}
+
 	resp := buildCustomerTaskResponse(task)
 	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+// verifyTaskOwnership checks that a task's associated VM belongs to the
+// requesting customer. Returns false (and writes the error response) if
+// ownership cannot be confirmed.
+func (h *CustomerHandler) verifyTaskOwnership(c *gin.Context, task *models.Task, customerID string) bool {
+	vmID := extractVMIDFromPayload(task.Payload)
+	if vmID == "" {
+		middleware.RespondWithError(c, http.StatusNotFound,
+			"TASK_NOT_FOUND", "Task not found")
+		return false
+	}
+
+	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
+	if err != nil || vm == nil || vm.CustomerID != customerID {
+		middleware.RespondWithError(c, http.StatusNotFound,
+			"TASK_NOT_FOUND", "Task not found")
+		return false
+	}
+	return true
+}
+
+// extractVMIDFromPayload attempts to extract the vm_id field from a task payload.
+func extractVMIDFromPayload(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var p struct {
+		VMID string `json:"vm_id"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return ""
+	}
+	return p.VMID
 }
 
 // buildCustomerTaskResponse builds a TaskStatusResponse from a Task model.
 func buildCustomerTaskResponse(task *models.Task) TaskStatusResponse {
 	resp := TaskStatusResponse{
-		ID:       task.ID,
-		Type:     task.Type,
-		Status:   task.Status,
-		Progress: task.Progress,
+		ID:        task.ID,
+		Type:      task.Type,
+		Status:    task.Status,
+		Progress:  task.Progress,
 		CreatedAt: task.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 

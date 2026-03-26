@@ -1099,10 +1099,12 @@ export const adminVMBackupSchedulesApi = {
     return apiClient.post<VMBackupSchedule>(`/admin/backup-schedules`, { ...data, vm_id: vmId });
   },
 
+  /** vmId is retained for call-site compatibility; the backend identifies the schedule by scheduleId. */
   async updateVMBackupSchedule(_vmId: string, scheduleId: string, data: UpdateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
     return apiClient.put<VMBackupSchedule>(`/admin/backup-schedules/${scheduleId}`, data);
   },
 
+  /** vmId is retained for call-site compatibility; the backend identifies the schedule by scheduleId. */
   async deleteVMBackupSchedule(_vmId: string, scheduleId: string): Promise<void> {
     return apiClient.deleteVoid(`/admin/backup-schedules/${scheduleId}`);
   },
