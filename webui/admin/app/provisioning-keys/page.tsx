@@ -586,7 +586,10 @@ export default function ProvisioningKeysPage() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={secretOpen} onOpenChange={setSecretOpen}>
+        <Dialog open={secretOpen} onOpenChange={(open) => {
+          setSecretOpen(open);
+          if (!open) setCreatedSecret(null);
+        }}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Copy the Provisioning Key Now</DialogTitle>
