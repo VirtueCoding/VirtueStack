@@ -33,12 +33,13 @@ const apiKeySchema = z.object({
 type ApiKeyFormData = z.infer<typeof apiKeySchema>;
 
 const AVAILABLE_PERMISSIONS = [
-  "vms:read",
-  "vms:write",
-  "backups:read",
-  "backups:write",
-  "snapshots:read",
-  "snapshots:write",
+  { value: "vm:read", label: "vm:read — view VM details, metrics, bandwidth, and IPs" },
+  { value: "vm:write", label: "vm:write — manage rDNS and ISO operations" },
+  { value: "vm:power", label: "vm:power — start, stop, restart, and request console access" },
+  { value: "backup:read", label: "backup:read — view backup inventory" },
+  { value: "backup:write", label: "backup:write — create, restore, and remove backups" },
+  { value: "snapshot:read", label: "snapshot:read — view snapshot inventory" },
+  { value: "snapshot:write", label: "snapshot:write — create, restore, and remove snapshots" },
 ];
 
 interface ApiKeysTabProps {
@@ -57,6 +58,9 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
   const [rotatedKeyValue, setRotatedKeyValue] = useState<string | null>(null);
   const [rotatedKeyDialogOpen, setRotatedKeyDialogOpen] = useState(false);
+  const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null);
+  const [createdKeyDialogOpen, setCreatedKeyDialogOpen] = useState(false);
+  const [renderedAt] = useState(() => Date.now());
 
   const apiKeyForm = useForm<ApiKeyFormData>({
     resolver: zodResolver(apiKeySchema),
@@ -70,14 +74,19 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
   const createApiKeyMutation = useMutation({
     mutationFn: settingsApi.createApiKey,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       setApiKeyDialogOpen(false);
       apiKeyForm.reset();
-      toast({
-        title: "Success",
-        description: "API key created successfully",
-      });
+      if (data.key) {
+        setCreatedKeyValue(data.key);
+        setCreatedKeyDialogOpen(true);
+      } else {
+        toast({
+          title: "Success",
+          description: "API key created successfully",
+        });
+      }
     },
     onError: createMutationOnError("Failed to create API key"),
   });
@@ -101,16 +110,16 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
   const deleteApiKeyMutation = useMutation({
     mutationFn: settingsApi.deleteApiKey,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      setDeleteKeyDialogOpen(false);
-      setSelectedKeyId(null);
-      toast({
-        title: "Success",
-        description: "API key deleted successfully",
-      });
-    },
-    onError: createMutationOnError("Failed to delete API key"),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+        setDeleteKeyDialogOpen(false);
+        setSelectedKeyId(null);
+        toast({
+          title: "Success",
+          description: "API key revoked successfully",
+        });
+      },
+      onError: createMutationOnError("Failed to delete API key"),
   });
 
   const handleCopy = async (text: string, id: string) => {
@@ -141,7 +150,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       name: data.name,
       permissions: data.permissions,
       allowed_ips: allowedIps,
-      expires_at: data.expires_at || undefined,
+      expires_at: data.expires_at ? new Date(data.expires_at).toISOString() : undefined,
     });
   };
 
@@ -154,6 +163,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
     if (selectedKeyId) {
       rotateApiKeyMutation.mutate(selectedKeyId);
       setRotateKeyDialogOpen(false);
+      setSelectedKeyId(null);
     }
   };
 
@@ -216,6 +226,9 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                       ) : (
                         <Badge variant="secondary">Inactive</Badge>
                       )}
+                      {apiKey.expires_at && new Date(apiKey.expires_at).getTime() <= renderedAt && (
+                        <Badge variant="secondary">Expired</Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
@@ -276,7 +289,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                       onClick={() => handleDeleteKey(apiKey.id)}
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
+                      Revoke
                     </Button>
                   </div>
                 </div>
@@ -311,16 +324,16 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               <Label>Permissions</Label>
               <div className="space-y-2 border rounded-md p-3">
                 {AVAILABLE_PERMISSIONS.map((permission) => (
-                  <div key={permission} className="flex items-center space-x-2">
+                  <div key={permission.value} className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      id={permission}
-                      value={permission}
+                      id={permission.value}
+                      value={permission.value}
                       {...apiKeyForm.register("permissions")}
                       className="rounded border-gray-300"
                     />
-                    <Label htmlFor={permission} className="text-sm font-normal cursor-pointer">
-                      {permission}
+                    <Label htmlFor={permission.value} className="text-sm font-normal cursor-pointer">
+                      {permission.label}
                     </Label>
                   </div>
                 ))}
@@ -342,6 +355,17 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                 One IP address or CIDR range per line. Leave empty to allow all IPs.
               </p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="expires-at">Expiration (Optional)</Label>
+              <Input
+                id="expires-at"
+                type="datetime-local"
+                {...apiKeyForm.register("expires_at")}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave empty to keep the key valid until it is manually revoked.
+              </p>
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setApiKeyDialogOpen(false)}>
                 Cancel
@@ -359,9 +383,9 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       <Dialog open={deleteKeyDialogOpen} onOpenChange={setDeleteKeyDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete API Key</DialogTitle>
+            <DialogTitle>Revoke API Key</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this API key? This action cannot be undone.
+              Are you sure you want to revoke this API key? It will stop working immediately and cannot be used again.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -375,7 +399,48 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               disabled={deleteApiKeyMutation.isPending}
             >
               {deleteApiKeyMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Delete
+              Revoke
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createdKeyDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setCreatedKeyDialogOpen(false);
+          setCreatedKeyValue(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>API Key Created</DialogTitle>
+            <DialogDescription>
+              Your new API key is shown below. Copy it now — it will not be displayed again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
+            <code className="flex-1 break-all text-sm font-mono">
+              {createdKeyValue}
+            </code>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => createdKeyValue && handleCopy(createdKeyValue, "created")}
+            >
+              {copiedId === "created" ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => {
+              setCreatedKeyDialogOpen(false);
+              setCreatedKeyValue(null);
+            }}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>
