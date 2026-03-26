@@ -29,7 +29,12 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	}
 
 	idempotencyKey := c.GetHeader("Idempotency-Key")
-	password := generateRandomPassword()
+	password, err := generateRandomPassword()
+	if err != nil {
+		h.logger.Error("failed to generate random password for provisioning request", "customer_id", req.CustomerID, "hostname", req.Hostname, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_GENERATION_FAILED", "Internal server error")
+		return
+	}
 	vmReq := buildVMCreateRequest(&req, password, idempotencyKey)
 
 	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, req.CustomerID)
@@ -50,7 +55,7 @@ func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
 
 	vm, err := getValidVMWithChecks(c.Request.Context(), h.vmRepo, vmID, h.logger, checkVMOpts{
 		AlreadyDeleted: true,
-		DeletedErrMsg:   "VM has already been terminated",
+		DeletedErrMsg:  "VM has already been terminated",
 	})
 	if err != nil {
 		respondWithValidationError(c, err)
@@ -89,7 +94,7 @@ func buildVMCreateRequest(req *ProvisioningCreateVMRequest, password, idempotenc
 // generateRandomPassword creates a cryptographically secure random password
 // that always satisfies strength requirements: at least 1 uppercase letter,
 // 1 lowercase letter, 1 digit, 1 special character, and 12+ characters total.
-func generateRandomPassword() string {
+func generateRandomPassword() (string, error) {
 	const (
 		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
@@ -99,29 +104,32 @@ func generateRandomPassword() string {
 		totalLen     = 16
 	)
 
-	randChar := func(charset string) byte {
+	randChar := func(charset string) (byte, error) {
 		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
-			// SECURITY: crypto/rand failure indicates system entropy exhaustion or
-			// serious system issue. Fail immediately rather than generating predictable
-			// passwords with math/rand (CWE-1241).
-			panic(fmt.Sprintf("crypto/rand failure during password generation: %v", err))
+			return 0, fmt.Errorf("generate random password character: %w", err)
 		}
-		return charset[n.Int64()]
+		return charset[n.Int64()], nil
 	}
 
-	// Guarantee at least one character from each required class
-	required := []byte{
-		randChar(upperChars),
-		randChar(lowerChars),
-		randChar(digitChars),
-		randChar(specialChars),
+	requiredCharsets := []string{upperChars, lowerChars, digitChars, specialChars}
+	required := make([]byte, 0, len(requiredCharsets))
+	for _, charset := range requiredCharsets {
+		char, err := randChar(charset)
+		if err != nil {
+			return "", err
+		}
+		required = append(required, char)
 	}
 
 	// Fill remaining characters from the full set
 	rest := make([]byte, totalLen-len(required))
 	for i := range rest {
-		rest[i] = randChar(allChars)
+		char, err := randChar(allChars)
+		if err != nil {
+			return "", err
+		}
+		rest[i] = char
 	}
 
 	combined := slices.Concat(required, rest)
@@ -130,12 +138,11 @@ func generateRandomPassword() string {
 	for i := len(combined) - 1; i > 0; i-- {
 		jBig, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(i+1)))
 		if err != nil {
-			// SECURITY: Consistent with randChar - panic on crypto/rand failure.
-			panic(fmt.Sprintf("crypto/rand failure during password shuffle: %v", err))
+			return "", fmt.Errorf("shuffle random password: %w", err)
 		}
 		j := int(jBig.Int64())
 		combined[i], combined[j] = combined[j], combined[i]
 	}
 
-	return string(combined)
+	return string(combined), nil
 }

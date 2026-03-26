@@ -67,7 +67,12 @@ func (h *ProvisioningHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	newPassword := generateRandomPassword()
+	newPassword, err := generateRandomPassword()
+	if err != nil {
+		h.logger.Error("failed to generate random password during reset", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_GENERATION_FAILED", "Internal server error")
+		return
+	}
 
 	hashedPassword, err := hashPassword(newPassword)
 	if err != nil {

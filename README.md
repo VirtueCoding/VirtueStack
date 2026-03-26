@@ -205,11 +205,17 @@ make deps
 # Run database migrations
 make migrate-up
 
-# Run tests (unit tests)
+# Run controller/shared unit tests that do not require native libvirt/Ceph headers
 make test
+
+# Run Docker/Testcontainers-backed integration tests
+make test-integration
 
 # Build Node Agent (runs directly on host, not in Docker)
 make build-node-agent
+
+# Run native node-agent tests on a hypervisor/build host with libvirt/Ceph headers installed
+make test-native
 ```
 
 ### Docker Stack

@@ -6,7 +6,7 @@ This file captures codebase findings from a repository-wide review. Each item is
 
 ## Security / threat-model findings
 
-- [ ] Replace panic-based password generation in the provisioning API request path.
+- [x] Replace panic-based password generation in the provisioning API request path.
   - Evidence: `/home/runner/work/VirtueStack/VirtueStack/internal/controller/api/provisioning/vms.go:92-140`
   - Risk: `generateRandomPassword()` calls `panic(...)` on `crypto/rand` failure, which can crash the controller during an HTTP request instead of returning a controlled `5xx`.
   - Solution steps:
@@ -43,7 +43,7 @@ This file captures codebase findings from a repository-wide review. Each item is
 
 ## Bugs / correctness gaps
 
-- [ ] Repair the broken backup integration tests so they match the current backup model/service contract.
+- [x] Repair the broken backup integration tests so they match the current backup model/service contract.
   - Evidence: `/home/runner/work/VirtueStack/VirtueStack/tests/integration/backup_test.go:30-56`, `/home/runner/work/VirtueStack/VirtueStack/internal/controller/models/backup.go:22-43`, `/home/runner/work/VirtueStack/VirtueStack/internal/controller/services/backup_service.go:194-238`
   - Risk: `make test` currently fails because the tests still expect removed fields such as `Backup.Type` and `Backup.DiffFromSnapshot`.
   - Solution steps:
@@ -51,7 +51,7 @@ This file captures codebase findings from a repository-wide review. Each item is
     - Update the tests to assert the current `Backup` shape (`Source`, `StorageBackend`, `Status`, etc.), or restore the removed contract if it was unintentionally broken.
     - Re-run the integration suite after aligning the API contract.
 
-- [ ] Fix the ergonomics gap where `make test` hard-fails without native libvirt/Ceph development headers.
+- [x] Fix the ergonomics gap where `make test` hard-fails without native libvirt/Ceph development headers.
   - Evidence: baseline `make test` failure in this environment building node-agent packages that require `libvirt.pc` and `rados/librados.h`
   - Risk: contributors and generic CI runners cannot run the default test target unless native hypervisor/storage SDKs are preinstalled.
   - Solution steps:
@@ -87,7 +87,7 @@ This file captures codebase findings from a repository-wide review. Each item is
     - Delete the deprecated wrappers once all call sites are updated.
     - Keep only error-returning crypto helpers in the production surface area.
 
-- [ ] Remove or consolidate the duplicate generated protobuf tree if it is truly unused.
+- [x] Remove or consolidate the duplicate generated protobuf tree if it is truly unused.
   - Evidence: unused duplicate directory `/home/runner/work/VirtueStack/VirtueStack/internal/shared/proto/proto/virtuestack` while imports target `/home/runner/work/VirtueStack/VirtueStack/internal/shared/proto/virtuestack`
   - Risk: duplicate generated artifacts increase maintenance cost and create ambiguity about the canonical import path.
   - Solution steps:

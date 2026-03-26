@@ -32,11 +32,11 @@ func TestBackupCreation(t *testing.T) {
 		require.NoError(t, err, "Backup creation should succeed")
 		assert.NotEmpty(t, backup.ID, "Backup ID should be generated")
 		assert.Equal(t, vmID, backup.VMID, "Backup VM ID should match")
-		assert.Equal(t, "full", backup.Type, "Backup type should be full")
+		assert.Equal(t, models.BackupSourceManual, backup.Source, "Backup source should be manual")
 		assert.Equal(t, models.BackupStatusCreating, backup.Status, "Backup status should be creating")
 	})
 
-	t.Run("CreateIncrementalBackup", func(t *testing.T) {
+	t.Run("CreateSecondManualBackup", func(t *testing.T) {
 		// Create a VM
 		vmID, err := CreateTestVM(ctx, TestCustomerID, TestPlanID, TestNodeID)
 		require.NoError(t, err)
@@ -48,12 +48,13 @@ func TestBackupCreation(t *testing.T) {
 		// Update full backup to completed
 		_, _ = suite.DBPool.Exec(ctx, "UPDATE backups SET status = $1 WHERE id = $2", models.BackupStatusCompleted, fullBackup.ID)
 
-		// Create an incremental backup
+		// Create another backup for the same VM
 		incBackup, err := suite.BackupService.CreateBackup(ctx, vmID, "incremental")
 
-		require.NoError(t, err, "Incremental backup creation should succeed")
-		assert.Equal(t, "incremental", incBackup.Type, "Backup type should be incremental")
-		assert.Equal(t, fullBackup.ID, *incBackup.DiffFromSnapshot, "Should reference full backup")
+		require.NoError(t, err, "Second backup creation should succeed")
+		assert.NotEqual(t, fullBackup.ID, incBackup.ID, "Each backup should have a unique ID")
+		assert.Equal(t, vmID, incBackup.VMID, "Second backup should belong to the same VM")
+		assert.Equal(t, models.BackupSourceManual, incBackup.Source, "Second backup should be recorded as a manual backup")
 	})
 
 	t.Run("ListBackupsForVM", func(t *testing.T) {

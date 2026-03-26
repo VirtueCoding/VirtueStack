@@ -1303,7 +1303,7 @@ VirtueStack uses a hybrid testing approach:
 - **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent connects to the host's libvirt daemon and is not containerized during testing. It requires KVM/libvirt, mTLS certificates, and direct hardware access.
 - **E2E Testing** — Playwright tests run against the Docker stack with optional Wiremock for mocking Node Agent responses. See `tests/e2e/README.md` for setup instructions and `scripts/setup-e2e.sh` for automated environment setup.
 
-For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. Unit tests (`make test`) may run outside Docker since they test logic in isolation.
+For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. `make test` and `make test-race` cover the non-native unit-test package set, `make test-integration` runs the Docker/Testcontainers-backed integration suite, and `make test-native` is reserved for hosts that have libvirt/Ceph development headers installed.
 
 ### Build Commands
 
@@ -1317,6 +1317,8 @@ make build-node-agent
 
 # Run tests
 make test
+make test-integration
+make test-native
 make test-race
 
 # Database migrations

@@ -62,13 +62,14 @@ type TestSuite struct {
 
 // Test fixture IDs
 const (
-	TestCustomerID = "00000000-0000-0000-0000-000000000001"
-	TestAdminID    = "00000000-0000-0000-0000-000000000002"
-	TestPlanID     = "00000000-0000-0000-0000-000000000003"
-	TestTemplateID = "00000000-0000-0000-0000-000000000004"
-	TestNodeID     = "00000000-0000-0000-0000-000000000005"
-	TestVMID       = "00000000-0000-0000-0000-000000000006"
-	TestIPSetID    = "00000000-0000-0000-0000-000000000007"
+	TestCustomerID       = "00000000-0000-0000-0000-000000000001"
+	TestAdminID          = "00000000-0000-0000-0000-000000000002"
+	TestPlanID           = "00000000-0000-0000-0000-000000000003"
+	TestTemplateID       = "00000000-0000-0000-0000-000000000004"
+	TestNodeID           = "00000000-0000-0000-0000-000000000005"
+	TestVMID             = "00000000-0000-0000-0000-000000000006"
+	TestIPSetID          = "00000000-0000-0000-0000-000000000007"
+	TestStorageBackendID = "00000000-0000-0000-0000-000000000008"
 )
 
 // Test credentials - can be overridden via environment variables
@@ -348,6 +349,12 @@ func SetupTest(t *testing.T) {
 	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM nodes WHERE id = $1", TestNodeID); err != nil {
 		t.Logf("setup cleanup warning: %v", err)
 	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM node_storage WHERE node_id = $1 OR storage_backend_id = $2", TestNodeID, TestStorageBackendID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM storage_backends WHERE id = $1", TestStorageBackendID); err != nil {
+		t.Logf("setup cleanup warning: %v", err)
+	}
 	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM sessions WHERE user_id IN ($1, $2)", TestCustomerID, TestAdminID); err != nil {
 		t.Logf("setup cleanup warning: %v", err)
 	}
@@ -372,11 +379,25 @@ func SetupTest(t *testing.T) {
 
 	// Create test node
 	if _, err := suite.DBPool.Exec(ctx, `
-		INSERT INTO nodes (id, hostname, grpc_address, management_ip, status, total_vcpu, total_memory_mb, created_at)
-		VALUES ($1, 'test-node-1', '192.168.1.100:50051', '192.168.1.100', 'online', 16, 65536, NOW())
+		INSERT INTO nodes (id, hostname, grpc_address, management_ip, status, storage_backend, ceph_pool, ceph_user, ceph_monitors, total_vcpu, total_memory_mb, created_at)
+		VALUES ($1, 'test-node-1', '192.168.1.100:50051', '192.168.1.100', 'online', 'ceph', 'vs-vms', 'client.admin', '127.0.0.1:6789', 16, 65536, NOW())
 		ON CONFLICT (id) DO NOTHING
 	`, TestNodeID); err != nil {
 		t.Logf("setup node warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, `
+		INSERT INTO storage_backends (id, name, type, ceph_pool, ceph_user, ceph_monitors, health_status, created_at, updated_at)
+		VALUES ($1, 'ceph-test-node-1', 'ceph', 'vs-vms', 'client.admin', '127.0.0.1:6789', 'healthy', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, TestStorageBackendID); err != nil {
+		t.Logf("setup storage backend warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, `
+		INSERT INTO node_storage (node_id, storage_backend_id, enabled, preferred, created_at)
+		VALUES ($1, $2, true, true, NOW())
+		ON CONFLICT (node_id, storage_backend_id) DO NOTHING
+	`, TestNodeID, TestStorageBackendID); err != nil {
+		t.Logf("setup node_storage warning: %v", err)
 	}
 
 	// Create test IP set for IP address tests
@@ -428,6 +449,12 @@ func TeardownTest(t *testing.T) {
 	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM vms WHERE customer_id = $1", TestCustomerID); err != nil {
 		t.Logf("teardown cleanup warning: %v", err)
 	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM node_storage WHERE node_id = $1 OR storage_backend_id = $2", TestNodeID, TestStorageBackendID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
+	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM storage_backends WHERE id = $1", TestStorageBackendID); err != nil {
+		t.Logf("teardown cleanup warning: %v", err)
+	}
 	if _, err := suite.DBPool.Exec(ctx, "DELETE FROM customers WHERE id = $1", TestCustomerID); err != nil {
 		t.Logf("teardown cleanup warning: %v", err)
 	}
@@ -442,9 +469,11 @@ func TeardownTest(t *testing.T) {
 // CreateTestVM creates a test VM and returns its ID.
 func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (string, error) {
 	vmID := crypto.GenerateUUID()
+	hostname := fmt.Sprintf("test-vm-%s", vmID[:8])
 	// Generate MAC address in proper format: 52:54:00:XX:XX:XX (QEMU default prefix + random suffix)
 	macSuffix := crypto.GenerateRandomHex(6)
 	macAddr := fmt.Sprintf("52:54:00:%s:%s:%s", macSuffix[0:2], macSuffix[2:4], macSuffix[4:6])
+	storageBackendID := TestStorageBackendID
 
 	// Handle nullable node_id - pass NULL if empty string
 	var nodeIDArg interface{}
@@ -452,16 +481,25 @@ func CreateTestVM(ctx context.Context, customerID, planID, nodeID string) (strin
 		nodeIDArg = nil
 	} else {
 		nodeIDArg = nodeID
+		if err := suite.DBPool.QueryRow(ctx, `
+			SELECT storage_backend_id
+			FROM node_storage
+			WHERE node_id = $1 AND enabled = true
+			ORDER BY preferred DESC, created_at ASC
+			LIMIT 1
+		`, nodeID).Scan(&storageBackendID); err != nil {
+			return "", fmt.Errorf("resolving test storage backend: %w", err)
+		}
 	}
 
 	query := `
 		INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, vcpu, memory_mb, disk_gb,
-			port_speed_mbps, bandwidth_limit_gb, mac_address, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, 'test-vm', 'provisioning', 2, 4096, 50, 1000, 1000, $5, NOW(), NOW())
+			port_speed_mbps, bandwidth_limit_gb, mac_address, storage_backend, storage_backend_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 'provisioning', 2, 4096, 50, 1000, 1000, $6, 'ceph', $7, NOW(), NOW())
 		RETURNING id
 	`
 
-	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeIDArg, planID, macAddr).Scan(&vmID)
+	err := suite.DBPool.QueryRow(ctx, query, vmID, customerID, nodeIDArg, planID, hostname, macAddr, storageBackendID).Scan(&vmID)
 	if err != nil {
 		return "", fmt.Errorf("creating test vm: %w", err)
 	}

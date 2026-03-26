@@ -877,11 +877,17 @@ rbd ls -p vs-vms
 ### Run Integration Tests
 
 ```bash
-# Go unit tests
+# Go tests that do not require native libvirt/Ceph development headers
 make test
 
-# Go tests with race detector
+# Docker/Testcontainers-backed integration tests
+make test-integration
+
+# Go tests with race detector (same non-native package set)
 make test-race
+
+# Native node-agent tests (requires libvirt/Ceph development headers on the host)
+make test-native
 
 # E2E tests
 cd tests/e2e

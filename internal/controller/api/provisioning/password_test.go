@@ -4,13 +4,21 @@ package provisioning
 // DO NOT use these credentials in production environments.
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
+	"io"
 	"testing"
 
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type failingReader struct{}
+
+func (failingReader) Read(_ []byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
 
 func TestValidatePasswordStrength(t *testing.T) {
 	tests := []struct {
@@ -181,4 +189,32 @@ func TestValidatePasswordStrength_ReturnsTypedError(t *testing.T) {
 
 	// Verify it supports errors.Is
 	assert.True(t, errors.Is(err, sharederrors.ErrValidation))
+}
+
+func TestGenerateRandomPassword(t *testing.T) {
+	password, err := generateRandomPassword()
+
+	require.NoError(t, err)
+	assert.Len(t, password, 16)
+	assert.NoError(t, validatePasswordStrength(password))
+}
+
+func TestGenerateRandomPassword_ReturnsErrorOnEntropyFailure(t *testing.T) {
+	originalReader := cryptorand.Reader
+	cryptorand.Reader = failingReader{}
+	t.Cleanup(func() {
+		cryptorand.Reader = originalReader
+	})
+
+	var (
+		password string
+		err      error
+	)
+	assert.NotPanics(t, func() {
+		password, err = generateRandomPassword()
+	})
+
+	require.Error(t, err)
+	assert.Empty(t, password)
+	assert.Contains(t, err.Error(), "random password")
 }
