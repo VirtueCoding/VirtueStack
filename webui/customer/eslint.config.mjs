@@ -1,7 +1,7 @@
 import nextPlugin from "eslint-config-next";
 
 /** @type {import('eslint').Linter.Config[]} */
-export default [
+const config = [
   ...nextPlugin,
   {
     rules: {
@@ -17,3 +17,5 @@ export default [
     },
   },
 ];
+
+export default config;
