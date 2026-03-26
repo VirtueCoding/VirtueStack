@@ -1,5 +1,3 @@
--- No-op: rolling back to the non-concurrent index versions from migrations 000003-000007
--- is neither necessary nor safe. The concurrent indexes created in the .up migration
--- are functionally identical to the originals; dropping them would leave the tables
--- unindexed. If a full rollback of the original migrations is required, restore from
--- a pre-migration database backup.
+-- No-op: the .up migration is intentionally a compatibility placeholder.
+-- The canonical indexes were already created in migrations 000003-000007, so there
+-- is nothing additional to roll back here.
