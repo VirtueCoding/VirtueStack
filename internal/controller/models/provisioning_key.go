@@ -65,7 +65,7 @@ type ProvisioningKeyCreateRequest struct {
 	Name        string     `json:"name" validate:"required,min=1,max=100"`
 	AllowedIPs  []string   `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
 	Description string     `json:"description,omitempty" validate:"max=500"`
-	CreatedBy   string     `json:"created_by" validate:"required,uuid"`
+	CreatedBy   string     `json:"-"` // Server-set from authenticated admin; excluded from JSON binding.
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 

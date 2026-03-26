@@ -160,7 +160,9 @@ func (h *AdminHandler) RevokeProvisioningKey(c *gin.Context) {
 	}
 
 	if err := h.provisioningKeyRepo.Revoke(c.Request.Context(), id); err != nil {
-		if handleNotFoundError(c, err, "KEY_NOT_FOUND", "Provisioning key not found") {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			middleware.RespondWithError(c, http.StatusNotFound, "KEY_NOT_FOUND",
+				"Provisioning key not found or already revoked")
 			return
 		}
 		h.logger.Error("failed to revoke provisioning key",
@@ -173,7 +175,7 @@ func (h *AdminHandler) RevokeProvisioningKey(c *gin.Context) {
 
 	h.logAuditEvent(c, "provisioning_key.revoke", "provisioning_key", id, nil, true)
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 // generateProvisioningAPIKey creates a 32-byte (64-hex-char) random API key.
