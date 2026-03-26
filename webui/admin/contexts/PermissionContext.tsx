@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useCallback,
+  useMemo,
   ReactNode,
 } from "react";
 import { useAuth } from "@/lib/auth-context";
@@ -117,7 +118,10 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export function PermissionProvider({ children }: { children: ReactNode }) {
   const { user, isAuthenticated, isLoading: authIsLoading } = useAuth();
-  const permissions = isAuthenticated && user ? user.permissions || [] : [];
+  const permissions = useMemo(
+    () => (isAuthenticated && user ? user.permissions || [] : []),
+    [isAuthenticated, user]
+  );
   const isLoading = authIsLoading;
 
   const isSuperAdmin = user?.role === "super_admin";
@@ -132,19 +136,19 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
   );
 
   const hasAnyPermission = useCallback(
-    (permissions: string[]): boolean => {
+    (requiredPermissions: string[]): boolean => {
       // Super admins always have all permissions
       if (isSuperAdmin) return true;
-      return permissions.some((p) => permissions.includes(p));
+      return requiredPermissions.some((permission) => permissions.includes(permission));
     },
     [permissions, isSuperAdmin]
   );
 
   const hasAllPermissions = useCallback(
-    (permissions: string[]): boolean => {
+    (requiredPermissions: string[]): boolean => {
       // Super admins always have all permissions
       if (isSuperAdmin) return true;
-      return permissions.every((p) => permissions.includes(p));
+      return requiredPermissions.every((permission) => permissions.includes(permission));
     },
     [permissions, isSuperAdmin]
   );
