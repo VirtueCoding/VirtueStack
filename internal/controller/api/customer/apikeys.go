@@ -335,19 +335,23 @@ func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID st
 
 	normalized := dedupeStrings(vmIDs)
 	for _, vmID := range normalized {
-		if _, err := uuid.Parse(vmID); err != nil {
-			return nil, sharederrors.NewAPIError("INVALID_VM_SCOPE", "VM scope must contain valid VM IDs from your account", http.StatusBadRequest)
-		}
 	}
 
 	// Validate all scoped VM IDs in a single repository call to avoid N+1 queries.
-	filter := models.VMListFilter{
+	opts := repository.VMListOptions{
 		CustomerID: &customerID,
-		VMIDs:      normalized,
+		IDs:        normalized,
 	}
-	filter.Page = 1
-	filter.PerPage = len(normalized)
 
+	vms, err := h.vmRepo.List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("listing VMs for api key scope: %w", err)
+	}
+
+	if len(vms) != len(normalized) {
+		// At least one VM ID does not exist or does not belong to this customer.
+		return nil, sharederrors.NewAPIError("INVALID_VM_SCOPE", "VM scope must contain valid VM IDs from your account", http.StatusBadRequest)
+	}
 	vms, _, err := h.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs for api key scope: %w", err)
