@@ -360,13 +360,13 @@ export default function StorageBackendsPage() {
         {deleteDialogOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <Card className="w-full max-w-md mx-4">
-              <CardHeader>
-                <CardTitle>Delete Storage Backend</CardTitle>
-                <CardDescription>
-                  Are you sure you want to delete "{deletingBackend?.name}"?
-                  This action cannot be undone.
-                </CardDescription>
-              </CardHeader>
+                <CardHeader>
+                  <CardTitle>Delete Storage Backend</CardTitle>
+                  <CardDescription>
+                    Are you sure you want to delete &quot;{deletingBackend?.name}&quot;?
+                    This action cannot be undone.
+                  </CardDescription>
+                </CardHeader>
               <CardContent>
                 {deletingBackend?.nodes && deletingBackend.nodes.length > 0 && (
                   <div className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">

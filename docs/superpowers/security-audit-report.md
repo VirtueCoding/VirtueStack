@@ -183,22 +183,17 @@ public static function buildWebuiUrl(string $webuiUrl, string $vmId, string $sso
 An attacker with access to browser history, logs, or network traffic could capture SSO tokens and impersonate users. The default 1-hour token expiry limits but does not eliminate this risk.
 
 **Fix Applied:**
-Documented the security trade-off and updated docstrings to recommend short token expiry:
+Implemented a full opaque token exchange flow for WHMCS SSO:
 
-1. **Documentation update** in `VirtueStackHelper.php` - Added security note recommending 5-minute token expiry
-2. **Documentation update** in `docs/INSTALL.md` - Added security considerations section
+1. **Provisioning API** now issues short-lived single-use opaque SSO tokens stored server-side
+2. **Customer auth exchange endpoint** consumes the opaque token, sets the standard HttpOnly session cookies, and redirects to the clean customer WebUI path
+3. **WHMCS module** now builds SSO URLs that carry only the opaque bootstrap token rather than a JWT containing customer identity claims
 
-**Rationale for accepting the risk:**
-- The original finding was INFO severity
-- Implementing opaque token exchange would add significant complexity (database tables, new endpoints, race conditions)
-- The simpler mitigation (short token expiry) provides adequate protection for the use case
-- The token is used for customer WebUI access, not administrative functions
-
-**Recommendation for future:**
-Consider implementing opaque token exchange if:
-- Regulatory requirements mandate it
-- Security audit findings require it
-- Token exposure incidents occur
+**Result:**
+- No JWT bearer token is exposed in browser history
+- No JWT bearer token is leaked via reverse-proxy logs or referer headers
+- Tokens are short-lived and single-use even while delivered via query string
+- Successful issuance and redemption are audit logged server-side
 
 ---
 

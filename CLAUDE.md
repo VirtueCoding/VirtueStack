@@ -15,9 +15,11 @@ VirtueStack is a KVM/QEMU VM management platform for VPS hosting providers. Stac
 make build                  # Build controller + node-agent binaries to bin/
 make build-controller       # Controller only
 make build-node-agent       # Node Agent only
-make test                   # Run all Go tests
-make test-race              # Tests with race detector (used in CI)
-make test-coverage          # Generate HTML coverage report
+make test                   # Run Go tests that do not require libvirt/Ceph dev headers
+make test-integration       # Run Docker/Testcontainers-backed integration tests
+make test-native            # Run node-agent/libvirt/Ceph tests on a prepared host
+make test-race              # Non-native tests with race detector
+make test-coverage          # Generate HTML coverage report for the non-native test set
 make lint                   # golangci-lint run ./...
 make vet                    # go vet ./...
 make vuln                   # govulncheck ./...

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -12,11 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,18 +34,6 @@ const (
 	// when the plan does not specify a limit.
 	defaultISOLimit = 2
 )
-
-// isoLimitMu serialises the per-VM ISO count check-and-create operation
-// to prevent TOCTOU races when multiple concurrent uploads compete for the
-// same slot (F-013).
-//
-// NOTE: This mutex only protects against races within a single controller
-// process. In a multi-instance deployment each instance has an independent
-// mutex, so the filesystem count and file creation are still not globally
-// atomic. A database-level counter with SELECT FOR UPDATE is the correct
-// long-term fix. Until then, accept the small window of over-admission that
-// can occur across instances.
-var isoLimitMu sync.Mutex
 
 type ISORecord struct {
 	ID        string    `json:"id"`
@@ -89,11 +78,11 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 		return
 	}
 
-	if !h.checkISOLimit(c, ctx.vm, ctx.customerID, ctx.vmID) {
+	if !h.prepareISODirectory(c, ctx.customerID, ctx.vmID) {
 		return
 	}
 
-	result, ok := h.writeISOFile(c, ctx.file, ctx.customerID, ctx.vmID, ctx.header.Filename)
+	result, ok := h.writeISOFile(c, ctx.file, ctx.vm, ctx.customerID, ctx.vmID, ctx.header.Filename)
 	if !ok {
 		return
 	}
@@ -173,16 +162,8 @@ func (h *CustomerHandler) validateISOFile(c *gin.Context, header *multipart.File
 	return true
 }
 
-// checkISOLimit checks if the VM has reached its ISO upload limit.
-// F-013: The filesystem read and subsequent write are performed under isoLimitMu to
-// make the check-and-increment effectively atomic within a single process. In a
-// multi-controller deployment each process has an independent mutex, so a small
-// over-admission window exists across instances; a database-level counter with
-// SELECT FOR UPDATE is the correct long-term fix (TODO).
-func (h *CustomerHandler) checkISOLimit(c *gin.Context, vm *models.VM, customerID, vmID string) bool {
-	isoLimitMu.Lock()
-	defer isoLimitMu.Unlock()
-
+// prepareISODirectory ensures the VM ISO directory exists before the upload starts.
+func (h *CustomerHandler) prepareISODirectory(c *gin.Context, customerID, vmID string) bool {
 	isoDir := filepath.Join(h.isoStoragePath, customerID, vmID)
 	if err := os.MkdirAll(isoDir, 0750); err != nil {
 		h.logger.Error("failed to create ISO directory",
@@ -192,28 +173,7 @@ func (h *CustomerHandler) checkISOLimit(c *gin.Context, vm *models.VM, customerI
 		return false
 	}
 
-	existing, _ := os.ReadDir(isoDir)
-	isoCount := countISOFiles(existing)
-
-	planLimit := h.getISOPlanLimit(c.Request.Context(), vm.PlanID)
-	if isoCount >= planLimit {
-		middleware.RespondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
-			fmt.Sprintf("ISO upload limit reached for this VM (%d/%d). Delete existing ISOs first.", isoCount, planLimit))
-		return false
-	}
-
 	return true
-}
-
-// countISOFiles counts the number of .iso files in a directory listing.
-func countISOFiles(entries []os.DirEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if strings.HasSuffix(strings.ToLower(entry.Name()), ".iso") {
-			count++
-		}
-	}
-	return count
 }
 
 // getISOPlanLimit returns the ISO upload limit for a plan.
@@ -259,7 +219,7 @@ func validateISOWritePath(resolvedBase, destPath string) error {
 // the file exceeds maxISOSizeBytes, avoiding a full-file write before the size check.
 // F-073: Validates the write path against the resolved storage root.
 // F-074: Checks ISO 9660 / UDF magic bytes after writing.
-func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerID, vmID, filename string) (*ISOUploadResponse, bool) {
+func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *models.VM, customerID, vmID, filename string) (*ISOUploadResponse, bool) {
 	resolvedBase, err := h.resolvedISOBase()
 	if err != nil {
 		h.logger.Error("failed to resolve ISO storage path",
@@ -271,28 +231,29 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 
 	isoID := uuid.New().String()
 	isoDir := filepath.Join(h.isoStoragePath, customerID, vmID)
-	destPath := filepath.Join(isoDir, isoID+".iso")
+	tempPath := filepath.Join(isoDir, isoID+".uploading")
+	finalPath := filepath.Join(isoDir, isoID+".iso")
 
 	// F-073: Ensure the destination is inside the resolved storage root.
-	if err := validateISOWritePath(resolvedBase, destPath); err != nil {
+	if err := validateISOWritePath(resolvedBase, tempPath); err != nil {
 		h.logger.Error("ISO path traversal detected",
-			"path", destPath, "error", err,
+			"path", tempPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid upload path")
 		return nil, false
 	}
 
-	dst, err := os.Create(destPath)
+	dst, err := os.Create(tempPath)
 	if err != nil {
 		h.logger.Error("failed to create ISO file",
-			"path", destPath, "error", err,
+			"path", tempPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to create file on disk")
 		return nil, false
 	}
 	defer func() {
 		if err := dst.Close(); err != nil {
-			h.logger.Warn("failed to close ISO file", "path", destPath, "error", err,
+			h.logger.Warn("failed to close ISO file", "path", tempPath, "error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 		}
 	}()
@@ -301,10 +262,10 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 	// detect an overrun without writing the entire oversized stream to disk first.
 	limitedReader := io.LimitReader(file, maxISOSizeBytes+1)
 
-	written, checksum, magicBuf, err := h.copyFileWithHash(dst, limitedReader, destPath)
+	written, checksum, magicBuf, err := h.copyFileWithHash(dst, limitedReader, tempPath)
 	if err != nil {
 		h.logger.Error("failed to write ISO file",
-			"path", destPath, "error", err,
+			"path", tempPath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to write file")
 		return nil, false
@@ -312,8 +273,8 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 
 	// F-012: If exactly maxISOSizeBytes+1 bytes were written the file is oversized.
 	if written > maxISOSizeBytes {
-		if err := os.Remove(destPath); err != nil {
-			h.logger.Warn("failed to remove oversized ISO file", "path", destPath, "error", err,
+		if err := os.Remove(tempPath); err != nil {
+			h.logger.Warn("failed to remove oversized ISO file", "path", tempPath, "error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 		}
 		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
@@ -322,21 +283,62 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, customerI
 
 	// F-074: Validate ISO 9660 / UDF magic bytes.
 	if !isValidISOMagic(magicBuf) {
-		if err := os.Remove(destPath); err != nil {
-			h.logger.Warn("failed to remove invalid ISO file", "path", destPath, "error", err,
+		if err := os.Remove(tempPath); err != nil {
+			h.logger.Warn("failed to remove invalid ISO file", "path", tempPath, "error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 		}
 		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_FILE_TYPE", "File does not appear to be a valid ISO 9660 or UDF image")
 		return nil, false
 	}
 
-	h.writeChecksumSidecar(destPath, checksum, middleware.GetCorrelationID(c))
+	planLimit := h.getISOPlanLimit(c.Request.Context(), vm.PlanID)
+	upload := &repository.ISOUpload{
+		ID:          isoID,
+		VMID:        vmID,
+		CustomerID:  customerID,
+		FileName:    sanitizeFileName(filename),
+		FileSize:    written,
+		SHA256:      checksum,
+		StoragePath: finalPath,
+	}
+	if err := h.isoUploadRepo.CreateIfUnderLimit(c.Request.Context(), upload, planLimit); err != nil {
+		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			h.logger.Warn("failed to remove rejected ISO upload", "path", tempPath, "error", removeErr,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+		var limitErr *repository.LimitExceededError
+		if errors.As(err, &limitErr) {
+			middleware.RespondWithError(c, http.StatusConflict, "ISO_LIMIT_REACHED",
+				fmt.Sprintf("ISO upload limit reached for this VM (%d/%d). Delete existing ISOs first.", limitErr.Current, limitErr.Limit))
+			return nil, false
+		}
+		h.logger.Error("failed to persist ISO upload metadata",
+			"vm_id", vmID, "customer_id", customerID, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to register ISO upload")
+		return nil, false
+	}
+
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		_ = h.isoUploadRepo.Delete(c.Request.Context(), upload.ID)
+		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			h.logger.Warn("failed to remove ISO temp file after rename failure", "path", tempPath, "error", removeErr,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+		h.logger.Error("failed to finalize ISO upload",
+			"path", finalPath, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to finalize ISO upload")
+		return nil, false
+	}
+
+	h.writeChecksumSidecar(finalPath, checksum, middleware.GetCorrelationID(c))
 
 	return &ISOUploadResponse{
-		ID:       isoID,
-		FileName: sanitizeFileName(filename),
-		FileSize: written,
-		SHA256:   checksum,
+		ID:       upload.ID,
+		FileName: upload.FileName,
+		FileSize: upload.FileSize,
+		SHA256:   upload.SHA256,
 	}, true
 }
 
@@ -427,14 +429,26 @@ func (h *CustomerHandler) ListISOs(c *gin.Context) {
 		return
 	}
 
-	isoDir := filepath.Join(h.isoStoragePath, customerID, vmID)
-	records, err := listISODirectory(isoDir, vmID)
+	uploads, err := h.isoUploadRepo.ListByVM(c.Request.Context(), vmID)
 	if err != nil {
 		h.logger.Error("failed to list ISOs",
 			"vm_id", vmID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_LIST_FAILED", "Failed to list ISOs")
 		return
+	}
+
+	records := make([]ISORecord, 0, len(uploads))
+	for _, upload := range uploads {
+		records = append(records, ISORecord{
+			ID:        upload.ID,
+			VMID:      upload.VMID,
+			FileName:  upload.FileName,
+			FileSize:  upload.FileSize,
+			SHA256:    upload.SHA256,
+			Status:    "available",
+			CreatedAt: upload.CreatedAt,
+		})
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: records})
@@ -470,21 +484,37 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		return
 	}
 
-	isoPath := filepath.Join(h.isoStoragePath, customerID, vmID, isoID+".iso")
-	if err := os.Remove(isoPath); err != nil {
-		if os.IsNotExist(err) {
+	upload, err := h.isoUploadRepo.GetByID(c.Request.Context(), isoID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
 			return
 		}
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to retrieve ISO upload")
+		return
+	}
+	if upload.VMID != vmID || upload.CustomerID != customerID {
+		middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
+		return
+	}
+
+	if err := os.Remove(upload.StoragePath); err != nil && !os.IsNotExist(err) {
 		h.logger.Error("failed to delete ISO",
-			"path", isoPath, "error", err,
+			"path", upload.StoragePath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
 		return
 	}
-	if err := os.Remove(isoPath + ".sha256"); err != nil && !os.IsNotExist(err) {
+	if err := h.isoUploadRepo.DeleteByVMAndID(c.Request.Context(), vmID, isoID); err != nil && !sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+		h.logger.Error("failed to delete ISO metadata",
+			"iso_id", isoID, "vm_id", vmID, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO metadata")
+		return
+	}
+	if err := os.Remove(upload.StoragePath + ".sha256"); err != nil && !os.IsNotExist(err) {
 		h.logger.Warn("failed to delete ISO checksum sidecar",
-			"path", isoPath+".sha256", "error", err,
+			"path", upload.StoragePath+".sha256", "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 	}
 
@@ -534,8 +564,21 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 		return
 	}
 
-	isoPath := filepath.Join(h.isoStoragePath, customerID, vmID, isoID+".iso")
-	if _, err := os.Stat(isoPath); os.IsNotExist(err) {
+	upload, err := h.isoUploadRepo.GetByID(c.Request.Context(), isoID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
+			return
+		}
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_ATTACH_FAILED", "Failed to retrieve ISO metadata")
+		return
+	}
+	if upload.VMID != vmID || upload.CustomerID != customerID {
+		middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
+		return
+	}
+
+	if _, err := os.Stat(upload.StoragePath); os.IsNotExist(err) {
 		middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO file not found on disk")
 		return
 	}
@@ -619,49 +662,4 @@ func sanitizeFileName(name string) string {
 	}
 	// Always enforce .iso extension regardless of what was provided.
 	return base + ".iso"
-}
-
-func listISODirectory(dir, vmID string) ([]ISORecord, error) {
-	var records []ISORecord
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return records, nil
-		}
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".iso") {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		isoID := strings.TrimSuffix(entry.Name(), ".iso")
-
-		checksum := ""
-		sumData, sumErr := os.ReadFile(filepath.Join(dir, isoID+".sha256"))
-		if sumErr == nil {
-			checksum = strings.TrimSpace(string(sumData))
-		}
-		// If the sidecar is missing, return an empty checksum.
-		// Computing SHA-256 of multi-GB ISOs on every list request is too expensive.
-
-		records = append(records, ISORecord{
-			ID:        isoID,
-			VMID:      vmID,
-			FileName:  entry.Name(),
-			FileSize:  info.Size(),
-			SHA256:    checksum,
-			Status:    "available",
-			CreatedAt: info.ModTime(),
-		})
-	}
-
-	return records, nil
 }

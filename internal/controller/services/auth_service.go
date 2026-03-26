@@ -214,3 +214,19 @@ func (s *AuthService) enforceCustomerSessionLimit(ctx context.Context, customerI
 		}
 	}
 }
+
+// CreateCustomerSSOSession issues a normal browser session for an already-identified
+// customer. It is used by the opaque WHMCS SSO exchange flow after the one-time
+// server-side token has been redeemed.
+func (s *AuthService) CreateCustomerSSOSession(ctx context.Context, customerID, ipAddress, userAgent string) (*models.AuthTokens, string, error) {
+	customer, err := s.customerRepo.GetByID(ctx, customerID)
+	if err != nil {
+		return nil, "", fmt.Errorf("getting customer for sso session: %w", err)
+	}
+	if customer.Status != models.CustomerStatusActive {
+		return nil, "", sharederrors.ErrUnauthorized
+	}
+
+	s.enforceCustomerSessionLimit(ctx, customerID)
+	return s.createLoginSession(ctx, customerID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
+}

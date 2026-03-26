@@ -1657,6 +1657,24 @@ Refresh the access token.
 
 ---
 
+#### `GET /customer/auth/sso-exchange`
+
+Consume a short-lived opaque WHMCS SSO token, set the standard customer session cookies, and redirect the browser to the clean customer WebUI path.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `token` | string | Yes | Single-use opaque SSO bootstrap token |
+
+**Response (`303 See Other`):** Sets auth cookies and redirects to `/vms/{id}`.
+
+**Error Responses:**
+- `400` — `MISSING_TOKEN`: Query string token missing
+- `401` — `INVALID_TOKEN`: Token invalid, already consumed, or expired
+
+---
+
 #### `POST /customer/auth/logout`
 
 Invalidate session and clear cookies.
@@ -2653,6 +2671,40 @@ Look up a VM by its WHMCS service ID.
 **Error Responses:**
 - `400` — `INVALID_SERVICE_ID`: Not a valid integer
 - `404` — `VM_NOT_FOUND`: No VM with that service ID
+
+---
+
+#### `POST /provisioning/sso-tokens`
+
+Issue a short-lived opaque browser SSO token for WHMCS-driven customer login.
+
+**Request Headers:**
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-API-Key` | string | Yes | Valid provisioning API key |
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `vm_id` | string | No | Valid UUID |
+| `whmcs_service_id` | integer | No | Positive integer |
+
+Provide either `vm_id` or `whmcs_service_id`.
+
+**Response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "token": "opaque-token",
+    "vm_id": "uuid",
+    "redirect_path": "/vms/uuid",
+    "expires_at": "2026-03-26T08:00:00Z"
+  }
+}
+```
 
 ---
 

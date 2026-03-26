@@ -93,7 +93,7 @@ function virtuestack_ConfigOptions(): array
         'JWT Secret' => [
             'Type'        => 'password',
             'Size'        => 64,
-            'Description' => 'HMAC secret for signing SSO JWT tokens. Must be at least 32 characters. Required for Customer WebUI integration.',
+            'Description' => 'Deprecated legacy setting from the old JWT-based SSO flow. The current opaque-token exchange flow does not use this value.',
             'Required'    => false,
         ],
     ];
@@ -585,27 +585,15 @@ function virtuestack_ClientArea(array $params): array
             ];
         }
 
-        // Get customer credentials for SSO
-        $credentials = VirtueStackHelper::getCustomerCredentials($clientId);
         $webuiUrl = virtuestack_getWebuiUrl($params);
 
-        // Generate SSO token with short expiry (5 minutes) for security
         $ssoToken = '';
-        if (!empty($credentials) && !empty($vmId)) {
+        if (!empty($vmId) && !empty($webuiUrl)) {
             try {
-                $jwtSecret = virtuestack_getJwtSecret($params);
-                $issuer = virtuestack_getApiUrl($params);
-                $customerId = virtuestack_getServiceField($serviceId, 'virtuestack_customer_id');
-
-                // Generate SSO token
-                $ssoToken = VirtueStackHelper::generateSSOToken(
-                    $customerId,
-                    $credentials['api_id'],
-                    $jwtSecret,
-                    $issuer
-                );
+                $sso = $client->createSSOToken($serviceId, $vmId);
+                $ssoToken = (string) ($sso['token'] ?? '');
             } catch (\Exception $e) {
-                VirtueStackHelper::log('ClientArea', 'SSO token generation failed', $e->getMessage());
+                VirtueStackHelper::log('ClientArea', 'Opaque SSO token creation failed', $e->getMessage());
             }
         }
 
@@ -849,29 +837,6 @@ function virtuestack_getApiKey(array $params): string
 }
 
 /**
- * Get JWT secret from configuration.
- *
- * @param array $params WHMCS module parameters
- *
- * @return string
- *
- * @throws \RuntimeException If JWT secret not configured
- */
-function virtuestack_getJwtSecret(array $params): string
-{
-    $secret = VirtueStackHelper::getConfigValue($params, 'jwt_secret', '');
-    
-    if (empty($secret)) {
-        throw new \RuntimeException(
-            'VirtueStack: jwt_secret configuration is required. '
-            . 'Set it in the server configuration to prevent JWT signing with API key.'
-        );
-    }
-
-    return $secret;
-}
-
-/**
  * Get Customer WebUI URL from configuration.
  *
  * @param array $params WHMCS module parameters
@@ -1107,15 +1072,102 @@ function virtuestack_powerOperation(array $params, string $operation): string
 
 function virtuestack_UsageUpdate(array $params): array
 {
-    return [];
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+
+    try {
+        $client = virtuestack_getApiClient($params);
+        $vm = virtuestack_syncServiceState($client, $serviceId);
+        if (empty($vm)) {
+            return [];
+        }
+
+        return array_filter([
+            'vcpu' => isset($vm['vcpu']) ? (int) $vm['vcpu'] : null,
+            'memory_mb' => isset($vm['memory_mb']) ? (int) $vm['memory_mb'] : null,
+            'disk_gb' => isset($vm['disk_gb']) ? (int) $vm['disk_gb'] : null,
+            'bandwidth_limit_gb' => isset($vm['bandwidth_limit_gb']) ? (int) $vm['bandwidth_limit_gb'] : null,
+        ], static fn($value) => $value !== null);
+    } catch (\Exception $e) {
+        VirtueStackHelper::log('UsageUpdate', 'Failed', $e->getMessage());
+        return [];
+    }
 }
 
 function virtuestack_SingleSignOn(array $params): string
 {
-    return '';
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+
+    try {
+        $client = virtuestack_getApiClient($params);
+        $vmId = virtuestack_getServiceField($serviceId, 'vm_id');
+        if (empty($vmId)) {
+            $vm = virtuestack_syncServiceState($client, $serviceId);
+            $vmId = (string) ($vm['id'] ?? '');
+        }
+        if (empty($vmId)) {
+            return 'VM ID not found for this service';
+        }
+
+        $sso = $client->createSSOToken($serviceId, $vmId);
+        $token = (string) ($sso['token'] ?? '');
+        if ($token === '') {
+            return 'Failed to create SSO token';
+        }
+
+        return VirtueStackHelper::buildWebuiUrl(virtuestack_getWebuiUrl($params), $vmId, $token);
+    } catch (\Exception $e) {
+        VirtueStackHelper::log('SingleSignOn', 'Failed', $e->getMessage());
+        return 'Failed to initialize SSO: ' . $e->getMessage();
+    }
 }
 
 function virtuestack_AdminServicesTabFieldsSave(array $params): string
 {
-    return '';
+    $serviceId = (int) ($params['serviceid'] ?? 0);
+
+    try {
+        $client = virtuestack_getApiClient($params);
+        virtuestack_syncServiceState($client, $serviceId);
+        return '';
+    } catch (\Exception $e) {
+        VirtueStackHelper::log('AdminServicesTabFieldsSave', 'Failed', $e->getMessage());
+        return $e->getMessage();
+    }
+}
+
+function virtuestack_syncServiceState(ApiClient $client, int $serviceId): array
+{
+    if ($serviceId <= 0) {
+        return [];
+    }
+
+    $vm = $client->getVMByServiceId($serviceId);
+    if (empty($vm['id'])) {
+        return [];
+    }
+
+    try {
+        $detail = $client->getVMInfo((string) $vm['id']);
+        if (!empty($detail)) {
+            $vm = $detail;
+        }
+    } catch (\Exception $e) {
+        VirtueStackHelper::log('syncServiceState', 'VM detail lookup failed', $e->getMessage());
+    }
+
+    virtuestack_updateServiceField($serviceId, 'vm_id', (string) $vm['id']);
+    if (!empty($vm['status'])) {
+        virtuestack_updateServiceField($serviceId, 'provisioning_status', (string) $vm['status']);
+    }
+
+    if (!empty($vm['ip_addresses']) && is_array($vm['ip_addresses'])) {
+        foreach ($vm['ip_addresses'] as $ip) {
+            if (!empty($ip['address'])) {
+                virtuestack_updateServiceField($serviceId, 'vm_ip', (string) $ip['address']);
+                break;
+            }
+        }
+    }
+
+    return $vm;
 }

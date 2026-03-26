@@ -9,37 +9,23 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import type { NodeDetail } from "@/lib/api-client";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import { Server, Network, Cpu, MemoryStick, MapPin, Activity, Clock, HardDrive } from "lucide-react";
 
 interface NodeDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  node: {
-    id: string;
-    hostname: string;
-    grpc_address: string;
-    management_ip?: string;
-    location: string;
-    status: string;
-    total_vcpu: number;
-    total_memory_mb: number;
-    cpu_allocated: number;
-    memory_allocated_gb: number;
-    vm_count: number;
-    created_at?: string;
-    last_heartbeat_at?: string;
-    storage_backend?: string;
-    storage_backend_name?: string;
-  } | null;
+  node: NodeDetail | null;
 }
 
 export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogProps) {
   if (!node) return null;
 
-  const cpuPercent = node.total_vcpu > 0 ? Math.round((node.cpu_allocated / node.total_vcpu) * 100) : 0;
+  const cpuPercent = node.total_vcpu > 0 ? Math.round((node.allocated_vcpu / node.total_vcpu) * 100) : 0;
   const memoryGb = node.total_memory_mb / 1024;
-  const memoryPercent = memoryGb > 0 ? Math.round((node.memory_allocated_gb / memoryGb) * 100) : 0;
+  const allocatedMemoryGb = node.allocated_memory_mb / 1024;
+  const memoryPercent = memoryGb > 0 ? Math.round((allocatedMemoryGb / memoryGb) * 100) : 0;
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "Never";
@@ -110,7 +96,7 @@ export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogP
                   <MapPin className="h-3 w-3" />
                   Location
                 </p>
-                <p className="text-sm font-medium">{node.location}</p>
+                <p className="text-sm font-medium">{node.location_id || "Not configured"}</p>
               </div>
             </div>
           </div>
@@ -125,7 +111,7 @@ export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogP
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">CPU Allocation</p>
                 <div className="flex items-center justify-between text-sm">
-                  <span>{node.cpu_allocated} / {node.total_vcpu} Cores</span>
+                  <span>{node.allocated_vcpu} / {node.total_vcpu} Cores</span>
                   <span className="text-muted-foreground">{cpuPercent}%</span>
                 </div>
                 <div className="h-2 bg-secondary rounded-full overflow-hidden">
@@ -138,7 +124,7 @@ export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogP
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">Memory Allocation</p>
                 <div className="flex items-center justify-between text-sm">
-                  <span>{node.memory_allocated_gb} / {memoryGb.toFixed(1)} GB</span>
+                  <span>{allocatedMemoryGb.toFixed(1)} / {memoryGb.toFixed(1)} GB</span>
                   <span className="text-muted-foreground">{memoryPercent}%</span>
                 </div>
                 <div className="h-2 bg-secondary rounded-full overflow-hidden">
@@ -162,10 +148,10 @@ export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogP
                 <p className="text-xs text-muted-foreground">Storage Backend</p>
                 <p className="text-sm font-medium capitalize">{node.storage_backend || "Not configured"}</p>
               </div>
-              {node.storage_backend_name && (
+              {node.storage_path && (
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Backend Name</p>
-                  <p className="text-sm font-medium">{node.storage_backend_name}</p>
+                  <p className="text-xs text-muted-foreground">Storage Path</p>
+                  <p className="text-sm font-medium font-mono break-all">{node.storage_path}</p>
                 </div>
               )}
             </div>
@@ -179,10 +165,10 @@ export function NodeDetailDialog({ open, onOpenChange, node }: NodeDetailDialogP
             </h4>
             <div className="grid grid-cols-1 gap-4">
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Running VMs</p>
-                <p className="text-2xl font-bold">{node.vm_count}</p>
+                  <p className="text-xs text-muted-foreground">Allocated Memory</p>
+                  <p className="text-2xl font-bold">{allocatedMemoryGb.toFixed(1)} GB</p>
+                </div>
               </div>
-            </div>
           </div>
 
           {/* Metadata Section */}

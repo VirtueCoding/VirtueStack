@@ -1029,7 +1029,7 @@ virtuestack_ChangePackage()   // Resize VM
 virtuestack_ChangePassword()  // Reset password
 virtuestack_ClientArea()      // Embed Customer WebUI
 virtuestack_UsageUpdate()       // Usage metering (stub)
-virtuestack_SingleSignOn()      // WebUI SSO (stub)
+virtuestack_SingleSignOn()      // WebUI SSO (opaque token exchange)
 virtuestack_AdminServicesTabFieldsSave()  // Admin tab save (stub)
 ```
 
@@ -1042,22 +1042,20 @@ For WHMCS → Customer WebUI SSO:
 ```php
 use VirtueStack\WHMCS\VirtueStackHelper;
 
-// Generate SSO token with customer identity
-$ssoToken = VirtueStackHelper::generateSSOToken($customerId, $apiId, $jwtSecret, $issuer);
+// Create one-time opaque SSO token via Provisioning API
+$sso = $apiClient->createSSOToken($serviceId, $vmId);
+$ssoToken = $sso['token'];
 
 // Build WebUI URL with token
 $webuiUrl = VirtueStackHelper::buildWebuiUrl($webuiBaseUrl, $vmId, $ssoToken);
-// Returns: https://webui.example.com/vm/{vmId}?sso_token={jwt}
+// Returns: https://webui.example.com/api/v1/customer/auth/sso-exchange?token={opaque}
 ```
 
-**Security Note:** The SSO token is passed in the URL query parameter, which exposes it to browser history and logs. This is acceptable because:
-- The token has a short expiry (default 1 hour, recommend shorter for production)
-- It's used for customer self-service access, not administrative functions
-- The attack window is limited by token expiry
+**Security Note:** The WHMCS module now uses one-time opaque tokens stored server-side. The browser only receives a short-lived bootstrap token that is consumed by the controller's SSO exchange endpoint, which then sets the standard HttpOnly session cookies before redirecting to the clean customer UI URL.
 
 **Methods:**
-- `generateSSOToken()` — Creates JWT with customer identity claims
-- `buildWebuiUrl()` — Builds URL with SSO token for VM access
+- `createSSOToken()` — Requests a one-time opaque browser SSO token from the Provisioning API
+- `buildWebuiUrl()` — Builds the controller exchange URL that redeems the opaque token into a session
 - `buildConsoleUrl()` — Builds URL for console access (VNC/serial)
 
 **Why use opaque tokens via API?**
@@ -1172,6 +1170,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error
 | NATS_URL | Yes | NATS server URL |
 | JWT_SECRET | Yes | HMAC secret for JWT signing |
 | ENCRYPTION_KEY | Yes | AES-256 key for secret encryption |
+| REDIS_URL | No | Redis connection URL for shared production rate limiting (required when `APP_ENV=production`) |
 | PDNS_MYSQL_DSN | No | PowerDNS MySQL connection |
 | SMTP_HOST | No | SMTP server hostname |
 | SMTP_PORT | No | SMTP server port (default: 587) |
@@ -1303,7 +1302,7 @@ VirtueStack uses a hybrid testing approach:
 - **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent connects to the host's libvirt daemon and is not containerized during testing. It requires KVM/libvirt, mTLS certificates, and direct hardware access.
 - **E2E Testing** — Playwright tests run against the Docker stack with optional Wiremock for mocking Node Agent responses. See `tests/e2e/README.md` for setup instructions and `scripts/setup-e2e.sh` for automated environment setup.
 
-For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. Unit tests (`make test`) may run outside Docker since they test logic in isolation.
+For integration and E2E testing, use the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node. `make test` and `make test-race` cover the non-native unit-test package set, `make test-integration` runs the Docker/Testcontainers-backed integration suite, and `make test-native` is reserved for hosts that have libvirt/Ceph development headers installed.
 
 ### Build Commands
 
@@ -1317,6 +1316,8 @@ make build-node-agent
 
 # Run tests
 make test
+make test-integration
+make test-native
 make test-race
 
 # Database migrations

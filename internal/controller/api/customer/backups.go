@@ -188,7 +188,7 @@ func (h *CustomerHandler) GetBackup(c *gin.Context) {
 	}
 
 	// Verify backup belongs to a VM owned by the customer
-	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
+	if !h.verifyVMOwnership(c.Request.Context(), backup.VMID, customerID) {
 		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
@@ -225,7 +225,7 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 	}
 
 	// Verify backup belongs to a VM owned by the customer
-	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
+	if !h.verifyVMOwnership(c.Request.Context(), backup.VMID, customerID) {
 		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
@@ -278,7 +278,7 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 	}
 
 	// Verify backup belongs to a VM owned by the customer
-	if !h.verifyBackupOwnership(c.Request.Context(), backup.VMID, customerID) {
+	if !h.verifyVMOwnership(c.Request.Context(), backup.VMID, customerID) {
 		middleware.RespondWithError(c, http.StatusNotFound, "BACKUP_NOT_FOUND", "Backup not found")
 		return
 	}
@@ -301,13 +301,6 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	c.JSON(http.StatusAccepted, models.Response{Data: gin.H{"message": "Backup restore initiated"}})
-}
-
-// verifyBackupOwnership verifies that a VM belongs to the customer.
-//
-// Deprecated: Use verifyVMOwnership instead.
-func (h *CustomerHandler) verifyBackupOwnership(ctx context.Context, vmID, customerID string) bool {
-	return h.verifyVMOwnership(ctx, vmID, customerID)
 }
 
 // verifyVMOwnership verifies that a VM belongs to the customer.

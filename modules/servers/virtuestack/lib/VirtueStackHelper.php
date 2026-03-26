@@ -24,9 +24,6 @@ use RuntimeException;
  */
 final class VirtueStackHelper
 {
-    private const SSO_TOKEN_EXPIRY_HOURS = 1;
-    private const JWT_ALGORITHM = 'HS256';
-
     /**
      * Encrypt a value using WHMCS encryption.
      *
@@ -136,74 +133,6 @@ final class VirtueStackHelper
 
         // Shuffle to randomize position of required characters
         return str_shuffle($password);
-    }
-
-    /**
-     * Generate an SSO JWT token for Customer WebUI.
-     *
-     * Creates a short-lived JWT that authenticates the customer
-     * with the Customer WebUI without requiring separate login.
-     *
-     * NOTE: The API secret is NOT included in the JWT payload.
-     * API secrets should never be transmitted in JWTs as they are
-     * only base64 encoded, not encrypted. The Customer WebUI should
-     * look up the secret securely from the database using api_id.
-     *
-     * @param string $customerId         Customer UUID from VirtueStack
-     * @param string $customerApiId      Customer API ID
-     * @param string $jwtSecret          JWT signing secret
-     * @param string $issuer             JWT issuer (usually controller URL)
-     * @param int    $expiryHours        Token expiry in hours (default 1)
-     *
-     * @return string JWT token
-     *
-     * @throws RuntimeException If JWT generation fails
-     */
-    public static function generateSSOToken(
-        string $customerId,
-        string $customerApiId,
-        string $jwtSecret,
-        string $issuer,
-        int $expiryHours = self::SSO_TOKEN_EXPIRY_HOURS
-    ): string {
-        if (empty($customerId) || empty($customerApiId)) {
-            throw new InvalidArgumentException('Customer ID and API ID are required');
-        }
-
-        if (empty($jwtSecret)) {
-            throw new InvalidArgumentException('JWT secret is required');
-        }
-
-        $now = time();
-        $expiry = $now + ($expiryHours * 3600);
-
-        // JWT header
-        $header = [
-            'typ' => 'JWT',
-            'alg' => self::JWT_ALGORITHM,
-        ];
-
-        // JWT payload
-        $payload = [
-            'iss' => $issuer,
-            'sub' => $customerId,
-            'aud' => 'customer-webui',
-            'iat' => $now,
-            'nbf' => $now,
-            'exp' => $expiry,
-            'api_id' => $customerApiId,
-            'type' => 'sso',
-        ];
-
-        // Encode header and payload
-        $headerEncoded = self::base64UrlEncode(json_encode($header, JSON_THROW_ON_ERROR));
-        $payloadEncoded = self::base64UrlEncode(json_encode($payload, JSON_THROW_ON_ERROR));
-
-        // Create signature
-        $signature = hash_hmac('sha256', "{$headerEncoded}.{$payloadEncoded}", $jwtSecret, true);
-        $signatureEncoded = self::base64UrlEncode($signature);
-
-        return "{$headerEncoded}.{$payloadEncoded}.{$signatureEncoded}";
     }
 
     /**
@@ -422,54 +351,36 @@ final class VirtueStackHelper
     }
 
     /**
-     * Build the Customer WebUI URL with SSO token.
+     * Build the Customer WebUI URL with a one-time opaque SSO token.
      *
-     * SECURITY NOTE: The SSO token is passed via query parameter which exposes it
-     * in browser history, referrer headers, and server logs. To minimize risk:
-     * - Use a short token expiry (recommend 5 minutes)
-     * - Tokens should be single-use where possible
+     * The token is redeemed by the controller's SSO exchange endpoint, which sets
+     * the normal HttpOnly session cookies before redirecting to the final customer UI.
      *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID
-     * @param string $ssoToken   SSO JWT token (use short expiry)
+     * @param string $ssoToken   One-time opaque SSO token
      *
      * @return string Full URL with token
      */
     public static function buildWebuiUrl(string $webuiUrl, string $vmId, string $ssoToken): string
     {
         $webuiUrl = rtrim($webuiUrl, '/');
-        return "{$webuiUrl}/vm/{$vmId}?sso_token={$ssoToken}";
+        return "{$webuiUrl}/api/v1/customer/auth/sso-exchange?token=" . rawurlencode($ssoToken);
     }
 
     /**
-     * Build the Console WebUI URL with SSO token.
-     *
-     * SECURITY NOTE: Same concern as buildWebuiUrl(). Use short token expiry.
+     * Build the Console WebUI URL with the same opaque SSO bootstrap flow.
      *
      * @param string $webuiUrl   Base Customer WebUI URL
      * @param string $vmId       VM UUID
-     * @param string $ssoToken   SSO JWT token (use short expiry)
+     * @param string $ssoToken   One-time opaque SSO token
      * @param string $type       Console type: vnc or serial
      *
      * @return string Full URL with token
      */
     public static function buildConsoleUrl(string $webuiUrl, string $vmId, string $ssoToken, string $type = 'vnc'): string
     {
-        $webuiUrl = rtrim($webuiUrl, '/');
-        $type = in_array($type, ['vnc', 'serial'], true) ? $type : 'vnc';
-        return "{$webuiUrl}/vm/{$vmId}/console/{$type}?token={$ssoToken}";
-    }
-
-    /**
-     * Base64 URL encode (RFC 4648 compliant).
-     *
-     * @param string $data Data to encode
-     *
-     * @return string URL-safe base64 encoded string
-     */
-    private static function base64UrlEncode(string $data): string
-    {
-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+        return self::buildWebuiUrl($webuiUrl, $vmId, $ssoToken);
     }
 
     /**

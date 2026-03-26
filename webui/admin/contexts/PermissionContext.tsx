@@ -3,9 +3,8 @@
 import {
   createContext,
   useContext,
-  useState,
-  useEffect,
   useCallback,
+  useMemo,
   ReactNode,
 } from "react";
 import { useAuth } from "@/lib/auth-context";
@@ -118,26 +117,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 ];
 
 export function PermissionProvider({ children }: { children: ReactNode }) {
-  const { user, isAuthenticated } = useAuth();
-  const [state, setState] = useState<PermissionState>({
-    permissions: [],
-    isLoading: true,
-  });
-
-  // Load permissions when user changes
-  useEffect(() => {
-    if (!isAuthenticated || !user) {
-      setState({ permissions: [], isLoading: false });
-      return;
-    }
-
-    // Use permissions from user object (returned by /auth/me)
-    // The backend returns effective permissions based on role + custom permissions
-    setState({
-      permissions: user.permissions || [],
-      isLoading: false,
-    });
-  }, [user, isAuthenticated]);
+  const { user, isAuthenticated, isLoading: authIsLoading } = useAuth();
+  const permissions = useMemo(
+    () => (isAuthenticated && user ? user.permissions || [] : []),
+    [isAuthenticated, user]
+  );
+  const isLoading = authIsLoading;
 
   const isSuperAdmin = user?.role === "super_admin";
 
@@ -145,31 +130,32 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
     (permission: string): boolean => {
       // Super admins always have all permissions
       if (isSuperAdmin) return true;
-      return state.permissions.includes(permission);
+      return permissions.includes(permission);
     },
-    [state.permissions, isSuperAdmin]
+    [permissions, isSuperAdmin]
   );
 
   const hasAnyPermission = useCallback(
-    (permissions: string[]): boolean => {
+    (requiredPermissions: string[]): boolean => {
       // Super admins always have all permissions
       if (isSuperAdmin) return true;
-      return permissions.some((p) => state.permissions.includes(p));
+      return requiredPermissions.some((permission) => permissions.includes(permission));
     },
-    [state.permissions, isSuperAdmin]
+    [permissions, isSuperAdmin]
   );
 
   const hasAllPermissions = useCallback(
-    (permissions: string[]): boolean => {
+    (requiredPermissions: string[]): boolean => {
       // Super admins always have all permissions
       if (isSuperAdmin) return true;
-      return permissions.every((p) => state.permissions.includes(p));
+      return requiredPermissions.every((permission) => permissions.includes(permission));
     },
-    [state.permissions, isSuperAdmin]
+    [permissions, isSuperAdmin]
   );
 
   const value: PermissionContextType = {
-    ...state,
+    permissions,
+    isLoading,
     hasPermission,
     hasAnyPermission,
     hasAllPermissions,

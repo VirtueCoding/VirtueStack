@@ -124,17 +124,6 @@ func Decrypt(ciphertext string, hexKey string) (string, error) {
 	return string(plaintext), nil
 }
 
-// GenerateRandomString generates a random hex string of the given byte length.
-// Deprecated: Use GenerateRandomToken which propagates errors instead of panicking.
-// This wrapper is kept for backward-compatibility with test code.
-func GenerateRandomString(byteLength int) string {
-	token, err := GenerateRandomToken(byteLength)
-	if err != nil {
-		panic(fmt.Sprintf("generating random string: %v", err))
-	}
-	return token
-}
-
 // GenerateRandomToken generates a cryptographically secure random token.
 // Returns a hex-encoded string of the specified byte length.
 // For example, GenerateRandomToken(32) returns a 64-character hex string.
@@ -164,17 +153,6 @@ func GenerateRandomBytes(length int) ([]byte, error) {
 	}
 
 	return bytes, nil
-}
-
-// GenerateRandomHex generates a random hex string of the given number of hex characters.
-// Deprecated: Use SafeGenerateRandomHex which propagates errors instead of panicking.
-// This wrapper is kept for backward-compatibility with test code.
-func GenerateRandomHex(hexChars int) string {
-	token, err := SafeGenerateRandomHex(hexChars)
-	if err != nil {
-		panic(fmt.Sprintf("generating random hex: %v", err))
-	}
-	return token
 }
 
 // SafeGenerateRandomHex generates a random hex string of the given number of hex

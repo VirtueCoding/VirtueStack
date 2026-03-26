@@ -381,6 +381,30 @@ final class ApiClient
     }
 
     /**
+     * Create a short-lived opaque SSO token for browser login.
+     *
+     * @param int         $serviceId WHMCS service ID
+     * @param string|null $vmId      Optional VM UUID if already known
+     *
+     * @return array{token: string, vm_id: string, redirect_path: string, expires_at: string}
+     */
+    public function createSSOToken(int $serviceId, ?string $vmId = null): array
+    {
+        if ($serviceId <= 0) {
+            throw new InvalidArgumentException('Service ID must be a positive integer');
+        }
+
+        $payload = ['whmcs_service_id' => $serviceId];
+        if (!empty($vmId)) {
+            $this->validateUuid($vmId, 'VM ID');
+            $payload['vm_id'] = $vmId;
+        }
+
+        $response = $this->request('POST', '/provisioning/sso-tokens', $payload);
+        return $response['data'] ?? [];
+    }
+
+    /**
      * Get async task status.
      *
      * @param string $taskId Task UUID

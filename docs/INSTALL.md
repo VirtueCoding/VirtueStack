@@ -813,7 +813,7 @@ The E2E seed script creates predictable test data:
 
 #### Rate Limiting for Distributed Deployments
 
-**IMPORTANT:** The default in-memory rate limiting does NOT protect multi-instance deployments.
+**IMPORTANT:** When `APP_ENV=production`, the controller now refuses to start unless `REDIS_URL` is configured so that all rate limiting uses shared Redis state.
 
 | Deployment | Recommended Rate Limiter | Why |
 |------------|-------------------------|-----|
@@ -826,7 +826,7 @@ The E2E seed script creates predictable test data:
 - Redis provides shared state so all instances see the same request counts
 
 **Configuration:**
-To use Redis-backed rate limiting, configure a Redis instance and use the `RedisRateLimit` middleware instead of `RateLimit`. See `internal/controller/api/middleware/ratelimit.go` for implementation details.
+Set `REDIS_URL` to a `redis://` connection string reachable by every controller instance. The built-in middleware helpers automatically switch to the Redis-backed limiter when this is configured.
 
 #### NATS Authentication
 
@@ -877,11 +877,17 @@ rbd ls -p vs-vms
 ### Run Integration Tests
 
 ```bash
-# Go unit tests
+# Go tests that do not require native libvirt/Ceph development headers
 make test
 
-# Go tests with race detector
+# Docker/Testcontainers-backed integration tests
+make test-integration
+
+# Go tests with race detector (same non-native package set)
 make test-race
+
+# Native node-agent tests (requires libvirt/Ceph development headers on the host)
+make test-native
 
 # E2E tests
 cd tests/e2e

@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto lint test test-race migrate-up migrate-down certs clean help backup-db
+.PHONY: all build build-controller build-node-agent proto lint test test-integration test-native test-all test-race migrate-up migrate-down certs clean help backup-db
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -11,6 +11,10 @@ GOBUILD := $(GOCMD) build $(LDFLAGS)
 GOTEST := $(GOCMD) test
 GOVET := $(GOCMD) vet
 GOMOD := $(GOCMD) mod
+
+TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -Ev '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$|tests/integration$$)')
+INTEGRATION_TEST_PACKAGES := ./tests/integration
+NATIVE_TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -E '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$)')
 
 # Output directories
 BIN_DIR := bin
@@ -59,17 +63,28 @@ lint:
 vet:
 	$(GOVET) ./...
 
-## test: Run all tests
+## test: Run Go tests that do not require native libvirt/Ceph headers
 test:
-	$(GOTEST) ./...
+	$(GOTEST) $(TEST_PACKAGES)
 
-## test-race: Run all tests with race detector
+## test-native: Run native node-agent tests (requires libvirt/Ceph development headers)
+test-native:
+	$(GOTEST) $(NATIVE_TEST_PACKAGES)
+
+## test-integration: Run integration tests (requires Docker/Testcontainers)
+test-integration:
+	$(GOTEST) $(INTEGRATION_TEST_PACKAGES)
+
+## test-all: Run the default, integration, and native node-agent test suites
+test-all: test test-integration test-native
+
+## test-race: Run non-native tests with race detector
 test-race:
-	$(GOTEST) -race -count=1 ./...
+	$(GOTEST) -race -count=1 $(TEST_PACKAGES)
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
-	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic ./...
+	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic $(TEST_PACKAGES)
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
