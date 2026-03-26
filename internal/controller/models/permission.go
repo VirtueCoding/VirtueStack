@@ -63,6 +63,11 @@ const (
 	PermissionRDNSWrite Permission = "rdns:write"
 )
 
+// Permission constants for audit logs resource.
+const (
+	PermissionAuditLogsRead Permission = "audit_logs:read"
+)
+
 // Permission constants for storage backends resource.
 const (
 	PermissionStorageBackendsRead   Permission = "storage_backends:read"
@@ -88,6 +93,7 @@ var allPermissions = []Permission{
 	PermissionIPSetsRead, PermissionIPSetsWrite, PermissionIPSetsDelete,
 	PermissionTemplatesRead, PermissionTemplatesWrite,
 	PermissionRDNSRead, PermissionRDNSWrite,
+	PermissionAuditLogsRead,
 	PermissionStorageBackendsRead, PermissionStorageBackendsWrite, PermissionStorageBackendsDelete,
 }
 
@@ -104,6 +110,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionIPSetsRead, PermissionIPSetsWrite,
 		PermissionTemplatesRead, PermissionTemplatesWrite,
 		PermissionRDNSRead, PermissionRDNSWrite,
+		PermissionAuditLogsRead,
 		PermissionStorageBackendsRead, PermissionStorageBackendsWrite,
 	},
 	RoleViewer: {
@@ -116,6 +123,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionIPSetsRead,
 		PermissionTemplatesRead,
 		PermissionRDNSRead,
+		PermissionAuditLogsRead,
 		PermissionStorageBackendsRead,
 	},
 }

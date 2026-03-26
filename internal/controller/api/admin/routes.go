@@ -249,7 +249,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 		}
 
 		// Audit logs - requires dedicated audit log permission (F-076)
-		protected.GET("/audit-logs", middleware.RequireAdminPermission(PermissionAuditLogsRead), handler.ListAuditLogs)
+		protected.GET("/audit-logs", middleware.RequireAdminPermission(models.PermissionAuditLogsRead), handler.ListAuditLogs)
 
 		// Settings
 		settings := protected.Group("/settings")

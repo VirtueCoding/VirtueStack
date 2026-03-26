@@ -13,11 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// PermissionAuditLogsRead is the dedicated permission for reading audit logs.
-// It is defined here because the models package does not yet include it;
-// all admin routes and handlers in this package should reference this constant.
-const PermissionAuditLogsRead models.Permission = "audit_logs:read"
-
 // PermissionInfo represents a permission with its description.
 type PermissionInfo struct {
 	Name        string `json:"name"`
@@ -49,7 +44,7 @@ var permissionDescriptions = map[models.Permission]string{
 	models.PermissionTemplatesWrite:  "Manage templates",
 	models.PermissionRDNSRead:        "View RDNS records",
 	models.PermissionRDNSWrite:       "Manage RDNS records",
-	PermissionAuditLogsRead: "View audit logs",
+	models.PermissionAuditLogsRead:   "View audit logs",
 }
 
 // UpdatePermissionsRequest holds the request body for updating admin permissions.
@@ -147,8 +142,7 @@ func (h *AdminHandler) UpdateAdminPermissions(c *gin.Context) {
 
 	// Guard against excessively large permission slices (F-087).
 	// The maximum number of valid permissions is the size of the known permission universe.
-	// +1 accounts for PermissionAuditLogsRead which is defined locally in this package.
-	if len(req.Permissions) > len(models.GetAllPermissions())+1 {
+	if len(req.Permissions) > len(models.GetAllPermissions()) {
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "too many permissions specified")
 		return
 	}
