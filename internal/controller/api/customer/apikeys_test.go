@@ -47,6 +47,8 @@ func testCustomerAPIKeyValidator(repo customerAPIKeyGetter) middleware.CustomerA
 			KeyID:       key.ID,
 			CustomerID:  key.CustomerID,
 			Permissions: key.Permissions,
+			AllowedIPs:  key.AllowedIPs,
+			VMIDs:       key.VMIDs,
 		}, nil
 	}
 }
@@ -71,12 +73,16 @@ func TestCustomerAPIKeyValidator(t *testing.T) {
 			key: &models.CustomerAPIKey{
 				ID:          "key-123",
 				CustomerID:  "customer-456",
+				AllowedIPs:  []string{"198.51.100.0/24"},
+				VMIDs:       []string{"vm-1", "vm-2"},
 				Permissions: []string{"vm:read", "vm:write"},
 				IsActive:    true,
 			},
 			wantInfo: middleware.CustomerAPIKeyInfo{
 				KeyID:       "key-123",
 				CustomerID:  "customer-456",
+				AllowedIPs:  []string{"198.51.100.0/24"},
+				VMIDs:       []string{"vm-1", "vm-2"},
 				Permissions: []string{"vm:read", "vm:write"},
 			},
 		},
@@ -181,6 +187,8 @@ func TestCustomerAPIKeyValidator(t *testing.T) {
 				assert.Equal(t, tt.wantInfo.KeyID, info.KeyID)
 				assert.Equal(t, tt.wantInfo.CustomerID, info.CustomerID)
 				assert.Equal(t, tt.wantInfo.Permissions, info.Permissions)
+				assert.Equal(t, tt.wantInfo.AllowedIPs, info.AllowedIPs)
+				assert.Equal(t, tt.wantInfo.VMIDs, info.VMIDs)
 			}
 		})
 	}

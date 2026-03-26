@@ -2304,7 +2304,11 @@ Create a new API key. **The raw key is only returned once.**
 |-------|------|----------|-------------|
 | `name` | string | Yes | Max 100 chars |
 | `permissions` | string[] | Yes | Min 1 permission |
+| `allowed_ips` | string[] | No | Max 50 IP/CIDR entries |
+| `vm_ids` | string[] | No | Max 100 VM UUIDs owned by the authenticated customer |
 | `expires_at` | string | No | RFC 3339 timestamp (must be in the future) |
+
+If `vm_ids` is omitted or empty, the key can access all of the customer's VMs. When provided, the key is restricted to the listed VMs only.
 
 **Valid permissions:**
 
@@ -2326,6 +2330,8 @@ Create a new API key. **The raw key is only returned once.**
     "id": "uuid",
     "name": "My API Key",
     "permissions": ["vm:read", "vm:power"],
+    "allowed_ips": ["203.0.113.10/32"],
+    "vm_ids": ["11111111-1111-1111-1111-111111111111"],
     "key": "vs_a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "is_active": true,
     "expires_at": "2027-03-15T00:00:00Z",

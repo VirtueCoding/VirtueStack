@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/audit"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,7 @@ type CreateAPIKeyRequest struct {
 	Name        string   `json:"name" validate:"required,max=100"`
 	Permissions []string `json:"permissions" validate:"required,min=1,dive,max=100"`
 	AllowedIPs  []string `json:"allowed_ips,omitempty" validate:"max=50,dive,ip|cidr"`
+	VMIDs       []string `json:"vm_ids,omitempty" validate:"max=100,dive,uuid"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"`
 }
 
@@ -37,6 +39,7 @@ type APIKeyResponse struct {
 	Name        string   `json:"name"`
 	Permissions []string `json:"permissions"`
 	AllowedIPs  []string `json:"allowed_ips,omitempty"`
+	VMIDs       []string `json:"vm_ids,omitempty"`
 	Key         string   `json:"key,omitempty"`
 	IsActive    bool     `json:"is_active"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"`
@@ -76,26 +79,7 @@ func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 
 	resp := make([]APIKeyResponse, len(keys))
 	for i, key := range keys {
-		var expiresAtStr *string
-		if key.ExpiresAt != nil {
-			s := key.ExpiresAt.Format(time.RFC3339)
-			expiresAtStr = &s
-		}
-		var lastUsedAtStr *string
-		if key.LastUsedAt != nil {
-			s := key.LastUsedAt.Format(time.RFC3339)
-			lastUsedAtStr = &s
-		}
-		resp[i] = APIKeyResponse{
-			ID:          key.ID,
-			Name:        key.Name,
-			Permissions: key.Permissions,
-			AllowedIPs:  key.AllowedIPs,
-			IsActive:    key.IsActive,
-			ExpiresAt:   expiresAtStr,
-			CreatedAt:   key.CreatedAt.Format(time.RFC3339),
-			LastUsedAt:  lastUsedAtStr,
-		}
+		resp[i] = buildAPIKeyResponse(&key, "")
 	}
 
 	// Meta is omitted: ListByCustomer returns all keys without pagination support.
@@ -141,6 +125,21 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		expiresAt = &parsed
 	}
 
+	vmIDs, err := h.validateScopedVMIDs(c.Request.Context(), customerID, req.VMIDs)
+	if err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		h.logger.Error("failed to validate API key VM scope",
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", correlationID)
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate API key scope")
+		return
+	}
+
 	keyID := uuid.New().String()
 	rawKey := "vs_" + uuid.New().String()
 	keyHash := h.hashAPIKey(rawKey)
@@ -152,6 +151,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		KeyHash:     keyHash,
 		Permissions: req.Permissions,
 		AllowedIPs:  req.AllowedIPs,
+		VMIDs:       vmIDs,
 		ExpiresAt:   expiresAt,
 	}
 
@@ -167,6 +167,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 	h.logAudit(c, "api_key.create", "api_key", keyID, map[string]any{
 		"name":        req.Name,
 		"permissions": req.Permissions,
+		"vm_ids":      vmIDs,
 	}, true)
 
 	h.logger.Info("API key created",
@@ -175,24 +176,7 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 		"name", req.Name,
 		"correlation_id", correlationID)
 
-	var expiresAtStr *string
-	if key.ExpiresAt != nil {
-		s := key.ExpiresAt.Format(time.RFC3339)
-		expiresAtStr = &s
-	}
-
-	resp := APIKeyResponse{
-		ID:          keyID,
-		Name:        req.Name,
-		Permissions: req.Permissions,
-		AllowedIPs:  req.AllowedIPs,
-		Key:         rawKey,
-		IsActive:    true,
-		ExpiresAt:   expiresAtStr,
-		CreatedAt:   key.CreatedAt.Format(time.RFC3339),
-	}
-
-	c.JSON(http.StatusCreated, models.Response{Data: resp})
+	c.JSON(http.StatusCreated, models.Response{Data: buildAPIKeyResponse(key, rawKey)})
 }
 
 // RotateAPIKey handles POST /api-keys/:id/rotate - rotates an existing API key.
@@ -253,24 +237,7 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", correlationID)
 
-	var expiresAtStr *string
-	if existingKey.ExpiresAt != nil {
-		s := existingKey.ExpiresAt.Format(time.RFC3339)
-		expiresAtStr = &s
-	}
-
-	resp := APIKeyResponse{
-		ID:          keyID,
-		Name:        existingKey.Name,
-		Permissions: existingKey.Permissions,
-		AllowedIPs:  existingKey.AllowedIPs,
-		Key:         newRawKey,
-		IsActive:    true,
-		ExpiresAt:   expiresAtStr,
-		CreatedAt:   existingKey.CreatedAt.Format(time.RFC3339),
-	}
-
-	c.JSON(http.StatusOK, models.Response{Data: resp})
+	c.JSON(http.StatusOK, models.Response{Data: buildAPIKeyResponse(existingKey, newRawKey)})
 }
 
 // DeleteAPIKey handles DELETE /api-keys/:id - revokes an API key.
@@ -332,6 +299,72 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 // F-207: The local thin wrapper has been consolidated here.
 func (h *CustomerHandler) hashAPIKey(rawKey string) string {
 	return crypto.GenerateHMACSignature(h.encryptionKey, []byte(rawKey))
+}
+
+func buildAPIKeyResponse(key *models.CustomerAPIKey, rawKey string) APIKeyResponse {
+	var expiresAtStr *string
+	if key.ExpiresAt != nil {
+		s := key.ExpiresAt.Format(time.RFC3339)
+		expiresAtStr = &s
+	}
+
+	var lastUsedAtStr *string
+	if key.LastUsedAt != nil {
+		s := key.LastUsedAt.Format(time.RFC3339)
+		lastUsedAtStr = &s
+	}
+
+	return APIKeyResponse{
+		ID:          key.ID,
+		Name:        key.Name,
+		Permissions: key.Permissions,
+		AllowedIPs:  key.AllowedIPs,
+		VMIDs:       key.VMIDs,
+		Key:         rawKey,
+		IsActive:    key.IsActive,
+		ExpiresAt:   expiresAtStr,
+		CreatedAt:   key.CreatedAt.Format(time.RFC3339),
+		LastUsedAt:  lastUsedAtStr,
+	}
+}
+
+func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID string, vmIDs []string) ([]string, error) {
+	if len(vmIDs) == 0 {
+		return nil, nil
+	}
+
+	normalized := dedupeStrings(vmIDs)
+	for _, vmID := range normalized {
+		if _, err := uuid.Parse(vmID); err != nil {
+			return nil, sharederrors.NewAPIError("INVALID_VM_SCOPE", "VM scope must contain valid VM IDs from your account", http.StatusBadRequest)
+		}
+
+		vm, err := h.vmRepo.GetByID(ctx, vmID)
+		if err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNotFound) {
+				return nil, sharederrors.NewAPIError("INVALID_VM_SCOPE", "VM scope must contain valid VM IDs from your account", http.StatusBadRequest)
+			}
+			return nil, fmt.Errorf("getting VM %s for api key scope: %w", vmID, err)
+		}
+		if vm.CustomerID != customerID {
+			return nil, sharederrors.NewAPIError("INVALID_VM_SCOPE", "VM scope must contain valid VM IDs from your account", http.StatusBadRequest)
+		}
+	}
+
+	return normalized, nil
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 // logAudit creates an audit log entry for customer operations.

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,15 +19,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { settingsApi, ApiKey } from "@/lib/api-client";
+import { settingsApi, ApiKey, VM } from "@/lib/api-client";
 import { useMutationToast } from "@/lib/utils/toast-helpers";
-import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check, Globe } from "lucide-react";
+import { Key, Calendar, Loader2, Trash2, RefreshCw, Plus, Copy, Check, Globe, Server } from "lucide-react";
 
 const apiKeySchema = z.object({
   name: z.string().min(1, "Name is required"),
   permissions: z.array(z.string()).min(1, "At least one permission is required"),
   allowed_ips: z.string().optional(),
+  restrict_vm_scope: z.boolean(),
+  vm_ids: z.array(z.string()),
   expires_at: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.restrict_vm_scope && data.vm_ids.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["vm_ids"],
+      message: "Select at least one VM to scope this key",
+    });
+  }
 });
 
 type ApiKeyFormData = z.infer<typeof apiKeySchema>;
@@ -42,12 +52,41 @@ const AVAILABLE_PERMISSIONS = [
   { value: "snapshot:write", label: "snapshot:write — create, restore, and remove snapshots" },
 ];
 
+const MAX_VM_NAMES_TO_DISPLAY = 2;
+
 interface ApiKeysTabProps {
   apiKeys: ApiKey[] | null | undefined;
+  vms: VM[] | null | undefined;
   isLoading: boolean;
+  isVMsLoading: boolean;
 }
 
-export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
+function formatVMLabel(vm: VM) {
+  return vm.name || vm.hostname;
+}
+
+function describeVMScope(vmIDs: string[] | undefined, vms: VM[] | null | undefined) {
+  if (!vmIDs || vmIDs.length === 0) {
+    return "All VMs";
+  }
+
+  const names = vmIDs
+    .map((vmID) => vms?.find((vm) => vm.id === vmID))
+    .filter((vm): vm is VM => Boolean(vm))
+    .map(formatVMLabel);
+
+  if (
+    names.length === vmIDs.length &&
+    names.length > 0 &&
+    names.length <= MAX_VM_NAMES_TO_DISPLAY
+  ) {
+    return names.join(", ");
+  }
+
+  return `${vmIDs.length} selected VM${vmIDs.length === 1 ? "" : "s"}`;
+}
+
+export function ApiKeysTab({ apiKeys, vms, isLoading, isVMsLoading }: ApiKeysTabProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { createMutationOnError } = useMutationToast();
@@ -68,6 +107,8 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       name: "",
       permissions: [],
       allowed_ips: "",
+      restrict_vm_scope: false,
+      vm_ids: [],
       expires_at: "",
     },
   });
@@ -118,16 +159,16 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
   const deleteApiKeyMutation = useMutation({
     mutationFn: settingsApi.deleteApiKey,
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-        setDeleteKeyDialogOpen(false);
-        setSelectedKeyId(null);
-        toast({
-          title: "Success",
-          description: "API key revoked successfully",
-        });
-      },
-      onError: createMutationOnError("Failed to delete API key"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setDeleteKeyDialogOpen(false);
+      setSelectedKeyId(null);
+      toast({
+        title: "Success",
+        description: "API key revoked successfully",
+      });
+    },
+    onError: createMutationOnError("Failed to delete API key"),
   });
 
   const handleCopy = async (text: string, id: string) => {
@@ -158,8 +199,27 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
       name: data.name,
       permissions: data.permissions,
       allowed_ips: allowedIps,
+      vm_ids: data.restrict_vm_scope ? data.vm_ids : undefined,
       expires_at: data.expires_at ? new Date(data.expires_at).toISOString() : undefined,
     });
+  };
+
+  const restrictVMScope = useWatch({ control: apiKeyForm.control, name: "restrict_vm_scope" });
+  const selectedVMIDs = useWatch({ control: apiKeyForm.control, name: "vm_ids" }) || [];
+
+  const handleRestrictVMScopeChange = (checked: boolean) => {
+    apiKeyForm.setValue("restrict_vm_scope", checked, { shouldValidate: true });
+    if (!checked) {
+      apiKeyForm.setValue("vm_ids", [], { shouldValidate: true });
+    }
+  };
+
+  const handleScopedVMToggle = (vmID: string, checked: boolean) => {
+    const currentVMIDs = apiKeyForm.getValues("vm_ids");
+    const nextVMIDs = checked
+      ? [...currentVMIDs, vmID]
+      : currentVMIDs.filter((currentID) => currentID !== vmID);
+    apiKeyForm.setValue("vm_ids", nextVMIDs, { shouldValidate: true });
   };
 
   const handleRotateKey = (keyId: string) => {
@@ -238,7 +298,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                         <Badge variant="secondary">Expired</Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
                         Created: {new Date(apiKey.created_at).toLocaleDateString()}
@@ -253,6 +313,10 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
                           IPs: {apiKey.allowed_ips.length} whitelisted
                         </div>
                       )}
+                      <div className="flex items-center gap-1">
+                        <Server className="h-3 w-3" />
+                        Scope: {describeVMScope(apiKey.vm_ids, vms)}
+                      </div>
                       {apiKey.expires_at && (
                         <div className="flex items-center gap-1">
                           <Calendar className="h-3 w-3" />
@@ -309,7 +373,7 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
 
       {/* API Key Dialog */}
       <Dialog open={apiKeyDialogOpen} onOpenChange={setApiKeyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
@@ -362,6 +426,65 @@ export function ApiKeysTab({ apiKeys, isLoading }: ApiKeysTabProps) {
               <p className="text-xs text-muted-foreground">
                 One IP address or CIDR range per line. Leave empty to allow all IPs.
               </p>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Server className="h-4 w-4" />
+                VM Scope (Optional)
+              </Label>
+              <div className="space-y-3 rounded-md border p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={restrictVMScope}
+                    onChange={(event) => handleRestrictVMScopeChange(event.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Restrict this key to selected VMs only
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Leave this disabled to allow the key to access every VM on your account.
+                </p>
+                {restrictVMScope && (
+                  <div className="space-y-2">
+                    {isVMsLoading ? (
+                      <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading your VMs…
+                      </div>
+                    ) : !vms || vms.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                        No VMs are available to scope yet.
+                      </div>
+                    ) : (
+                      <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-2">
+                        {vms.map((vm) => (
+                          <label
+                            key={vm.id}
+                            className="flex items-start gap-2 rounded-md p-2 text-sm hover:bg-muted/50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedVMIDs.includes(vm.id)}
+                              onChange={(event) => handleScopedVMToggle(vm.id, event.target.checked)}
+                              className="mt-0.5 rounded border-gray-300"
+                            />
+                            <span className="space-y-1">
+                              <span className="block font-medium">{formatVMLabel(vm)}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {vm.hostname}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {apiKeyForm.formState.errors.vm_ids && (
+                      <p className="text-sm text-destructive">{apiKeyForm.formState.errors.vm_ids.message}</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="expires-at">Expiration (Optional)</Label>
