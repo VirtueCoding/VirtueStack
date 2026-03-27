@@ -100,6 +100,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 		vms.POST("/:id/password/reset", handler.ResetPassword)
 		vms.POST("/:id/power", handler.PowerOperation)
 		vms.GET("/:id/status", handler.GetStatus)
+		vms.GET("/:id/usage", handler.GetVMUsage)
 		vms.GET("/:id/rdns", handler.GetVMRDNS)
 		vms.PUT("/:id/rdns", handler.SetVMRDNS)
 	}
@@ -138,6 +139,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 //	POST   /vms/:id/password/reset - Reset root password
 //	POST   /vms/:id/power          - Power operations (start/stop/restart)
 //	GET    /vms/:id/status         - Get VM status
+//	GET    /vms/:id/usage          - Get VM resource usage (bandwidth, disk)
 //	GET    /tasks/:id              - Get task status
 //	POST   /sso-tokens             - Create SSO token
 //	POST   /customers              - Create or get customer by email

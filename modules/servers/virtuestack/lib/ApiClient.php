@@ -361,6 +361,26 @@ final class ApiClient
     }
 
     /**
+     * Get actual resource usage for a VM.
+     *
+     * Returns bandwidth consumed this month and disk usage for metered billing.
+     *
+     * @param string $vmId VM UUID
+     *
+     * @return array{vm_id: string, bandwidth_used_gb: float, bandwidth_limit_gb: int, disk_used_gb: int, disk_limit_gb: int}
+     *
+     * @throws RuntimeException On API error
+     */
+    public function getVMUsage(string $vmId): array
+    {
+        $this->validateUuid($vmId, 'VM ID');
+
+        $response = $this->request('GET', "/provisioning/vms/{$vmId}/usage");
+
+        return $response['data'] ?? [];
+    }
+
+    /**
      * Get VM by WHMCS service ID.
      *
      * @param int $serviceId WHMCS service ID

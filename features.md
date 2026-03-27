@@ -1,6 +1,6 @@
 # VirtueStack — Critical Gap Implementation Plan
 
-> **Status:** PARTIAL — Gap #4 implemented; others remain as plans  
+> **Status:** PARTIAL — Gaps #1, #2, #4, #5 implemented; #3 deferred (not needed for WHMCS-only)  
 > **Date:** 2026-03-27  
 > **Scope:** Critical gaps only — features without which VirtueStack cannot operate as a production VPS hosting business.
 
@@ -151,7 +151,7 @@ The random password is generated because WHMCS manages customer authentication v
 
 ---
 
-## 5. WHMCS Usage Metering
+## 5. WHMCS Usage Metering ✅ IMPLEMENTED
 
 ### What `virtuestack_UsageUpdate()` Does Today
 
@@ -167,15 +167,16 @@ The `virtuestack_UsageUpdate()` function in `modules/servers/virtuestack/virtues
 
 **Problem:** It returns what the plan *allocates*, not what the VM actually *uses*. WHMCS expects fields like `diskusage` (actual GB used) and `bwusage` (actual bandwidth consumed this month) to enable metered billing and overage charges. Without actual usage data, only fixed-price plans work.
 
-### Implementation Plan
+### Implementation
 
-| Step | Work |
-|------|------|
-| **Provisioning API** | Add `GET /provisioning/vms/:id/usage` returning actual bandwidth, disk, CPU usage |
-| **WHMCS module** | Update `UsageUpdate()` to fetch real metrics and report to WHMCS |
-| **Bandwidth** | `BandwidthService.GetMonthlyUsage()` already tracks this — expose via provisioning API |
-| **Disk** | Query node agent for actual disk usage (not just allocated size) |
-| **Response format** | Match WHMCS `UsageUpdate` expected fields: `diskusage`, `disklimit`, `bwusage`, `bwlimit` |
+| Component | File | What |
+|-----------|------|------|
+| **Handler** | `internal/controller/api/provisioning/usage.go` | `GetVMUsage` — returns bandwidth used (GB), bandwidth limit, disk allocated/limit |
+| **Route** | `internal/controller/api/provisioning/routes.go` | `GET /provisioning/vms/:id/usage` |
+| **Wiring** | `internal/controller/server.go` | `BandwidthService` created and passed to provisioning handler |
+| **API client** | `modules/servers/virtuestack/lib/ApiClient.php` | `getVMUsage()` → `GET /provisioning/vms/{id}/usage` |
+| **WHMCS module** | `modules/servers/virtuestack/virtuestack.php` | `UsageUpdate()` now returns `diskusage`, `disklimit`, `bwusage`, `bwlimit` |
+| **Tests** | `internal/controller/api/provisioning/usage_test.go` | Validation, response format, bytes-to-GB conversion |
 
 **Estimated scope:** ~100 lines Go + ~40 lines PHP
 
@@ -185,11 +186,11 @@ The `virtuestack_UsageUpdate()` function in `modules/servers/virtuestack/virtues
 
 | # | Gap | Severity | Scope | Dependencies |
 |---|-----|----------|-------|--------------|
-| 1 | Unify Backup/Snapshot | HIGH | Large (1–2 weeks) | Migration, all layers |
-| 2 | Customer Password Reset | CRITICAL | Small (1–2 days) | Email infra (exists) |
+| 1 | ~~Unify Backup/Snapshot~~ | ✅ DONE | — | Merged into single Backup model with `method` field |
+| 2 | ~~Customer Password Reset~~ | ✅ DONE | — | `POST /auth/forgot-password` + `POST /auth/reset-password` |
 | 3 | Customer Self-Registration | LOW | Medium (3–5 days) | Email verification, migration (not needed for WHMCS-only) |
 | 4 | ~~WHMCS Customer Auto-Provisioning~~ | ✅ DONE | — | `POST /provisioning/customers` implemented |
-| 5 | WHMCS Usage Metering | HIGH | Small (1–2 days) | Bandwidth service (exists) |
+| 5 | ~~WHMCS Usage Metering~~ | ✅ DONE | — | `GET /provisioning/vms/:id/usage` + updated `UsageUpdate()` |
 
 **Recommended execution order:** 2 → 5 → 1 (→ 3 only if self-registration is needed)
 
