@@ -10,6 +10,8 @@
 
 **Recommendation: Build as an integrated module within the existing VirtueStack codebase** — not a separate project, and not a loosely-coupled microservice. The current modular-monolith architecture (single Go controller, shared PostgreSQL, NATS task queue) is a natural fit. Payment gateway integrations (Stripe, PayPal, Crypto) should be abstracted behind a Go interface so they can be swapped or extended without touching billing logic.
 
+**Default mode is `whmcs`** — self-billing is **disabled by default**. When disabled, all billing API endpoints return `403 BILLING_DISABLED`, the customer WebUI hides all billing pages/navigation, and the admin billing settings page shows "Self-billing is disabled. Billing is managed by WHMCS." An admin must explicitly set `BILLING_MODE=self` (or `hybrid`) to activate the built-in billing system.
+
 ---
 
 ## 1. Current Architecture Assessment
@@ -105,6 +107,8 @@ internal/controller/
 │   ├── invoice_service.go      # Invoice generation, PDF rendering
 │   └── payment_service.go      # Gateway abstraction, webhook processing
 ├── api/
+│   ├── middleware/
+│   │   └── billing.go          # RequireSelfBilling() — returns 403 when BILLING_MODE=whmcs
 │   ├── customer/
 │   │   ├── billing.go          # GET /credits, GET /transactions, GET /invoices
 │   │   └── payment_methods.go  # CRUD payment methods (Stripe tokens, not raw cards)
@@ -114,14 +118,32 @@ internal/controller/
 │   └── provisioning/
 │       └── billing.go          # Usage reporting for WHMCS sync
 ├── tasks/
-│   ├── billing_hourly.go       # Hourly credit deduction task
+│   ├── billing_hourly.go       # Hourly credit deduction task (only runs when billing enabled)
 │   ├── billing_invoice.go      # Monthly invoice generation task
 │   └── billing_webhook.go      # Payment gateway webhook processing
 └── payment/                    # NEW: Payment gateway abstractions
     ├── gateway.go              # PaymentGateway interface
-    ├── stripe.go               # Stripe implementation
-    ├── paypal.go               # PayPal implementation
+    ├── stripe.go               # Stripe v85 implementation (PaymentIntents + Checkout Sessions)
+    ├── paypal.go               # PayPal Orders v2 implementation
     └── crypto.go               # Crypto payment implementation (BTCPay/NOWPayments/etc.)
+```
+
+**Route registration (billing routes guarded by mode check):**
+
+```go
+// internal/controller/api/customer/routes.go
+// All billing routes are wrapped with RequireSelfBilling middleware
+if billingMode != "whmcs" {
+    billing := customerGroup.Group("/billing")
+    billing.Use(middleware.RequireSelfBilling(billingMode))
+    {
+        billing.GET("/credits", h.GetCredits)
+        billing.GET("/transactions", h.ListTransactions)
+        billing.POST("/topup", h.CreateTopUp)
+        // ...
+    }
+}
+// When BILLING_MODE=whmcs, these routes are never registered — 404 Not Found
 ```
 
 ### 3.2 Payment Gateway Interface
@@ -130,15 +152,25 @@ internal/controller/
 // internal/controller/payment/gateway.go
 type PaymentGateway interface {
     // CreateCustomer creates a customer record in the payment provider
+    // Maps VirtueStack customer → Stripe cus_xxx / PayPal merchant_customer_id
     CreateCustomer(ctx context.Context, customer CustomerInfo) (providerID string, err error)
 
-    // CreatePaymentIntent initiates a payment (returns client secret for frontend)
+    // CreatePaymentIntent initiates a payment
+    // Stripe: creates PaymentIntent, returns client_secret for Payment Element
+    // PayPal: creates Order via Orders v2, returns order_id for PayPal Buttons
     CreatePaymentIntent(ctx context.Context, req PaymentRequest) (*PaymentIntent, error)
+
+    // CapturePayment finalizes the payment after customer approval
+    // Stripe: handled automatically via webhook (payment_intent.succeeded)
+    // PayPal: captures order via POST /v2/checkout/orders/{id}/capture
+    CapturePayment(ctx context.Context, providerRef string) (*PaymentResult, error)
 
     // GetPaymentStatus checks payment status by provider reference
     GetPaymentStatus(ctx context.Context, providerRef string) (*PaymentStatus, error)
 
-    // ProcessWebhook validates and parses incoming webhook from provider
+    // ProcessWebhook validates signature and parses incoming webhook from provider
+    // Stripe: verifies stripe-signature header using webhook.ConstructEvent()
+    // PayPal: verifies via POST /v1/notifications/verify-webhook-signature
     ProcessWebhook(ctx context.Context, headers map[string]string, body []byte) (*WebhookEvent, error)
 
     // Refund issues a full or partial refund
@@ -149,7 +181,7 @@ type PaymentGateway interface {
 }
 ```
 
-This interface allows adding new payment providers without touching billing logic.
+This interface allows adding new payment providers without touching billing logic. Each gateway implementation is only instantiated when `BILLING_MODE != "whmcs"` and the gateway's credentials are configured.
 
 ### 3.3 Database Schema (New Tables)
 
@@ -231,16 +263,19 @@ ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
 
 ### 3.4 Customer WebUI Changes
 
+> **All billing UI is conditionally rendered.** When `BILLING_MODE=whmcs` (default), none of the billing pages, components, or navigation items are visible. The WebUI checks a server-provided feature flag (`billing_enabled`) from `GET /customer/config`.
+
 ```
 webui/customer/
 ├── app/
 │   └── billing/
-│       ├── layout.tsx              # RequireAuth wrapper
+│       ├── layout.tsx              # RequireAuth + RequireBillingEnabled wrapper
 │       ├── page.tsx                # Dashboard: credit balance, recent transactions, active VMs cost
 │       ├── transactions/page.tsx   # Full transaction history with filters
 │       ├── invoices/page.tsx       # Invoice list
 │       ├── invoices/[id]/page.tsx  # Invoice detail + PDF download
-│       ├── topup/page.tsx          # Add credits (Stripe Elements / PayPal button / Crypto QR)
+│       ├── topup/page.tsx          # Add credits (Stripe Payment Element / PayPal Buttons / Crypto QR)
+│       ├── topup/complete/page.tsx # Post-payment redirect page (Stripe return_url target)
 │       └── payment-methods/page.tsx # Manage saved payment methods
 ├── components/
 │   └── billing/
@@ -248,18 +283,36 @@ webui/customer/
 │       ├── TransactionTable.tsx    # Transaction list with pagination
 │       ├── InvoiceTable.tsx        # Invoice list
 │       ├── TopupForm.tsx           # Credit top-up form with gateway selection
-│       ├── StripePayment.tsx       # Stripe Elements integration
-│       ├── PayPalPayment.tsx       # PayPal button integration
+│       ├── StripePayment.tsx       # Stripe Payment Element integration (@stripe/react-stripe-js)
+│       ├── PayPalPayment.tsx       # PayPal Buttons integration (@paypal/react-paypal-js)
 │       └── CryptoPayment.tsx       # Crypto payment flow (QR code, address, status polling)
 ├── lib/
 │   ├── api-client.ts              # Add billingApi module (follows existing pattern)
-│   └── nav-items.ts               # Add billing nav entry
+│   └── nav-items.ts               # Conditionally add billing nav entry based on config
 ```
 
-**New npm dependencies needed:**
-- `@stripe/stripe-js` + `@stripe/react-stripe-js` — Stripe Elements (PCI-compliant tokenization)
-- `@paypal/react-paypal-js` — PayPal button SDK
+**New npm dependencies (only loaded when billing is enabled):**
+- `@stripe/stripe-js` + `@stripe/react-stripe-js` — Stripe Payment Element (PCI-compliant tokenization)
+- `@paypal/react-paypal-js` — PayPal Buttons SDK
 - No crypto SDK needed client-side (QR code + status polling via backend API)
+
+**Billing-disabled behavior (default):**
+```typescript
+// /app/billing/layout.tsx
+export default function BillingLayout({ children }: { children: React.ReactNode }) {
+  const { config } = useAppConfig();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!config.billing_enabled) {
+      router.replace("/vms"); // Redirect away from billing pages
+    }
+  }, [config.billing_enabled, router]);
+
+  if (!config.billing_enabled) return null;
+  return <RequireAuth>{children}</RequireAuth>;
+}
+```
 
 ### 3.5 Admin WebUI Changes
 
@@ -299,7 +352,7 @@ webui/admin/
                     └───────────────────────┘
 ```
 
-### 3.7 Payment Processing Flow (Stripe Example)
+### 3.7 Payment Processing Flow (Stripe Payment Element)
 
 ```
 Customer WebUI                    Controller API                     Stripe
@@ -307,17 +360,27 @@ Customer WebUI                    Controller API                     Stripe
      │ POST /customer/billing/topup    │                               │
      │ {amount: 5000, gateway: stripe} │                               │
      │ ──────────────────────────────► │                               │
-     │                                 │ stripe.PaymentIntents.Create  │
+     │                                 │ sc.V1PaymentIntents.Create()  │
+     │                                 │ (stripe-go/v85)               │
      │                                 │ ─────────────────────────────►│
-     │                                 │ ◄─ client_secret              │
-     │ ◄── {client_secret: pi_xxx}     │                               │
+     │                                 │ ◄─ client_secret: pi_xxx     │
+     │ ◄── {client_secret: "pi_xxx.."}│                               │
      │                                 │                               │
-     │ stripe.confirmPayment(secret)   │                               │
+     │ <PaymentElement /> renders      │                               │
+     │ stripe.confirmPayment({        │                               │
+     │   elements,                    │                               │
+     │   confirmParams: {             │                               │
+     │     return_url: ".../complete" │                               │
+     │   }                            │                               │
+     │ })                             │                               │
      │ ────────────────────────────────┼──────────────────────────────►│
      │                                 │                               │
      │                                 │ POST /webhooks/stripe         │
+     │                                 │ (Stripe-Signature header)     │
      │                                 │ ◄─────────────────────────────│
-     │                                 │ (payment_intent.succeeded)    │
+     │                                 │ webhook.ConstructEvent() ✓    │
+     │                                 │ event: payment_intent.        │
+     │                                 │        succeeded              │
      │                                 │                               │
      │                                 │ → Add credits to balance      │
      │                                 │ → Record transaction          │
@@ -331,38 +394,419 @@ Customer WebUI                    Controller API                     Stripe
 
 ## 4. WHMCS Coexistence Strategy
 
-VirtueStack currently supports WHMCS for billing. The new built-in billing system must coexist:
+VirtueStack currently supports WHMCS for billing. **WHMCS mode is the default; self-billing is disabled out of the box.** The built-in billing system must be explicitly enabled by an administrator.
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **WHMCS-managed** | WHMCS handles all billing. VirtueStack credit system disabled. `UsageUpdate()` reports hourly costs to WHMCS. | Existing WHMCS customers |
-| **Self-managed** | Built-in billing handles credits, payments, invoices. No WHMCS dependency. | Standalone VirtueStack deployments |
-| **Hybrid** | WHMCS creates VMs; VirtueStack tracks hourly credits and reports back to WHMCS via `UsageUpdate()`. | Gradual migration |
+### 4.1 Billing Modes
 
-**Configuration:** `BILLING_MODE` env var: `whmcs` (default, current behavior), `self`, or `hybrid`.
+| Mode | Default | Description | Use Case |
+|------|---------|-------------|----------|
+| **`whmcs`** | ✅ Yes | WHMCS handles all billing. Self-billing disabled. All billing endpoints return `403 BILLING_DISABLED`. Customer WebUI billing section hidden. `UsageUpdate()` reports hourly costs to WHMCS. | Existing WHMCS customers (majority of deployments) |
+| **`self`** | No | Built-in billing handles credits, payments, invoices. No WHMCS dependency. All billing endpoints active. Customer WebUI billing section visible. | Standalone VirtueStack deployments without WHMCS |
+| **`hybrid`** | No | WHMCS creates VMs; VirtueStack tracks hourly credits and reports back to WHMCS via `UsageUpdate()`. Billing endpoints active for credit top-up only. | Gradual migration from WHMCS |
+
+**Configuration:** `BILLING_MODE` env var — defaults to `whmcs` (current behavior, self-billing completely disabled).
+
+### 4.2 Self-Billing Disabled Behavior (Default: `BILLING_MODE=whmcs`)
+
+When self-billing is disabled, the system enforces the following restrictions at every layer:
+
+#### Backend (Controller API)
+
+All billing-related endpoints are guarded by a `RequireSelfBilling()` middleware that checks `BILLING_MODE`:
+
+```go
+// internal/controller/api/middleware/billing.go
+func RequireSelfBilling(billingMode string) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        if billingMode == "whmcs" {
+            middleware.RespondWithError(c, http.StatusForbidden,
+                "BILLING_DISABLED",
+                "Self-billing is disabled. Billing is managed by WHMCS.")
+            return
+        }
+        c.Next()
+    }
+}
+```
+
+**Affected endpoints (all return `403 BILLING_DISABLED` when `BILLING_MODE=whmcs`):**
+
+| Tier | Endpoints | Behavior |
+|------|-----------|----------|
+| Customer API | `GET /customer/billing/*` | 403 Forbidden |
+| Customer API | `POST /customer/billing/*` | 403 Forbidden |
+| Customer API | `GET /customer/payment-methods/*` | 403 Forbidden |
+| Customer API | `POST /customer/payment-methods/*` | 403 Forbidden |
+| Admin API | `GET /admin/billing/*` | 403 Forbidden |
+| Admin API | `POST /admin/billing/*` | 403 Forbidden |
+| Webhook endpoints | `POST /webhooks/stripe`, `POST /webhooks/paypal`, `POST /webhooks/crypto` | 403 Forbidden |
+
+**Unaffected endpoints (always active regardless of mode):**
+
+| Tier | Endpoints | Reason |
+|------|-----------|--------|
+| Admin API | `GET/POST/PUT/DELETE /admin/plans` | Plan pricing fields are informational (used by WHMCS) |
+| Provisioning API | `GET /provisioning/plans` | WHMCS reads plan pricing |
+| Provisioning API | All VM lifecycle endpoints | WHMCS provisions VMs |
+
+#### Customer WebUI
+
+The billing navigation item and all billing pages are **conditionally rendered** based on a server-provided feature flag:
+
+```typescript
+// Customer WebUI checks billing mode via /customer/profile or a dedicated config endpoint
+// GET /customer/config returns { billing_enabled: false } when BILLING_MODE=whmcs
+
+// In nav-items.ts — billing nav item only shown when billing_enabled=true
+export function getNavItems(config: AppConfig) {
+  const items = [
+    { href: "/vms", label: "My VMs", icon: Monitor },
+    { href: "/settings", label: "Settings", icon: Settings },
+  ];
+  if (config.billing_enabled) {
+    items.splice(1, 0, { href: "/billing", label: "Billing", icon: CreditCard });
+  }
+  return items;
+}
+
+// In billing pages — redirect to /vms if billing is disabled
+// /app/billing/layout.tsx checks config.billing_enabled, redirects if false
+```
+
+**When `BILLING_MODE=whmcs`:**
+- ❌ No "Billing" item in sidebar navigation
+- ❌ `/billing/*` routes redirect to `/vms`
+- ❌ No credit balance widget in header/sidebar
+- ❌ No payment method management
+- ✅ VMs page, Settings page, Console — all work normally
+
+#### Admin WebUI
+
+The admin billing management pages are similarly hidden:
+
+- ❌ No "Billing" section in admin sidebar
+- ❌ `/billing/*` admin routes show "Self-billing is disabled" message
+- ✅ Plan management (including pricing fields) remains visible — pricing is informational for WHMCS
+- ✅ Admin can change `BILLING_MODE` via Settings page to enable self-billing
+
+### 4.3 Enabling Self-Billing
+
+To activate self-billing, an administrator must:
+
+1. Set `BILLING_MODE=self` (or `hybrid`) in environment variables or via Admin Settings API
+2. Configure at least one payment gateway (Stripe/PayPal/Crypto credentials)
+3. Restart the controller (or apply settings via hot-reload if supported)
+
+The billing database tables are always created by migrations regardless of mode — they just sit empty when billing is disabled. This avoids migration ordering issues when switching modes.
 
 ---
 
-## 5. Payment Gateway Considerations
+## 5. Payment Gateway Integration Details (Latest Documentation, March 2026)
 
-### Stripe
-- **PCI compliance:** Use Stripe Elements (client-side tokenization) — card numbers never touch VirtueStack servers
-- **Webhooks:** `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`
-- **Recurring:** Optional Stripe Subscriptions for monthly plans (or handle in VirtueStack)
-- **Go SDK:** `github.com/stripe/stripe-go/v82`
+> **Note:** All payment gateways are only active when `BILLING_MODE=self` or `BILLING_MODE=hybrid`. When `BILLING_MODE=whmcs` (default), gateway code is never invoked and webhook endpoints return `403`.
 
-### PayPal
-- **Integration:** PayPal JavaScript SDK (client-side) + REST API (server-side)
-- **Webhooks:** `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`
-- **Go SDK:** `github.com/plutov/paypal/v4` or direct REST API calls
-- **Consideration:** PayPal disputes/chargebacks need handling (auto-suspend VM)
+### 5.1 Stripe Integration
 
-### Crypto
-- **Self-hosted:** BTCPay Server (full control, no KYC, supports BTC/LTC/XMR)
-- **Third-party:** NOWPayments, CoinGate, or Coinbase Commerce
+**Documentation:** https://docs.stripe.com/api (API version `2026-03-25.dahlia`)
+
+#### Go SDK — `github.com/stripe/stripe-go/v85`
+
+The official Stripe Go SDK v85 uses the new `stripe.Client` pattern (introduced in v82.1). The legacy `client.API` and package-level functions are deprecated.
+
+```go
+import "github.com/stripe/stripe-go/v85"
+
+// Initialize client (NEVER use global stripe.Key — use per-request client)
+sc := stripe.NewClient(os.Getenv("STRIPE_SECRET_KEY"))
+
+// Create PaymentIntent for credit top-up
+params := &stripe.PaymentIntentCreateParams{
+    Amount:   stripe.Int64(5000), // $50.00 in cents
+    Currency: stripe.String("usd"),
+    AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+        Enabled: stripe.Bool(true),
+    },
+    Metadata: map[string]string{
+        "customer_id": customerID,
+        "topup_id":    topupID,
+    },
+}
+// For saving payment method for future off-session charges:
+// params.SetupFutureUsage = stripe.String("off_session")
+
+pi, err := sc.V1PaymentIntents.Create(ctx, params)
+// Return pi.ClientSecret to frontend
+```
+
+#### Frontend — Stripe Payment Element (recommended over Card Element)
+
+Stripe recommends the **Payment Element** (not the legacy Card Element) for all new integrations. Payment Element supports 100+ payment methods, Apple Pay, Google Pay, Link, and auto-handles 3D Secure / SCA.
+
+**NPM packages:**
+- `@stripe/stripe-js` — Stripe.js loader
+- `@stripe/react-stripe-js` — React bindings for Stripe Elements
+
+```tsx
+// webui/customer/components/billing/StripePayment.tsx
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+
+function CheckoutForm({ clientSecret }: { clientSecret: string }) {
+  const stripe = useStripe();
+  const elements = useElements();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/billing/topup/complete`,
+      },
+    });
+    if (error) { /* handle error */ }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <PaymentElement />
+      <button type="submit" disabled={!stripe}>Pay</button>
+    </form>
+  );
+}
+
+// Wrap in Elements provider with clientSecret from server
+<Elements stripe={stripePromise} options={{ clientSecret }}>
+  <CheckoutForm clientSecret={clientSecret} />
+</Elements>
+```
+
+**Alternative — Stripe Checkout Sessions (redirect-based, even lower effort):**
+For simpler integrations, Stripe Checkout Sessions redirect the customer to a Stripe-hosted payment page. This avoids embedding any payment UI in the customer portal:
+
+```go
+// Server-side: create Checkout Session
+params := &stripe.CheckoutSessionCreateParams{
+    LineItems: []*stripe.CheckoutSessionLineItemParams{{
+        PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+            Currency:    stripe.String("usd"),
+            UnitAmount:  stripe.Int64(5000), // $50.00
+            ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+                Name: stripe.String("VirtueStack Credit Top-Up"),
+            },
+        },
+        Quantity: stripe.Int64(1),
+    }},
+    Mode:       stripe.String("payment"),
+    SuccessURL: stripe.String("https://portal.example.com/billing?topup=success"),
+}
+session, err := sc.V1CheckoutSessions.Create(ctx, params)
+// Redirect customer to session.URL
+```
+
+#### Webhook Handling
+
+**Key events to subscribe to:**
+
+| Event | Trigger | Action |
+|-------|---------|--------|
+| `payment_intent.succeeded` | Payment confirmed | Credit customer balance, record transaction |
+| `payment_intent.payment_failed` | Payment declined/failed | Notify customer, log failure |
+| `charge.refunded` | Refund processed | Deduct from customer balance, record transaction |
+| `charge.dispute.created` | Chargeback initiated | Auto-suspend VMs, notify admin, record transaction |
+| `checkout.session.completed` | Checkout Session payment done | Credit customer (if using Checkout Sessions) |
+| `checkout.session.async_payment_succeeded` | Delayed payment method (ACH) succeeded | Credit customer |
+| `checkout.session.async_payment_failed` | Delayed payment method failed | Notify customer |
+
+**Webhook signature verification (required for security):**
+
+```go
+import "github.com/stripe/stripe-go/v85/webhook"
+
+func handleStripeWebhook(c *gin.Context) {
+    payload, _ := io.ReadAll(c.Request.Body)
+    sigHeader := c.GetHeader("Stripe-Signature")
+    endpointSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+
+    event, err := webhook.ConstructEvent(payload, sigHeader, endpointSecret)
+    if err != nil {
+        middleware.RespondWithError(c, http.StatusBadRequest,
+            "WEBHOOK_SIGNATURE_INVALID", "Invalid webhook signature")
+        return
+    }
+
+    switch event.Type {
+    case "payment_intent.succeeded":
+        // Credit customer balance
+    case "charge.dispute.created":
+        // Auto-suspend VMs, notify admin
+    }
+    c.JSON(http.StatusOK, gin.H{"received": true})
+}
+```
+
+### 5.2 PayPal Integration
+
+**Documentation:** https://developer.paypal.com/docs/api/orders/v2/, https://developer.paypal.com/docs/checkout/
+
+#### Go SDK — `github.com/plutov/paypal/v4`
+
+Community-maintained Go client for PayPal REST APIs. Supports Orders v2, Webhooks, Vault, Payouts, and Invoicing.
+
+```go
+import "github.com/plutov/paypal/v4"
+
+// Initialize client
+c, err := paypal.NewClient(
+    os.Getenv("PAYPAL_CLIENT_ID"),
+    os.Getenv("PAYPAL_CLIENT_SECRET"),
+    paypal.APIBaseLive, // or paypal.APIBaseSandBox for testing
+)
+
+// Create Order (server-side, called when customer clicks PayPal button)
+order, err := c.CreateOrder(ctx, paypal.OrderIntentCapture,
+    []paypal.PurchaseUnitRequest{{
+        Amount: &paypal.PurchaseUnitAmount{
+            Currency: "USD",
+            Value:    "50.00",
+        },
+        Description: "VirtueStack Credit Top-Up",
+    }},
+    nil, // payment source
+    &paypal.ApplicationContext{
+        ReturnURL: "https://portal.example.com/billing/topup/complete",
+        CancelURL: "https://portal.example.com/billing/topup",
+    },
+)
+// Return order.ID to frontend
+
+// Capture Order (server-side, after customer approves in PayPal popup)
+capture, err := c.CaptureOrder(ctx, orderID, paypal.CaptureOrderRequest{})
+```
+
+#### Frontend — PayPal JavaScript SDK
+
+PayPal offers 4 integration tiers. For VirtueStack, **PayPal Checkout (Standard)** is recommended — it provides PayPal buttons with minimal frontend code.
+
+**NPM package:** `@paypal/react-paypal-js`
+
+```tsx
+// webui/customer/components/billing/PayPalPayment.tsx
+import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
+
+function PayPalTopup({ amount }: { amount: number }) {
+  return (
+    <PayPalScriptProvider options={{
+      clientId: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID!,
+      currency: "USD",
+      components: "buttons",
+    }}>
+      <PayPalButtons
+        style={{ layout: "vertical", color: "blue", shape: "rect" }}
+        createOrder={async () => {
+          // Call VirtueStack backend to create PayPal order
+          const res = await billingApi.createPayPalOrder(amount);
+          return res.order_id; // PayPal order ID
+        }}
+        onApprove={async (data) => {
+          // Call VirtueStack backend to capture payment
+          await billingApi.capturePayPalOrder(data.orderID);
+          // Redirect to success page or refresh balance
+        }}
+        onError={(err) => {
+          console.error("PayPal error:", err);
+        }}
+      />
+    </PayPalScriptProvider>
+  );
+}
+```
+
+#### PayPal Integration Flow (Orders v2 API)
+
+```
+Customer WebUI                    Controller API                     PayPal
+     │                                 │                               │
+     │ Customer clicks PayPal button   │                               │
+     │                                 │                               │
+     │ POST /customer/billing/topup    │                               │
+     │ {amount: 5000, gateway: paypal} │                               │
+     │ ──────────────────────────────► │                               │
+     │                                 │ POST /v2/checkout/orders      │
+     │                                 │ (OrderIntentCapture)          │
+     │                                 │ ─────────────────────────────►│
+     │                                 │ ◄─ { id: "ORDER_ID" }        │
+     │ ◄── { order_id: "ORDER_ID" }    │                               │
+     │                                 │                               │
+     │ PayPal popup → customer approves│                               │
+     │ ────────────────────────────────┼──────────────────────────────►│
+     │                                 │                               │
+     │ onApprove callback fires        │                               │
+     │ POST /customer/billing/         │                               │
+     │       paypal/capture            │                               │
+     │ {order_id: "ORDER_ID"}          │                               │
+     │ ──────────────────────────────► │                               │
+     │                                 │ POST /v2/checkout/orders/     │
+     │                                 │       {id}/capture            │
+     │                                 │ ─────────────────────────────►│
+     │                                 │ ◄─ { status: "COMPLETED" }   │
+     │                                 │                               │
+     │                                 │ → Add credits to balance      │
+     │                                 │ → Record transaction          │
+     │                                 │ → Send confirmation email     │
+     │ ◄── { balance: 5000 }           │                               │
+```
+
+#### Webhook Handling
+
+PayPal webhooks use the Webhooks Management API v1. VirtueStack should subscribe to:
+
+| Event Type | Trigger | Action |
+|-----------|---------|--------|
+| `CHECKOUT.ORDER.APPROVED` | Buyer approves order | Begin capture flow |
+| `PAYMENT.CAPTURE.COMPLETED` | Payment captured | Credit customer (backup to capture API call) |
+| `PAYMENT.CAPTURE.DENIED` | Capture denied | Notify customer, log failure |
+| `PAYMENT.CAPTURE.REFUNDED` | Refund processed | Deduct from balance, record transaction |
+| `CUSTOMER.DISPUTE.CREATED` | Dispute/chargeback | Auto-suspend VMs, notify admin |
+
+**Webhook signature verification:** PayPal verifies webhooks via `POST /v1/notifications/verify-webhook-signature` (server-to-server call, not local verification like Stripe).
+
+```go
+// PayPal webhook verification is done server-side via API call
+verifyReq := paypal.VerifyWebhookSignatureRequest{
+    WebhookID:       os.Getenv("PAYPAL_WEBHOOK_ID"),
+    TransmissionID:  c.GetHeader("PAYPAL-TRANSMISSION-ID"),
+    TransmissionTime: c.GetHeader("PAYPAL-TRANSMISSION-TIME"),
+    CertURL:         c.GetHeader("PAYPAL-CERT-URL"),
+    AuthAlgo:        c.GetHeader("PAYPAL-AUTH-ALGO"),
+    TransmissionSig: c.GetHeader("PAYPAL-TRANSMISSION-SIG"),
+    WebhookEvent:    webhookEventBody,
+}
+result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
+// result.VerificationStatus == "SUCCESS"
+```
+
+### 5.3 Crypto Integration
+
+> Crypto integration is the lowest priority. Implement after Stripe and PayPal are stable.
+
+- **Self-hosted option:** BTCPay Server (full control, no KYC, supports BTC/LTC/XMR)
+- **Third-party options:** NOWPayments, CoinGate, or Coinbase Commerce
 - **Flow:** Generate payment address → display QR → poll for confirmation → credit on N confirmations
 - **Volatility:** Convert to USD-equivalent at time of payment, credit in cents
-- **Consideration:** Confirmation delays (10min–1hr for BTC) — show "pending" status
+- **Consideration:** Confirmation delays (10min–1hr for BTC) — show "pending" status in UI
+- **No client SDK needed:** QR code rendering + status polling via VirtueStack backend API
+
+### 5.4 SDK Version Summary
+
+| Gateway | Server SDK (Go) | Client SDK (npm) | API Version |
+|---------|----------------|-------------------|-------------|
+| **Stripe** | `github.com/stripe/stripe-go/v85` | `@stripe/stripe-js` + `@stripe/react-stripe-js` | `2026-03-25.dahlia` |
+| **PayPal** | `github.com/plutov/paypal/v4` | `@paypal/react-paypal-js` | Orders v2 + Webhooks v1 |
+| **Crypto** | BTCPay Server API (HTTP) or provider SDK | None (QR code + polling) | Provider-dependent |
 
 ---
 
@@ -370,48 +814,62 @@ VirtueStack currently supports WHMCS for billing. The new built-in billing syste
 
 | Concern | Mitigation |
 |---------|------------|
-| **PCI DSS** | Never store card numbers. Stripe Elements / PayPal vault handle tokenization. Only store provider token IDs. |
-| **Payment webhooks** | Verify webhook signatures (Stripe: `stripe-signature` header; PayPal: webhook ID verification). |
-| **Credit manipulation** | All credit operations go through `billing_service.go` with DB transactions. No direct balance updates from API. |
+| **PCI DSS** | Never store card numbers. Stripe Payment Element / PayPal Vault handle tokenization client-side. Only store provider token IDs (`pm_xxx`, PayPal vault ID). VirtueStack servers never see raw card data. |
+| **Stripe webhook verification** | Verify `Stripe-Signature` header using `webhook.ConstructEvent()` from stripe-go/v85. Reject requests with invalid signatures. Use endpoint-specific secrets (`whsec_xxx`). |
+| **PayPal webhook verification** | Verify via server-to-server call: `POST /v1/notifications/verify-webhook-signature`. Validate `PAYPAL-TRANSMISSION-SIG`, `PAYPAL-CERT-URL`, `PAYPAL-AUTH-ALGO` headers. |
+| **Billing mode enforcement** | When `BILLING_MODE=whmcs` (default): all billing endpoints return 403, webhook endpoints return 403, billing tasks don't run, customer WebUI hides billing section. No credit/payment code paths are reachable. |
+| **Credit manipulation** | All credit operations go through `billing_service.go` with DB transactions. No direct balance updates from API. Balance changes are always paired with a transaction record. |
 | **Negative balance** | Check balance before hourly deduction. Suspend VMs at configurable threshold (e.g., -$5.00 grace). |
-| **Race conditions** | Use PostgreSQL `SELECT ... FOR UPDATE` on `customer_credits` row during deductions. |
-| **Audit trail** | `billing_transactions` table is append-only (no UPDATE/DELETE). All mutations logged in `audit_logs`. |
+| **Race conditions** | Use PostgreSQL `SELECT ... FOR UPDATE` on `customer_credits` row during deductions. Stripe PaymentIntents and PayPal Orders provide built-in idempotency. |
+| **Audit trail** | `billing_transactions` table is append-only (no UPDATE/DELETE). All mutations logged in `audit_logs`. Payment gateway references stored for reconciliation. |
 | **Crypto address reuse** | Generate unique payment address per top-up. Never reuse addresses. |
 | **Currency handling** | All amounts in integer cents (BIGINT). No floating-point. Round consistently (banker's rounding). |
+| **Chargeback/dispute handling** | Auto-suspend customer VMs on `charge.dispute.created` (Stripe) or `CUSTOMER.DISPUTE.CREATED` (PayPal). Notify admin immediately. Record dispute in billing transactions. |
+| **3D Secure / SCA** | Stripe Payment Element handles SCA automatically. PayPal handles authentication via its checkout flow. No additional server-side work needed. |
 
 ---
 
 ## 7. Implementation Phases
 
-### Phase 1: Database & Core Models (1–2 days)
-- [ ] Create migration: `customer_credits`, `billing_transactions`, `invoices`, `invoice_line_items`, `payment_methods`
+> **Guiding principle:** WHMCS mode is default. Self-billing is opt-in. Every billing feature must check `BILLING_MODE` before executing.
+
+### Phase 1: Database, Core Models & Billing Mode Guard (1–2 days)
+- [ ] Create migration: `customer_credits`, `billing_transactions`, `invoices`, `invoice_line_items`, `payment_methods` (tables created regardless of mode — they sit empty when billing disabled)
 - [ ] Add RLS policies for customer isolation
 - [ ] Add billing models in `internal/controller/models/billing.go`
 - [ ] Add billing repository in `internal/controller/repository/billing_repo.go`
-- [ ] Add `BILLING_MODE` configuration with `whmcs` default
+- [ ] Add `BILLING_MODE` configuration with **`whmcs` default** — parsed in `internal/shared/config/`
+- [ ] Implement `RequireSelfBilling()` middleware in `internal/controller/api/middleware/billing.go`
+- [ ] Add `GET /customer/config` endpoint returning `{ billing_enabled: bool }` feature flag
+- [ ] Ensure all billing routes are **not registered** when `BILLING_MODE=whmcs`
 
 ### Phase 2: Billing Service & Hourly Engine (2–3 days)
 - [ ] Implement `billing_service.go` — credit operations, balance checks, transaction recording
-- [ ] Implement hourly billing task in `tasks/billing_hourly.go`
-- [ ] Register billing tasks in `tasks/handlers.go`
+- [ ] Implement hourly billing task in `tasks/billing_hourly.go` (only schedules when billing enabled)
+- [ ] Register billing tasks in `tasks/handlers.go` (conditional on billing mode)
 - [ ] Add billing scheduler (NATS cron or ticker-based) for hourly sweeps
 - [ ] Implement auto-suspend on zero/negative balance
 - [ ] Implement low-balance email/notification warnings
 
 ### Phase 3: Payment Gateway Interface & Stripe (2–3 days)
 - [ ] Define `PaymentGateway` interface in `internal/controller/payment/gateway.go`
-- [ ] Implement Stripe gateway in `payment/stripe.go`
-- [ ] Add Stripe webhook handler (signature verification, idempotency)
-- [ ] Add payment method CRUD (customer-facing)
-- [ ] Add credit top-up endpoint
+- [ ] Implement Stripe gateway using `stripe-go/v85` — `V1PaymentIntents.Create()`, `V1CheckoutSessions.Create()`
+- [ ] Add Stripe webhook handler with `webhook.ConstructEvent()` signature verification
+- [ ] Subscribe to: `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`
+- [ ] Add payment method CRUD using Stripe Payment Methods API (tokenized `pm_xxx` references only)
+- [ ] Add credit top-up endpoint returning `client_secret` for frontend Payment Element
+- [ ] Guard all webhook endpoints with `RequireSelfBilling()` middleware
 
 ### Phase 4: Customer API & WebUI (2–3 days)
-- [ ] Add customer billing API endpoints (credits, transactions, invoices, payment methods, top-up)
-- [ ] Add billing nav item to customer portal
-- [ ] Build billing dashboard page (balance, recent charges, active VM costs)
+- [ ] Add customer billing API endpoints (credits, transactions, invoices, payment methods, top-up) — all behind `RequireSelfBilling()`
+- [ ] Add `GET /customer/config` returning `{ billing_enabled }` feature flag
+- [ ] Add conditional billing nav item to customer portal (`nav-items.ts` checks `billing_enabled`)
+- [ ] Build billing layout with `RequireBillingEnabled` guard (redirects to `/vms` when disabled)
+- [ ] Build billing dashboard page (balance, recent charges, active VMs cost)
 - [ ] Build transaction history page
-- [ ] Build Stripe Elements top-up form
+- [ ] Build Stripe Payment Element top-up form (`@stripe/react-stripe-js`, Payment Element)
 - [ ] Build payment method management page
+- [ ] **Verify billing pages are invisible when `BILLING_MODE=whmcs`**
 
 ### Phase 5: Admin API & WebUI (1–2 days)
 - [ ] Add admin billing endpoints (view/adjust customer credits, view transactions)
@@ -420,9 +878,11 @@ VirtueStack currently supports WHMCS for billing. The new built-in billing syste
 - [ ] Add manual credit adjustment with audit logging
 
 ### Phase 6: PayPal Integration (1–2 days)
-- [ ] Implement PayPal gateway in `payment/paypal.go`
-- [ ] Add PayPal webhook handler
-- [ ] Add PayPal button to top-up form (gateway selection)
+- [ ] Implement PayPal gateway using `plutov/paypal/v4` — `CreateOrder()`, `CaptureOrder()` (Orders v2 API)
+- [ ] Add PayPal webhook handler with `VerifyWebhookSignature()` (server-to-server verification)
+- [ ] Subscribe to: `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.REFUNDED`, `CUSTOMER.DISPUTE.CREATED`
+- [ ] Add PayPal Buttons to top-up form using `@paypal/react-paypal-js` (`PayPalButtons` component)
+- [ ] Implement PayPal capture endpoint (called from `onApprove` callback)
 
 ### Phase 7: Crypto Integration (2–3 days)
 - [ ] Choose provider (BTCPay Server recommended for self-hosting)
@@ -444,12 +904,17 @@ VirtueStack currently supports WHMCS for billing. The new built-in billing syste
 ### Phase 10: Testing & Hardening (2–3 days)
 - [ ] Unit tests for billing service (credit operations, edge cases)
 - [ ] Unit tests for payment gateway implementations (mocked provider APIs)
+- [ ] **Unit tests for `RequireSelfBilling()` middleware — verify 403 when `BILLING_MODE=whmcs`**
+- [ ] **E2E test: verify billing nav/pages are hidden when `BILLING_MODE=whmcs` (default)**
+- [ ] **E2E test: verify billing nav/pages appear when `BILLING_MODE=self`**
 - [ ] Integration tests for hourly billing sweep
-- [ ] E2E tests for customer billing flow
+- [ ] E2E tests for customer billing flow (Stripe test cards, PayPal sandbox)
 - [ ] Load test for concurrent hourly billing (1000+ VMs)
 - [ ] Security review of payment webhook handling
+- [ ] Stripe test cards: `4242 4242 4242 4242` (success), `4000 0025 0000 3155` (3DS required), `4000 0000 0000 9995` (declined)
+- [ ] PayPal sandbox accounts for end-to-end payment testing
 
-**Estimated total: 15–24 days**
+**Estimated total: 16–26 days**
 
 ---
 
@@ -472,18 +937,20 @@ VirtueStack currently supports WHMCS for billing. The new built-in billing syste
 
 ## 9. Final Recommendation
 
-**Build billing as an integrated module within the existing VirtueStack codebase.** Specifically:
+**Build billing as an integrated module within the existing VirtueStack codebase, with WHMCS mode as the default and self-billing disabled out of the box.** Specifically:
 
-1. **Backend:** New packages under `internal/controller/` (services, repository, models, tasks) + new `internal/controller/payment/` package for gateway abstractions.
-2. **Frontend:** New pages under `webui/customer/app/billing/` and `webui/admin/app/billing/`, following existing patterns.
-3. **Database:** New tables via standard migrations in `migrations/`.
-4. **Payment gateways:** Abstracted behind a Go interface — Stripe first, then PayPal, then Crypto.
+1. **Default mode:** `BILLING_MODE=whmcs` — self-billing is completely disabled. All billing endpoints return 403, customer WebUI hides billing section, hourly billing tasks don't run. Zero impact on existing WHMCS-managed deployments.
+2. **Backend:** New packages under `internal/controller/` (services, repository, models, tasks) + new `internal/controller/payment/` package for gateway abstractions. All billing routes guarded by `RequireSelfBilling()` middleware.
+3. **Frontend:** New pages under `webui/customer/app/billing/` and `webui/admin/app/billing/`, conditionally rendered based on `billing_enabled` feature flag from server. When disabled, billing nav items and pages are invisible.
+4. **Database:** New tables via standard migrations in `migrations/` — created regardless of mode (empty when billing disabled, avoids migration issues on mode switch).
+5. **Payment gateways:** Abstracted behind a Go interface — Stripe v85 first (Payment Element + PaymentIntents), then PayPal (Orders v2 + Buttons), then Crypto (BTCPay Server).
 
 This approach:
+- **Preserves** existing WHMCS-managed deployments with zero changes (default mode)
 - **Reuses** 100% of existing infrastructure (auth, middleware, DB pool, NATS, audit logging, RLS)
 - **Follows** established patterns (every VirtueStack feature is built this way)
 - **Avoids** distributed transaction complexity (credit deduction is atomic with VM operations)
 - **Ships** in 3–5 weeks vs. 2–3 months for a separate service
-- **Coexists** with WHMCS via configurable billing mode
+- **Coexists** with WHMCS via configurable billing mode — admin explicitly opts in to self-billing
 
 The only scenario where a separate service makes sense is if billing needs to scale independently to thousands of concurrent payment webhook events — which is unlikely for a VPS hosting platform. If that need arises later, the `PaymentGateway` interface and package-level separation make extraction straightforward.
