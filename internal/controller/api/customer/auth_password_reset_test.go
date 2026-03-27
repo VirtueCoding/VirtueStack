@@ -68,7 +68,7 @@ func newTestPasswordResetHandler(authMock *mockAuthServicePwReset, emailMock *mo
 	return h
 }
 
-func TestForgotPassword(t *testing.T) {
+func TestForgotPassword_Validation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -113,13 +113,11 @@ func TestForgotPassword(t *testing.T) {
 			c.Request, _ = http.NewRequest(http.MethodPost, "/auth/forgot-password", bytes.NewBuffer(bodyBytes))
 			c.Request.Header.Set("Content-Type", "application/json")
 
-			// For valid requests, we can't easily test without a real AuthService,
-			// but we can test validation at the handler level
 			h := &CustomerHandler{
 				logger: slog.Default().With("component", "test"),
 			}
 
-			// Test validation path (before auth service call)
+			// Validation tests only check request parsing (before auth service call)
 			if tt.expectedStatus == http.StatusBadRequest {
 				h.ForgotPassword(c)
 				assert.Equal(t, tt.expectedStatus, w.Code)
@@ -136,7 +134,7 @@ func TestForgotPassword(t *testing.T) {
 	}
 }
 
-func TestResetPassword(t *testing.T) {
+func TestResetPassword_Validation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {

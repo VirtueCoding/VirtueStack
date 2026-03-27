@@ -114,13 +114,12 @@ func (h *CustomerHandler) ResetPassword(c *gin.Context) {
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 
-		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
+		if sharederrors.Is(err, sharederrors.ErrUnauthorized) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_RESET_TOKEN", "Invalid or expired reset token")
 			return
 		}
 
-		// Check for expired or used tokens
-		if err.Error() == "reset token has expired" || err.Error() == "reset token has already been used" {
+		if sharederrors.Is(err, sharederrors.ErrValidation) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_RESET_TOKEN", "Invalid or expired reset token")
 			return
 		}

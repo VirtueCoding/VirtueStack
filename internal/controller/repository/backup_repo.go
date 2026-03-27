@@ -109,10 +109,10 @@ func (r *BackupRepository) CreateBackupWithLimitCheck(ctx context.Context, backu
 		return fmt.Errorf("locking VM row: %w", err)
 	}
 
-	// Count existing backups within the transaction (only count same method)
-	const countQ = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted' AND method = $2`
+	// Count existing backups within the transaction (all methods count toward the same limit)
+	const countQ = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted'`
 	var count int
-	err = tx.QueryRow(ctx, countQ, backup.VMID, backup.Method).Scan(&count)
+	err = tx.QueryRow(ctx, countQ, backup.VMID).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("counting backups: %w", err)
 	}

@@ -143,7 +143,7 @@ type nodeAgentConnPool interface {
 	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
 }
 
-// emailSender is the interface for sending emails, satisfied by notifications.EmailProvider.
+// emailSender abstracts notifications.EmailProvider for testability.
 type emailSender interface {
 	Send(ctx context.Context, payload *notifications.EmailPayload) error
 	IsEnabled() bool
