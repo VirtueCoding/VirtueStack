@@ -323,19 +323,24 @@ func (s *Server) InitializeServices() error {
 	}
 
 	// Initialize handlers
+	bandwidthService := services.NewBandwidthService(vmRepo, bandwidthRepo, nil, s.logger)
+
 	s.provisioningHandler = provisioning.NewProvisioningHandler(provisioning.ProvisioningHandlerConfig{
-		VMService:     s.vmService,
-		AuthService:   s.authService,
-		TaskRepo:      taskRepo,
-		VMRepo:        vmRepo,
-		IPRepo:        ipRepo,
-		SSOTokenRepo:  ssoTokenRepo,
-		AuditRepo:     auditRepo,
-		PlanService:   s.planService,
-		JWTSecret:     s.config.JWTSecret.Value(),
-		Issuer:        "virtuestack",
-		EncryptionKey: s.config.EncryptionKey.Value(),
-		Logger:        s.logger,
+		VMService:        s.vmService,
+		AuthService:      s.authService,
+		CustomerService:  s.customerService,
+		BandwidthService: bandwidthService,
+		CustomerRepo:     customerRepo,
+		TaskRepo:         taskRepo,
+		VMRepo:           vmRepo,
+		IPRepo:           ipRepo,
+		SSOTokenRepo:     ssoTokenRepo,
+		AuditRepo:        auditRepo,
+		PlanService:      s.planService,
+		JWTSecret:        s.config.JWTSecret.Value(),
+		Issuer:           "virtuestack",
+		EncryptionKey:    s.config.EncryptionKey.Value(),
+		Logger:           s.logger,
 	})
 
 	isoStoragePath := s.config.FileStorage.ISOStoragePath

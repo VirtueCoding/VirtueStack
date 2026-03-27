@@ -398,6 +398,16 @@ func RDNSUpdateRateLimit() gin.HandlerFunc {
 	}, "ratelimit:rdns:")
 }
 
+// PasswordResetRateLimit limits password reset requests to 3 per hour per IP.
+// Prevents email enumeration and abuse of the password reset flow.
+func PasswordResetRateLimit() gin.HandlerFunc {
+	return selectedRateLimit(RateLimitConfig{
+		Requests: 3,
+		Window:   time.Hour,
+		KeyFunc:  keyByIP,
+	}, "ratelimit:password-reset:")
+}
+
 // ─── Redis-backed distributed rate limiter ───────────────────────────────────
 
 // RedisClient is the minimal interface needed by the Redis-backed rate limiter.

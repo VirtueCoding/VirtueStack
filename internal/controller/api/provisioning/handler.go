@@ -16,49 +16,58 @@ import (
 // It provides endpoints for VM lifecycle operations that integrate with
 // billing systems. All operations are authenticated via API keys.
 type ProvisioningHandler struct {
-	vmService     *services.VMService
-	authService   *services.AuthService
-	taskRepo      *repository.TaskRepository
-	vmRepo        *repository.VMRepository
-	ipRepo        *repository.IPRepository
-	ssoTokenRepo  *repository.SSOTokenRepository
-	auditRepo     *repository.AuditRepository
-	planService   *services.PlanService
-	authConfig    middleware.AuthConfig
-	encryptionKey string
-	logger        *slog.Logger
+	vmService        *services.VMService
+	authService      *services.AuthService
+	customerService  *services.CustomerService
+	bandwidthService *services.BandwidthService
+	customerRepo     *repository.CustomerRepository
+	taskRepo         *repository.TaskRepository
+	vmRepo           *repository.VMRepository
+	ipRepo           *repository.IPRepository
+	ssoTokenRepo     *repository.SSOTokenRepository
+	auditRepo        *repository.AuditRepository
+	planService      *services.PlanService
+	authConfig       middleware.AuthConfig
+	encryptionKey    string
+	logger           *slog.Logger
 }
 
 // ProvisioningHandlerConfig holds all dependencies required to construct a ProvisioningHandler.
 type ProvisioningHandlerConfig struct {
-	VMService     *services.VMService
-	AuthService   *services.AuthService
-	TaskRepo      *repository.TaskRepository
-	VMRepo        *repository.VMRepository
-	IPRepo        *repository.IPRepository
-	SSOTokenRepo  *repository.SSOTokenRepository
-	AuditRepo     *repository.AuditRepository
-	PlanService   *services.PlanService
-	JWTSecret     string
-	Issuer        string
-	EncryptionKey string
-	Logger        *slog.Logger
+	VMService        *services.VMService
+	AuthService      *services.AuthService
+	CustomerService  *services.CustomerService
+	BandwidthService *services.BandwidthService
+	CustomerRepo     *repository.CustomerRepository
+	TaskRepo         *repository.TaskRepository
+	VMRepo           *repository.VMRepository
+	IPRepo           *repository.IPRepository
+	SSOTokenRepo     *repository.SSOTokenRepository
+	AuditRepo        *repository.AuditRepository
+	PlanService      *services.PlanService
+	JWTSecret        string
+	Issuer           string
+	EncryptionKey    string
+	Logger           *slog.Logger
 }
 
 // NewProvisioningHandler creates a new ProvisioningHandler with the given dependencies.
 func NewProvisioningHandler(cfg ProvisioningHandlerConfig) *ProvisioningHandler {
 	return &ProvisioningHandler{
-		vmService:     cfg.VMService,
-		authService:   cfg.AuthService,
-		taskRepo:      cfg.TaskRepo,
-		vmRepo:        cfg.VMRepo,
-		ipRepo:        cfg.IPRepo,
-		ssoTokenRepo:  cfg.SSOTokenRepo,
-		auditRepo:     cfg.AuditRepo,
-		planService:   cfg.PlanService,
-		authConfig:    middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
-		encryptionKey: cfg.EncryptionKey,
-		logger:        cfg.Logger.With("component", "provisioning-handler"),
+		vmService:        cfg.VMService,
+		authService:      cfg.AuthService,
+		customerService:  cfg.CustomerService,
+		bandwidthService: cfg.BandwidthService,
+		customerRepo:     cfg.CustomerRepo,
+		taskRepo:         cfg.TaskRepo,
+		vmRepo:           cfg.VMRepo,
+		ipRepo:           cfg.IPRepo,
+		ssoTokenRepo:     cfg.SSOTokenRepo,
+		auditRepo:        cfg.AuditRepo,
+		planService:      cfg.PlanService,
+		authConfig:       middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
+		encryptionKey:    cfg.EncryptionKey,
+		logger:           cfg.Logger.With("component", "provisioning-handler"),
 	}
 }
 

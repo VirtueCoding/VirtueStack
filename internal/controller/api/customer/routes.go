@@ -95,6 +95,10 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
 		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)
 		auth.GET("/sso-exchange", handler.ExchangeSSOToken)
+
+		// Password reset flow (no auth required, rate-limited to prevent abuse)
+		auth.POST("/forgot-password", middleware.PasswordResetRateLimit(), handler.ForgotPassword)
+		auth.POST("/reset-password", middleware.PasswordResetRateLimit(), handler.ResetPassword)
 	}
 }
 

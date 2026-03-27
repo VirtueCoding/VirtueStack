@@ -20,7 +20,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Archive, Loader2, Trash2, RefreshCcw, Download, CheckCircle2, XCircle, Clock } from "lucide-react";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { Archive, Camera, Loader2, Trash2, RefreshCcw, Download, CheckCircle2, XCircle, Clock } from "lucide-react";
 import type { Backup } from "@/lib/api-client";
 import { getStatusLabel, formatBytes } from "@/lib/vm-utils";
 
@@ -63,6 +68,8 @@ interface VMBackupsTabProps {
   onCreateBackup: (name: string) => Promise<void>;
   onDeleteBackup: (backupId: string) => Promise<void>;
   onRestoreBackup: (backupId: string) => Promise<void>;
+  methodFilter?: "all" | "full" | "snapshot";
+  onMethodFilterChange?: (method: "all" | "full" | "snapshot") => void;
 }
 
 export function VMBackupsTab({
@@ -75,6 +82,8 @@ export function VMBackupsTab({
   onCreateBackup,
   onDeleteBackup,
   onRestoreBackup,
+  methodFilter = "all",
+  onMethodFilterChange,
 }: VMBackupsTabProps) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -103,14 +112,18 @@ export function VMBackupsTab({
     setSelectedBackup(null);
   };
 
+  const filteredBackups = methodFilter === "all"
+    ? backups
+    : backups.filter(b => b.method === methodFilter);
+
   return (
     <>
       <Card data-vm-id={vmId}>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">Backups</CardTitle>
+            <CardTitle className="text-lg">Backups & Snapshots</CardTitle>
             <CardDescription>
-              Manage automated and manual backups
+              Manage full backups and point-in-time snapshots
             </CardDescription>
           </div>
           <Button
@@ -129,15 +142,24 @@ export function VMBackupsTab({
           </Button>
         </CardHeader>
         <CardContent>
+          {onMethodFilterChange && (
+            <Tabs value={methodFilter} onValueChange={(v) => onMethodFilterChange(v as "all" | "full" | "snapshot")} className="mb-4">
+              <TabsList>
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="full">Full Backups</TabsTrigger>
+                <TabsTrigger value="snapshot">Snapshots</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
           {isLoading ? (
             <div className="flex min-h-[200px] items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : backups.length === 0 ? (
+          ) : filteredBackups.length === 0 ? (
             <div className="flex min-h-[200px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
               <Archive className="h-12 w-12 text-muted-foreground" />
               <p className="mt-4 text-sm text-muted-foreground">
-                No backups found
+                No {methodFilter === "all" ? "backups" : methodFilter === "full" ? "full backups" : "snapshots"} found
               </p>
               <p className="text-xs text-muted-foreground">
                 Create your first backup to protect your data
@@ -145,14 +167,16 @@ export function VMBackupsTab({
             </div>
           ) : (
             <div className="space-y-4">
-              {backups.map((backup) => (
+              {filteredBackups.map((backup) => (
                 <div
                   key={backup.id}
                   className="flex items-center justify-between rounded-lg border p-4"
                 >
                   <div className="flex items-center gap-4">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                      {backup.status === "completed" ? (
+                      {backup.method === "snapshot" ? (
+                        <Camera className="h-5 w-5 text-primary" />
+                      ) : backup.status === "completed" ? (
                         <CheckCircle2 className="h-5 w-5 text-green-500" />
                       ) : backup.status === "failed" ? (
                         <XCircle className="h-5 w-5 text-red-500" />
@@ -161,7 +185,12 @@ export function VMBackupsTab({
                       )}
                     </div>
                     <div>
-                      <p className="font-medium">{backup.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium">{backup.name}</p>
+                        <Badge variant={backup.method === "snapshot" ? "secondary" : "default"} className="text-xs">
+                          {backup.method === "snapshot" ? "Snapshot" : "Full"}
+                        </Badge>
+                      </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Clock className="h-3 w-3" />
                         <span>{formatDate(backup.created_at)}</span>
@@ -253,9 +282,9 @@ export function VMBackupsTab({
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Backup</DialogTitle>
+            <DialogTitle>Delete {selectedBackup?.method === "snapshot" ? "Snapshot" : "Backup"}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the backup &quot;{selectedBackup?.name}&quot;?
+              Are you sure you want to delete the {selectedBackup?.method === "snapshot" ? "snapshot" : "backup"} &quot;{selectedBackup?.name}&quot;?
               This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -274,7 +303,7 @@ export function VMBackupsTab({
                   Deleting...
                 </>
               ) : (
-                "Delete Backup"
+                `Delete ${selectedBackup?.method === "snapshot" ? "Snapshot" : "Backup"}`
               )}
             </Button>
           </DialogFooter>
@@ -285,9 +314,9 @@ export function VMBackupsTab({
       <Dialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Restore Backup</DialogTitle>
+            <DialogTitle>Restore {selectedBackup?.method === "snapshot" ? "Snapshot" : "Backup"}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to restore <strong>{vmName}</strong> from the backup &quot;{selectedBackup?.name}&quot;?
+              Are you sure you want to restore <strong>{vmName}</strong> from the {selectedBackup?.method === "snapshot" ? "snapshot" : "backup"} &quot;{selectedBackup?.name}&quot;?
               This will overwrite the current VM state and cannot be undone.
               The VM will be temporarily unavailable during restoration.
             </DialogDescription>
@@ -306,7 +335,7 @@ export function VMBackupsTab({
                   Restoring...
                 </>
               ) : (
-                "Restore Backup"
+                `Restore ${selectedBackup?.method === "snapshot" ? "Snapshot" : "Backup"}`
               )}
             </Button>
           </DialogFooter>

@@ -212,6 +212,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 	backup := &models.Backup{
 		ID:             uuid.New().String(),
 		VMID:           vmID,
+		Method:         models.BackupMethodFull,
 		Source:         models.BackupSourceManual,
 		Status:         models.BackupStatusCreating,
 		StorageBackend: storageBackend,
@@ -264,6 +265,7 @@ func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, na
 	backup := &models.Backup{
 		ID:             uuid.New().String(),
 		VMID:           vmID,
+		Method:         models.BackupMethodFull,
 		Source:         models.BackupSourceManual,
 		Status:         models.BackupStatusCreating,
 		StorageBackend: storageBackend,

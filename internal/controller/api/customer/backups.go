@@ -71,6 +71,18 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		filter.Status = &status
 	}
 
+	// Optional method filter (full or snapshot)
+	validBackupMethods := map[string]bool{
+		"full": true, "snapshot": true,
+	}
+	if method := c.Query("method"); method != "" {
+		if !validBackupMethods[method] {
+			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_METHOD", "Invalid method value. Must be one of: full, snapshot")
+			return
+		}
+		filter.Method = &method
+	}
+
 	backups, total, err := h.backupRepo.ListBackupsByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		h.logger.Error("failed to list backups",

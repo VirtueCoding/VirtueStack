@@ -32,6 +32,7 @@ var templateNames = []string{
 	"backup-failed",
 	"node-offline",
 	"bandwidth-exceeded",
+	"password-reset",
 	"default",
 }
 

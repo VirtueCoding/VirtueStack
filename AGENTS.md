@@ -506,9 +506,13 @@ POST   /vms/:id/password
 POST   /vms/:id/password/reset
 POST   /vms/:id/power
 GET    /vms/:id/status
+GET    /vms/:id/usage
 
 // Task Polling
 GET /tasks/:id
+
+// Customer Management
+POST /customers              // Create-or-get customer by email
 ```
 
 ---

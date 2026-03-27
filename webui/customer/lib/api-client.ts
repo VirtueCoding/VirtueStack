@@ -244,6 +244,17 @@ export const customerAuthApi = {
       return false;
     }
   },
+
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/customer/auth/forgot-password", { email });
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/customer/auth/reset-password", {
+      token,
+      new_password: newPassword,
+    });
+  },
 };
 
 export interface VMMetrics {
@@ -353,6 +364,7 @@ export const vmApi = {
 export interface Backup {
   id: string;
   vm_id: string;
+  method: "full" | "snapshot";
   name: string;
   source: "manual" | "customer_schedule" | "admin_schedule";
   admin_schedule_id?: string;
@@ -470,9 +482,12 @@ export const taskApi = {
 };
 
 export const backupApi = {
-  async listBackups(vmId?: string): Promise<Backup[]> {
-    const params = vmId ? `?vm_id=${vmId}` : "";
-    return apiClient.get<Backup[]>(`/customer/backups${params}`);
+  async listBackups(vmId?: string, method?: "full" | "snapshot"): Promise<Backup[]> {
+    const params = new URLSearchParams();
+    if (vmId) params.set("vm_id", vmId);
+    if (method) params.set("method", method);
+    const query = params.toString();
+    return apiClient.get<Backup[]>(`/customer/backups${query ? `?${query}` : ""}`);
   },
 
   async getBackup(backupId: string): Promise<Backup> {

@@ -17,6 +17,7 @@ type AdminBackupListFilter struct {
 	VMID             *string `form:"vm_id"`
 	Status           *string `form:"status"`
 	Source           *string `form:"source"`
+	Method           *string `form:"method"`
 	AdminScheduleID  *string `form:"admin_schedule_id"`
 }
 
@@ -62,6 +63,15 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
+	// Validate method against known enum values
+	validBackupMethods := map[string]bool{
+		"full": true, "snapshot": true,
+	}
+	if methodStr := c.Query("method"); methodStr != "" && !validBackupMethods[methodStr] {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_METHOD", "Invalid method value. Must be one of: full, snapshot")
+		return
+	}
+
 	// Build filter using single-step nil assignment (F-185)
 	var filter AdminBackupListFilter
 	if v := c.Query("customer_id"); v != "" {
@@ -76,6 +86,9 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 	if v := c.Query("source"); v != "" {
 		filter.Source = &v
 	}
+	if v := c.Query("method"); v != "" {
+		filter.Method = &v
+	}
 	if v := c.Query("admin_schedule_id"); v != "" {
 		filter.AdminScheduleID = &v
 	}
@@ -85,6 +98,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		VMID:             filter.VMID,
 		Status:           filter.Status,
 		Source:           filter.Source,
+		Method:           filter.Method,
 		AdminScheduleID:  filter.AdminScheduleID,
 	}
 
