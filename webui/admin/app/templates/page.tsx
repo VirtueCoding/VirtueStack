@@ -22,8 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal, Disc } from "lucide-react";
-import { adminTemplatesApi, type Template, type UpdateTemplateRequest } from "@/lib/api-client";
+import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal, Disc, Send, Database } from "lucide-react";
+import { adminTemplatesApi, adminNodesApi, type Template, type UpdateTemplateRequest, type TemplateCacheEntry, type Node } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TemplateEditDialog, type EditTemplateFormData } from "@/components/templates/TemplateEditDialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type DialogAction = "create" | "edit" | "delete" | "import" | null;
 type ISOSourceMode = "path" | "url";
@@ -99,6 +100,15 @@ export default function TemplatesPage() {
   const [buildForm, setBuildForm] = useState({ ...defaultBuildForm });
   const [buildLoading, setBuildLoading] = useState(false);
   const [isoSourceMode, setIsoSourceMode] = useState<ISOSourceMode>("url");
+  const [distributeDialogOpen, setDistributeDialogOpen] = useState(false);
+  const [distributeTemplate, setDistributeTemplate] = useState<Template | null>(null);
+  const [distributeLoading, setDistributeLoading] = useState(false);
+  const [availableNodes, setAvailableNodes] = useState<Node[]>([]);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [cacheStatusDialogOpen, setCacheStatusDialogOpen] = useState(false);
+  const [cacheStatusTemplate, setCacheStatusTemplate] = useState<Template | null>(null);
+  const [cacheEntries, setCacheEntries] = useState<TemplateCacheEntry[]>([]);
+  const [cacheStatusLoading, setCacheStatusLoading] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -282,6 +292,60 @@ export default function TemplatesPage() {
     }
   };
 
+  const openDistributeDialog = async (template: Template) => {
+    setDistributeTemplate(template);
+    setSelectedNodeIds([]);
+    setDistributeDialogOpen(true);
+    try {
+      const response = await adminNodesApi.getNodes();
+      setAvailableNodes(response.data || []);
+    } catch {
+      toast({ title: "Error", description: "Failed to load nodes", variant: "destructive" });
+    }
+  };
+
+  const handleDistribute = async () => {
+    if (!distributeTemplate || selectedNodeIds.length === 0) return;
+    setDistributeLoading(true);
+    try {
+      const result = await adminTemplatesApi.distributeTemplate(distributeTemplate.id, selectedNodeIds);
+      toast({ title: "Distribution Started", description: `Distribution task created: ${result.task_id}` });
+      setDistributeDialogOpen(false);
+      setDistributeTemplate(null);
+      setSelectedNodeIds([]);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to start distribution",
+        variant: "destructive",
+      });
+    } finally {
+      setDistributeLoading(false);
+    }
+  };
+
+  const openCacheStatusDialog = async (template: Template) => {
+    setCacheStatusTemplate(template);
+    setCacheStatusDialogOpen(true);
+    setCacheStatusLoading(true);
+    try {
+      const status = await adminTemplatesApi.getTemplateCacheStatus(template.id);
+      setCacheEntries(status.entries || []);
+    } catch {
+      toast({ title: "Error", description: "Failed to load cache status", variant: "destructive" });
+    } finally {
+      setCacheStatusLoading(false);
+    }
+  };
+
+  const toggleNodeSelection = (nodeId: string) => {
+    setSelectedNodeIds((prev) =>
+      prev.includes(nodeId)
+        ? prev.filter((id) => id !== nodeId)
+        : [...prev, nodeId]
+    );
+  };
+
   const activeTemplates = templates.filter((t) => t.status === "active").length;
   const totalTemplates = templates.length;
 
@@ -393,6 +457,16 @@ export default function TemplatesPage() {
                             <DropdownMenuItem onClick={() => openDialog("import", template)}>
                               <Download className="mr-2 h-4 w-4" />
                               Import
+                            </DropdownMenuItem>
+                            {template.storage_backend !== "ceph" && (
+                              <DropdownMenuItem onClick={() => openDistributeDialog(template)}>
+                                <Send className="mr-2 h-4 w-4" />
+                                Distribute to Nodes
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={() => openCacheStatusDialog(template)}>
+                              <Database className="mr-2 h-4 w-4" />
+                              Cache Status
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive"
@@ -734,6 +808,126 @@ export default function TemplatesPage() {
             >
               {buildLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Start Build
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Distribute Template Dialog */}
+      <Dialog open={distributeDialogOpen} onOpenChange={setDistributeDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Distribute Template</DialogTitle>
+            <DialogDescription>
+              Push &quot;{distributeTemplate?.name}&quot; to selected QCOW/LVM nodes.
+              Ceph nodes access templates from the shared pool automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <Label>Select target nodes:</Label>
+            {availableNodes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No nodes available</p>
+            ) : (
+              <div className="max-h-[300px] overflow-y-auto space-y-2">
+                {availableNodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className="flex items-center space-x-3 rounded-md border p-3"
+                  >
+                    <Checkbox
+                      id={`node-${node.id}`}
+                      checked={selectedNodeIds.includes(node.id)}
+                      onCheckedChange={() => toggleNodeSelection(node.id)}
+                    />
+                    <label htmlFor={`node-${node.id}`} className="flex-1 cursor-pointer text-sm">
+                      <span className="font-medium">{node.hostname}</span>
+                      <span className="ml-2 text-muted-foreground">({node.status})</span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDistributeDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDistribute}
+              disabled={distributeLoading || selectedNodeIds.length === 0}
+            >
+              {distributeLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Distribute ({selectedNodeIds.length} node{selectedNodeIds.length !== 1 ? "s" : ""})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cache Status Dialog */}
+      <Dialog open={cacheStatusDialogOpen} onOpenChange={setCacheStatusDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Cache Status</DialogTitle>
+            <DialogDescription>
+              Template distribution status for &quot;{cacheStatusTemplate?.name}&quot;
+              {cacheStatusTemplate?.storage_backend === "ceph" && (
+                <span className="block mt-1 text-blue-500">
+                  Ceph templates are accessed directly from the shared pool — no per-node caching needed.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {cacheStatusLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : cacheEntries.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-8">
+                No cache entries found. Template has not been distributed to any nodes yet.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Node</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead>Synced</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cacheEntries.map((entry) => (
+                    <TableRow key={entry.node_id}>
+                      <TableCell className="font-mono text-sm">{entry.node_id.slice(0, 8)}...</TableCell>
+                      <TableCell>
+                        <Badge variant={
+                          entry.status === "ready" ? "default" :
+                          entry.status === "downloading" ? "secondary" :
+                          entry.status === "failed" ? "destructive" : "outline"
+                        }>
+                          {entry.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {entry.size_bytes
+                          ? `${(entry.size_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {entry.synced_at
+                          ? new Date(entry.synced_at).toLocaleString()
+                          : "-"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCacheStatusDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

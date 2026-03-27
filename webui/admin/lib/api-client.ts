@@ -762,6 +762,23 @@ export interface UpdateTemplateRequest {
   file_path?: string;
 }
 
+export interface TemplateCacheEntry {
+  template_id: string;
+  node_id: string;
+  status: "pending" | "downloading" | "ready" | "failed";
+  local_path?: string;
+  size_bytes?: number;
+  synced_at?: string;
+  error_msg?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateCacheStatusResponse {
+  template_id: string;
+  entries: TemplateCacheEntry[];
+}
+
 export const adminTemplatesApi = {
   async getTemplates(): Promise<Template[]> {
     return apiClient.get<Template[]>("/admin/templates");
@@ -820,6 +837,16 @@ export const adminTemplatesApi = {
     custom_install_config?: string;
   }): Promise<{ task_id: string }> {
     return apiClient.post<{ task_id: string }>("/admin/templates/build-from-iso", data);
+  },
+
+  async distributeTemplate(id: string, nodeIds: string[]): Promise<{ task_id: string }> {
+    return apiClient.post<{ task_id: string }>(`/admin/templates/${id}/distribute`, {
+      node_ids: nodeIds,
+    });
+  },
+
+  async getTemplateCacheStatus(id: string): Promise<TemplateCacheStatusResponse> {
+    return apiClient.get<TemplateCacheStatusResponse>(`/admin/templates/${id}/cache-status`);
   },
 };
 

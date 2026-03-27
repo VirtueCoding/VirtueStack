@@ -366,6 +366,12 @@ func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
 
 	var req models.TemplateDistributeRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
 
