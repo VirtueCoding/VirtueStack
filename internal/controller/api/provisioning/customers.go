@@ -125,7 +125,18 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 // updateWHMCSClientID sets whmcs_client_id on an existing customer if the
 // request carries one and the customer does not already have one set.
 func (h *ProvisioningHandler) updateWHMCSClientID(c *gin.Context, customer *models.Customer, whmcsClientID *int) {
-	if whmcsClientID == nil || (customer.WHMCSClientID != nil && *customer.WHMCSClientID == *whmcsClientID) {
+	if whmcsClientID == nil {
+		return
+	}
+	if customer.WHMCSClientID != nil {
+		if *customer.WHMCSClientID == *whmcsClientID {
+			return
+		}
+		h.logger.Warn("whmcs_client_id mismatch on existing customer",
+			"customer_id", customer.ID,
+			"existing_whmcs_client_id", *customer.WHMCSClientID,
+			"requested_whmcs_client_id", *whmcsClientID,
+			"correlation_id", middleware.GetCorrelationID(c))
 		return
 	}
 	if err := h.customerRepo.UpdateWHMCSClientID(c.Request.Context(), customer.ID, *whmcsClientID); err != nil {

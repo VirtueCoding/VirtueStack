@@ -173,4 +173,3 @@ func TestCreateCustomerRequest_ValidFields(t *testing.T) {
 		})
 	}
 }
-

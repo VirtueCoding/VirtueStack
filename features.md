@@ -193,7 +193,7 @@ The `virtuestack_UsageUpdate()` function in `modules/servers/virtuestack/virtues
 
 **Recommended execution order:** 2 → 5 → 1 (→ 3 only if self-registration is needed)
 
-Password reset and WHMCS auto-provisioning are quick wins that unblock production. Self-registration is needed only if operating without WHMCS. Backup/snapshot unification is the largest refactor and should be planned as a dedicated sprint.
+Password reset is a quick win that unblocks production. WHMCS customer auto-provisioning is already done (Gap #4). Self-registration is needed only if operating without WHMCS. Backup/snapshot unification is the largest refactor and should be planned as a dedicated sprint.
 
 ---
 
