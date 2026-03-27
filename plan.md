@@ -123,7 +123,7 @@ internal/controller/
 │   └── billing_webhook.go      # Payment gateway webhook processing
 └── payment/                    # NEW: Payment gateway abstractions
     ├── gateway.go              # PaymentGateway interface
-    ├── stripe.go               # Stripe v85 implementation (PaymentIntents + Checkout Sessions)
+    ├── stripe.go               # Stripe v85 implementation (Payment Element + Checkout Sessions API)
     ├── paypal.go               # PayPal Orders v2 implementation
     └── crypto.go               # Crypto payment implementation (BTCPay/NOWPayments/etc.)
 ```
@@ -155,13 +155,14 @@ type PaymentGateway interface {
     // Maps VirtueStack customer → Stripe cus_xxx / PayPal merchant_customer_id
     CreateCustomer(ctx context.Context, customer CustomerInfo) (providerID string, err error)
 
-    // CreatePaymentIntent initiates a payment
-    // Stripe: creates PaymentIntent, returns client_secret for Payment Element
-    // PayPal: creates Order via Orders v2, returns order_id for PayPal Buttons
-    CreatePaymentIntent(ctx context.Context, req PaymentRequest) (*PaymentIntent, error)
+    // CreatePaymentSession initiates a payment session
+    // Stripe: creates a Checkout Session, returns client_secret/session data for Payment Element
+    // PayPal: creates an Order via Orders v2, returns order_id for PayPal Buttons
+    // Crypto: creates an invoice/quote and returns address/QR/status metadata
+    CreatePaymentSession(ctx context.Context, req PaymentRequest) (*PaymentSession, error)
 
     // CapturePayment finalizes the payment after customer approval
-    // Stripe: handled automatically via webhook (payment_intent.succeeded)
+    // Stripe: handled automatically via webhook (primarily checkout.session.completed)
     // PayPal: captures order via POST /v2/checkout/orders/{id}/capture
     CapturePayment(ctx context.Context, providerRef string) (*PaymentResult, error)
 
@@ -352,7 +353,7 @@ webui/admin/
                     └───────────────────────┘
 ```
 
-### 3.7 Payment Processing Flow (Stripe Payment Element)
+### 3.7 Payment Processing Flow (Stripe Payment Element + Checkout Sessions API)
 
 ```
 Customer WebUI                    Controller API                     Stripe
@@ -360,11 +361,11 @@ Customer WebUI                    Controller API                     Stripe
      │ POST /customer/billing/topup    │                               │
      │ {amount: 5000, gateway: stripe} │                               │
      │ ──────────────────────────────► │                               │
-     │                                 │ sc.V1PaymentIntents.Create()  │
+     │                                 │ sc.V1CheckoutSessions.Create()│
      │                                 │ (stripe-go/v85)               │
      │                                 │ ─────────────────────────────►│
-     │                                 │ ◄─ client_secret: pi_xxx     │
-     │ ◄── {client_secret: "pi_xxx.."}│                               │
+     │                                 │ ◄─ client_secret/session data │
+     │ ◄── {client_secret: "..."}     │                               │
      │                                 │                               │
      │ <PaymentElement /> renders      │                               │
      │ stripe.confirmPayment({        │                               │
@@ -379,8 +380,8 @@ Customer WebUI                    Controller API                     Stripe
      │                                 │ (Stripe-Signature header)     │
      │                                 │ ◄─────────────────────────────│
      │                                 │ webhook.ConstructEvent() ✓    │
-     │                                 │ event: payment_intent.        │
-     │                                 │        succeeded              │
+     │                                 │ event: checkout.session.      │
+     │                                 │        completed              │
      │                                 │                               │
      │                                 │ → Add credits to balance      │
      │                                 │ → Record transaction          │
@@ -509,6 +510,14 @@ The billing database tables are always created by migrations regardless of mode 
 
 **Documentation:** https://docs.stripe.com/api (API version `2026-03-25.dahlia`)
 
+#### Recommendation for VirtueStack
+
+- **Default UI:** Use the **Payment Element** inside the customer portal so credit top-ups stay in the VirtueStack UI.
+- **Default server-side API:** Prefer the **Checkout Sessions API** for most flows; Stripe explicitly recommends it over Payment Intents for most new integrations.
+- **Fallback UX:** Keep **hosted Checkout redirect** as a lower-effort fallback or MVP escape hatch if embedded checkout causes rollout friction.
+- **Avoid for v1:** Do not build around the legacy Card Element.
+- **Use Payment Intents only if needed later:** Only drop to the lower-level Payment Intents API if VirtueStack eventually needs to fully own tax, discount, shipping, or currency-conversion logic that Checkout Sessions does not cover cleanly.
+
 #### Go SDK — `github.com/stripe/stripe-go/v85`
 
 The official Stripe Go SDK v85 uses the new `stripe.Client` pattern (introduced in v82.1). The legacy `client.API` and package-level functions are deprecated.
@@ -519,23 +528,13 @@ import "github.com/stripe/stripe-go/v85"
 // Initialize client (NEVER use global stripe.Key — use per-request client)
 sc := stripe.NewClient(os.Getenv("STRIPE_SECRET_KEY"))
 
-// Create PaymentIntent for credit top-up
-params := &stripe.PaymentIntentCreateParams{
-    Amount:   stripe.Int64(5000), // $50.00 in cents
-    Currency: stripe.String("usd"),
-    AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
-        Enabled: stripe.Bool(true),
-    },
-    Metadata: map[string]string{
-        "customer_id": customerID,
-        "topup_id":    topupID,
-    },
-}
-// For saving payment method for future off-session charges:
-// params.SetupFutureUsage = stripe.String("off_session")
-
-pi, err := sc.V1PaymentIntents.Create(ctx, params)
-// Return pi.ClientSecret to frontend
+// Preferred path: create a Checkout Session for the top-up flow
+// and return the client secret / session data needed by the Payment Element.
+//
+// Pseudocode only — exact parameters depend on whether VirtueStack uses
+// embedded/custom UI mode or falls back to hosted redirect mode.
+session, err := sc.V1CheckoutSessions.Create(ctx, params)
+// Return session client/session data to frontend
 ```
 
 #### Frontend — Stripe Payment Element (recommended over Card Element)
@@ -584,8 +583,8 @@ function CheckoutForm({ clientSecret }: { clientSecret: string }) {
 </Elements>
 ```
 
-**Alternative — Stripe Checkout Sessions (redirect-based, even lower effort):**
-For simpler integrations, Stripe Checkout Sessions redirect the customer to a Stripe-hosted payment page. This avoids embedding any payment UI in the customer portal:
+**Fallback — hosted Stripe Checkout redirect (lower effort, lower UX control):**
+If VirtueStack wants the fastest possible rollout, Checkout Sessions can also redirect the customer to a Stripe-hosted payment page instead of rendering the Payment Element in-portal:
 
 ```go
 // Server-side: create Checkout Session
@@ -621,6 +620,8 @@ session, err := sc.V1CheckoutSessions.Create(ctx, params)
 | `checkout.session.async_payment_succeeded` | Delayed payment method (ACH) succeeded | Credit customer |
 | `checkout.session.async_payment_failed` | Delayed payment method failed | Notify customer |
 
+**Implementation note:** if VirtueStack standardizes on the Checkout Sessions API, `checkout.session.completed` should be treated as the primary fulfillment signal. `payment_intent.*` events are still useful for reconciliation and failure visibility, but they should not be the only signal wired into the credit ledger.
+
 **Webhook signature verification (required for security):**
 
 ```go
@@ -651,6 +652,12 @@ func handleStripeWebhook(c *gin.Context) {
 ### 5.2 PayPal Integration
 
 **Documentation:** https://developer.paypal.com/docs/api/orders/v2/, https://developer.paypal.com/docs/checkout/
+
+#### Recommendation for VirtueStack
+
+- **Use PayPal Checkout (standard buttons) for v1.** It covers the primary PayPal/Venmo/Pay Later use cases with the least code and the least PCI surface area.
+- **Do not use Expanded Checkout / Enterprise Checkout in v1.** Stripe already covers card entry better via the Payment Element; duplicating advanced card flows in PayPal adds complexity without clear product value.
+- **Recommended role split:** Stripe handles cards, Apple Pay, Google Pay, Link, and local methods; PayPal handles PayPal wallet, Venmo, and Pay Later.
 
 #### Go SDK — `github.com/plutov/paypal/v4`
 
@@ -793,12 +800,28 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 
 > Crypto integration is the lowest priority. Implement after Stripe and PayPal are stable.
 
-- **Self-hosted option:** BTCPay Server (full control, no KYC, supports BTC/LTC/XMR)
-- **Third-party options:** NOWPayments, CoinGate, or Coinbase Commerce
+- **BTCPay Server is not BTC-only, but it is Bitcoin-first.** Core BTCPay focuses on BTC; some altcoins are available via community-maintained integrations/plugins (for example LTC, DOGE, XMR plugin, and USDt on Tron plugin). It is **not** a native ERC-20/BEP-20 solution.
+- **If ERC-20/BEP-20 stablecoins are required, use a separate provider.** BTCPay should be treated as the self-hosted BTC/LTC/XMR path, not the default stablecoin strategy.
+- **Recommended third-party options:** NOWPayments or CoinGate
 - **Flow:** Generate payment address → display QR → poll for confirmation → credit on N confirmations
 - **Volatility:** Convert to USD-equivalent at time of payment, credit in cents
 - **Consideration:** Confirmation delays (10min–1hr for BTC) — show "pending" status in UI
 - **No client SDK needed:** QR code rendering + status polling via VirtueStack backend API
+
+#### Crypto provider recommendation matrix
+
+| Provider | Best fit | Strengths | Limits / Cautions |
+|----------|----------|-----------|-------------------|
+| **BTCPay Server** | Self-hosted BTC-first deployments | Full control, no processor fees, strong fit for BTC/LTC/XMR-style payments | Altcoin support is limited and community-maintained; not a native ERC-20/BEP-20 strategy |
+| **NOWPayments** | Broad stablecoin / multi-chain support | Very wide asset coverage, supports common stablecoin rails, simple API | Third-party dependency, merchant compliance/KYC, processor fees |
+| **CoinGate** | Crypto with stronger fiat/stablecoin settlement options | Hosted checkout, reporting, conversion/settlement options | Third-party dependency, processor fees, less self-sovereign than BTCPay |
+
+#### Launch recommendation for VirtueStack crypto
+
+1. **Do not start with every network.** Limit the first release to a short, supportable list.
+2. **Suggested launch set:** BTC + one or two stablecoin rails with low fees and strong wallet support (for example TRC20 or Polygon), rather than Ethereum mainnet first.
+3. **Treat asset and chain as separate identifiers.** `USDT-TRC20`, `USDT-ERC20`, and `USDT-BEP20` must never be modeled as a single “USDT” payment method.
+4. **If self-hosting is a product requirement:** offer BTCPay as an optional admin-selectable provider, not the only crypto path.
 
 ### 5.4 SDK Version Summary
 
@@ -806,7 +829,7 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 |---------|----------------|-------------------|-------------|
 | **Stripe** | `github.com/stripe/stripe-go/v85` | `@stripe/stripe-js` + `@stripe/react-stripe-js` | `2026-03-25.dahlia` |
 | **PayPal** | `github.com/plutov/paypal/v4` | `@paypal/react-paypal-js` | Orders v2 + Webhooks v1 |
-| **Crypto** | BTCPay Server API (HTTP) or provider SDK | None (QR code + polling) | Provider-dependent |
+| **Crypto** | BTCPay Server API (HTTP) or provider SDK / REST wrapper | None (QR code + polling) | Provider-dependent |
 
 ---
 
@@ -823,6 +846,9 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 | **Race conditions** | Use PostgreSQL `SELECT ... FOR UPDATE` on `customer_credits` row during deductions. Stripe PaymentIntents and PayPal Orders provide built-in idempotency. |
 | **Audit trail** | `billing_transactions` table is append-only (no UPDATE/DELETE). All mutations logged in `audit_logs`. Payment gateway references stored for reconciliation. |
 | **Crypto address reuse** | Generate unique payment address per top-up. Never reuse addresses. |
+| **Webhook replay / double-credit risk** | Store processed webhook event IDs with a unique constraint. Credit top-ups must be idempotent by provider event ID and provider payment/order/session ID. |
+| **Crypto underpayment / overpayment** | Define quote expiry, acceptable tolerance, minimum confirmations, and a manual-review path before automatically crediting mismatched amounts. |
+| **Token symbol ambiguity** | Persist asset and network separately (`USDT` + `TRC20`, not just `USDT`) to prevent customers sending funds on the wrong chain. |
 | **Currency handling** | All amounts in integer cents (BIGINT). No floating-point. Round consistently (banker's rounding). |
 | **Chargeback/dispute handling** | Auto-suspend customer VMs on `charge.dispute.created` (Stripe) or `CUSTOMER.DISPUTE.CREATED` (PayPal). Notify admin immediately. Record dispute in billing transactions. |
 | **3D Secure / SCA** | Stripe Payment Element handles SCA automatically. PayPal handles authentication via its checkout flow. No additional server-side work needed. |
@@ -853,7 +879,7 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 
 ### Phase 3: Payment Gateway Interface & Stripe (2–3 days)
 - [ ] Define `PaymentGateway` interface in `internal/controller/payment/gateway.go`
-- [ ] Implement Stripe gateway using `stripe-go/v85` — `V1PaymentIntents.Create()`, `V1CheckoutSessions.Create()`
+- [ ] Implement Stripe gateway using `stripe-go/v85` — **Payment Element UI with Checkout Sessions API as the default path**
 - [ ] Add Stripe webhook handler with `webhook.ConstructEvent()` signature verification
 - [ ] Subscribe to: `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`
 - [ ] Add payment method CRUD using Stripe Payment Methods API (tokenized `pm_xxx` references only)
@@ -881,13 +907,14 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 - [ ] Implement PayPal gateway using `plutov/paypal/v4` — `CreateOrder()`, `CaptureOrder()` (Orders v2 API)
 - [ ] Add PayPal webhook handler with `VerifyWebhookSignature()` (server-to-server verification)
 - [ ] Subscribe to: `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.REFUNDED`, `CUSTOMER.DISPUTE.CREATED`
-- [ ] Add PayPal Buttons to top-up form using `@paypal/react-paypal-js` (`PayPalButtons` component)
+- [ ] Add PayPal Buttons to top-up form using `@paypal/react-paypal-js` (`PayPalButtons` component) — **do not add Expanded Checkout card fields in v1**
 - [ ] Implement PayPal capture endpoint (called from `onApprove` callback)
 
 ### Phase 7: Crypto Integration (2–3 days)
-- [ ] Choose provider (BTCPay Server recommended for self-hosting)
+- [ ] Choose provider strategy: BTCPay Server for optional self-hosted BTC-first deployments, NOWPayments/CoinGate for ERC-20/BEP-20 stablecoin acceptance
 - [ ] Implement crypto gateway in `payment/crypto.go`
 - [ ] Add crypto payment flow (address generation, QR display, confirmation polling)
+- [ ] Launch with a small, explicit network list (for example BTC + one or two low-fee stablecoin rails), not every supported chain
 - [ ] Handle confirmation delays and pending states
 
 ### Phase 8: Invoice Generation (1–2 days)
@@ -943,7 +970,7 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 2. **Backend:** New packages under `internal/controller/` (services, repository, models, tasks) + new `internal/controller/payment/` package for gateway abstractions. All billing routes guarded by `RequireSelfBilling()` middleware.
 3. **Frontend:** New pages under `webui/customer/app/billing/` and `webui/admin/app/billing/`, conditionally rendered based on `billing_enabled` feature flag from server. When disabled, billing nav items and pages are invisible.
 4. **Database:** New tables via standard migrations in `migrations/` — created regardless of mode (empty when billing disabled, avoids migration issues on mode switch).
-5. **Payment gateways:** Abstracted behind a Go interface — Stripe v85 first (Payment Element + PaymentIntents), then PayPal (Orders v2 + Buttons), then Crypto (BTCPay Server).
+5. **Payment gateways:** Abstracted behind a Go interface — Stripe v85 first (**Payment Element + Checkout Sessions API**), then PayPal (Orders v2 + standard buttons), then Crypto (BTCPay for optional self-hosted BTC-first deployments, plus a separate provider if ERC-20/BEP-20 stablecoins are required).
 
 This approach:
 - **Preserves** existing WHMCS-managed deployments with zero changes (default mode)
