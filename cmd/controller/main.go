@@ -142,13 +142,14 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	}
 
 	handlerDeps := &tasks.HandlerDeps{
-		VMRepo:       repository.NewVMRepository(infra.dbPool),
-		NodeRepo:     repository.NewNodeRepository(infra.dbPool),
-		IPRepo:       repository.NewIPRepository(infra.dbPool),
-		BackupRepo:   repository.NewBackupRepository(infra.dbPool),
-		TaskRepo:     repository.NewTaskRepository(infra.dbPool),
-		TemplateRepo: repository.NewTemplateRepository(infra.dbPool),
-		IPAMService:  server.GetIPAMService(),
+		VMRepo:            repository.NewVMRepository(infra.dbPool),
+		NodeRepo:          repository.NewNodeRepository(infra.dbPool),
+		IPRepo:            repository.NewIPRepository(infra.dbPool),
+		BackupRepo:        repository.NewBackupRepository(infra.dbPool),
+		TaskRepo:          repository.NewTaskRepository(infra.dbPool),
+		TemplateRepo:      repository.NewTemplateRepository(infra.dbPool),
+		TemplateCacheRepo: repository.NewTemplateCacheRepository(infra.dbPool),
+		IPAMService:       server.GetIPAMService(),
 		NodeClient: services.NewNodeAgentGRPCClient(repository.NewNodeRepository(infra.dbPool), repository.NewVMRepository(infra.dbPool), nodeClient, &services.CephConfig{
 			Monitors:   cfg.CephMonitors,
 			User:       cfg.CephUser,

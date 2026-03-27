@@ -41,6 +41,23 @@ type TemplateCreateRequest struct {
 	FilePath          string `json:"file_path,omitempty" validate:"omitempty,max=500"`
 }
 
+// TemplateBuildFromISORequest holds the fields for building a template from an ISO.
+// Exactly one of ISOPath or ISOURL must be provided.
+type TemplateBuildFromISORequest struct {
+	Name                string `json:"name" validate:"required,max=100"`
+	OSFamily            string `json:"os_family" validate:"required,oneof=debian ubuntu almalinux rocky centos"`
+	OSVersion           string `json:"os_version" validate:"required,max=50"`
+	ISOPath             string `json:"iso_path,omitempty" validate:"omitempty,max=512"`
+	ISOURL              string `json:"iso_url,omitempty" validate:"omitempty,http_url,max=2048"`
+	NodeID              string `json:"node_id" validate:"required,uuid"`
+	StorageBackend      string `json:"storage_backend" validate:"required,oneof=ceph qcow lvm"`
+	DiskSizeGB          int    `json:"disk_size_gb" validate:"omitempty,min=5,max=500"`
+	MemoryMB            int    `json:"memory_mb" validate:"omitempty,min=512,max=16384"`
+	VCPUs               int    `json:"vcpus" validate:"omitempty,min=1,max=8"`
+	RootPassword        string `json:"root_password,omitempty" validate:"omitempty,min=8,max=128"`
+	CustomInstallConfig string `json:"custom_install_config,omitempty" validate:"omitempty,max=65536"`
+}
+
 // TemplateUpdateRequest holds the fields that can be updated on an existing template.
 // All fields are optional to support partial updates.
 type TemplateUpdateRequest struct {

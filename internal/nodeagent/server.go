@@ -968,6 +968,192 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 	}, nil
 }
 
+// BuildTemplateFromISO builds a VM template from an ISO using unattended installation.
+func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb.BuildTemplateFromISORequest) (*nodeagentpb.BuildTemplateFromISOResponse, error) {
+	h.server.logger.Info("received BuildTemplateFromISO request",
+		"template_name", req.TemplateName,
+		"iso_path", req.IsoPath,
+		"iso_url", req.IsoUrl,
+		"os_family", req.OsFamily,
+		"storage_backend", req.StorageBackend)
+
+	builder := storage.NewTemplateBuilder(h.server.logger)
+
+	diskSizeGB := int(req.DiskSizeGb)
+	if diskSizeGB == 0 {
+		diskSizeGB = 10
+	}
+	memoryMB := int(req.MemoryMb)
+	if memoryMB == 0 {
+		memoryMB = 2048
+	}
+	vcpus := int(req.Vcpus)
+	if vcpus == 0 {
+		vcpus = 2
+	}
+
+	result, err := builder.Build(ctx, storage.BuildConfig{
+		TemplateName:        req.TemplateName,
+		ISOPath:             req.IsoPath,
+		ISOURL:              req.IsoUrl,
+		OSFamily:            req.OsFamily,
+		OSVersion:           req.OsVersion,
+		DiskSizeGB:          diskSizeGB,
+		MemoryMB:            memoryMB,
+		VCPUs:               vcpus,
+		RootPassword:        req.RootPassword,
+		CustomInstallConfig: req.CustomInstallConfig,
+	})
+	if err != nil {
+		return &nodeagentpb.BuildTemplateFromISOResponse{
+			Success:      false,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+	defer builder.Cleanup(filepath.Dir(result.DiskPath))
+
+	templateRef, snapshotRef, importErr := h.importBuiltDisk(ctx, req, result)
+	if importErr != nil {
+		return &nodeagentpb.BuildTemplateFromISOResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("importing built disk: %v", importErr),
+		}, nil
+	}
+
+	return &nodeagentpb.BuildTemplateFromISOResponse{
+		Success:     true,
+		TemplateRef: templateRef,
+		SnapshotRef: snapshotRef,
+		SizeBytes:   result.SizeBytes,
+	}, nil
+}
+
+func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.BuildTemplateFromISORequest, result *storage.BuildResult) (string, string, error) {
+	if h.server.templateMgr == nil {
+		return "", "", fmt.Errorf("template manager not configured")
+	}
+
+	meta := storage.TemplateMeta{
+		OSFamily:  req.OsFamily,
+		OSVersion: req.OsVersion,
+	}
+
+	ref := storage.SanitizeTemplateName(req.TemplateName)
+
+	filePath, _, err := h.server.templateMgr.ImportTemplate(ctx, ref, result.DiskPath, meta)
+	if err != nil {
+		return "", "", fmt.Errorf("importing template: %w", err)
+	}
+
+	snapshotRef := ""
+	if req.StorageBackend == "ceph" {
+		snapshotRef = ref + "-snap"
+	}
+
+	return filePath, snapshotRef, nil
+}
+
+// EnsureTemplateCached ensures a template image is available locally on this node.
+// For QCOW/LVM nodes, it downloads the template from the source URL if not cached.
+// Returns the local path where the template is stored.
+func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb.EnsureTemplateCachedRequest) (*nodeagentpb.EnsureTemplateCachedResponse, error) {
+	h.server.logger.Info("received EnsureTemplateCached request",
+		"template_id", req.TemplateId,
+		"template_name", req.TemplateName,
+		"storage_backend", req.StorageBackend)
+
+	if h.server.templateMgr == nil {
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:      false,
+			ErrorMessage: "template manager not configured",
+		}, nil
+	}
+
+	ref := storage.SanitizeTemplateName(req.TemplateName)
+	templateRef := ref
+	if req.StorageBackend == "qcow" {
+		templateRef = h.resolveTemplatePath(ref, req.StorageBackend)
+	}
+
+	exists, err := h.server.templateMgr.TemplateExists(ctx, templateRef)
+	if err != nil {
+		h.server.logger.Warn("error checking template existence", "ref", templateRef, "error", err)
+	}
+	if exists {
+		size, _ := h.server.templateMgr.GetTemplateSize(ctx, templateRef)
+		localPath := h.resolveTemplatePath(ref, req.StorageBackend)
+		h.server.logger.Info("template already cached",
+			"template_id", req.TemplateId, "ref", ref, "local_path", localPath)
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:       true,
+			LocalPath:     localPath,
+			AlreadyCached: true,
+			SizeBytes:     size,
+		}, nil
+	}
+
+	if req.SourceUrl == "" {
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:      false,
+			ErrorMessage: "source_url is required to download template",
+		}, nil
+	}
+
+	localPath, sizeBytes, dlErr := h.downloadAndImportTemplate(ctx, req, ref)
+	if dlErr != nil {
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("downloading template: %v", dlErr),
+		}, nil
+	}
+
+	h.server.logger.Info("template cached successfully",
+		"template_id", req.TemplateId, "ref", ref, "local_path", localPath, "size_bytes", sizeBytes)
+
+	return &nodeagentpb.EnsureTemplateCachedResponse{
+		Success:       true,
+		LocalPath:     localPath,
+		AlreadyCached: false,
+		SizeBytes:     sizeBytes,
+	}, nil
+}
+
+// downloadAndImportTemplate downloads a template from source URL and imports it into the local backend.
+func (h *grpcHandler) downloadAndImportTemplate(ctx context.Context, req *nodeagentpb.EnsureTemplateCachedRequest, ref string) (string, int64, error) {
+	tmpDir, err := os.MkdirTemp("", "vs-template-download-*")
+	if err != nil {
+		return "", 0, fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpFile := filepath.Join(tmpDir, ref+".qcow2")
+	builder := storage.NewTemplateBuilder(h.server.logger)
+	if err := builder.DownloadFile(ctx, req.SourceUrl, tmpFile); err != nil {
+		return "", 0, fmt.Errorf("downloading template from %s: %w", req.SourceUrl, err)
+	}
+
+	meta := storage.TemplateMeta{}
+	localPath, sizeBytes, importErr := h.server.templateMgr.ImportTemplate(ctx, ref, tmpFile, meta)
+	if importErr != nil {
+		return "", 0, fmt.Errorf("importing downloaded template: %w", importErr)
+	}
+
+	return localPath, sizeBytes, nil
+}
+
+// resolveTemplatePath returns the expected local path for a template reference.
+func (h *grpcHandler) resolveTemplatePath(ref, storageBackend string) string {
+	switch storageBackend {
+	case "qcow":
+		return filepath.Join("/var/lib/virtuestack/templates", ref+".qcow2")
+	case "lvm":
+		return "/dev/" + ref
+	default:
+		return ref
+	}
+}
+
+
 // mapError maps internal errors to safe gRPC status codes.
 // The original error is logged server-side and only a generic message is
 // returned to the caller to prevent leaking internal details such as file

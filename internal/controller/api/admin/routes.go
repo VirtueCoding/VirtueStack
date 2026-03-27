@@ -50,6 +50,7 @@ import (
 //	  PUT    /templates/:id      - Update template
 //	  DELETE /templates/:id      - Delete template
 //	  POST   /templates/:id/import - Import OS image
+//	  POST   /templates/build-from-iso - Build template from ISO
 //
 //	IP Sets:
 //	  GET    /ip-sets              - List IP sets
@@ -224,6 +225,9 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			templates.PUT("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.UpdateTemplate)
 			templates.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DeleteTemplate)
 			templates.POST("/:id/import", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.ImportTemplate)
+			templates.POST("/build-from-iso", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.BuildTemplateFromISO)
+			templates.POST("/:id/distribute", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DistributeTemplate)
+			templates.GET("/:id/cache-status", middleware.RequireAdminPermission(models.PermissionTemplatesRead), handler.GetTemplateCacheStatus)
 		}
 
 		// IP Set management

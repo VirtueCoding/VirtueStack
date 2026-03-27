@@ -274,3 +274,156 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, models.Response{Data: template})
 }
+
+// BuildTemplateFromISO handles POST /templates/build-from-iso.
+// Starts an async task to build a VM template from an ISO using unattended installation.
+// The ISO can be specified as a local filesystem path (iso_path) or an HTTP/HTTPS URL (iso_url).
+func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
+	var req models.TemplateBuildFromISORequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	if req.ISOPath == "" && req.ISOURL == "" {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Either iso_path or iso_url is required")
+		return
+	}
+	if req.ISOPath != "" && req.ISOURL != "" {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Only one of iso_path or iso_url may be provided")
+		return
+	}
+
+	if req.DiskSizeGB == 0 {
+		req.DiskSizeGB = 10
+	}
+	if req.MemoryMB == 0 {
+		req.MemoryMB = 2048
+	}
+	if req.VCPUs == 0 {
+		req.VCPUs = 2
+	}
+
+	taskID, err := h.templateService.BuildFromISO(c.Request.Context(), &req)
+	if err != nil {
+		h.logger.Error("failed to start template build from ISO",
+			"name", req.Name,
+			"os_family", req.OSFamily,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+			return
+		}
+		if errors.Is(err, sharederrors.ErrValidation) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_BUILD_FAILED", "Failed to start template build")
+		return
+	}
+
+	isoSource := req.ISOPath
+	if isoSource == "" {
+		isoSource = req.ISOURL
+	}
+
+	h.logAuditEvent(c, "template.build_from_iso", "template", taskID, map[string]interface{}{
+		"name":            req.Name,
+		"os_family":       req.OSFamily,
+		"os_version":      req.OSVersion,
+		"iso_source":      isoSource,
+		"node_id":         req.NodeID,
+		"storage_backend": req.StorageBackend,
+	}, true)
+
+	h.logger.Info("template build from ISO started",
+		"task_id", taskID,
+		"name", req.Name,
+		"os_family", req.OSFamily,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: map[string]string{"task_id": taskID},
+	})
+}
+
+// DistributeTemplate handles POST /templates/:id/distribute - distributes a template to nodes.
+// This triggers an async task that pushes the template to the specified QCOW/LVM nodes.
+// Ceph templates are rejected since they use shared pool access.
+func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ID", "Invalid template ID format")
+		return
+	}
+
+	var req models.TemplateDistributeRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	taskID, err := h.templateService.DistributeToNodes(c.Request.Context(), id, req.NodeIDs)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Template not found")
+			return
+		}
+		if errors.Is(err, sharederrors.ErrValidation) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.logger.Error("failed to distribute template",
+			"template_id", id,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "DISTRIBUTE_FAILED", "Failed to start template distribution")
+		return
+	}
+
+	h.logAuditEvent(c, "template.distribute", "template", id, map[string]interface{}{
+		"node_ids":  req.NodeIDs,
+		"node_count": len(req.NodeIDs),
+	}, true)
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: map[string]string{"task_id": taskID},
+	})
+}
+
+// GetTemplateCacheStatus handles GET /templates/:id/cache-status - returns cache status across nodes.
+func (h *AdminHandler) GetTemplateCacheStatus(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ID", "Invalid template ID format")
+		return
+	}
+
+	status, err := h.templateService.GetCacheStatus(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Template not found")
+			return
+		}
+		h.logger.Error("failed to get template cache status",
+			"template_id", id,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CACHE_STATUS_FAILED", "Failed to get cache status")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: status})
+}

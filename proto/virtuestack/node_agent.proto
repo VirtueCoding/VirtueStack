@@ -227,6 +227,26 @@ service NodeAgentService {
 
   // GetNodeHealth retrieves comprehensive health status of the node.
   rpc GetNodeHealth(Empty) returns (NodeHealthResponse);
+
+  // ========================================================================
+  // Template Build Operations
+  // ========================================================================
+
+  // BuildTemplateFromISO creates a VM template by performing an unattended OS
+  // installation from an ISO image. Supports Debian preseed, Ubuntu autoinstall,
+  // and AlmaLinux/RHEL kickstart configurations. The resulting disk is imported
+  // into the specified storage backend (ceph, qcow, or lvm).
+  rpc BuildTemplateFromISO(BuildTemplateFromISORequest) returns (BuildTemplateFromISOResponse);
+
+  // ========================================================================
+  // Template Distribution Operations
+  // ========================================================================
+
+  // EnsureTemplateCached ensures a template is available locally on the node.
+  // For QCOW/LVM nodes, the controller streams the template image to the node
+  // if it is not already cached. Ceph nodes should not call this (they use shared pool).
+  // The source_url field tells the node agent where to fetch the template image.
+  rpc EnsureTemplateCached(EnsureTemplateCachedRequest) returns (EnsureTemplateCachedResponse);
 }
 
 // ============================================================================
@@ -867,4 +887,87 @@ message RestoreLVMBackupRequest {
   string vm_id = 1;
   // Path to the backup file to restore from
   string backup_file_path = 2;
+}
+
+// ============================================================================
+// TEMPLATE BUILD FROM ISO MESSAGES
+// ============================================================================
+
+// BuildTemplateFromISORequest provides parameters for building a VM template
+// from an ISO image using unattended installation.
+message BuildTemplateFromISORequest {
+  // Human-readable template name (e.g., "Ubuntu 24.04 LTS")
+  string template_name = 1;
+  // Path to the ISO file on the node filesystem
+  string iso_path = 2;
+  // OS family: "debian", "ubuntu", "almalinux", "rocky", "centos"
+  string os_family = 3;
+  // OS version: "12", "24.04", "9"
+  string os_version = 4;
+  // Disk size in GB for the template (default: 10)
+  int32 disk_size_gb = 5;
+  // RAM in MB for the installation VM (default: 2048)
+  int32 memory_mb = 6;
+  // vCPUs for the installation VM (default: 2)
+  int32 vcpus = 7;
+  // Target storage backend: "ceph", "qcow", or "lvm"
+  string storage_backend = 8;
+  // Optional root password for the template (default: auto-generated)
+  string root_password = 9;
+  // Optional custom preseed/kickstart/autoinstall content.
+  // If empty, a built-in config for the OS family is used.
+  string custom_install_config = 10;
+  // Optional HTTP/HTTPS URL to download the ISO from.
+  // If provided, the node agent downloads the ISO before building.
+  // Exactly one of iso_path or iso_url must be set.
+  string iso_url = 11;
+}
+
+// BuildTemplateFromISOResponse is returned after template build completes.
+message BuildTemplateFromISOResponse {
+  // Whether the build succeeded
+  bool success = 1;
+  // Error message if build failed
+  string error_message = 2;
+  // Reference to the created template in storage (RBD image name or file path)
+  string template_ref = 3;
+  // Snapshot reference (for Ceph RBD; empty for qcow/lvm)
+  string snapshot_ref = 4;
+  // Size of the template in bytes
+  int64 size_bytes = 5;
+}
+
+// ============================================================================
+// TEMPLATE DISTRIBUTION MESSAGES
+// ============================================================================
+
+// EnsureTemplateCachedRequest asks the node to ensure a template is available locally.
+message EnsureTemplateCachedRequest {
+  // Unique template identifier from the controller database
+  string template_id = 1;
+  // Human-readable template name (used for local file naming)
+  string template_name = 2;
+  // Storage backend on this node: "qcow" or "lvm"
+  string storage_backend = 3;
+  // HTTP(S) URL from which the node agent can download the template image.
+  // The controller provides a signed/internal URL for streaming.
+  string source_url = 4;
+  // Expected file size in bytes (for progress tracking and pre-allocation)
+  int64 expected_size_bytes = 5;
+  // SHA-256 checksum of the template image for integrity verification
+  string checksum_sha256 = 6;
+}
+
+// EnsureTemplateCachedResponse indicates whether the template is now available.
+message EnsureTemplateCachedResponse {
+  // Whether the template is cached and ready for use
+  bool success = 1;
+  // Error message if caching failed
+  string error_message = 2;
+  // Local path where the template is stored on the node
+  string local_path = 3;
+  // Whether the template was already cached (true) or freshly downloaded (false)
+  bool already_cached = 4;
+  // Actual size of the cached template in bytes
+  int64 size_bytes = 5;
 }

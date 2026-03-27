@@ -689,6 +689,8 @@ func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *
 		Vcpu:                int32(req.VCPU),
 		MemoryMb:            int32(req.MemoryMB),
 		DiskGb:              int32(req.DiskGB),
+		StorageBackend:      req.StorageBackend,
+		TemplateFilePath:    req.TemplateFilePath,
 		TemplateRbdImage:    req.TemplateRBDImage,
 		TemplateRbdSnapshot: req.TemplateRBDSnapshot,
 		RootPasswordHash:    req.RootPasswordHash,
@@ -1399,6 +1401,83 @@ func (c *NodeAgentGRPCClient) PrepareMigratedVM(ctx context.Context, targetNodeI
 		return fmt.Errorf("prepare migrated VM failed: %s", resp.GetErrorMessage())
 	}
 	return nil
+}
+
+// BuildTemplateFromISO builds a VM template from an ISO on the specified node.
+func (c *NodeAgentGRPCClient) BuildTemplateFromISO(ctx context.Context, nodeID string, req *tasks.BuildTemplateFromISORequest) (*tasks.BuildTemplateFromISOResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.BuildTemplateFromISO(ctx, &nodeagentpb.BuildTemplateFromISORequest{
+		TemplateName:        req.TemplateName,
+		IsoPath:             req.ISOPath,
+		IsoUrl:              req.ISOURL,
+		OsFamily:            req.OSFamily,
+		OsVersion:           req.OSVersion,
+		DiskSizeGb:          int32(req.DiskSizeGB),
+		MemoryMb:            int32(req.MemoryMB),
+		Vcpus:               int32(req.VCPUs),
+		StorageBackend:      req.StorageBackend,
+		RootPassword:        req.RootPassword,
+		CustomInstallConfig: req.CustomInstallConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build template from ISO: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("template build failed: %s", resp.ErrorMessage)
+	}
+
+	return &tasks.BuildTemplateFromISOResponse{
+		TemplateRef: resp.TemplateRef,
+		SnapshotRef: resp.SnapshotRef,
+		SizeBytes:   resp.SizeBytes,
+	}, nil
+}
+
+// EnsureTemplateCached ensures a template image is available locally on a QCOW/LVM node.
+func (c *NodeAgentGRPCClient) EnsureTemplateCached(ctx context.Context, nodeID string, req *tasks.EnsureTemplateCachedRequest) (*tasks.EnsureTemplateCachedResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.EnsureTemplateCached(ctx, &nodeagentpb.EnsureTemplateCachedRequest{
+		TemplateId:        req.TemplateID,
+		TemplateName:      req.TemplateName,
+		StorageBackend:    req.StorageBackend,
+		SourceUrl:         req.SourceURL,
+		ExpectedSizeBytes: req.ExpectedSizeBytes,
+		ChecksumSha256:    req.ChecksumSHA256,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ensure template cached: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("template caching failed: %s", resp.ErrorMessage)
+	}
+
+	return &tasks.EnsureTemplateCachedResponse{
+		LocalPath:     resp.LocalPath,
+		AlreadyCached: resp.AlreadyCached,
+		SizeBytes:     resp.SizeBytes,
+	}, nil
 }
 
 func (c *NodeAgentGRPCClient) cephMonitors() []string {

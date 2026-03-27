@@ -163,6 +163,7 @@ func (s *Server) InitializeServices() error {
 	ipRepo := repository.NewIPRepository(s.dbPool)
 	planRepo := repository.NewPlanRepository(s.dbPool)
 	templateRepo := repository.NewTemplateRepository(s.dbPool)
+	templateCacheRepo := repository.NewTemplateCacheRepository(s.dbPool)
 	customerRepo := repository.NewCustomerRepository(s.dbPool)
 	backupRepo := repository.NewBackupRepository(s.dbPool)
 	auditRepo := repository.NewAuditRepository(s.dbPool)
@@ -247,11 +248,17 @@ func (s *Server) InitializeServices() error {
 
 	s.planService = services.NewPlanService(planRepo, s.logger)
 
-	s.templateService = services.NewTemplateService(
-		templateRepo,
-		s.storage,
-		s.logger,
-	)
+	s.templateService = services.NewTemplateServiceWithTasks(services.TemplateServiceTasksConfig{
+		TemplateRepo:      templateRepo,
+		TemplateCacheRepo: templateCacheRepo,
+		StorageBackends: map[string]services.TemplateStorage{
+			s.storage.GetStorageType(): s.storage,
+		},
+		DefaultBackend: string(s.storage.GetStorageType()),
+		NodeRepo:       nodeRepo,
+		TaskPublisher:  taskPublisher,
+		Logger:         s.logger,
+	})
 
 	s.customerService = services.NewCustomerService(customerRepo, auditRepo, s.logger)
 

@@ -38,7 +38,7 @@ export const editTemplateSchema = z.object({
   is_active: z.boolean().optional(),
   sort_order: z.number().int().min(0, "Must be 0 or greater").optional(),
   description: z.string().max(500, "Description must be 500 characters or less").optional(),
-  storage_backend: z.enum(["ceph", "qcow"]).optional(),
+  storage_backend: z.enum(["ceph", "qcow", "lvm"]).optional(),
   file_path: z.string().max(500, "File Path must be 500 characters or less").optional(),
 });
 
@@ -231,7 +231,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 </Label>
                 <Select
                   value={form.watch("storage_backend")}
-                  onValueChange={(value: "ceph" | "qcow") => form.setValue("storage_backend", value)}
+                  onValueChange={(value: "ceph" | "qcow" | "lvm") => form.setValue("storage_backend", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select backend" />
@@ -239,6 +239,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                   <SelectContent>
                     <SelectItem value="ceph">Ceph (RBD)</SelectItem>
                     <SelectItem value="qcow">Local QCOW2</SelectItem>
+                    <SelectItem value="lvm">LVM Thin</SelectItem>
                   </SelectContent>
                 </Select>
                 {form.formState.errors.storage_backend && (
@@ -300,6 +301,20 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                   <p className="text-xs text-destructive">{form.formState.errors.file_path.message}</p>
                 )}
                 <p className="text-xs text-muted-foreground">Path to the QCOW2 template file on the node</p>
+              </div>
+            )}
+            {form.watch("storage_backend") === "lvm" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-file_path">LV Path</Label>
+                <Input
+                  id="edit-file_path"
+                  placeholder="e.g., /dev/vgvs/template-ubuntu-24.04"
+                  {...form.register("file_path")}
+                />
+                {form.formState.errors.file_path && (
+                  <p className="text-xs text-destructive">{form.formState.errors.file_path.message}</p>
+                )}
+                <p className="text-xs text-muted-foreground">Path to the LVM thin logical volume</p>
               </div>
             )}
           </div>

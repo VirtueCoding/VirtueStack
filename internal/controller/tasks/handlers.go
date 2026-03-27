@@ -41,6 +41,12 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 	worker.RegisterHandler(models.TaskTypeVMResize, func(ctx context.Context, task *models.Task) error {
 		return handleVMResize(ctx, task, deps)
 	})
+	worker.RegisterHandler(models.TaskTypeTemplateBuild, func(ctx context.Context, task *models.Task) error {
+		return handleTemplateBuild(ctx, task, deps)
+	})
+	worker.RegisterHandler(models.TaskTypeTemplateDistribute, func(ctx context.Context, task *models.Task) error {
+		return handleTemplateDistribute(ctx, task, deps)
+	})
 
 	deps.Logger.Info("all task handlers registered",
 		"handlers", []string{
@@ -54,5 +60,7 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 			models.TaskTypeSnapshotCreate,
 			models.TaskTypeSnapshotRevert,
 			models.TaskTypeSnapshotDelete,
+			models.TaskTypeTemplateBuild,
+			models.TaskTypeTemplateDistribute,
 		})
 }

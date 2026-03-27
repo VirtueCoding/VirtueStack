@@ -44,10 +44,13 @@ type TemplateStorage interface {
 // TemplateService provides business logic for managing OS templates.
 // Templates are OS images stored in Ceph RBD or QCOW2 that can be used for VM provisioning.
 type TemplateService struct {
-	templateRepo   *repository.TemplateRepository
-	storageMap     map[string]TemplateStorage
-	defaultStorage TemplateStorage
-	logger         *slog.Logger
+	templateRepo      *repository.TemplateRepository
+	templateCacheRepo *repository.TemplateCacheRepository
+	storageMap        map[string]TemplateStorage
+	defaultStorage    TemplateStorage
+	nodeRepo          *repository.NodeRepository
+	taskPublisher     TaskPublisher
+	logger            *slog.Logger
 }
 
 // NewTemplateService creates a new TemplateService with the given dependencies.
@@ -93,6 +96,26 @@ func NewTemplateServiceWithBackends(
 		defaultStorage: defaultStorage,
 		logger:         logger.With("component", "template-service"),
 	}
+}
+
+// TemplateServiceTasksConfig holds dependencies for creating a TemplateService with task support.
+type TemplateServiceTasksConfig struct {
+	TemplateRepo      *repository.TemplateRepository
+	TemplateCacheRepo *repository.TemplateCacheRepository
+	StorageBackends   map[string]TemplateStorage
+	DefaultBackend    string
+	NodeRepo          *repository.NodeRepository
+	TaskPublisher     TaskPublisher
+	Logger            *slog.Logger
+}
+
+// NewTemplateServiceWithTasks creates a TemplateService with task publishing support.
+func NewTemplateServiceWithTasks(cfg TemplateServiceTasksConfig) *TemplateService {
+	svc := NewTemplateServiceWithBackends(cfg.TemplateRepo, cfg.StorageBackends, cfg.DefaultBackend, cfg.Logger)
+	svc.templateCacheRepo = cfg.TemplateCacheRepo
+	svc.nodeRepo = cfg.NodeRepo
+	svc.taskPublisher = cfg.TaskPublisher
+	return svc
 }
 
 // GetStorage returns the appropriate storage backend for the given type.
@@ -391,4 +414,137 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 		"version", template.Version)
 
 	return template, nil
+}
+
+// BuildFromISO starts an async task to build a VM template from an ISO.
+// It validates the request, verifies the node exists and is online,
+// creates a task record, and publishes it to the task queue.
+// Requires that the service was created with NewTemplateServiceWithTasks.
+func (s *TemplateService) BuildFromISO(ctx context.Context, req *models.TemplateBuildFromISORequest) (string, error) {
+	if s.taskPublisher == nil || s.nodeRepo == nil {
+		return "", fmt.Errorf("template service not configured for task publishing (use NewTemplateServiceWithTasks)")
+	}
+
+	// Verify template name is unique
+	existing, err := s.templateRepo.GetByName(ctx, req.Name)
+	if err == nil && existing != nil {
+		return "", fmt.Errorf("%w: template with name %s already exists", sharederrors.ErrValidation, req.Name)
+	}
+
+	// Verify the target node exists and is online
+	node, err := s.nodeRepo.GetByID(ctx, req.NodeID)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", sharederrors.ErrNotFound, err)
+	}
+	if node.Status != "online" {
+		return "", fmt.Errorf("%w: node %s is not online (status: %s)", sharederrors.ErrValidation, node.Hostname, node.Status)
+	}
+
+	payload := map[string]any{
+		"template_name":         req.Name,
+		"os_family":             req.OSFamily,
+		"os_version":            req.OSVersion,
+		"iso_path":              req.ISOPath,
+		"iso_url":               req.ISOURL,
+		"node_id":               req.NodeID,
+		"storage_backend":       req.StorageBackend,
+		"disk_size_gb":          req.DiskSizeGB,
+		"memory_mb":             req.MemoryMB,
+		"vcpus":                 req.VCPUs,
+		"root_password":         req.RootPassword,
+		"custom_install_config": req.CustomInstallConfig,
+	}
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeTemplateBuild, payload)
+	if err != nil {
+		return "", fmt.Errorf("publishing task: %w", err)
+	}
+
+	s.logger.Info("template build from ISO task created",
+		"task_id", taskID,
+		"template_name", req.Name,
+		"os_family", req.OSFamily,
+		"os_version", req.OSVersion,
+		"node_id", req.NodeID,
+		"storage_backend", req.StorageBackend)
+
+	return taskID, nil
+}
+
+// DistributeToNodes publishes an async task to distribute a template to specified nodes.
+// Ceph templates are skipped (shared pool access). Only QCOW/LVM templates need distribution.
+func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID string, nodeIDs []string) (string, error) {
+	if s.taskPublisher == nil {
+		return "", fmt.Errorf("template service not configured for task publishing")
+	}
+
+	template, err := s.templateRepo.GetByID(ctx, templateID)
+	if err != nil {
+		return "", fmt.Errorf("getting template: %w", err)
+	}
+
+	if template.StorageBackend == StorageBackendCeph {
+		return "", fmt.Errorf("%w: ceph templates use shared pool access and do not need distribution",
+			sharederrors.ErrValidation)
+	}
+	if err := models.ValidateTemplateDistributionSourceURL(derefString(template.FilePath)); err != nil {
+		return "", fmt.Errorf("%w: %v", sharederrors.ErrValidation, err)
+	}
+
+	for _, nodeID := range nodeIDs {
+		node, nodeErr := s.nodeRepo.GetByID(ctx, nodeID)
+		if nodeErr != nil {
+			return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, nodeID)
+		}
+		if node.Status != "online" {
+			return "", fmt.Errorf("%w: node %s is not online (status: %s)",
+				sharederrors.ErrValidation, node.Hostname, node.Status)
+		}
+	}
+
+	payload := map[string]any{
+		"template_id": templateID,
+		"node_ids":    nodeIDs,
+	}
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeTemplateDistribute, payload)
+	if err != nil {
+		return "", fmt.Errorf("publishing distribute task: %w", err)
+	}
+
+	s.logger.Info("template distribution task created",
+		"task_id", taskID,
+		"template_id", templateID,
+		"target_nodes", len(nodeIDs))
+
+	return taskID, nil
+}
+
+// GetCacheStatus returns the cache status of a template across all nodes.
+func (s *TemplateService) GetCacheStatus(ctx context.Context, templateID string) (*models.TemplateCacheStatusResponse, error) {
+	if s.templateCacheRepo == nil {
+		return nil, fmt.Errorf("template cache repository not configured")
+	}
+
+	_, err := s.templateRepo.GetByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("getting template: %w", err)
+	}
+
+	entries, err := s.templateCacheRepo.ListByTemplate(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("listing cache entries: %w", err)
+	}
+
+	return &models.TemplateCacheStatusResponse{
+		TemplateID: templateID,
+		Entries:    entries,
+	}, nil
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

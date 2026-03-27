@@ -758,8 +758,25 @@ export interface UpdateTemplateRequest {
   is_active?: boolean;
   sort_order?: number;
   description?: string;
-  storage_backend?: "ceph" | "qcow";
+  storage_backend?: "ceph" | "qcow" | "lvm";
   file_path?: string;
+}
+
+export interface TemplateCacheEntry {
+  template_id: string;
+  node_id: string;
+  status: "pending" | "downloading" | "ready" | "failed";
+  local_path?: string;
+  size_bytes?: number;
+  synced_at?: string;
+  error_msg?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateCacheStatusResponse {
+  template_id: string;
+  entries: TemplateCacheEntry[];
 }
 
 export const adminTemplatesApi = {
@@ -782,7 +799,7 @@ export const adminTemplatesApi = {
     is_active?: boolean;
     sort_order?: number;
     description?: string;
-    storage_backend?: "ceph" | "qcow";
+    storage_backend?: "ceph" | "qcow" | "lvm";
     file_path?: string;
   }): Promise<Template> {
     return apiClient.post<Template>("/admin/templates", data);
@@ -803,6 +820,33 @@ export const adminTemplatesApi = {
     source_path?: string;
   } = {}): Promise<{ message: string }> {
     return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, data);
+  },
+
+  async buildTemplateFromISO(data: {
+    name: string;
+    os_family: string;
+    os_version: string;
+    iso_path?: string;
+    iso_url?: string;
+    node_id: string;
+    storage_backend: string;
+    disk_size_gb?: number;
+    memory_mb?: number;
+    vcpus?: number;
+    root_password?: string;
+    custom_install_config?: string;
+  }): Promise<{ task_id: string }> {
+    return apiClient.post<{ task_id: string }>("/admin/templates/build-from-iso", data);
+  },
+
+  async distributeTemplate(id: string, nodeIds: string[]): Promise<{ task_id: string }> {
+    return apiClient.post<{ task_id: string }>(`/admin/templates/${id}/distribute`, {
+      node_ids: nodeIds,
+    });
+  },
+
+  async getTemplateCacheStatus(id: string): Promise<TemplateCacheStatusResponse> {
+    return apiClient.get<TemplateCacheStatusResponse>(`/admin/templates/${id}/cache-status`);
   },
 };
 
