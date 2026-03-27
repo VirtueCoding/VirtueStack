@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -375,7 +376,7 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 		return "", nil, fmt.Errorf("ISO too large: %d bytes (max %d)", resp.ContentLength, maxISOSizeBytes)
 	}
 
-	out, err := os.Create(destPath)
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("creating download file: %w", err)
@@ -396,11 +397,6 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 		return "", nil, fmt.Errorf("ISO too large: downloaded %d bytes (max %d)", written, maxISOSizeBytes)
 	}
 
-	if err := os.Chmod(destPath, 0600); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("securing downloaded ISO permissions: %w", err)
-	}
-
 	b.logger.Info("ISO download completed",
 		"url", isoURL,
 		"dest", destPath,
@@ -410,8 +406,9 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 }
 
 // validateISOURL validates an ISO download URL.
-// Only HTTP and HTTPS schemes are allowed, and the host must not be a
-// loopback or private address to prevent SSRF attacks.
+// Only HTTP and HTTPS schemes are allowed. The hostname is resolved
+// and the resulting IP addresses are checked against known private/loopback
+// ranges to prevent SSRF attacks.
 func validateISOURL(isoURL string) error {
 	if isoURL == "" {
 		return fmt.Errorf("ISO URL is required")
@@ -431,26 +428,8 @@ func validateISOURL(isoURL string) error {
 		return fmt.Errorf("ISO URL must have a hostname")
 	}
 
-	blockedHosts := []string{"localhost", "127.0.0.1", "::1", "0.0.0.0"}
-	for _, blocked := range blockedHosts {
-		if strings.EqualFold(host, blocked) {
-			return fmt.Errorf("ISO URL must not point to localhost")
-		}
-	}
-
-	blockedPrefixes := []string{"10.", "192.168.", "169.254."}
-	for _, prefix := range blockedPrefixes {
-		if strings.HasPrefix(host, prefix) {
-			return fmt.Errorf("ISO URL must not point to a private network address")
-		}
-	}
-	if strings.HasPrefix(host, "172.") && len(host) > 4 {
-		parts := strings.SplitN(host, ".", 3)
-		if len(parts) >= 2 {
-			if octet := parts[1]; octet >= "16" && octet <= "31" {
-				return fmt.Errorf("ISO URL must not point to a private network address")
-			}
-		}
+	if err := validateHostNotPrivate(host); err != nil {
+		return err
 	}
 
 	if !strings.HasSuffix(strings.ToLower(parsed.Path), ".iso") {
@@ -458,6 +437,48 @@ func validateISOURL(isoURL string) error {
 	}
 
 	return nil
+}
+
+// validateHostNotPrivate resolves the hostname and ensures none of the
+// resulting IP addresses are loopback, private, or link-local.
+func validateHostNotPrivate(host string) error {
+	// First check if host is a raw IP address.
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("ISO URL must not point to a private or loopback address")
+		}
+		return nil
+	}
+
+	// Resolve hostname to IP addresses.
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve ISO URL hostname %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("ISO URL hostname %q resolves to no addresses", host)
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if isBlockedIP(ip) {
+			return fmt.Errorf("ISO URL must not point to a private or loopback address")
+		}
+	}
+	return nil
+}
+
+// isBlockedIP returns true if the IP is loopback, private, link-local,
+// or otherwise should not be accessed by the ISO downloader.
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified()
 }
 
 // isoFilenameFromURL extracts a safe filename from a URL.
