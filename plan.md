@@ -381,7 +381,7 @@ Customer WebUI                    Controller API                     Stripe
      │                                 │ ◄─────────────────────────────│
      │                                 │ webhook.ConstructEvent() ✓    │
      │                                 │ event: checkout.session.      │
-     │                                 │        completed              │
+     │                                 │ completed                     │
      │                                 │                               │
      │                                 │ → Add credits to balance      │
      │                                 │ → Record transaction          │
@@ -657,6 +657,7 @@ func handleStripeWebhook(c *gin.Context) {
 
 - **Use PayPal Checkout (standard buttons) for v1.** It covers the primary PayPal/Venmo/Pay Later use cases with the least code and the least PCI surface area.
 - **Do not use Expanded Checkout / Enterprise Checkout in v1.** Stripe already covers card entry better via the Payment Element; duplicating advanced card flows in PayPal adds complexity without clear product value.
+- **Revisit Expanded Checkout only if product requirements change.** A future upgrade is reasonable if VirtueStack later needs PayPal-hosted card acquiring in markets where Stripe coverage is insufficient, or if enterprise customers explicitly require PayPal-only advanced card flows.
 - **Recommended role split:** Stripe handles cards, Apple Pay, Google Pay, Link, and local methods; PayPal handles PayPal wallet, Venmo, and Pay Later.
 
 #### Go SDK — `github.com/plutov/paypal/v4`
@@ -820,7 +821,7 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 
 1. **Do not start with every network.** Limit the first release to a short, supportable list.
 2. **Suggested launch set:** BTC + one or two stablecoin rails with low fees and strong wallet support (for example TRC20 or Polygon), rather than Ethereum mainnet first.
-3. **Treat asset and chain as separate identifiers.** `USDT-TRC20`, `USDT-ERC20`, and `USDT-BEP20` must never be modeled as a single “USDT” payment method.
+3. **Treat asset and chain as separate identifiers.** `USDT-TRC20`, `USDT-ERC20`, and `USDT-BEP20` must never be modeled as a single “USDT” payment method. Enforce this in the database schema and validation layer (for example, separate `asset_symbol` + `network` fields with a composite uniqueness/allowlist constraint).
 4. **If self-hosting is a product requirement:** offer BTCPay as an optional admin-selectable provider, not the only crypto path.
 
 ### 5.4 SDK Version Summary
@@ -846,9 +847,9 @@ result, err := paypalClient.VerifyWebhookSignature(ctx, verifyReq)
 | **Race conditions** | Use PostgreSQL `SELECT ... FOR UPDATE` on `customer_credits` row during deductions. Stripe PaymentIntents and PayPal Orders provide built-in idempotency. |
 | **Audit trail** | `billing_transactions` table is append-only (no UPDATE/DELETE). All mutations logged in `audit_logs`. Payment gateway references stored for reconciliation. |
 | **Crypto address reuse** | Generate unique payment address per top-up. Never reuse addresses. |
-| **Webhook replay / double-credit risk** | Store processed webhook event IDs with a unique constraint. Credit top-ups must be idempotent by provider event ID and provider payment/order/session ID. |
+| **Webhook replay / double-credit risk** | Store processed webhook event IDs in a dedicated table (for example `billing_webhook_events`) or equivalent durable ledger with a unique constraint on `(provider, event_id)`. Credit top-ups must also be idempotent by provider payment/order/session ID before writing to `billing_transactions`. |
 | **Crypto underpayment / overpayment** | Define quote expiry, acceptable tolerance, minimum confirmations, and a manual-review path before automatically crediting mismatched amounts. |
-| **Token symbol ambiguity** | Persist asset and network separately (`USDT` + `TRC20`, not just `USDT`) to prevent customers sending funds on the wrong chain. |
+| **Token symbol ambiguity** | Persist asset and network separately (`USDT` + `TRC20`, not just `USDT`) to prevent customers sending funds on the wrong chain. Enforce this in payment-method configuration, invoice generation, and webhook validation. |
 | **Currency handling** | All amounts in integer cents (BIGINT). No floating-point. Round consistently (banker's rounding). |
 | **Chargeback/dispute handling** | Auto-suspend customer VMs on `charge.dispute.created` (Stripe) or `CUSTOMER.DISPUTE.CREATED` (PayPal). Notify admin immediately. Record dispute in billing transactions. |
 | **3D Secure / SCA** | Stripe Payment Element handles SCA automatically. PayPal handles authentication via its checkout flow. No additional server-side work needed. |
