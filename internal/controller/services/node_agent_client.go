@@ -1417,6 +1417,7 @@ func (c *NodeAgentGRPCClient) BuildTemplateFromISO(ctx context.Context, nodeID s
 	resp, err := client.BuildTemplateFromISO(ctx, &nodeagentpb.BuildTemplateFromISORequest{
 		TemplateName:        req.TemplateName,
 		IsoPath:             req.ISOPath,
+		IsoUrl:              req.ISOURL,
 		OsFamily:            req.OSFamily,
 		OsVersion:           req.OSVersion,
 		DiskSizeGb:          int32(req.DiskSizeGB),

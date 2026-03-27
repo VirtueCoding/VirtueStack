@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +36,8 @@ func NewTemplateBuilder(logger *slog.Logger) *TemplateBuilder {
 // BuildConfig holds the parameters for building a template from ISO.
 type BuildConfig struct {
 	TemplateName        string // Human-readable name for the template
-	ISOPath             string // Path to the ISO file on disk
+	ISOPath             string // Path to the ISO file on disk (mutually exclusive with ISOURL)
+	ISOURL              string // HTTP/HTTPS URL to download the ISO from (mutually exclusive with ISOPath)
 	OSFamily            string // OS family: debian, ubuntu, almalinux, rocky, centos
 	OSVersion           string // OS version: 12, 24.04, 9
 	DiskSizeGB          int    // Disk size in GB for the template
@@ -53,7 +57,19 @@ type BuildResult struct {
 // The build process runs virt-install with a generated preseed/kickstart/autoinstall
 // config, waits up to 45 minutes for installation to complete, then runs virt-sysprep
 // to generalize the image. The resulting disk can be imported into any storage backend.
+//
+// If cfg.ISOURL is set (instead of cfg.ISOPath), the ISO is downloaded first.
 func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildResult, error) {
+	// If a URL is provided, download the ISO first.
+	if cfg.ISOURL != "" {
+		downloadedPath, cleanup, err := b.downloadISO(ctx, cfg.ISOURL)
+		if err != nil {
+			return nil, fmt.Errorf("downloading ISO from URL: %w", err)
+		}
+		defer cleanup()
+		cfg.ISOPath = downloadedPath
+	}
+
 	if err := validateISOPath(cfg.ISOPath); err != nil {
 		return nil, err
 	}
@@ -284,6 +300,178 @@ func SanitizeTemplateName(name string) string {
 		result = result[:50]
 	}
 	return result
+}
+
+// ============================================================================
+// ISO Download from URL
+// ============================================================================
+
+// isoDownloadTimeout is the maximum time for downloading an ISO from a URL.
+const isoDownloadTimeout = 30 * time.Minute
+
+// maxISOSizeBytes is the maximum allowed ISO size (10 GB).
+const maxISOSizeBytes int64 = 10 * 1024 * 1024 * 1024
+
+// maxRedirects is the maximum number of HTTP redirects to follow.
+const maxRedirects = 5
+
+// downloadISO downloads an ISO from the given URL to a temporary directory.
+// Returns the path to the downloaded file and a cleanup function that removes it.
+func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (string, func(), error) {
+	if err := validateISOURL(isoURL); err != nil {
+		return "", nil, err
+	}
+
+	downloadDir, err := os.MkdirTemp("/tmp", "vs-iso-download-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating temp download directory: %w", err)
+	}
+
+	cleanup := func() {
+		if removeErr := os.RemoveAll(downloadDir); removeErr != nil {
+			b.logger.Warn("failed to clean download dir", "dir", downloadDir, "error", removeErr)
+		}
+	}
+
+	filename := isoFilenameFromURL(isoURL)
+	destPath := filepath.Join(downloadDir, filename)
+
+	b.logger.Info("downloading ISO from URL",
+		"url", isoURL,
+		"dest", destPath)
+
+	dlCtx, cancel := context.WithTimeout(ctx, isoDownloadTimeout)
+	defer cancel()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, isoURL, nil)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating HTTP request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("HTTP GET %s: %w", isoURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		cleanup()
+		return "", nil, fmt.Errorf("HTTP GET %s returned status %d", isoURL, resp.StatusCode)
+	}
+
+	if resp.ContentLength > maxISOSizeBytes {
+		cleanup()
+		return "", nil, fmt.Errorf("ISO too large: %d bytes (max %d)", resp.ContentLength, maxISOSizeBytes)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating download file: %w", err)
+	}
+
+	reader := io.LimitReader(resp.Body, maxISOSizeBytes+1)
+	written, err := io.Copy(out, reader)
+	if closeErr := out.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("writing ISO to disk: %w", err)
+	}
+
+	if written > maxISOSizeBytes {
+		cleanup()
+		return "", nil, fmt.Errorf("ISO too large: downloaded %d bytes (max %d)", written, maxISOSizeBytes)
+	}
+
+	if err := os.Chmod(destPath, 0600); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("securing downloaded ISO permissions: %w", err)
+	}
+
+	b.logger.Info("ISO download completed",
+		"url", isoURL,
+		"dest", destPath,
+		"size_bytes", written)
+
+	return destPath, cleanup, nil
+}
+
+// validateISOURL validates an ISO download URL.
+// Only HTTP and HTTPS schemes are allowed, and the host must not be a
+// loopback or private address to prevent SSRF attacks.
+func validateISOURL(isoURL string) error {
+	if isoURL == "" {
+		return fmt.Errorf("ISO URL is required")
+	}
+
+	parsed, err := url.Parse(isoURL)
+	if err != nil {
+		return fmt.Errorf("invalid ISO URL: %w", err)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("ISO URL must use http or https scheme, got: %s", parsed.Scheme)
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("ISO URL must have a hostname")
+	}
+
+	blockedHosts := []string{"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+	for _, blocked := range blockedHosts {
+		if strings.EqualFold(host, blocked) {
+			return fmt.Errorf("ISO URL must not point to localhost")
+		}
+	}
+
+	blockedPrefixes := []string{"10.", "192.168.", "169.254."}
+	for _, prefix := range blockedPrefixes {
+		if strings.HasPrefix(host, prefix) {
+			return fmt.Errorf("ISO URL must not point to a private network address")
+		}
+	}
+	if strings.HasPrefix(host, "172.") && len(host) > 4 {
+		parts := strings.SplitN(host, ".", 3)
+		if len(parts) >= 2 {
+			if octet := parts[1]; octet >= "16" && octet <= "31" {
+				return fmt.Errorf("ISO URL must not point to a private network address")
+			}
+		}
+	}
+
+	if !strings.HasSuffix(strings.ToLower(parsed.Path), ".iso") {
+		return fmt.Errorf("ISO URL must end with .iso")
+	}
+
+	return nil
+}
+
+// isoFilenameFromURL extracts a safe filename from a URL.
+func isoFilenameFromURL(isoURL string) string {
+	parsed, err := url.Parse(isoURL)
+	if err != nil {
+		return "download.iso"
+	}
+	base := filepath.Base(parsed.Path)
+	safe := SanitizeTemplateName(strings.TrimSuffix(base, ".iso"))
+	if safe == "" {
+		return "download.iso"
+	}
+	return safe + ".iso"
 }
 
 // ============================================================================

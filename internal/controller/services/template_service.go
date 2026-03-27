@@ -442,6 +442,7 @@ func (s *TemplateService) BuildFromISO(ctx context.Context, req *models.Template
 		"os_family":             req.OSFamily,
 		"os_version":            req.OSVersion,
 		"iso_path":              req.ISOPath,
+		"iso_url":               req.ISOURL,
 		"node_id":               req.NodeID,
 		"storage_backend":       req.StorageBackend,
 		"disk_size_gb":          req.DiskSizeGB,

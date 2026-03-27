@@ -109,6 +109,26 @@ func TestHandleTemplateBuild(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "successful build with iso_url",
+			payload: TemplateBuildPayload{
+				TemplateName:   "Debian 12 from URL",
+				OSFamily:       "debian",
+				OSVersion:      "12",
+				ISOURL:         "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.9.0-amd64-netinst.iso",
+				NodeID:         "node-1",
+				StorageBackend: "ceph",
+				DiskSizeGB:     10,
+				MemoryMB:       2048,
+				VCPUs:          2,
+			},
+			buildResp: &BuildTemplateFromISOResponse{
+				TemplateRef: "debian-12-base",
+				SnapshotRef: "debian-12-snap",
+				SizeBytes:   3221225472,
+			},
+			wantErr: false,
+		},
+		{
 			name: "missing template name",
 			payload: TemplateBuildPayload{
 				ISOPath:        "/var/lib/iso/ubuntu.iso",
@@ -119,14 +139,14 @@ func TestHandleTemplateBuild(t *testing.T) {
 			errContain: "missing required fields",
 		},
 		{
-			name: "missing ISO path",
+			name: "missing ISO path and URL",
 			payload: TemplateBuildPayload{
 				TemplateName:   "Ubuntu 24.04",
 				NodeID:         "node-1",
 				StorageBackend: "ceph",
 			},
 			wantErr:    true,
-			errContain: "missing required fields",
+			errContain: "iso_path or iso_url required",
 		},
 		{
 			name: "missing node ID",
@@ -254,13 +274,17 @@ func handleTemplateBuildWithMocks(
 		return fmt.Errorf("unmarshal template build payload: %w", err)
 	}
 
-	if payload.TemplateName == "" || payload.ISOPath == "" || payload.NodeID == "" {
+	if payload.TemplateName == "" || payload.NodeID == "" {
 		return fmt.Errorf("missing required fields in template build payload")
+	}
+	if payload.ISOPath == "" && payload.ISOURL == "" {
+		return fmt.Errorf("missing required fields in template build payload: iso_path or iso_url required")
 	}
 
 	req := &BuildTemplateFromISORequest{
 		TemplateName:        payload.TemplateName,
 		ISOPath:             payload.ISOPath,
+		ISOURL:              payload.ISOURL,
 		OSFamily:            payload.OSFamily,
 		OSVersion:           payload.OSVersion,
 		DiskSizeGB:          payload.DiskSizeGB,

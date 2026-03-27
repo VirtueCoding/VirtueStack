@@ -296,6 +296,7 @@ type TemplateBuildPayload struct {
 	OSFamily            string `json:"os_family"`
 	OSVersion           string `json:"os_version"`
 	ISOPath             string `json:"iso_path"`
+	ISOURL              string `json:"iso_url,omitempty"`
 	NodeID              string `json:"node_id"`
 	StorageBackend      string `json:"storage_backend"`
 	DiskSizeGB          int    `json:"disk_size_gb"`
@@ -309,6 +310,7 @@ type TemplateBuildPayload struct {
 type BuildTemplateFromISORequest struct {
 	TemplateName        string
 	ISOPath             string
+	ISOURL              string
 	OSFamily            string
 	OSVersion           string
 	DiskSizeGB          int

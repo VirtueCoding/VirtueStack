@@ -42,12 +42,14 @@ import {
 import { TemplateEditDialog, type EditTemplateFormData } from "@/components/templates/TemplateEditDialog";
 
 type DialogAction = "create" | "edit" | "delete" | "import" | null;
+type ISOSourceMode = "path" | "url";
 
 const defaultBuildForm = {
   name: "",
   os_family: "ubuntu",
   os_version: "",
   iso_path: "",
+  iso_url: "",
   node_id: "",
   storage_backend: "qcow",
   disk_size_gb: 10,
@@ -96,6 +98,7 @@ export default function TemplatesPage() {
   const [buildDialogOpen, setBuildDialogOpen] = useState(false);
   const [buildForm, setBuildForm] = useState({ ...defaultBuildForm });
   const [buildLoading, setBuildLoading] = useState(false);
+  const [isoSourceMode, setIsoSourceMode] = useState<ISOSourceMode>("url");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -254,16 +257,23 @@ export default function TemplatesPage() {
   };
 
   const handleBuildFromISO = async () => {
-    if (!buildForm.name || !buildForm.iso_path || !buildForm.node_id) {
-      toast({ title: "Error", description: "Name, ISO path, and Node ID are required", variant: "destructive" });
+    const hasISOSource = isoSourceMode === "path" ? buildForm.iso_path : buildForm.iso_url;
+    if (!buildForm.name || !hasISOSource || !buildForm.node_id) {
+      toast({ title: "Error", description: "Name, ISO source, and Node ID are required", variant: "destructive" });
       return;
     }
     setBuildLoading(true);
     try {
-      const result = await adminTemplatesApi.buildTemplateFromISO(buildForm);
+      const payload = {
+        ...buildForm,
+        iso_path: isoSourceMode === "path" ? buildForm.iso_path : "",
+        iso_url: isoSourceMode === "url" ? buildForm.iso_url : "",
+      };
+      const result = await adminTemplatesApi.buildTemplateFromISO(payload);
       toast({ title: "Build Started", description: `Template build task created: ${result.task_id}` });
       setBuildDialogOpen(false);
       setBuildForm({ ...defaultBuildForm });
+      setIsoSourceMode("url");
       setTimeout(() => loadTemplates(), 2000);
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to start build", variant: "destructive" });
@@ -610,13 +620,40 @@ export default function TemplatesPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="build-iso_path">ISO Path</Label>
-              <Input
-                id="build-iso_path"
-                value={buildForm.iso_path}
-                onChange={(e) => setBuildForm({ ...buildForm, iso_path: e.target.value })}
-                placeholder="/var/lib/virtuestack/iso/ubuntu-24.04.iso"
-              />
+              <Label>ISO Source</Label>
+              <div className="flex gap-2 mb-2">
+                <Button
+                  type="button"
+                  variant={isoSourceMode === "url" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => { setIsoSourceMode("url"); setBuildForm({ ...buildForm, iso_path: "" }); }}
+                >
+                  Download from URL
+                </Button>
+                <Button
+                  type="button"
+                  variant={isoSourceMode === "path" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => { setIsoSourceMode("path"); setBuildForm({ ...buildForm, iso_url: "" }); }}
+                >
+                  Local Path
+                </Button>
+              </div>
+              {isoSourceMode === "url" ? (
+                <Input
+                  id="build-iso_url"
+                  value={buildForm.iso_url}
+                  onChange={(e) => setBuildForm({ ...buildForm, iso_url: e.target.value })}
+                  placeholder="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.9.0-amd64-netinst.iso"
+                />
+              ) : (
+                <Input
+                  id="build-iso_path"
+                  value={buildForm.iso_path}
+                  onChange={(e) => setBuildForm({ ...buildForm, iso_path: e.target.value })}
+                  placeholder="/var/lib/virtuestack/iso/ubuntu-24.04.iso"
+                />
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="build-node_id">Node ID</Label>
@@ -693,7 +730,7 @@ export default function TemplatesPage() {
             </Button>
             <Button
               onClick={handleBuildFromISO}
-              disabled={buildLoading || !buildForm.name || !buildForm.iso_path || !buildForm.node_id}
+              disabled={buildLoading || !buildForm.name || !buildForm.node_id || (isoSourceMode === "path" ? !buildForm.iso_path : !buildForm.iso_url)}
             >
               {buildLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Start Build

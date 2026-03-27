@@ -973,6 +973,7 @@ func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb
 	h.server.logger.Info("received BuildTemplateFromISO request",
 		"template_name", req.TemplateName,
 		"iso_path", req.IsoPath,
+		"iso_url", req.IsoUrl,
 		"os_family", req.OsFamily,
 		"storage_backend", req.StorageBackend)
 
@@ -994,6 +995,7 @@ func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb
 	result, err := builder.Build(ctx, storage.BuildConfig{
 		TemplateName:        req.TemplateName,
 		ISOPath:             req.IsoPath,
+		ISOURL:              req.IsoUrl,
 		OSFamily:            req.OsFamily,
 		OSVersion:           req.OsVersion,
 		DiskSizeGB:          diskSizeGB,

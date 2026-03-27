@@ -3708,8 +3708,12 @@ type BuildTemplateFromISORequest struct {
 	// Optional custom preseed/kickstart/autoinstall content.
 	// If empty, a built-in config for the OS family is used.
 	CustomInstallConfig string `protobuf:"bytes,10,opt,name=custom_install_config,json=customInstallConfig,proto3" json:"custom_install_config,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Optional HTTP/HTTPS URL to download the ISO from.
+	// If provided, the node agent downloads the ISO before building.
+	// Exactly one of iso_path or iso_url must be set.
+	IsoUrl        string `protobuf:"bytes,11,opt,name=iso_url,json=isoUrl,proto3" json:"iso_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BuildTemplateFromISORequest) Reset() {
@@ -3808,6 +3812,13 @@ func (x *BuildTemplateFromISORequest) GetRootPassword() string {
 func (x *BuildTemplateFromISORequest) GetCustomInstallConfig() string {
 	if x != nil {
 		return x.CustomInstallConfig
+	}
+	return ""
+}
+
+func (x *BuildTemplateFromISORequest) GetIsoUrl() string {
+	if x != nil {
+		return x.IsoUrl
 	}
 	return ""
 }

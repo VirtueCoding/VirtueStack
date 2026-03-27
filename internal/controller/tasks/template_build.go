@@ -24,8 +24,11 @@ func handleTemplateBuild(ctx context.Context, task *models.Task, deps *HandlerDe
 		return fmt.Errorf("unmarshal template build payload: %w", err)
 	}
 
-	if payload.TemplateName == "" || payload.ISOPath == "" || payload.NodeID == "" {
+	if payload.TemplateName == "" || payload.NodeID == "" {
 		return fmt.Errorf("missing required fields in template build payload")
+	}
+	if payload.ISOPath == "" && payload.ISOURL == "" {
+		return fmt.Errorf("missing required fields in template build payload: iso_path or iso_url required")
 	}
 
 	deps.Logger.Info("starting template build from ISO",
@@ -33,12 +36,14 @@ func handleTemplateBuild(ctx context.Context, task *models.Task, deps *HandlerDe
 		"template_name", payload.TemplateName,
 		"os_family", payload.OSFamily,
 		"iso_path", payload.ISOPath,
+		"iso_url", payload.ISOURL,
 		"node_id", payload.NodeID,
 		"storage_backend", payload.StorageBackend)
 
 	req := &BuildTemplateFromISORequest{
 		TemplateName:        payload.TemplateName,
 		ISOPath:             payload.ISOPath,
+		ISOURL:              payload.ISOURL,
 		OSFamily:            payload.OSFamily,
 		OSVersion:           payload.OSVersion,
 		DiskSizeGB:          payload.DiskSizeGB,

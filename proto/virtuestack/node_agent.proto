@@ -907,6 +907,10 @@ message BuildTemplateFromISORequest {
   // Optional custom preseed/kickstart/autoinstall content.
   // If empty, a built-in config for the OS family is used.
   string custom_install_config = 10;
+  // Optional HTTP/HTTPS URL to download the ISO from.
+  // If provided, the node agent downloads the ISO before building.
+  // Exactly one of iso_path or iso_url must be set.
+  string iso_url = 11;
 }
 
 // BuildTemplateFromISOResponse is returned after template build completes.

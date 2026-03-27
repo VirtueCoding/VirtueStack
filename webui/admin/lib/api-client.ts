@@ -809,7 +809,8 @@ export const adminTemplatesApi = {
     name: string;
     os_family: string;
     os_version: string;
-    iso_path: string;
+    iso_path?: string;
+    iso_url?: string;
     node_id: string;
     storage_backend: string;
     disk_size_gb?: number;

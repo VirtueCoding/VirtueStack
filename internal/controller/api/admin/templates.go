@@ -277,6 +277,7 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 
 // BuildTemplateFromISO handles POST /templates/build-from-iso.
 // Starts an async task to build a VM template from an ISO using unattended installation.
+// The ISO can be specified as a local filesystem path (iso_path) or an HTTP/HTTPS URL (iso_url).
 func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 	var req models.TemplateBuildFromISORequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -286,6 +287,15 @@ func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 			return
 		}
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	if req.ISOPath == "" && req.ISOURL == "" {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Either iso_path or iso_url is required")
+		return
+	}
+	if req.ISOPath != "" && req.ISOURL != "" {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Only one of iso_path or iso_url may be provided")
 		return
 	}
 
@@ -319,11 +329,16 @@ func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 		return
 	}
 
+	isoSource := req.ISOPath
+	if isoSource == "" {
+		isoSource = req.ISOURL
+	}
+
 	h.logAuditEvent(c, "template.build_from_iso", "template", taskID, map[string]interface{}{
 		"name":            req.Name,
 		"os_family":       req.OSFamily,
 		"os_version":      req.OSVersion,
-		"iso_path":        req.ISOPath,
+		"iso_source":      isoSource,
 		"node_id":         req.NodeID,
 		"storage_backend": req.StorageBackend,
 	}, true)

@@ -42,11 +42,13 @@ type TemplateCreateRequest struct {
 }
 
 // TemplateBuildFromISORequest holds the fields for building a template from an ISO.
+// Exactly one of ISOPath or ISOURL must be provided.
 type TemplateBuildFromISORequest struct {
 	Name                string `json:"name" validate:"required,max=100"`
 	OSFamily            string `json:"os_family" validate:"required,oneof=debian ubuntu almalinux rocky centos"`
 	OSVersion           string `json:"os_version" validate:"required,max=50"`
-	ISOPath             string `json:"iso_path" validate:"required,max=512"`
+	ISOPath             string `json:"iso_path,omitempty" validate:"omitempty,max=512"`
+	ISOURL              string `json:"iso_url,omitempty" validate:"omitempty,http_url,max=2048"`
 	NodeID              string `json:"node_id" validate:"required,uuid"`
 	StorageBackend      string `json:"storage_backend" validate:"required,oneof=ceph qcow lvm"`
 	DiskSizeGB          int    `json:"disk_size_gb" validate:"omitempty,min=5,max=500"`
