@@ -31,7 +31,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 - **Multi-tenant** - Separate admin and customer portals with RBAC
 - **Distributed** - Scale across multiple hypervisor nodes
-- **Flexible Storage** - Ceph RBD or QCOW2 backends
+- **Flexible Storage** - Ceph RBD, QCOW2, or LVM thin-provisioned backends
 - **Live Migration** - Zero-downtime VM movement
 - **API Integration** - REST API for WHMCS and custom billing
 - **High Availability** - Automatic node failover with IPMI fencing
@@ -47,16 +47,19 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 |---------|--------|
 | VM Lifecycle Management | ✅ Create, start, stop, restart, reinstall VMs |
 | Live Migration | ✅ Zero-downtime migration between nodes |
-| Storage Management | ✅ Ceph RBD + QCOW2 dual backend |
+| Storage Backends | ✅ Ceph RBD, QCOW2, and LVM thin-provisioned with admin management UI |
+| Storage Backend Management | ✅ Full CRUD, node assignment, health monitoring with configurable thresholds |
 | Bandwidth Monitoring | ✅ Real-time tracking with limits and overage throttling |
-| Backup & Snapshots | ✅ Automated backups, snapshots, and recovery |
+| Backup & Snapshots | ✅ Unified backup model (full + snapshot methods) with plan-based limits |
 | Admin Backup Schedules | ✅ Mass backup campaigns targeting VMs by plan/node/customer |
 | Console Access | ✅ Web-based VNC (noVNC) and Serial (xterm.js) consoles |
 | HA Node Failover | ✅ IPMI fencing, STONITH, Ceph blocklist, VM redistribution |
+| Template Build from ISO | ✅ Build OS templates from ISO with unattended install (preseed/kickstart/autoinstall) |
+| Template Distribution | ✅ Distribute templates to QCOW/LVM nodes with cache tracking |
 | PowerDNS rDNS | ✅ Reverse DNS with MySQL direct access, IPv4+IPv6 PTR |
 | IPv6 Support | ✅ /48 prefix allocation, /64 per-VM subnets |
-| WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module |
-| ISO Mounting | ✅ Upload and attach ISO images to VMs |
+| WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module with SSO token exchange |
+| ISO Management | ✅ Upload, attach, detach ISOs with plan-based limits and SHA256 validation |
 | Webhooks | ✅ Customer webhook delivery with retry and logging |
 | Notification Preferences | ✅ Email and Telegram notifications per event type |
 
@@ -67,9 +70,11 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
 | JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
 | RBAC | ✅ Role-based permissions (customer and admin) |
+| Fine-grained Admin Permissions | ✅ 18 granular permissions with super_admin management |
 | API Keys | ✅ Secure API access with expiration, IP whitelist, and VM scoping |
 | API Key IP Whitelist | ✅ IPv4, IPv6, CIDR support for customer and provisioning keys |
 | VM-Scoped API Keys | ✅ Restrict customer API keys to specific VMs |
+| SSO Token Exchange | ✅ One-time opaque tokens for WHMCS → customer portal seamless login |
 | Audit Logging | ✅ Immutable operation logs with partitioning |
 | Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
 | Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
@@ -88,8 +93,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 
 | Portal | Technology | Pages |
 |--------|------------|-------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Provisioning Keys, Failover Requests, Audit Logs, Settings |
-| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, RDNS), Settings (profile, 2FA, API keys, webhooks, notifications) |
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Storage Backends, Provisioning Keys, Failover Requests, Audit Logs, Settings (incl. Permissions) |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, rDNS), Settings (profile, 2FA, API keys, webhooks, notifications), Forgot/Reset Password |
 
 ### API System
 
@@ -144,7 +149,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 |-------|-------------|
 | **Backend** | Go 1.26, Gin, gRPC, NATS JetStream, PostgreSQL |
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui |
-| **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2, Docker, Nginx |
+| **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2/LVM, Docker, Nginx |
 
 ---
 
@@ -236,10 +241,10 @@ docker compose down
 
 ```bash
 # Admin Portal
-cd webui/admin && npm install && npm run dev
+cd webui/admin && npm ci && npm run dev
 
 # Customer Portal
-cd webui/customer && npm install && npm run dev
+cd webui/customer && npm ci && npm run dev
 ```
 
 ---
@@ -273,14 +278,14 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 | [docs/CODEMAPS/](docs/CODEMAPS/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
 | [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
 | [docs/API.md](docs/API.md) | API reference |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture specification |
 | [docs/CODING_STANDARD.md](docs/CODING_STANDARD.md) | Quality gates and coding rules |
-| [failure.md](failure.md) | Implementation tasks and backend-frontend gap tracking |
 
 ---
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions!
 
 ### Development Workflow
 
@@ -325,18 +330,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 |-----------|--------|
 | Controller APIs | 100% |
 | Node Agent | 100% |
-| Database Schema (38 migrations) | 100% |
-| Authentication (JWT, 2FA, API Keys) | 100% |
+| Database Schema (65 migrations) | 100% |
+| Authentication (JWT, 2FA, API Keys, SSO) | 100% |
 | VM Lifecycle | 100% |
-| Storage (Ceph RBD + QCOW) | 100% |
+| Storage (Ceph RBD + QCOW + LVM) | 100% |
+| Storage Backend Management | 100% |
 | Live Migration | 100% |
-| Backup & Snapshots | 100% |
+| Backup & Snapshots (unified) | 100% |
 | Admin Backup Schedules | 100% |
+| Template Build from ISO | 100% |
+| Template Distribution & Caching | 100% |
 | WebSocket Console | 100% |
 | Web UIs | 100% |
 | WHMCS Module | 100% |
 | Networking | 100% |
 | HA Failover | 100% |
 | PowerDNS rDNS | 100% |
+| Admin Permissions | 100% |
 | Monitoring | 100% |
 | E2E Tests | 100% |
