@@ -509,6 +509,9 @@ GET    /vms/:id/status
 
 // Task Polling
 GET /tasks/:id
+
+// Customer Management
+POST /customers              // Create-or-get customer by email
 ```
 
 ---

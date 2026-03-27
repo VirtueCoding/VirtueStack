@@ -110,6 +110,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 	}
 
 	group.POST("/sso-tokens", handler.CreateSSOToken)
+	group.POST("/customers", handler.CreateOrGetCustomer)
 
 	plans := group.Group("/plans")
 	{
@@ -138,6 +139,8 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 //	POST   /vms/:id/power          - Power operations (start/stop/restart)
 //	GET    /vms/:id/status         - Get VM status
 //	GET    /tasks/:id              - Get task status
+//	POST   /sso-tokens             - Create SSO token
+//	POST   /customers              - Create or get customer by email
 //	GET    /plans                  - List all active plans
 //	GET    /plans/:id              - Get plan details by ID
 func RegisterProvisioningRoutes(router *gin.RouterGroup, handler *ProvisioningHandler, apiKeyRepo *repository.ProvisioningKeyRepository, auditRepo *repository.AuditRepository) {

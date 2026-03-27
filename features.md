@@ -1,6 +1,6 @@
 # VirtueStack — Critical Gap Implementation Plan
 
-> **Status:** PLAN — No code changes  
+> **Status:** PARTIAL — Gap #4 implemented; others remain as plans  
 > **Date:** 2026-03-27  
 > **Scope:** Critical gaps only — features without which VirtueStack cannot operate as a production VPS hosting business.
 
@@ -103,11 +103,9 @@ Merge into a **single "Backup" concept** with two modes:
 
 ### Current State
 
-- Customers can only be created by admins (`POST /admin/customers`) or implicitly via WHMCS provisioning
-- No public signup endpoint exists
-- The platform cannot acquire customers without manual admin intervention
+Not needed for WHMCS-centric deployments. Customers register and pay through WHMCS. When a VPS order is provisioned, the WHMCS module calls `POST /provisioning/customers` which automatically creates (or retrieves) the matching VirtueStack customer account by email. There is no need for a separate public signup page.
 
-### Implementation Plan
+**If self-registration is needed in the future** (e.g. for a standalone deployment without WHMCS):
 
 | Step | Work |
 |------|------|
@@ -127,36 +125,47 @@ Merge into a **single "Backup" concept** with two modes:
 
 ---
 
-## 4. WHMCS Customer Auto-Provisioning
+## 4. WHMCS Customer Auto-Provisioning ✅ IMPLEMENTED
 
-### Current State
+### Flow
 
-- WHMCS `CreateAccount()` provisions VMs but expects the customer to already exist in VirtueStack
-- No automatic customer creation from WHMCS → VirtueStack
-- Gap between WHMCS billing and VirtueStack identity
+When a customer pays for a VPS in WHMCS and it triggers the module's `CreateAccount()`:
 
-### Implementation Plan
+1. **WHMCS module** calls `virtuestack_ensureCustomer()` which calls `POST /provisioning/customers` with the WHMCS customer's email and name
+2. **Controller** checks if a customer with that email already exists in VirtueStack
+   - **If email exists:** returns the existing customer (no duplicate created)
+   - **If email does not exist:** creates a new customer with the same email + a cryptographically random password, returns the new customer
+3. **WHMCS module** then calls `POST /provisioning/vms` with the `customer_id` to create the VM under that customer's ownership
 
-| Step | Work |
-|------|------|
-| **Provisioning API** | Add `POST /provisioning/customers` — create-or-get customer by email |
-| **WHMCS module** | Call `createCustomer()` before `createVM()` in `virtuestack_CreateAccount()` |
-| **Idempotency** | If email already exists, return existing customer (no duplicate) |
-| **Password** | Generate random password; WHMCS manages auth via SSO |
-| **Handler** | New `customers.go` in `api/provisioning/` |
-| **Tests** | Create new, idempotent re-create, invalid email |
+The random password is generated because WHMCS manages customer authentication via SSO — customers access the VirtueStack portal through WHMCS Single Sign-On and never need to know their VirtueStack password.
 
-**Estimated scope:** ~150 lines Go + ~30 lines PHP
+### Implementation
+
+| Component | File | What |
+|-----------|------|------|
+| **Handler** | `internal/controller/api/provisioning/customers.go` | `CreateOrGetCustomer` — idempotent create-or-get by email |
+| **Route** | `internal/controller/api/provisioning/routes.go` | `POST /provisioning/customers` |
+| **WHMCS module** | `modules/servers/virtuestack/virtuestack.php` | `virtuestack_ensureCustomer()` calls `createCustomer()` before `createVM()` |
+| **API client** | `modules/servers/virtuestack/lib/ApiClient.php` | `createCustomer()` → `POST /provisioning/customers` |
+| **Tests** | `internal/controller/api/provisioning/customers_test.go` | Validation, response format |
 
 ---
 
 ## 5. WHMCS Usage Metering
 
-### Current State
+### What `virtuestack_UsageUpdate()` Does Today
 
-- `virtuestack_UsageUpdate()` returns resource allocation (vCPU, RAM, disk) but **not actual usage**
-- WHMCS cannot charge for bandwidth overage or actual resource consumption
-- Only fixed-price plans work; metered/hourly billing is impossible
+The `virtuestack_UsageUpdate()` function in `modules/servers/virtuestack/virtuestack.php` is called periodically by WHMCS's cron job to collect resource usage data for each service. WHMCS uses this data to:
+
+- Display usage statistics in the admin and client areas
+- Enforce overage charges (if configured with metered billing)
+- Suspend services that exceed their limits
+
+**Current implementation** (lines 1073–1094 of `virtuestack.php`):
+1. Gets the API client and syncs the VM's current state from VirtueStack
+2. Returns the VM's **allocated** resources: `vcpu`, `memory_mb`, `disk_gb`, `bandwidth_limit_gb`
+
+**Problem:** It returns what the plan *allocates*, not what the VM actually *uses*. WHMCS expects fields like `diskusage` (actual GB used) and `bwusage` (actual bandwidth consumed this month) to enable metered billing and overage charges. Without actual usage data, only fixed-price plans work.
 
 ### Implementation Plan
 
@@ -178,11 +187,11 @@ Merge into a **single "Backup" concept** with two modes:
 |---|-----|----------|-------|--------------|
 | 1 | Unify Backup/Snapshot | HIGH | Large (1–2 weeks) | Migration, all layers |
 | 2 | Customer Password Reset | CRITICAL | Small (1–2 days) | Email infra (exists) |
-| 3 | Customer Self-Registration | CRITICAL | Medium (3–5 days) | Email verification, migration |
-| 4 | WHMCS Customer Auto-Provisioning | CRITICAL | Small (1–2 days) | Provisioning API |
+| 3 | Customer Self-Registration | LOW | Medium (3–5 days) | Email verification, migration (not needed for WHMCS-only) |
+| 4 | ~~WHMCS Customer Auto-Provisioning~~ | ✅ DONE | — | `POST /provisioning/customers` implemented |
 | 5 | WHMCS Usage Metering | HIGH | Small (1–2 days) | Bandwidth service (exists) |
 
-**Recommended execution order:** 2 → 4 → 5 → 3 → 1
+**Recommended execution order:** 2 → 5 → 1 (→ 3 only if self-registration is needed)
 
 Password reset and WHMCS auto-provisioning are quick wins that unblock production. Self-registration is needed only if operating without WHMCS. Backup/snapshot unification is the largest refactor and should be planned as a dedicated sprint.
 
