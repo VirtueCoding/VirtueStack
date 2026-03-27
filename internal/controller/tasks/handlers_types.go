@@ -116,6 +116,8 @@ type NodeAgentClient interface {
 	TransferDisk(ctx context.Context, opts *DiskTransferOptions) error
 	// PrepareMigratedVM creates a VM definition on the target node using a transferred disk.
 	PrepareMigratedVM(ctx context.Context, targetNodeID, vmID, diskPath string, vm *models.VM) error
+	// BuildTemplateFromISO builds a VM template from an ISO on the specified node.
+	BuildTemplateFromISO(ctx context.Context, nodeID string, req *BuildTemplateFromISORequest) (*BuildTemplateFromISOResponse, error)
 }
 
 // CreateVMRequest contains parameters for VM creation via node agent.
@@ -286,4 +288,40 @@ type BackupCreatePayload struct {
 type BackupRestorePayload struct {
 	BackupID string `json:"backup_id"`
 	VMID     string `json:"vm_id"`
+}
+
+// TemplateBuildPayload represents the payload for template.build_from_iso tasks.
+type TemplateBuildPayload struct {
+	TemplateName        string `json:"template_name"`
+	OSFamily            string `json:"os_family"`
+	OSVersion           string `json:"os_version"`
+	ISOPath             string `json:"iso_path"`
+	NodeID              string `json:"node_id"`
+	StorageBackend      string `json:"storage_backend"`
+	DiskSizeGB          int    `json:"disk_size_gb"`
+	MemoryMB            int    `json:"memory_mb"`
+	VCPUs               int    `json:"vcpus"`
+	RootPassword        string `json:"root_password"`
+	CustomInstallConfig string `json:"custom_install_config,omitempty"`
+}
+
+// BuildTemplateFromISORequest contains parameters for building a template from ISO via node agent.
+type BuildTemplateFromISORequest struct {
+	TemplateName        string
+	ISOPath             string
+	OSFamily            string
+	OSVersion           string
+	DiskSizeGB          int
+	MemoryMB            int
+	VCPUs               int
+	StorageBackend      string
+	RootPassword        string
+	CustomInstallConfig string
+}
+
+// BuildTemplateFromISOResponse contains the result of a template build from ISO.
+type BuildTemplateFromISOResponse struct {
+	TemplateRef string
+	SnapshotRef string
+	SizeBytes   int64
 }

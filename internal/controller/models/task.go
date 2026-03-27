@@ -69,6 +69,8 @@ const (
 	TaskTypeSnapshotRevert = "snapshot.revert"
 	// TaskTypeSnapshotDelete deletes a VM snapshot.
 	TaskTypeSnapshotDelete = "snapshot.delete"
+	// TaskTypeTemplateBuild builds a VM template from an ISO image.
+	TaskTypeTemplateBuild = "template.build_from_iso"
 )
 
 // Task represents an async operation tracked in the database and NATS JetStream.

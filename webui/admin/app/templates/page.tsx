@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal } from "lucide-react";
+import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal, Disc } from "lucide-react";
 import { adminTemplatesApi, type Template, type UpdateTemplateRequest } from "@/lib/api-client";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
@@ -32,9 +32,29 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TemplateEditDialog, type EditTemplateFormData } from "@/components/templates/TemplateEditDialog";
 
 type DialogAction = "create" | "edit" | "delete" | "import" | null;
+
+const defaultBuildForm = {
+  name: "",
+  os_family: "ubuntu",
+  os_version: "",
+  iso_path: "",
+  node_id: "",
+  storage_backend: "qcow",
+  disk_size_gb: 10,
+  memory_mb: 2048,
+  vcpus: 2,
+  root_password: "",
+};
 
 function getStatusBadge(status: string) {
   const statusLabels: Record<string, string> = {
@@ -73,6 +93,9 @@ export default function TemplatesPage() {
     os_family: "debian",
     rbd_image: "",
   });
+  const [buildDialogOpen, setBuildDialogOpen] = useState(false);
+  const [buildForm, setBuildForm] = useState({ ...defaultBuildForm });
+  const [buildLoading, setBuildLoading] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -230,6 +253,25 @@ export default function TemplatesPage() {
     }
   };
 
+  const handleBuildFromISO = async () => {
+    if (!buildForm.name || !buildForm.iso_path || !buildForm.node_id) {
+      toast({ title: "Error", description: "Name, ISO path, and Node ID are required", variant: "destructive" });
+      return;
+    }
+    setBuildLoading(true);
+    try {
+      const result = await adminTemplatesApi.buildTemplateFromISO(buildForm);
+      toast({ title: "Build Started", description: `Template build task created: ${result.task_id}` });
+      setBuildDialogOpen(false);
+      setBuildForm({ ...defaultBuildForm });
+      setTimeout(() => loadTemplates(), 2000);
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to start build", variant: "destructive" });
+    } finally {
+      setBuildLoading(false);
+    }
+  };
+
   const activeTemplates = templates.filter((t) => t.status === "active").length;
   const totalTemplates = templates.length;
 
@@ -259,10 +301,16 @@ export default function TemplatesPage() {
               Manage VM templates for OS installation
             </p>
           </div>
-          <Button onClick={() => openDialog("create")}>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Template
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setBuildDialogOpen(true)}>
+              <Disc className="mr-2 h-4 w-4" />
+              Build from ISO
+            </Button>
+            <Button onClick={() => openDialog("create")}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Template
+            </Button>
+          </div>
         </div>
 
         <Card>
@@ -508,6 +556,147 @@ export default function TemplatesPage() {
             <Button variant="destructive" onClick={handleDelete} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Build from ISO Dialog */}
+      <Dialog open={buildDialogOpen} onOpenChange={setBuildDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Build Template from ISO</DialogTitle>
+            <DialogDescription>
+              Create a VM template by performing an unattended OS installation from an ISO image.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+            <div className="space-y-2">
+              <Label htmlFor="build-name">Template Name</Label>
+              <Input
+                id="build-name"
+                value={buildForm.name}
+                onChange={(e) => setBuildForm({ ...buildForm, name: e.target.value })}
+                placeholder="e.g., Ubuntu 24.04 LTS"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="build-os_family">OS Family</Label>
+                <Select
+                  value={buildForm.os_family}
+                  onValueChange={(value) => setBuildForm({ ...buildForm, os_family: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ubuntu">Ubuntu</SelectItem>
+                    <SelectItem value="debian">Debian</SelectItem>
+                    <SelectItem value="almalinux">AlmaLinux</SelectItem>
+                    <SelectItem value="rocky">Rocky Linux</SelectItem>
+                    <SelectItem value="centos">CentOS</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="build-os_version">OS Version</Label>
+                <Input
+                  id="build-os_version"
+                  value={buildForm.os_version}
+                  onChange={(e) => setBuildForm({ ...buildForm, os_version: e.target.value })}
+                  placeholder="e.g., 24.04"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="build-iso_path">ISO Path</Label>
+              <Input
+                id="build-iso_path"
+                value={buildForm.iso_path}
+                onChange={(e) => setBuildForm({ ...buildForm, iso_path: e.target.value })}
+                placeholder="/var/lib/virtuestack/iso/ubuntu-24.04.iso"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="build-node_id">Node ID</Label>
+              <Input
+                id="build-node_id"
+                value={buildForm.node_id}
+                onChange={(e) => setBuildForm({ ...buildForm, node_id: e.target.value })}
+                placeholder="UUID of the target node"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="build-storage_backend">Storage Backend</Label>
+              <Select
+                value={buildForm.storage_backend}
+                onValueChange={(value) => setBuildForm({ ...buildForm, storage_backend: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="qcow">Local QCOW2</SelectItem>
+                  <SelectItem value="ceph">Ceph (RBD)</SelectItem>
+                  <SelectItem value="lvm">LVM Thin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="build-disk_size_gb">Disk (GB)</Label>
+                <Input
+                  id="build-disk_size_gb"
+                  type="number"
+                  value={buildForm.disk_size_gb}
+                  onChange={(e) => setBuildForm({ ...buildForm, disk_size_gb: parseInt(e.target.value) || 10 })}
+                  min={5}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="build-memory_mb">RAM (MB)</Label>
+                <Input
+                  id="build-memory_mb"
+                  type="number"
+                  value={buildForm.memory_mb}
+                  onChange={(e) => setBuildForm({ ...buildForm, memory_mb: parseInt(e.target.value) || 2048 })}
+                  min={512}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="build-vcpus">vCPUs</Label>
+                <Input
+                  id="build-vcpus"
+                  type="number"
+                  value={buildForm.vcpus}
+                  onChange={(e) => setBuildForm({ ...buildForm, vcpus: parseInt(e.target.value) || 2 })}
+                  min={1}
+                  max={8}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="build-root_password">Root Password (optional)</Label>
+              <Input
+                id="build-root_password"
+                type="password"
+                value={buildForm.root_password}
+                onChange={(e) => setBuildForm({ ...buildForm, root_password: e.target.value })}
+                placeholder="Leave empty for default"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBuildDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBuildFromISO}
+              disabled={buildLoading || !buildForm.name || !buildForm.iso_path || !buildForm.node_id}
+            >
+              {buildLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Start Build
             </Button>
           </DialogFooter>
         </DialogContent>

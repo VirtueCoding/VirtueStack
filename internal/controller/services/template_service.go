@@ -47,6 +47,8 @@ type TemplateService struct {
 	templateRepo   *repository.TemplateRepository
 	storageMap     map[string]TemplateStorage
 	defaultStorage TemplateStorage
+	nodeRepo       *repository.NodeRepository
+	taskPublisher  TaskPublisher
 	logger         *slog.Logger
 }
 
@@ -93,6 +95,24 @@ func NewTemplateServiceWithBackends(
 		defaultStorage: defaultStorage,
 		logger:         logger.With("component", "template-service"),
 	}
+}
+
+// TemplateServiceTasksConfig holds dependencies for creating a TemplateService with task support.
+type TemplateServiceTasksConfig struct {
+	TemplateRepo    *repository.TemplateRepository
+	StorageBackends map[string]TemplateStorage
+	DefaultBackend  string
+	NodeRepo        *repository.NodeRepository
+	TaskPublisher   TaskPublisher
+	Logger          *slog.Logger
+}
+
+// NewTemplateServiceWithTasks creates a TemplateService with task publishing support.
+func NewTemplateServiceWithTasks(cfg TemplateServiceTasksConfig) *TemplateService {
+	svc := NewTemplateServiceWithBackends(cfg.TemplateRepo, cfg.StorageBackends, cfg.DefaultBackend, cfg.Logger)
+	svc.nodeRepo = cfg.NodeRepo
+	svc.taskPublisher = cfg.TaskPublisher
+	return svc
 }
 
 // GetStorage returns the appropriate storage backend for the given type.
@@ -391,4 +411,58 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 		"version", template.Version)
 
 	return template, nil
+}
+
+// BuildFromISO starts an async task to build a VM template from an ISO.
+// It validates the request, verifies the node exists and is online,
+// creates a task record, and publishes it to the task queue.
+// Requires that the service was created with NewTemplateServiceWithTasks.
+func (s *TemplateService) BuildFromISO(ctx context.Context, req *models.TemplateBuildFromISORequest) (string, error) {
+	if s.taskPublisher == nil || s.nodeRepo == nil {
+		return "", fmt.Errorf("template service not configured for task publishing (use NewTemplateServiceWithTasks)")
+	}
+
+	// Verify template name is unique
+	existing, err := s.templateRepo.GetByName(ctx, req.Name)
+	if err == nil && existing != nil {
+		return "", fmt.Errorf("%w: template with name %s already exists", sharederrors.ErrValidation, req.Name)
+	}
+
+	// Verify the target node exists and is online
+	node, err := s.nodeRepo.GetByID(ctx, req.NodeID)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", sharederrors.ErrNotFound, err)
+	}
+	if node.Status != "online" {
+		return "", fmt.Errorf("%w: node %s is not online (status: %s)", sharederrors.ErrValidation, node.Hostname, node.Status)
+	}
+
+	payload := map[string]any{
+		"template_name":         req.Name,
+		"os_family":             req.OSFamily,
+		"os_version":            req.OSVersion,
+		"iso_path":              req.ISOPath,
+		"node_id":               req.NodeID,
+		"storage_backend":       req.StorageBackend,
+		"disk_size_gb":          req.DiskSizeGB,
+		"memory_mb":             req.MemoryMB,
+		"vcpus":                 req.VCPUs,
+		"root_password":         req.RootPassword,
+		"custom_install_config": req.CustomInstallConfig,
+	}
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeTemplateBuild, payload)
+	if err != nil {
+		return "", fmt.Errorf("publishing task: %w", err)
+	}
+
+	s.logger.Info("template build from ISO task created",
+		"task_id", taskID,
+		"template_name", req.Name,
+		"os_family", req.OSFamily,
+		"os_version", req.OSVersion,
+		"node_id", req.NodeID,
+		"storage_backend", req.StorageBackend)
+
+	return taskID, nil
 }

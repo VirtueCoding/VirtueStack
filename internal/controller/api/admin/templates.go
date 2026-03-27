@@ -274,3 +274,67 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, models.Response{Data: template})
 }
+
+// BuildTemplateFromISO handles POST /templates/build-from-iso.
+// Starts an async task to build a VM template from an ISO using unattended installation.
+func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
+	var req models.TemplateBuildFromISORequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	if req.DiskSizeGB == 0 {
+		req.DiskSizeGB = 10
+	}
+	if req.MemoryMB == 0 {
+		req.MemoryMB = 2048
+	}
+	if req.VCPUs == 0 {
+		req.VCPUs = 2
+	}
+
+	taskID, err := h.templateService.BuildFromISO(c.Request.Context(), &req)
+	if err != nil {
+		h.logger.Error("failed to start template build from ISO",
+			"name", req.Name,
+			"os_family", req.OSFamily,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NODE_NOT_FOUND", "Node not found")
+			return
+		}
+		if errors.Is(err, sharederrors.ErrValidation) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		middleware.RespondWithError(c, http.StatusInternalServerError, "TEMPLATE_BUILD_FAILED", "Failed to start template build")
+		return
+	}
+
+	h.logAuditEvent(c, "template.build_from_iso", "template", taskID, map[string]interface{}{
+		"name":            req.Name,
+		"os_family":       req.OSFamily,
+		"os_version":      req.OSVersion,
+		"iso_path":        req.ISOPath,
+		"node_id":         req.NodeID,
+		"storage_backend": req.StorageBackend,
+	}, true)
+
+	h.logger.Info("template build from ISO started",
+		"task_id", taskID,
+		"name", req.Name,
+		"os_family", req.OSFamily,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: map[string]string{"task_id": taskID},
+	})
+}

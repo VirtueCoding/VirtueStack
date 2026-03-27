@@ -968,6 +968,106 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 	}, nil
 }
 
+// BuildTemplateFromISO builds a VM template from an ISO using unattended installation.
+func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb.BuildTemplateFromISORequest) (*nodeagentpb.BuildTemplateFromISOResponse, error) {
+	h.server.logger.Info("received BuildTemplateFromISO request",
+		"template_name", req.TemplateName,
+		"iso_path", req.IsoPath,
+		"os_family", req.OsFamily,
+		"storage_backend", req.StorageBackend)
+
+	builder := storage.NewTemplateBuilder(h.server.logger)
+
+	diskSizeGB := int(req.DiskSizeGb)
+	if diskSizeGB == 0 {
+		diskSizeGB = 10
+	}
+	memoryMB := int(req.MemoryMb)
+	if memoryMB == 0 {
+		memoryMB = 2048
+	}
+	vcpus := int(req.Vcpus)
+	if vcpus == 0 {
+		vcpus = 2
+	}
+
+	result, err := builder.Build(ctx, storage.BuildConfig{
+		TemplateName:        req.TemplateName,
+		ISOPath:             req.IsoPath,
+		OSFamily:            req.OsFamily,
+		OSVersion:           req.OsVersion,
+		DiskSizeGB:          diskSizeGB,
+		MemoryMB:            memoryMB,
+		VCPUs:               vcpus,
+		RootPassword:        req.RootPassword,
+		CustomInstallConfig: req.CustomInstallConfig,
+	})
+	if err != nil {
+		return &nodeagentpb.BuildTemplateFromISOResponse{
+			Success:      false,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+	defer builder.Cleanup(filepath.Dir(result.DiskPath))
+
+	templateRef, snapshotRef, importErr := h.importBuiltDisk(ctx, req, result)
+	if importErr != nil {
+		return &nodeagentpb.BuildTemplateFromISOResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("importing built disk: %v", importErr),
+		}, nil
+	}
+
+	return &nodeagentpb.BuildTemplateFromISOResponse{
+		Success:     true,
+		TemplateRef: templateRef,
+		SnapshotRef: snapshotRef,
+		SizeBytes:   result.SizeBytes,
+	}, nil
+}
+
+func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.BuildTemplateFromISORequest, result *storage.BuildResult) (string, string, error) {
+	if h.server.templateMgr == nil {
+		return "", "", fmt.Errorf("template manager not configured")
+	}
+
+	meta := storage.TemplateMeta{
+		OSFamily:  req.OsFamily,
+		OSVersion: req.OsVersion,
+	}
+
+	ref := sanitizeServerTemplateName(req.TemplateName)
+
+	filePath, _, err := h.server.templateMgr.ImportTemplate(ctx, ref, result.DiskPath, meta)
+	if err != nil {
+		return "", "", fmt.Errorf("importing template: %w", err)
+	}
+
+	snapshotRef := ""
+	if req.StorageBackend == "ceph" {
+		snapshotRef = ref + "-snap"
+	}
+
+	return filePath, snapshotRef, nil
+}
+
+func sanitizeServerTemplateName(name string) string {
+	name = strings.ToLower(name)
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		} else if c == ' ' || c == '_' {
+			b.WriteRune('-')
+		}
+	}
+	result := b.String()
+	if len(result) > 50 {
+		result = result[:50]
+	}
+	return result
+}
+
 // mapError maps internal errors to safe gRPC status codes.
 // The original error is logged server-side and only a generic message is
 // returned to the caller to prevent leaking internal details such as file

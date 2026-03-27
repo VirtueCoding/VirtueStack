@@ -227,6 +227,16 @@ service NodeAgentService {
 
   // GetNodeHealth retrieves comprehensive health status of the node.
   rpc GetNodeHealth(Empty) returns (NodeHealthResponse);
+
+  // ========================================================================
+  // Template Build Operations
+  // ========================================================================
+
+  // BuildTemplateFromISO creates a VM template by performing an unattended OS
+  // installation from an ISO image. Supports Debian preseed, Ubuntu autoinstall,
+  // and AlmaLinux/RHEL kickstart configurations. The resulting disk is imported
+  // into the specified storage backend (ceph, qcow, or lvm).
+  rpc BuildTemplateFromISO(BuildTemplateFromISORequest) returns (BuildTemplateFromISOResponse);
 }
 
 // ============================================================================
@@ -867,4 +877,48 @@ message RestoreLVMBackupRequest {
   string vm_id = 1;
   // Path to the backup file to restore from
   string backup_file_path = 2;
+}
+
+// ============================================================================
+// TEMPLATE BUILD FROM ISO MESSAGES
+// ============================================================================
+
+// BuildTemplateFromISORequest provides parameters for building a VM template
+// from an ISO image using unattended installation.
+message BuildTemplateFromISORequest {
+  // Human-readable template name (e.g., "Ubuntu 24.04 LTS")
+  string template_name = 1;
+  // Path to the ISO file on the node filesystem
+  string iso_path = 2;
+  // OS family: "debian", "ubuntu", "almalinux", "rocky", "centos"
+  string os_family = 3;
+  // OS version: "12", "24.04", "9"
+  string os_version = 4;
+  // Disk size in GB for the template (default: 10)
+  int32 disk_size_gb = 5;
+  // RAM in MB for the installation VM (default: 2048)
+  int32 memory_mb = 6;
+  // vCPUs for the installation VM (default: 2)
+  int32 vcpus = 7;
+  // Target storage backend: "ceph", "qcow", or "lvm"
+  string storage_backend = 8;
+  // Optional root password for the template (default: auto-generated)
+  string root_password = 9;
+  // Optional custom preseed/kickstart/autoinstall content.
+  // If empty, a built-in config for the OS family is used.
+  string custom_install_config = 10;
+}
+
+// BuildTemplateFromISOResponse is returned after template build completes.
+message BuildTemplateFromISOResponse {
+  // Whether the build succeeded
+  bool success = 1;
+  // Error message if build failed
+  string error_message = 2;
+  // Reference to the created template in storage (RBD image name or file path)
+  string template_ref = 3;
+  // Snapshot reference (for Ceph RBD; empty for qcow/lvm)
+  string snapshot_ref = 4;
+  // Size of the template in bytes
+  int64 size_bytes = 5;
 }

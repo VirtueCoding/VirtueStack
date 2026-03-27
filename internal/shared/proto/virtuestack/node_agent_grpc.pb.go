@@ -60,6 +60,7 @@ const (
 	NodeAgentService_ResetBandwidthCounters_FullMethodName    = "/virtuestack.nodeagent.NodeAgentService/ResetBandwidthCounters"
 	NodeAgentService_Ping_FullMethodName                      = "/virtuestack.nodeagent.NodeAgentService/Ping"
 	NodeAgentService_GetNodeHealth_FullMethodName             = "/virtuestack.nodeagent.NodeAgentService/GetNodeHealth"
+	NodeAgentService_BuildTemplateFromISO_FullMethodName      = "/virtuestack.nodeagent.NodeAgentService/BuildTemplateFromISO"
 )
 
 // NodeAgentServiceClient is the client API for NodeAgentService service.
@@ -161,6 +162,11 @@ type NodeAgentServiceClient interface {
 	Ping(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*PingResponse, error)
 	// GetNodeHealth retrieves comprehensive health status of the node.
 	GetNodeHealth(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*NodeHealthResponse, error)
+	// BuildTemplateFromISO creates a VM template by performing an unattended OS
+	// installation from an ISO image. Supports Debian preseed, Ubuntu autoinstall,
+	// and AlmaLinux/RHEL kickstart configurations. The resulting disk is imported
+	// into the specified storage backend (ceph, qcow, or lvm).
+	BuildTemplateFromISO(ctx context.Context, in *BuildTemplateFromISORequest, opts ...grpc.CallOption) (*BuildTemplateFromISOResponse, error)
 }
 
 type nodeAgentServiceClient struct {
@@ -549,6 +555,16 @@ func (c *nodeAgentServiceClient) GetNodeHealth(ctx context.Context, in *Empty, o
 	return out, nil
 }
 
+func (c *nodeAgentServiceClient) BuildTemplateFromISO(ctx context.Context, in *BuildTemplateFromISORequest, opts ...grpc.CallOption) (*BuildTemplateFromISOResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuildTemplateFromISOResponse)
+	err := c.cc.Invoke(ctx, NodeAgentService_BuildTemplateFromISO_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeAgentServiceServer is the server API for NodeAgentService service.
 // All implementations must embed UnimplementedNodeAgentServiceServer
 // for forward compatibility.
@@ -648,6 +664,11 @@ type NodeAgentServiceServer interface {
 	Ping(context.Context, *Empty) (*PingResponse, error)
 	// GetNodeHealth retrieves comprehensive health status of the node.
 	GetNodeHealth(context.Context, *Empty) (*NodeHealthResponse, error)
+	// BuildTemplateFromISO creates a VM template by performing an unattended OS
+	// installation from an ISO image. Supports Debian preseed, Ubuntu autoinstall,
+	// and AlmaLinux/RHEL kickstart configurations. The resulting disk is imported
+	// into the specified storage backend (ceph, qcow, or lvm).
+	BuildTemplateFromISO(context.Context, *BuildTemplateFromISORequest) (*BuildTemplateFromISOResponse, error)
 	mustEmbedUnimplementedNodeAgentServiceServer()
 }
 
@@ -765,6 +786,9 @@ func (UnimplementedNodeAgentServiceServer) Ping(context.Context, *Empty) (*PingR
 }
 func (UnimplementedNodeAgentServiceServer) GetNodeHealth(context.Context, *Empty) (*NodeHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeHealth not implemented")
+}
+func (UnimplementedNodeAgentServiceServer) BuildTemplateFromISO(context.Context, *BuildTemplateFromISORequest) (*BuildTemplateFromISOResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BuildTemplateFromISO not implemented")
 }
 func (UnimplementedNodeAgentServiceServer) mustEmbedUnimplementedNodeAgentServiceServer() {}
 func (UnimplementedNodeAgentServiceServer) testEmbeddedByValue()                          {}
@@ -1395,6 +1419,24 @@ func _NodeAgentService_GetNodeHealth_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeAgentService_BuildTemplateFromISO_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BuildTemplateFromISORequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeAgentServiceServer).BuildTemplateFromISO(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeAgentService_BuildTemplateFromISO_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeAgentServiceServer).BuildTemplateFromISO(ctx, req.(*BuildTemplateFromISORequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeAgentService_ServiceDesc is the grpc.ServiceDesc for NodeAgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1529,6 +1571,10 @@ var NodeAgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeHealth",
 			Handler:    _NodeAgentService_GetNodeHealth_Handler,
+		},
+		{
+			MethodName: "BuildTemplateFromISO",
+			Handler:    _NodeAgentService_BuildTemplateFromISO_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

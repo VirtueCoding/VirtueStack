@@ -758,7 +758,7 @@ export interface UpdateTemplateRequest {
   is_active?: boolean;
   sort_order?: number;
   description?: string;
-  storage_backend?: "ceph" | "qcow";
+  storage_backend?: "ceph" | "qcow" | "lvm";
   file_path?: string;
 }
 
@@ -782,7 +782,7 @@ export const adminTemplatesApi = {
     is_active?: boolean;
     sort_order?: number;
     description?: string;
-    storage_backend?: "ceph" | "qcow";
+    storage_backend?: "ceph" | "qcow" | "lvm";
     file_path?: string;
   }): Promise<Template> {
     return apiClient.post<Template>("/admin/templates", data);
@@ -803,6 +803,22 @@ export const adminTemplatesApi = {
     source_path?: string;
   } = {}): Promise<{ message: string }> {
     return apiClient.post<{ message: string }>(`/admin/templates/${id}/import`, data);
+  },
+
+  async buildTemplateFromISO(data: {
+    name: string;
+    os_family: string;
+    os_version: string;
+    iso_path: string;
+    node_id: string;
+    storage_backend: string;
+    disk_size_gb?: number;
+    memory_mb?: number;
+    vcpus?: number;
+    root_password?: string;
+    custom_install_config?: string;
+  }): Promise<{ task_id: string }> {
+    return apiClient.post<{ task_id: string }>("/admin/templates/build-from-iso", data);
   },
 };
 
