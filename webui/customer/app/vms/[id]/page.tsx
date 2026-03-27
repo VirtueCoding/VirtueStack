@@ -98,6 +98,7 @@ export default function VMDetailPage() {
   // Backup state
   const [backups, setBackups] = useState<Backup[]>([]);
   const [isBackupsLoading, setIsBackupsLoading] = useState(false);
+  const [backupMethodFilter, setBackupMethodFilter] = useState<"all" | "full" | "snapshot">("all");
 
   // Snapshot state
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -413,11 +414,7 @@ export default function VMDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="backups">
             <Server className="mr-2 h-4 w-4" />
-            Backups
-          </TabsTrigger>
-          <TabsTrigger value="snapshots">
-            <Server className="mr-2 h-4 w-4" />
-            Snapshots
+            Backups &amp; Snapshots
           </TabsTrigger>
           <TabsTrigger value="metrics">
             <BarChart3 className="mr-2 h-4 w-4" />
@@ -520,21 +517,8 @@ export default function VMDetailPage() {
             onCreateBackup={handleCreateBackup}
             onDeleteBackup={handleDeleteBackup}
             onRestoreBackup={handleRestoreBackup}
-          />
-        </TabsContent>
-
-        {/* Snapshots Tab */}
-        <TabsContent value="snapshots">
-          <VMSnapshotsTab
-            vmId={vmId}
-            vmName={vm.name}
-            snapshots={snapshots}
-            isLoading={isSnapshotsLoading}
-            isActionLoading={isVMActionLoading}
-            onRefresh={fetchSnapshots}
-            onCreateSnapshot={handleCreateSnapshot}
-            onDeleteSnapshot={handleDeleteSnapshot}
-            onRevertSnapshot={handleRevertSnapshot}
+            methodFilter={backupMethodFilter}
+            onMethodFilterChange={setBackupMethodFilter}
           />
         </TabsContent>
 

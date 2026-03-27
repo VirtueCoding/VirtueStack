@@ -29,6 +29,7 @@ type BackupListFilter struct {
 	VMIDs           []string // Filter by multiple VM IDs (for API key vm_ids scope)
 	Status          *string
 	Source          *string // "manual", "customer_schedule", "admin_schedule"
+	Method          *string // "full", "snapshot" — filter by backup method
 	AdminScheduleID *string
 }
 
@@ -55,7 +56,7 @@ type BackupScheduleListFilter struct {
 func scanBackup(row pgx.Row) (models.Backup, error) {
 	var b models.Backup
 	err := row.Scan(
-		&b.ID, &b.VMID, &b.Source, &b.AdminScheduleID, &b.StorageBackend, &b.RBDSnapshot,
+		&b.ID, &b.VMID, &b.Method, &b.Name, &b.Source, &b.AdminScheduleID, &b.StorageBackend, &b.RBDSnapshot,
 		&b.FilePath, &b.SnapshotName, &b.StoragePath, &b.SizeBytes,
 		&b.Status, &b.CreatedAt, &b.ExpiresAt,
 	)
@@ -63,7 +64,7 @@ func scanBackup(row pgx.Row) (models.Backup, error) {
 }
 
 const backupSelectCols = `
-	id, vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot,
+	id, vm_id, method, name, source, admin_schedule_id, storage_backend, rbd_snapshot,
 	file_path, snapshot_name, storage_path, size_bytes,
 	status, created_at, expires_at`
 
@@ -72,13 +73,13 @@ const backupSelectCols = `
 func (r *BackupRepository) CreateBackup(ctx context.Context, backup *models.Backup) error {
 	const q = `
 		INSERT INTO backups (
-			vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
+			vm_id, method, name, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
 			snapshot_name, storage_path, size_bytes, status, expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + backupSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		backup.VMID, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
+		backup.VMID, backup.Method, backup.Name, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
 		backup.SnapshotName, backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
 	)
 	created, err := scanBackup(row)
@@ -108,10 +109,10 @@ func (r *BackupRepository) CreateBackupWithLimitCheck(ctx context.Context, backu
 		return fmt.Errorf("locking VM row: %w", err)
 	}
 
-	// Count existing backups within the transaction
-	const countQ = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted'`
+	// Count existing backups within the transaction (only count same method)
+	const countQ = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted' AND method = $2`
 	var count int
-	err = tx.QueryRow(ctx, countQ, backup.VMID).Scan(&count)
+	err = tx.QueryRow(ctx, countQ, backup.VMID, backup.Method).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("counting backups: %w", err)
 	}
@@ -123,13 +124,13 @@ func (r *BackupRepository) CreateBackupWithLimitCheck(ctx context.Context, backu
 	// Create the backup
 	const q = `
 		INSERT INTO backups (
-			vm_id, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
+			vm_id, method, name, source, admin_schedule_id, storage_backend, rbd_snapshot, file_path,
 			snapshot_name, storage_path, size_bytes, status, expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + backupSelectCols
 
 	row := tx.QueryRow(ctx, q,
-		backup.VMID, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
+		backup.VMID, backup.Method, backup.Name, backup.Source, backup.AdminScheduleID, backup.StorageBackend, backup.RBDSnapshot, backup.FilePath,
 		backup.SnapshotName, backup.StoragePath, backup.SizeBytes, backup.Status, backup.ExpiresAt,
 	)
 	created, err := scanBackup(row)
@@ -188,6 +189,11 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 	if filter.Source != nil {
 		where = append(where, fmt.Sprintf("source = $%d", idx))
 		args = append(args, *filter.Source)
+		idx++
+	}
+	if filter.Method != nil {
+		where = append(where, fmt.Sprintf("method = $%d", idx))
+		args = append(args, *filter.Method)
 		idx++
 	}
 	if filter.AdminScheduleID != nil {
@@ -250,6 +256,11 @@ func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID
 		args = append(args, *filter.Source)
 		idx++
 	}
+	if filter.Method != nil {
+		where = append(where, fmt.Sprintf("b.method = $%d", idx))
+		args = append(args, *filter.Method)
+		idx++
+	}
 	if filter.AdminScheduleID != nil {
 		where = append(where, fmt.Sprintf("b.admin_schedule_id = $%d", idx))
 		args = append(args, *filter.AdminScheduleID)
@@ -300,6 +311,16 @@ func (r *BackupRepository) CountBackupsByVM(ctx context.Context, vmID string) (i
 	count, err := CountRows(ctx, r.db, q, vmID)
 	if err != nil {
 		return 0, fmt.Errorf("counting backups for VM %s: %w", vmID, err)
+	}
+	return count, nil
+}
+
+// CountBackupsByVMAndMethod returns the number of non-deleted backups for a specific VM and method.
+func (r *BackupRepository) CountBackupsByVMAndMethod(ctx context.Context, vmID, method string) (int, error) {
+	const q = `SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted' AND method = $2`
+	count, err := CountRows(ctx, r.db, q, vmID, method)
+	if err != nil {
+		return 0, fmt.Errorf("counting %s backups for VM %s: %w", method, vmID, err)
 	}
 	return count, nil
 }

@@ -19,10 +19,23 @@ const (
 	BackupSourceAdminSchedule   = "admin_schedule"
 )
 
-// Backup represents a full backup of a VM's disk.
+// Backup method constants define the type of backup.
+const (
+	// BackupMethodFull is an exported full copy of the disk (traditional backup).
+	BackupMethodFull = "full"
+	// BackupMethodSnapshot is a fast point-in-time reference (in-place snapshot).
+	BackupMethodSnapshot = "snapshot"
+)
+
+// Backup represents a point-in-time copy of a VM's disk.
+// The Method field distinguishes between full backups and snapshots.
 type Backup struct {
 	ID   string `json:"id" db:"id"`
 	VMID string `json:"vm_id" db:"vm_id"`
+	// Method indicates backup type: "full" (exported copy) or "snapshot" (in-place reference)
+	Method string `json:"method" db:"method"`
+	// Name is an optional user-provided label (required for snapshots)
+	Name *string `json:"name,omitempty" db:"name"`
 	// Source indicates how the backup was initiated: "manual", "customer_schedule", or "admin_schedule"
 	Source string `json:"source" db:"source"`
 	// AdminScheduleID references the admin schedule that created this backup, if applicable
