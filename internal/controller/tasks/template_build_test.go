@@ -215,7 +215,7 @@ func TestHandleTemplateBuild(t *testing.T) {
 			}
 
 			// Call the handler directly with mocked dependencies
-			err = handleTemplateBuildWithMocks(ctx, task, deps, mockClient, mockRepo)
+			err = handleTemplateBuildWithMocks(context.Background(), task, deps, mockClient, mockRepo)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -251,11 +251,11 @@ func handleTemplateBuildWithMocks(
 ) error {
 	var payload TemplateBuildPayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
-		return errorf("unmarshal template build payload: %w", err)
+		return fmt.Errorf("unmarshal template build payload: %w", err)
 	}
 
 	if payload.TemplateName == "" || payload.ISOPath == "" || payload.NodeID == "" {
-		return errorf("missing required fields in template build payload")
+		return fmt.Errorf("missing required fields in template build payload")
 	}
 
 	req := &BuildTemplateFromISORequest{
@@ -273,7 +273,7 @@ func handleTemplateBuildWithMocks(
 
 	resp, err := nodeClient.BuildTemplateFromISO(ctx, payload.NodeID, req)
 	if err != nil {
-		return errorf("build template from ISO on node %s: %w", payload.NodeID, err)
+		return fmt.Errorf("build template from ISO on node %s: %w", payload.NodeID, err)
 	}
 
 	minDiskGB := payload.DiskSizeGB
@@ -306,7 +306,7 @@ func handleTemplateBuildWithMocks(
 	}
 
 	if err := templateRepo.Create(ctx, template); err != nil {
-		return errorf("creating template record: %w", err)
+		return fmt.Errorf("creating template record: %w", err)
 	}
 
 	result, _ := json.Marshal(map[string]interface{}{
@@ -320,12 +320,6 @@ func handleTemplateBuildWithMocks(
 
 	return nil
 }
-
-func errorf(format string, args ...interface{}) error {
-	return fmt.Errorf(format, args...)
-}
-
-var ctx = context.Background()
 
 func TestMinDiskCalculation(t *testing.T) {
 	tests := []struct {

@@ -102,6 +102,11 @@ func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildRes
 		return nil, fmt.Errorf("virt-install failed: %w\nstderr: %s", err, stderr.String())
 	}
 
+	// Restrict permissions on the built disk image to prevent unauthorized access.
+	if err := os.Chmod(diskPath, 0600); err != nil {
+		b.logger.Warn("failed to chmod built disk", "error", err)
+	}
+
 	b.logger.Info("virt-install completed, running sysprep")
 
 	if err := b.sysprep(buildCtx, diskPath); err != nil {
@@ -140,7 +145,7 @@ func (b *TemplateBuilder) Cleanup(buildDir string) {
 }
 
 func (b *TemplateBuilder) buildVirtInstallArgs(cfg BuildConfig, diskPath, installCfgPath string) []string {
-	domainName := fmt.Sprintf("vs-build-%s", sanitizeTemplateBuildName(cfg.TemplateName))
+	domainName := fmt.Sprintf("vs-build-%s", SanitizeTemplateName(cfg.TemplateName))
 
 	args := []string{
 		"--name", domainName,
@@ -227,7 +232,7 @@ func renderInstallTemplate(tmplStr string, cfg BuildConfig, password string) (st
 
 	data := map[string]interface{}{
 		"RootPassword": password,
-		"Hostname":     sanitizeTemplateBuildName(cfg.TemplateName),
+		"Hostname":     SanitizeTemplateName(cfg.TemplateName),
 		"OSFamily":     cfg.OSFamily,
 		"OSVersion":    cfg.OSVersion,
 	}
@@ -255,7 +260,10 @@ func getQemuImgVirtualSize(ctx context.Context, path string) (int64, error) {
 	return result.VirtualSize, nil
 }
 
-func sanitizeTemplateBuildName(name string) string {
+// SanitizeTemplateName cleans a template name for use in storage references.
+// It lowercases the name, replaces spaces/underscores with hyphens, removes
+// other non-alphanumeric characters, and truncates to 50 characters.
+func SanitizeTemplateName(name string) string {
 	name = strings.ToLower(name)
 	var b strings.Builder
 	for _, c := range name {

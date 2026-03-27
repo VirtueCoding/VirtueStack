@@ -1036,7 +1036,7 @@ func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.Buil
 		OSVersion: req.OsVersion,
 	}
 
-	ref := sanitizeServerTemplateName(req.TemplateName)
+	ref := storage.SanitizeTemplateName(req.TemplateName)
 
 	filePath, _, err := h.server.templateMgr.ImportTemplate(ctx, ref, result.DiskPath, meta)
 	if err != nil {
@@ -1049,23 +1049,6 @@ func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.Buil
 	}
 
 	return filePath, snapshotRef, nil
-}
-
-func sanitizeServerTemplateName(name string) string {
-	name = strings.ToLower(name)
-	var b strings.Builder
-	for _, c := range name {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
-			b.WriteRune(c)
-		} else if c == ' ' || c == '_' {
-			b.WriteRune('-')
-		}
-	}
-	result := b.String()
-	if len(result) > 50 {
-		result = result[:50]
-	}
-	return result
 }
 
 // mapError maps internal errors to safe gRPC status codes.
