@@ -54,8 +54,14 @@ type BuildResult struct {
 // config, waits up to 45 minutes for installation to complete, then runs virt-sysprep
 // to generalize the image. The resulting disk can be imported into any storage backend.
 func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildResult, error) {
-	if _, err := os.Stat(cfg.ISOPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("ISO file not found: %s", cfg.ISOPath)
+	if err := validateISOPath(cfg.ISOPath); err != nil {
+		return nil, err
+	}
+
+	if cfg.RootPassword != "" {
+		if err := validateRootPassword(cfg.RootPassword); err != nil {
+			return nil, err
+		}
 	}
 
 	buildDir, err := os.MkdirTemp("", "vs-template-build-*")
@@ -104,7 +110,7 @@ func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildRes
 
 	// Restrict permissions on the built disk image to prevent unauthorized access.
 	if err := os.Chmod(diskPath, 0600); err != nil {
-		b.logger.Warn("failed to chmod built disk", "error", err)
+		return nil, fmt.Errorf("securing built disk permissions: %w", err)
 	}
 
 	b.logger.Info("virt-install completed, running sysprep")
@@ -278,6 +284,68 @@ func SanitizeTemplateName(name string) string {
 		result = result[:50]
 	}
 	return result
+}
+
+// ============================================================================
+// Input Validation
+// ============================================================================
+
+// allowedISODirs lists the directories where ISO files are expected.
+var allowedISODirs = []string{
+	"/var/lib/virtuestack/",
+	"/var/lib/libvirt/images/",
+	"/tmp/",
+	"/opt/iso/",
+}
+
+// validateISOPath ensures the ISO path exists and is within an allowed directory.
+func validateISOPath(isoPath string) error {
+	if isoPath == "" {
+		return fmt.Errorf("ISO path is required")
+	}
+
+	cleanPath := filepath.Clean(isoPath)
+	if !filepath.IsAbs(cleanPath) {
+		return fmt.Errorf("ISO path must be absolute: %s", isoPath)
+	}
+
+	allowed := false
+	for _, dir := range allowedISODirs {
+		if strings.HasPrefix(cleanPath, dir) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("ISO path not in allowed directory: %s", isoPath)
+	}
+
+	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
+		return fmt.Errorf("ISO file not found: %s", isoPath)
+	}
+
+	return nil
+}
+
+// validateRootPassword ensures the root password is safe for embedding in
+// preseed/kickstart/autoinstall configurations. Rejects characters that could
+// cause template injection or config-syntax breakout.
+func validateRootPassword(password string) error {
+	if len(password) > 128 {
+		return fmt.Errorf("root password must be at most 128 characters")
+	}
+
+	for _, c := range password {
+		if c < 0x20 || c == 0x7f {
+			return fmt.Errorf("root password contains invalid control character")
+		}
+		switch c {
+		case '"', '\'', '`', '\\', '\n', '\r', '{', '}':
+			return fmt.Errorf("root password contains disallowed character: %c", c)
+		}
+	}
+
+	return nil
 }
 
 // ============================================================================
