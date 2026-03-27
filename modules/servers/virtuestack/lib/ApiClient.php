@@ -361,9 +361,10 @@ final class ApiClient
     }
 
     /**
-     * Get actual resource usage for a VM.
+     * Get metering values for a VM.
      *
-     * Returns bandwidth consumed this month and disk usage for metered billing.
+     * Returns actual monthly bandwidth usage and the provisioned disk size used
+     * by WHMCS billing integrations.
      *
      * @param string $vmId VM UUID
      *

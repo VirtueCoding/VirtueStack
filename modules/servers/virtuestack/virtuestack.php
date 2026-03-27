@@ -1081,7 +1081,7 @@ function virtuestack_UsageUpdate(array $params): array
             return [];
         }
 
-        // Fetch actual usage metrics (bandwidth consumed, disk used)
+        // Fetch billing metrics (actual bandwidth, provisioned disk size)
         $usage = [];
         if (!empty($vm['id'])) {
             try {
@@ -1092,10 +1092,10 @@ function virtuestack_UsageUpdate(array $params): array
         }
 
         return array_filter([
-            // Disk usage: actual allocated vs plan limit
+            // Disk usage fields currently use the VM's provisioned disk size.
             'diskusage' => isset($usage['disk_used_gb']) ? (int) $usage['disk_used_gb'] : (isset($vm['disk_gb']) ? (int) $vm['disk_gb'] : null),
             'disklimit' => isset($usage['disk_limit_gb']) ? (int) $usage['disk_limit_gb'] : (isset($vm['disk_gb']) ? (int) $vm['disk_gb'] : null),
-            // Bandwidth usage: actual consumed this month vs plan limit
+            // Bandwidth usage: actual consumed this month vs plan limit.
             'bwusage' => isset($usage['bandwidth_used_gb']) ? (float) $usage['bandwidth_used_gb'] : null,
             'bwlimit' => isset($usage['bandwidth_limit_gb']) ? (int) $usage['bandwidth_limit_gb'] : (isset($vm['bandwidth_limit_gb']) ? (int) $vm['bandwidth_limit_gb'] : null),
         ], static fn($value) => $value !== null);

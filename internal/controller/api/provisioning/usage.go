@@ -9,8 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// VMUsageResponse represents actual resource usage for a VM.
-// This is consumed by WHMCS UsageUpdate() for metered billing.
+// VMUsageResponse represents the metering values returned for a VM.
+// This is consumed by WHMCS UsageUpdate() for billing.
+// BandwidthUsedGB is actual monthly bandwidth usage, while disk values reflect
+// the provisioned disk size currently tracked by the controller.
 type VMUsageResponse struct {
 	VMID             string  `json:"vm_id"`
 	BandwidthUsedGB  float64 `json:"bandwidth_used_gb"`
@@ -19,8 +21,9 @@ type VMUsageResponse struct {
 	DiskLimitGB      int     `json:"disk_limit_gb"`
 }
 
-// GetVMUsage handles GET /vms/:id/usage - retrieves actual resource usage for a VM.
-// Returns bandwidth consumed this month and disk allocation for WHMCS metered billing.
+// GetVMUsage handles GET /vms/:id/usage.
+// It returns actual monthly bandwidth usage and the VM's provisioned disk size
+// for WHMCS billing integrations.
 func (h *ProvisioningHandler) GetVMUsage(c *gin.Context) {
 	vmID := c.Param("id")
 
