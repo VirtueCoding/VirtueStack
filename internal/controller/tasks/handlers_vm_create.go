@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // handleVMCreate handles the full VM provisioning flow.
@@ -75,17 +76,26 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		macAddress = generateMACAddress(payload.VMID)
 	}
 
-	// Update task progress: Cloning disk
+	// Update task progress: Preparing template disk
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Cloning disk image from template..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// Clone disk from template via node agent
-	err = deps.NodeClient.CloneFromTemplate(ctx, payload.NodeID, payload.VMID,
-		template.RBDImage, template.RBDSnapshot, payload.DiskGB)
-	if err != nil {
-		logger.Error("failed to clone template", "error", err)
-		return fmt.Errorf("cloning template for VM %s: %w", payload.VMID, err)
+	var templateFilePath string
+
+	if template.StorageBackend == "" || template.StorageBackend == models.StorageBackendCeph {
+		err = deps.NodeClient.CloneFromTemplate(ctx, payload.NodeID, payload.VMID,
+			template.RBDImage, template.RBDSnapshot, payload.DiskGB)
+		if err != nil {
+			logger.Error("failed to clone template", "error", err)
+			return fmt.Errorf("cloning template for VM %s: %w", payload.VMID, err)
+		}
+	} else {
+		templateFilePath, err = resolveTemplatePathForNode(ctx, deps, template, payload.NodeID)
+		if err != nil {
+			logger.Error("failed to resolve template path for node", "error", err)
+			return fmt.Errorf("resolving template for VM %s: %w", payload.VMID, err)
+		}
 	}
 
 	// Update task progress: Generating cloud-init
@@ -134,9 +144,10 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	cloudInitPath, err := deps.NodeClient.GenerateCloudInit(ctx, payload.NodeID, cloudInitCfg)
 	if err != nil {
 		logger.Error("failed to generate cloud-init", "error", err)
-		// Cleanup of cloned disk is best-effort; primary error is cloud-init failure
-		if err := deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID); err != nil {
-			logger.Error("failed to cleanup cloned disk", "operation", "DeleteDisk", "err", err)
+		if template.StorageBackend == "" || template.StorageBackend == models.StorageBackendCeph {
+			if err := deps.NodeClient.DeleteDisk(ctx, payload.NodeID, payload.VMID); err != nil {
+				logger.Error("failed to cleanup cloned disk", "operation", "DeleteDisk", "err", err)
+			}
 		}
 		return fmt.Errorf("generating cloud-init for VM %s: %w", payload.VMID, err)
 	}
@@ -153,8 +164,8 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		VCPU:                payload.VCPU,
 		MemoryMB:            payload.MemoryMB,
 		DiskGB:              payload.DiskGB,
-		TemplateRBDImage:    template.RBDImage,
-		TemplateRBDSnapshot: template.RBDSnapshot,
+		StorageBackend:      template.StorageBackend,
+		TemplateFilePath:    templateFilePath,
 		RootPasswordHash:    passwordHash,
 		SSHPublicKeys:       payload.SSHKeys,
 		IPv4Address:         ipv4Addr,
@@ -169,7 +180,6 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		CephMonitors:        append([]string(nil), deps.CephMonitors...),
 		Nameservers:         cloudInitCfg.Nameservers,
 	}
-
 	createResp, err := deps.NodeClient.CreateVM(ctx, payload.NodeID, createReq)
 	if err != nil {
 		logger.Error("failed to create VM via node agent", "error", err)
@@ -238,4 +248,29 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		"ipv4", ipv4Addr)
 
 	return nil
+}
+
+func resolveTemplatePathForNode(ctx context.Context, deps *HandlerDeps, template *models.Template, nodeID string) (string, error) {
+	if template.StorageBackend == "" || template.StorageBackend == models.StorageBackendCeph {
+		return "", nil
+	}
+	if deps.TemplateCacheRepo == nil {
+		return "", fmt.Errorf("template cache repository not configured")
+	}
+
+	entry, err := deps.TemplateCacheRepo.Get(ctx, template.ID, nodeID)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return "", fmt.Errorf("template %s is not cached on node %s; distribute it first", template.ID, nodeID)
+		}
+		return "", fmt.Errorf("getting template cache entry: %w", err)
+	}
+	if entry.Status != models.TemplateCacheStatusReady {
+		return "", fmt.Errorf("template %s cache on node %s is %s", template.ID, nodeID, entry.Status)
+	}
+	if entry.LocalPath == nil || *entry.LocalPath == "" {
+		return "", fmt.Errorf("template %s cache on node %s has no local path", template.ID, nodeID)
+	}
+
+	return *entry.LocalPath, nil
 }

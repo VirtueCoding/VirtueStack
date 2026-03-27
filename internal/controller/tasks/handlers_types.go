@@ -131,6 +131,8 @@ type CreateVMRequest struct {
 	VCPU                int
 	MemoryMB            int
 	DiskGB              int
+	StorageBackend      string
+	TemplateFilePath    string
 	TemplateRBDImage    string
 	TemplateRBDSnapshot string
 	RootPasswordHash    string

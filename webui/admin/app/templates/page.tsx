@@ -59,6 +59,19 @@ const defaultBuildForm = {
   root_password: "",
 };
 
+function hasDistributableSource(template: Template) {
+  if (template.storage_backend === "ceph" || !template.file_path) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(template.file_path);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function getStatusBadge(status: string) {
   const statusLabels: Record<string, string> = {
     active: "Active",
@@ -458,7 +471,7 @@ export default function TemplatesPage() {
                               <Download className="mr-2 h-4 w-4" />
                               Import
                             </DropdownMenuItem>
-                            {template.storage_backend !== "ceph" && (
+                            {hasDistributableSource(template) && (
                               <DropdownMenuItem onClick={() => openDistributeDialog(template)}>
                                 <Send className="mr-2 h-4 w-4" />
                                 Distribute to Nodes
@@ -873,6 +886,11 @@ export default function TemplatesPage() {
               {cacheStatusTemplate?.storage_backend === "ceph" && (
                 <span className="block mt-1 text-blue-500">
                   Ceph templates are accessed directly from the shared pool — no per-node caching needed.
+                </span>
+              )}
+              {cacheStatusTemplate && !hasDistributableSource(cacheStatusTemplate) && cacheStatusTemplate.storage_backend !== "ceph" && (
+                <span className="block mt-1 text-amber-500">
+                  Distribution is only available for templates with a controller-accessible HTTP(S) source URL.
                 </span>
               )}
             </DialogDescription>

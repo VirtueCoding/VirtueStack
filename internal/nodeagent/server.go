@@ -1070,13 +1070,17 @@ func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb
 	}
 
 	ref := storage.SanitizeTemplateName(req.TemplateName)
+	templateRef := ref
+	if req.StorageBackend == "qcow" {
+		templateRef = h.resolveTemplatePath(ref, req.StorageBackend)
+	}
 
-	exists, err := h.server.templateMgr.TemplateExists(ctx, ref)
+	exists, err := h.server.templateMgr.TemplateExists(ctx, templateRef)
 	if err != nil {
-		h.server.logger.Warn("error checking template existence", "ref", ref, "error", err)
+		h.server.logger.Warn("error checking template existence", "ref", templateRef, "error", err)
 	}
 	if exists {
-		size, _ := h.server.templateMgr.GetTemplateSize(ctx, ref)
+		size, _ := h.server.templateMgr.GetTemplateSize(ctx, templateRef)
 		localPath := h.resolveTemplatePath(ref, req.StorageBackend)
 		h.server.logger.Info("template already cached",
 			"template_id", req.TemplateId, "ref", ref, "local_path", localPath)
@@ -1148,6 +1152,7 @@ func (h *grpcHandler) resolveTemplatePath(ref, storageBackend string) string {
 		return ref
 	}
 }
+
 
 // mapError maps internal errors to safe gRPC status codes.
 // The original error is logged server-side and only a generic message is

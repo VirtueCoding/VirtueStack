@@ -487,6 +487,9 @@ func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID stri
 		return "", fmt.Errorf("%w: ceph templates use shared pool access and do not need distribution",
 			sharederrors.ErrValidation)
 	}
+	if err := models.ValidateTemplateDistributionSourceURL(derefString(template.FilePath)); err != nil {
+		return "", fmt.Errorf("%w: %v", sharederrors.ErrValidation, err)
+	}
 
 	for _, nodeID := range nodeIDs {
 		node, nodeErr := s.nodeRepo.GetByID(ctx, nodeID)
@@ -537,4 +540,11 @@ func (s *TemplateService) GetCacheStatus(ctx context.Context, templateID string)
 		TemplateID: templateID,
 		Entries:    entries,
 	}, nil
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

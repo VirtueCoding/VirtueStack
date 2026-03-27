@@ -689,6 +689,8 @@ func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *
 		Vcpu:                int32(req.VCPU),
 		MemoryMb:            int32(req.MemoryMB),
 		DiskGb:              int32(req.DiskGB),
+		StorageBackend:      req.StorageBackend,
+		TemplateFilePath:    req.TemplateFilePath,
 		TemplateRbdImage:    req.TemplateRBDImage,
 		TemplateRbdSnapshot: req.TemplateRBDSnapshot,
 		RootPasswordHash:    req.RootPasswordHash,

@@ -32,6 +32,9 @@ func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *Hand
 	}
 
 	sourceURL := buildTemplateSourceURL(template)
+	if err := models.ValidateTemplateDistributionSourceURL(sourceURL); err != nil {
+		return fmt.Errorf("invalid template distribution source: %w", err)
+	}
 
 	var distributed, failed int
 	for _, nodeID := range payload.NodeIDs {

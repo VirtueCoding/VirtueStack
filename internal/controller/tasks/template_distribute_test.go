@@ -96,6 +96,7 @@ func TestHandleTemplateDistribute(t *testing.T) {
 				ID:             "tmpl-1",
 				Name:           "Ubuntu 24.04",
 				StorageBackend: "qcow",
+				FilePath:       stringPtr("https://controller.example.com/templates/ubuntu-2404.qcow2"),
 				MinDiskGB:      10,
 			},
 			nodes: map[string]*models.Node{
@@ -159,6 +160,7 @@ func TestHandleTemplateDistribute(t *testing.T) {
 				ID:             "tmpl-1",
 				Name:           "Ubuntu 24.04",
 				StorageBackend: "qcow",
+				FilePath:       stringPtr("https://controller.example.com/templates/ubuntu-2404.qcow2"),
 				MinDiskGB:      10,
 			},
 			nodes: map[string]*models.Node{
@@ -178,6 +180,7 @@ func TestHandleTemplateDistribute(t *testing.T) {
 				ID:             "tmpl-1",
 				Name:           "Ubuntu 24.04",
 				StorageBackend: "qcow",
+				FilePath:       stringPtr("https://controller.example.com/templates/ubuntu-2404.qcow2"),
 				MinDiskGB:      10,
 			},
 			nodes: map[string]*models.Node{
@@ -185,6 +188,24 @@ func TestHandleTemplateDistribute(t *testing.T) {
 			},
 			wantErr:    true,
 			errContain: "failed to distribute template to all",
+		},
+		{
+			name: "reject local file path source",
+			payload: TemplateDistributePayload{
+				TemplateID: "tmpl-local",
+				NodeIDs:    []string{"node-1"},
+			},
+			template: &models.Template{
+				ID:             "tmpl-local",
+				Name:           "Ubuntu Local",
+				StorageBackend: "qcow",
+				FilePath:       stringPtr("/var/lib/virtuestack/templates/ubuntu-local.qcow2"),
+			},
+			nodes: map[string]*models.Node{
+				"node-1": {ID: "node-1", Hostname: "node1.example.com", Status: "online"},
+			},
+			wantErr:    true,
+			errContain: "invalid template distribution source",
 		},
 	}
 
@@ -245,6 +266,10 @@ func handleTemplateDistributeWithMocks(
 
 	if template.StorageBackend == "ceph" {
 		return nil
+	}
+	sourceURL := buildTemplateSourceURL(template)
+	if err := models.ValidateTemplateDistributionSourceURL(sourceURL); err != nil {
+		return fmt.Errorf("invalid template distribution source: %w", err)
 	}
 
 	var distributed, failed int
@@ -313,6 +338,10 @@ func TestBuildTemplateSourceURL(t *testing.T) {
 			assert.Equal(t, tt.wantURL, url)
 		})
 	}
+}
+
+func stringPtr(v string) *string {
+	return &v
 }
 
 func TestEnsureTemplateCachedOnNode(t *testing.T) {
