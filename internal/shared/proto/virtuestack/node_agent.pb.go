@@ -3905,6 +3905,180 @@ func (x *BuildTemplateFromISOResponse) GetSizeBytes() int64 {
 	return 0
 }
 
+// EnsureTemplateCachedRequest asks the node to ensure a template is available locally.
+type EnsureTemplateCachedRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unique template identifier from the controller database
+	TemplateId string `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	// Human-readable template name (used for local file naming)
+	TemplateName string `protobuf:"bytes,2,opt,name=template_name,json=templateName,proto3" json:"template_name,omitempty"`
+	// Storage backend on this node: "qcow" or "lvm"
+	StorageBackend string `protobuf:"bytes,3,opt,name=storage_backend,json=storageBackend,proto3" json:"storage_backend,omitempty"`
+	// HTTP(S) URL from which the node agent can download the template image.
+	// The controller provides a signed/internal URL for streaming.
+	SourceUrl string `protobuf:"bytes,4,opt,name=source_url,json=sourceUrl,proto3" json:"source_url,omitempty"`
+	// Expected file size in bytes (for progress tracking and pre-allocation)
+	ExpectedSizeBytes int64 `protobuf:"varint,5,opt,name=expected_size_bytes,json=expectedSizeBytes,proto3" json:"expected_size_bytes,omitempty"`
+	// SHA-256 checksum of the template image for integrity verification
+	ChecksumSha256 string `protobuf:"bytes,6,opt,name=checksum_sha256,json=checksumSha256,proto3" json:"checksum_sha256,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *EnsureTemplateCachedRequest) Reset() {
+	*x = EnsureTemplateCachedRequest{}
+	mi := &file_virtuestack_node_agent_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureTemplateCachedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureTemplateCachedRequest) ProtoMessage() {}
+
+func (x *EnsureTemplateCachedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_virtuestack_node_agent_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureTemplateCachedRequest.ProtoReflect.Descriptor instead.
+func (*EnsureTemplateCachedRequest) Descriptor() ([]byte, []int) {
+	return file_virtuestack_node_agent_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *EnsureTemplateCachedRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedRequest) GetTemplateName() string {
+	if x != nil {
+		return x.TemplateName
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedRequest) GetStorageBackend() string {
+	if x != nil {
+		return x.StorageBackend
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedRequest) GetSourceUrl() string {
+	if x != nil {
+		return x.SourceUrl
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedRequest) GetExpectedSizeBytes() int64 {
+	if x != nil {
+		return x.ExpectedSizeBytes
+	}
+	return 0
+}
+
+func (x *EnsureTemplateCachedRequest) GetChecksumSha256() string {
+	if x != nil {
+		return x.ChecksumSha256
+	}
+	return ""
+}
+
+// EnsureTemplateCachedResponse indicates whether the template is now available.
+type EnsureTemplateCachedResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Whether the template is cached and ready for use
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// Error message if caching failed
+	ErrorMessage string `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	// Local path where the template is stored on the node
+	LocalPath string `protobuf:"bytes,3,opt,name=local_path,json=localPath,proto3" json:"local_path,omitempty"`
+	// Whether the template was already cached (true) or freshly downloaded (false)
+	AlreadyCached bool `protobuf:"varint,4,opt,name=already_cached,json=alreadyCached,proto3" json:"already_cached,omitempty"`
+	// Actual size of the cached template in bytes
+	SizeBytes     int64 `protobuf:"varint,5,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureTemplateCachedResponse) Reset() {
+	*x = EnsureTemplateCachedResponse{}
+	mi := &file_virtuestack_node_agent_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureTemplateCachedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureTemplateCachedResponse) ProtoMessage() {}
+
+func (x *EnsureTemplateCachedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_virtuestack_node_agent_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureTemplateCachedResponse.ProtoReflect.Descriptor instead.
+func (*EnsureTemplateCachedResponse) Descriptor() ([]byte, []int) {
+	return file_virtuestack_node_agent_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *EnsureTemplateCachedResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *EnsureTemplateCachedResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedResponse) GetLocalPath() string {
+	if x != nil {
+		return x.LocalPath
+	}
+	return ""
+}
+
+func (x *EnsureTemplateCachedResponse) GetAlreadyCached() bool {
+	if x != nil {
+		return x.AlreadyCached
+	}
+	return false
+}
+
+func (x *EnsureTemplateCachedResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
 var File_virtuestack_node_agent_proto protoreflect.FileDescriptor
 
 const file_virtuestack_node_agent_proto_rawDesc = "" +
@@ -4189,7 +4363,7 @@ const file_virtuestack_node_agent_proto_rawDesc = "" +
 	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"X\n" +
 	"\x17RestoreLVMBackupRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12(\n" +
-	"\x10backup_file_path\x18\x02 \x01(\tR\x0ebackupFilePath\"\xf0\x02\n" +
+	"\x10backup_file_path\x18\x02 \x01(\tR\x0ebackupFilePath\"\x89\x03\n" +
 	"\x1bBuildTemplateFromISORequest\x12#\n" +
 	"\rtemplate_name\x18\x01 \x01(\tR\ftemplateName\x12\x19\n" +
 	"\biso_path\x18\x02 \x01(\tR\aisoPath\x12\x1b\n" +
@@ -4203,12 +4377,30 @@ const file_virtuestack_node_agent_proto_rawDesc = "" +
 	"\x0fstorage_backend\x18\b \x01(\tR\x0estorageBackend\x12#\n" +
 	"\rroot_password\x18\t \x01(\tR\frootPassword\x122\n" +
 	"\x15custom_install_config\x18\n" +
-	" \x01(\tR\x13customInstallConfig\"\xc2\x01\n" +
+	" \x01(\tR\x13customInstallConfig\x12\x17\n" +
+	"\aiso_url\x18\v \x01(\tR\x06isoUrl\"\xc2\x01\n" +
 	"\x1cBuildTemplateFromISOResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12!\n" +
 	"\ftemplate_ref\x18\x03 \x01(\tR\vtemplateRef\x12!\n" +
 	"\fsnapshot_ref\x18\x04 \x01(\tR\vsnapshotRef\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x05 \x01(\x03R\tsizeBytes\"\x84\x02\n" +
+	"\x1bEnsureTemplateCachedRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\x12#\n" +
+	"\rtemplate_name\x18\x02 \x01(\tR\ftemplateName\x12'\n" +
+	"\x0fstorage_backend\x18\x03 \x01(\tR\x0estorageBackend\x12\x1d\n" +
+	"\n" +
+	"source_url\x18\x04 \x01(\tR\tsourceUrl\x12.\n" +
+	"\x13expected_size_bytes\x18\x05 \x01(\x03R\x11expectedSizeBytes\x12'\n" +
+	"\x0fchecksum_sha256\x18\x06 \x01(\tR\x0echecksumSha256\"\xc2\x01\n" +
+	"\x1cEnsureTemplateCachedResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x1d\n" +
+	"\n" +
+	"local_path\x18\x03 \x01(\tR\tlocalPath\x12%\n" +
+	"\x0ealready_cached\x18\x04 \x01(\bR\ralreadyCached\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x05 \x01(\x03R\tsizeBytes*\xb2\x01\n" +
 	"\bVMStatus\x12\x15\n" +
@@ -4229,7 +4421,7 @@ const file_virtuestack_node_agent_proto_rawDesc = "" +
 	"\x06IPType\x12\x13\n" +
 	"\x0fIP_TYPE_UNKNOWN\x10\x00\x12\x10\n" +
 	"\fIP_TYPE_IPV4\x10\x01\x12\x10\n" +
-	"\fIP_TYPE_IPV6\x10\x022\xc6\x1d\n" +
+	"\fIP_TYPE_IPV6\x10\x022\xc7\x1e\n" +
 	"\x10NodeAgentService\x12[\n" +
 	"\bCreateVM\x12&.virtuestack.nodeagent.CreateVMRequest\x1a'.virtuestack.nodeagent.CreateVMResponse\x12Z\n" +
 	"\aStartVM\x12#.virtuestack.nodeagent.VMIdentifier\x1a*.virtuestack.nodeagent.VMOperationResponse\x12Z\n" +
@@ -4267,7 +4459,8 @@ const file_virtuestack_node_agent_proto_rawDesc = "" +
 	"\x16ResetBandwidthCounters\x12#.virtuestack.nodeagent.VMIdentifier\x1a*.virtuestack.nodeagent.VMOperationResponse\x12I\n" +
 	"\x04Ping\x12\x1c.virtuestack.nodeagent.Empty\x1a#.virtuestack.nodeagent.PingResponse\x12X\n" +
 	"\rGetNodeHealth\x12\x1c.virtuestack.nodeagent.Empty\x1a).virtuestack.nodeagent.NodeHealthResponse\x12\x7f\n" +
-	"\x14BuildTemplateFromISO\x122.virtuestack.nodeagent.BuildTemplateFromISORequest\x1a3.virtuestack.nodeagent.BuildTemplateFromISOResponseBAZ?github.com/AbuGosok/VirtueStack/internal/shared/proto/nodeagentb\x06proto3"
+	"\x14BuildTemplateFromISO\x122.virtuestack.nodeagent.BuildTemplateFromISORequest\x1a3.virtuestack.nodeagent.BuildTemplateFromISOResponse\x12\x7f\n" +
+	"\x14EnsureTemplateCached\x122.virtuestack.nodeagent.EnsureTemplateCachedRequest\x1a3.virtuestack.nodeagent.EnsureTemplateCachedResponseBAZ?github.com/AbuGosok/VirtueStack/internal/shared/proto/nodeagentb\x06proto3"
 
 var (
 	file_virtuestack_node_agent_proto_rawDescOnce sync.Once
@@ -4282,7 +4475,7 @@ func file_virtuestack_node_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_virtuestack_node_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_virtuestack_node_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_virtuestack_node_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_virtuestack_node_agent_proto_goTypes = []any{
 	(VMStatus)(0),                        // 0: virtuestack.nodeagent.VMStatus
 	(TaskStatus)(0),                      // 1: virtuestack.nodeagent.TaskStatus
@@ -4331,19 +4524,21 @@ var file_virtuestack_node_agent_proto_goTypes = []any{
 	(*RestoreLVMBackupRequest)(nil),      // 44: virtuestack.nodeagent.RestoreLVMBackupRequest
 	(*BuildTemplateFromISORequest)(nil),  // 45: virtuestack.nodeagent.BuildTemplateFromISORequest
 	(*BuildTemplateFromISOResponse)(nil), // 46: virtuestack.nodeagent.BuildTemplateFromISOResponse
-	(*timestamppb.Timestamp)(nil),        // 47: google.protobuf.Timestamp
+	(*EnsureTemplateCachedRequest)(nil),  // 47: virtuestack.nodeagent.EnsureTemplateCachedRequest
+	(*EnsureTemplateCachedResponse)(nil), // 48: virtuestack.nodeagent.EnsureTemplateCachedResponse
+	(*timestamppb.Timestamp)(nil),        // 49: google.protobuf.Timestamp
 }
 var file_virtuestack_node_agent_proto_depIdxs = []int32{
 	14, // 0: virtuestack.nodeagent.PostMigrateSetupRequest.bandwidth:type_name -> virtuestack.nodeagent.BandwidthLimits
 	0,  // 1: virtuestack.nodeagent.VMStatusResponse.status:type_name -> virtuestack.nodeagent.VMStatus
-	47, // 2: virtuestack.nodeagent.VMMetricsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	47, // 3: virtuestack.nodeagent.Snapshot.created_at:type_name -> google.protobuf.Timestamp
+	49, // 2: virtuestack.nodeagent.VMMetricsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	49, // 3: virtuestack.nodeagent.Snapshot.created_at:type_name -> google.protobuf.Timestamp
 	23, // 4: virtuestack.nodeagent.SnapshotListResponse.snapshots:type_name -> virtuestack.nodeagent.Snapshot
 	2,  // 5: virtuestack.nodeagent.IPAddress.type:type_name -> virtuestack.nodeagent.IPType
 	28, // 6: virtuestack.nodeagent.GuestNetworkInterface.ip_addresses:type_name -> virtuestack.nodeagent.IPAddress
 	29, // 7: virtuestack.nodeagent.GuestNetworkResponse.interfaces:type_name -> virtuestack.nodeagent.GuestNetworkInterface
-	47, // 8: virtuestack.nodeagent.BandwidthUsageResponse.period_start:type_name -> google.protobuf.Timestamp
-	47, // 9: virtuestack.nodeagent.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
+	49, // 8: virtuestack.nodeagent.BandwidthUsageResponse.period_start:type_name -> google.protobuf.Timestamp
+	49, // 9: virtuestack.nodeagent.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
 	7,  // 10: virtuestack.nodeagent.NodeAgentService.CreateVM:input_type -> virtuestack.nodeagent.CreateVMRequest
 	4,  // 11: virtuestack.nodeagent.NodeAgentService.StartVM:input_type -> virtuestack.nodeagent.VMIdentifier
 	9,  // 12: virtuestack.nodeagent.NodeAgentService.StopVM:input_type -> virtuestack.nodeagent.StopVMRequest
@@ -4381,45 +4576,47 @@ var file_virtuestack_node_agent_proto_depIdxs = []int32{
 	3,  // 44: virtuestack.nodeagent.NodeAgentService.Ping:input_type -> virtuestack.nodeagent.Empty
 	3,  // 45: virtuestack.nodeagent.NodeAgentService.GetNodeHealth:input_type -> virtuestack.nodeagent.Empty
 	45, // 46: virtuestack.nodeagent.NodeAgentService.BuildTemplateFromISO:input_type -> virtuestack.nodeagent.BuildTemplateFromISORequest
-	8,  // 47: virtuestack.nodeagent.NodeAgentService.CreateVM:output_type -> virtuestack.nodeagent.CreateVMResponse
-	6,  // 48: virtuestack.nodeagent.NodeAgentService.StartVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 49: virtuestack.nodeagent.NodeAgentService.StopVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 50: virtuestack.nodeagent.NodeAgentService.ForceStopVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 51: virtuestack.nodeagent.NodeAgentService.DeleteVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	8,  // 52: virtuestack.nodeagent.NodeAgentService.ReinstallVM:output_type -> virtuestack.nodeagent.CreateVMResponse
-	6,  // 53: virtuestack.nodeagent.NodeAgentService.ResizeVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	13, // 54: virtuestack.nodeagent.NodeAgentService.MigrateVM:output_type -> virtuestack.nodeagent.MigrateVMResponse
-	6,  // 55: virtuestack.nodeagent.NodeAgentService.AbortMigration:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 56: virtuestack.nodeagent.NodeAgentService.PostMigrateSetup:output_type -> virtuestack.nodeagent.VMOperationResponse
-	36, // 57: virtuestack.nodeagent.NodeAgentService.CreateDiskSnapshot:output_type -> virtuestack.nodeagent.CreateDiskSnapshotResponse
-	6,  // 58: virtuestack.nodeagent.NodeAgentService.DeleteDiskSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
-	39, // 59: virtuestack.nodeagent.NodeAgentService.TransferDisk:output_type -> virtuestack.nodeagent.DiskChunk
-	40, // 60: virtuestack.nodeagent.NodeAgentService.ReceiveDisk:output_type -> virtuestack.nodeagent.ReceiveDiskResponse
-	6,  // 61: virtuestack.nodeagent.NodeAgentService.PrepareMigratedVM:output_type -> virtuestack.nodeagent.VMOperationResponse
-	43, // 62: virtuestack.nodeagent.NodeAgentService.CreateLVMBackup:output_type -> virtuestack.nodeagent.CreateLVMBackupResponse
-	6,  // 63: virtuestack.nodeagent.NodeAgentService.RestoreLVMBackup:output_type -> virtuestack.nodeagent.VMOperationResponse
-	16, // 64: virtuestack.nodeagent.NodeAgentService.StreamVNCConsole:output_type -> virtuestack.nodeagent.VNCFrame
-	17, // 65: virtuestack.nodeagent.NodeAgentService.StreamSerialConsole:output_type -> virtuestack.nodeagent.SerialData
-	18, // 66: virtuestack.nodeagent.NodeAgentService.GetVMStatus:output_type -> virtuestack.nodeagent.VMStatusResponse
-	19, // 67: virtuestack.nodeagent.NodeAgentService.GetVMMetrics:output_type -> virtuestack.nodeagent.VMMetricsResponse
-	20, // 68: virtuestack.nodeagent.NodeAgentService.GetNodeResources:output_type -> virtuestack.nodeagent.NodeResourcesResponse
-	23, // 69: virtuestack.nodeagent.NodeAgentService.CreateSnapshot:output_type -> virtuestack.nodeagent.Snapshot
-	6,  // 70: virtuestack.nodeagent.NodeAgentService.DeleteSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 71: virtuestack.nodeagent.NodeAgentService.RevertSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
-	24, // 72: virtuestack.nodeagent.NodeAgentService.ListSnapshots:output_type -> virtuestack.nodeagent.SnapshotListResponse
-	26, // 73: virtuestack.nodeagent.NodeAgentService.GuestExecCommand:output_type -> virtuestack.nodeagent.GuestExecResponse
-	6,  // 74: virtuestack.nodeagent.NodeAgentService.GuestSetPassword:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 75: virtuestack.nodeagent.NodeAgentService.GuestFreezeFilesystems:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 76: virtuestack.nodeagent.NodeAgentService.GuestThawFilesystems:output_type -> virtuestack.nodeagent.VMOperationResponse
-	30, // 77: virtuestack.nodeagent.NodeAgentService.GuestGetNetworkInterfaces:output_type -> virtuestack.nodeagent.GuestNetworkResponse
-	31, // 78: virtuestack.nodeagent.NodeAgentService.GetBandwidthUsage:output_type -> virtuestack.nodeagent.BandwidthUsageResponse
-	6,  // 79: virtuestack.nodeagent.NodeAgentService.SetBandwidthLimit:output_type -> virtuestack.nodeagent.VMOperationResponse
-	6,  // 80: virtuestack.nodeagent.NodeAgentService.ResetBandwidthCounters:output_type -> virtuestack.nodeagent.VMOperationResponse
-	33, // 81: virtuestack.nodeagent.NodeAgentService.Ping:output_type -> virtuestack.nodeagent.PingResponse
-	34, // 82: virtuestack.nodeagent.NodeAgentService.GetNodeHealth:output_type -> virtuestack.nodeagent.NodeHealthResponse
-	46, // 83: virtuestack.nodeagent.NodeAgentService.BuildTemplateFromISO:output_type -> virtuestack.nodeagent.BuildTemplateFromISOResponse
-	47, // [47:84] is the sub-list for method output_type
-	10, // [10:47] is the sub-list for method input_type
+	47, // 47: virtuestack.nodeagent.NodeAgentService.EnsureTemplateCached:input_type -> virtuestack.nodeagent.EnsureTemplateCachedRequest
+	8,  // 48: virtuestack.nodeagent.NodeAgentService.CreateVM:output_type -> virtuestack.nodeagent.CreateVMResponse
+	6,  // 49: virtuestack.nodeagent.NodeAgentService.StartVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 50: virtuestack.nodeagent.NodeAgentService.StopVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 51: virtuestack.nodeagent.NodeAgentService.ForceStopVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 52: virtuestack.nodeagent.NodeAgentService.DeleteVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	8,  // 53: virtuestack.nodeagent.NodeAgentService.ReinstallVM:output_type -> virtuestack.nodeagent.CreateVMResponse
+	6,  // 54: virtuestack.nodeagent.NodeAgentService.ResizeVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	13, // 55: virtuestack.nodeagent.NodeAgentService.MigrateVM:output_type -> virtuestack.nodeagent.MigrateVMResponse
+	6,  // 56: virtuestack.nodeagent.NodeAgentService.AbortMigration:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 57: virtuestack.nodeagent.NodeAgentService.PostMigrateSetup:output_type -> virtuestack.nodeagent.VMOperationResponse
+	36, // 58: virtuestack.nodeagent.NodeAgentService.CreateDiskSnapshot:output_type -> virtuestack.nodeagent.CreateDiskSnapshotResponse
+	6,  // 59: virtuestack.nodeagent.NodeAgentService.DeleteDiskSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
+	39, // 60: virtuestack.nodeagent.NodeAgentService.TransferDisk:output_type -> virtuestack.nodeagent.DiskChunk
+	40, // 61: virtuestack.nodeagent.NodeAgentService.ReceiveDisk:output_type -> virtuestack.nodeagent.ReceiveDiskResponse
+	6,  // 62: virtuestack.nodeagent.NodeAgentService.PrepareMigratedVM:output_type -> virtuestack.nodeagent.VMOperationResponse
+	43, // 63: virtuestack.nodeagent.NodeAgentService.CreateLVMBackup:output_type -> virtuestack.nodeagent.CreateLVMBackupResponse
+	6,  // 64: virtuestack.nodeagent.NodeAgentService.RestoreLVMBackup:output_type -> virtuestack.nodeagent.VMOperationResponse
+	16, // 65: virtuestack.nodeagent.NodeAgentService.StreamVNCConsole:output_type -> virtuestack.nodeagent.VNCFrame
+	17, // 66: virtuestack.nodeagent.NodeAgentService.StreamSerialConsole:output_type -> virtuestack.nodeagent.SerialData
+	18, // 67: virtuestack.nodeagent.NodeAgentService.GetVMStatus:output_type -> virtuestack.nodeagent.VMStatusResponse
+	19, // 68: virtuestack.nodeagent.NodeAgentService.GetVMMetrics:output_type -> virtuestack.nodeagent.VMMetricsResponse
+	20, // 69: virtuestack.nodeagent.NodeAgentService.GetNodeResources:output_type -> virtuestack.nodeagent.NodeResourcesResponse
+	23, // 70: virtuestack.nodeagent.NodeAgentService.CreateSnapshot:output_type -> virtuestack.nodeagent.Snapshot
+	6,  // 71: virtuestack.nodeagent.NodeAgentService.DeleteSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 72: virtuestack.nodeagent.NodeAgentService.RevertSnapshot:output_type -> virtuestack.nodeagent.VMOperationResponse
+	24, // 73: virtuestack.nodeagent.NodeAgentService.ListSnapshots:output_type -> virtuestack.nodeagent.SnapshotListResponse
+	26, // 74: virtuestack.nodeagent.NodeAgentService.GuestExecCommand:output_type -> virtuestack.nodeagent.GuestExecResponse
+	6,  // 75: virtuestack.nodeagent.NodeAgentService.GuestSetPassword:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 76: virtuestack.nodeagent.NodeAgentService.GuestFreezeFilesystems:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 77: virtuestack.nodeagent.NodeAgentService.GuestThawFilesystems:output_type -> virtuestack.nodeagent.VMOperationResponse
+	30, // 78: virtuestack.nodeagent.NodeAgentService.GuestGetNetworkInterfaces:output_type -> virtuestack.nodeagent.GuestNetworkResponse
+	31, // 79: virtuestack.nodeagent.NodeAgentService.GetBandwidthUsage:output_type -> virtuestack.nodeagent.BandwidthUsageResponse
+	6,  // 80: virtuestack.nodeagent.NodeAgentService.SetBandwidthLimit:output_type -> virtuestack.nodeagent.VMOperationResponse
+	6,  // 81: virtuestack.nodeagent.NodeAgentService.ResetBandwidthCounters:output_type -> virtuestack.nodeagent.VMOperationResponse
+	33, // 82: virtuestack.nodeagent.NodeAgentService.Ping:output_type -> virtuestack.nodeagent.PingResponse
+	34, // 83: virtuestack.nodeagent.NodeAgentService.GetNodeHealth:output_type -> virtuestack.nodeagent.NodeHealthResponse
+	46, // 84: virtuestack.nodeagent.NodeAgentService.BuildTemplateFromISO:output_type -> virtuestack.nodeagent.BuildTemplateFromISOResponse
+	48, // 85: virtuestack.nodeagent.NodeAgentService.EnsureTemplateCached:output_type -> virtuestack.nodeagent.EnsureTemplateCachedResponse
+	48, // [48:86] is the sub-list for method output_type
+	10, // [10:48] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -4436,7 +4633,7 @@ func file_virtuestack_node_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_virtuestack_node_agent_proto_rawDesc), len(file_virtuestack_node_agent_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   44,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

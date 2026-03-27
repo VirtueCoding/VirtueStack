@@ -237,6 +237,16 @@ service NodeAgentService {
   // and AlmaLinux/RHEL kickstart configurations. The resulting disk is imported
   // into the specified storage backend (ceph, qcow, or lvm).
   rpc BuildTemplateFromISO(BuildTemplateFromISORequest) returns (BuildTemplateFromISOResponse);
+
+  // ========================================================================
+  // Template Distribution Operations
+  // ========================================================================
+
+  // EnsureTemplateCached ensures a template is available locally on the node.
+  // For QCOW/LVM nodes, the controller streams the template image to the node
+  // if it is not already cached. Ceph nodes should not call this (they use shared pool).
+  // The source_url field tells the node agent where to fetch the template image.
+  rpc EnsureTemplateCached(EnsureTemplateCachedRequest) returns (EnsureTemplateCachedResponse);
 }
 
 // ============================================================================
@@ -924,5 +934,40 @@ message BuildTemplateFromISOResponse {
   // Snapshot reference (for Ceph RBD; empty for qcow/lvm)
   string snapshot_ref = 4;
   // Size of the template in bytes
+  int64 size_bytes = 5;
+}
+
+// ============================================================================
+// TEMPLATE DISTRIBUTION MESSAGES
+// ============================================================================
+
+// EnsureTemplateCachedRequest asks the node to ensure a template is available locally.
+message EnsureTemplateCachedRequest {
+  // Unique template identifier from the controller database
+  string template_id = 1;
+  // Human-readable template name (used for local file naming)
+  string template_name = 2;
+  // Storage backend on this node: "qcow" or "lvm"
+  string storage_backend = 3;
+  // HTTP(S) URL from which the node agent can download the template image.
+  // The controller provides a signed/internal URL for streaming.
+  string source_url = 4;
+  // Expected file size in bytes (for progress tracking and pre-allocation)
+  int64 expected_size_bytes = 5;
+  // SHA-256 checksum of the template image for integrity verification
+  string checksum_sha256 = 6;
+}
+
+// EnsureTemplateCachedResponse indicates whether the template is now available.
+message EnsureTemplateCachedResponse {
+  // Whether the template is cached and ready for use
+  bool success = 1;
+  // Error message if caching failed
+  string error_message = 2;
+  // Local path where the template is stored on the node
+  string local_path = 3;
+  // Whether the template was already cached (true) or freshly downloaded (false)
+  bool already_cached = 4;
+  // Actual size of the cached template in bytes
   int64 size_bytes = 5;
 }
