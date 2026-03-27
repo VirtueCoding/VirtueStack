@@ -121,7 +121,7 @@ export function VMBackupsTab({
       <Card data-vm-id={vmId}>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">Backups &amp; Snapshots</CardTitle>
+            <CardTitle className="text-lg">Backups & Snapshots</CardTitle>
             <CardDescription>
               Manage full backups and point-in-time snapshots
             </CardDescription>

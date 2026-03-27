@@ -414,7 +414,7 @@ export default function VMDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="backups">
             <Server className="mr-2 h-4 w-4" />
-            Backups &amp; Snapshots
+            Backups & Snapshots
           </TabsTrigger>
           <TabsTrigger value="metrics">
             <BarChart3 className="mr-2 h-4 w-4" />

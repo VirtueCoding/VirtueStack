@@ -23,7 +23,8 @@ type ResetPasswordRequest struct {
 }
 
 // ForgotPassword handles POST /auth/forgot-password - initiates a password reset.
-// Always returns 200 OK regardless of whether the email exists to prevent enumeration.
+// Returns 200 OK for valid requests regardless of whether the email exists (anti-enumeration).
+// Internal errors are logged but return the same generic success response.
 func (h *CustomerHandler) ForgotPassword(c *gin.Context) {
 	var req ForgotPasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
