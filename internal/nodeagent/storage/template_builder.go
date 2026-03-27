@@ -461,12 +461,16 @@ func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath 
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(destPath)
+		if rmErr := os.Remove(destPath); rmErr != nil {
+			b.logger.Warn("failed to remove partial download", "path", destPath, "error", rmErr)
+		}
 		return fmt.Errorf("writing file to disk: %w", err)
 	}
 
 	if written > maxTemplateDownloadSize {
-		os.Remove(destPath)
+		if rmErr := os.Remove(destPath); rmErr != nil {
+			b.logger.Warn("failed to remove oversized download", "path", destPath, "error", rmErr)
+		}
 		return fmt.Errorf("file too large: downloaded %d bytes (max %d)", written, maxTemplateDownloadSize)
 	}
 
