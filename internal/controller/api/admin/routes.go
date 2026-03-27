@@ -226,6 +226,8 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			templates.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DeleteTemplate)
 			templates.POST("/:id/import", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.ImportTemplate)
 			templates.POST("/build-from-iso", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.BuildTemplateFromISO)
+			templates.POST("/:id/distribute", middleware.RequireAdminPermission(models.PermissionTemplatesWrite), handler.DistributeTemplate)
+			templates.GET("/:id/cache-status", middleware.RequireAdminPermission(models.PermissionTemplatesRead), handler.GetTemplateCacheStatus)
 		}
 
 		// IP Set management

@@ -17,19 +17,20 @@ const MACPrefix = "52:54:00"
 
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
-	VMRepo         *repository.VMRepository
-	NodeRepo       *repository.NodeRepository
-	IPRepo         *repository.IPRepository
-	BackupRepo     *repository.BackupRepository
-	TaskRepo       *repository.TaskRepository
-	TemplateRepo   *repository.TemplateRepository
-	IPAMService    IPAMService
-	NodeClient     NodeAgentClient
-	DNSNameservers []string
-	CephUser       string
-	CephSecretUUID string
-	CephMonitors   []string
-	Logger         *slog.Logger
+	VMRepo             *repository.VMRepository
+	NodeRepo           *repository.NodeRepository
+	IPRepo             *repository.IPRepository
+	BackupRepo         *repository.BackupRepository
+	TaskRepo           *repository.TaskRepository
+	TemplateRepo       *repository.TemplateRepository
+	TemplateCacheRepo  *repository.TemplateCacheRepository
+	IPAMService        IPAMService
+	NodeClient         NodeAgentClient
+	DNSNameservers     []string
+	CephUser           string
+	CephSecretUUID     string
+	CephMonitors       []string
+	Logger             *slog.Logger
 }
 
 // IPAMService defines the interface for IP address management operations.
@@ -118,6 +119,9 @@ type NodeAgentClient interface {
 	PrepareMigratedVM(ctx context.Context, targetNodeID, vmID, diskPath string, vm *models.VM) error
 	// BuildTemplateFromISO builds a VM template from an ISO on the specified node.
 	BuildTemplateFromISO(ctx context.Context, nodeID string, req *BuildTemplateFromISORequest) (*BuildTemplateFromISOResponse, error)
+	// EnsureTemplateCached ensures a template image is available locally on the node.
+	// For QCOW/LVM nodes, downloads the template if not cached. Returns the local path.
+	EnsureTemplateCached(ctx context.Context, nodeID string, req *EnsureTemplateCachedRequest) (*EnsureTemplateCachedResponse, error)
 }
 
 // CreateVMRequest contains parameters for VM creation via node agent.
@@ -326,4 +330,27 @@ type BuildTemplateFromISOResponse struct {
 	TemplateRef string
 	SnapshotRef string
 	SizeBytes   int64
+}
+
+// EnsureTemplateCachedRequest contains parameters for ensuring a template is cached on a node.
+type EnsureTemplateCachedRequest struct {
+	TemplateID        string
+	TemplateName      string
+	StorageBackend    string
+	SourceURL         string
+	ExpectedSizeBytes int64
+	ChecksumSHA256    string
+}
+
+// EnsureTemplateCachedResponse contains the result of ensuring a template is cached.
+type EnsureTemplateCachedResponse struct {
+	LocalPath     string
+	AlreadyCached bool
+	SizeBytes     int64
+}
+
+// TemplateDistributePayload represents the payload for template.distribute tasks.
+type TemplateDistributePayload struct {
+	TemplateID string   `json:"template_id"`
+	NodeIDs    []string `json:"node_ids"`
 }

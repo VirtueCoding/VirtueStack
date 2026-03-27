@@ -353,3 +353,71 @@ func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 		Data: map[string]string{"task_id": taskID},
 	})
 }
+
+// DistributeTemplate handles POST /templates/:id/distribute - distributes a template to nodes.
+// This triggers an async task that pushes the template to the specified QCOW/LVM nodes.
+// Ceph templates are rejected since they use shared pool access.
+func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ID", "Invalid template ID format")
+		return
+	}
+
+	var req models.TemplateDistributeRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		return
+	}
+
+	taskID, err := h.templateService.DistributeToNodes(c.Request.Context(), id, req.NodeIDs)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Template not found")
+			return
+		}
+		if errors.Is(err, sharederrors.ErrValidation) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.logger.Error("failed to distribute template",
+			"template_id", id,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "DISTRIBUTE_FAILED", "Failed to start template distribution")
+		return
+	}
+
+	h.logAuditEvent(c, "template.distribute", "template", id, map[string]interface{}{
+		"node_ids":  req.NodeIDs,
+		"node_count": len(req.NodeIDs),
+	}, true)
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Data: map[string]string{"task_id": taskID},
+	})
+}
+
+// GetTemplateCacheStatus handles GET /templates/:id/cache-status - returns cache status across nodes.
+func (h *AdminHandler) GetTemplateCacheStatus(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_ID", "Invalid template ID format")
+		return
+	}
+
+	status, err := h.templateService.GetCacheStatus(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Template not found")
+			return
+		}
+		h.logger.Error("failed to get template cache status",
+			"template_id", id,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CACHE_STATUS_FAILED", "Failed to get cache status")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: status})
+}

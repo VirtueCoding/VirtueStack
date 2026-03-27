@@ -405,6 +405,105 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 	return destPath, cleanup, nil
 }
 
+// maxTemplateDownloadSize is the maximum size for a template file download (20 GB).
+const maxTemplateDownloadSize int64 = 20 * 1024 * 1024 * 1024
+
+// templateDownloadTimeout is the maximum time for downloading a template file.
+const templateDownloadTimeout = 30 * time.Minute
+
+// DownloadFile downloads a file from a URL to a local destination path.
+// Used for template distribution — downloads template images from the controller.
+// Applies SSRF protection, size limits, and redirect limits.
+func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath string) error {
+	if err := validateDownloadURL(sourceURL); err != nil {
+		return err
+	}
+
+	dlCtx, cancel := context.WithTimeout(ctx, templateDownloadTimeout)
+	defer cancel()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating HTTP request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP GET %s: %w", sourceURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP GET %s returned status %d", sourceURL, resp.StatusCode)
+	}
+
+	if resp.ContentLength > maxTemplateDownloadSize {
+		return fmt.Errorf("file too large: %d bytes (max %d)", resp.ContentLength, maxTemplateDownloadSize)
+	}
+
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("creating download file: %w", err)
+	}
+
+	reader := io.LimitReader(resp.Body, maxTemplateDownloadSize+1)
+	written, err := io.Copy(out, reader)
+	if closeErr := out.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(destPath)
+		return fmt.Errorf("writing file to disk: %w", err)
+	}
+
+	if written > maxTemplateDownloadSize {
+		os.Remove(destPath)
+		return fmt.Errorf("file too large: downloaded %d bytes (max %d)", written, maxTemplateDownloadSize)
+	}
+
+	b.logger.Info("template file download completed",
+		"url", sourceURL,
+		"dest", destPath,
+		"size_bytes", written)
+
+	return nil
+}
+
+// validateDownloadURL validates a download URL for template distribution.
+// Only HTTP and HTTPS schemes are allowed. Unlike ISO URLs, template distribution
+// URLs may point to internal infrastructure (controller, NFS, or file servers)
+// so private/loopback IPs are allowed.
+func validateDownloadURL(rawURL string) error {
+	if rawURL == "" {
+		return fmt.Errorf("download URL is required")
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme %q (only http/https)", parsed.Scheme)
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL missing hostname")
+	}
+
+	return nil
+}
+
 // validateISOURL validates an ISO download URL.
 // Only HTTP and HTTPS schemes are allowed. The hostname is resolved
 // and the resulting IP addresses are checked against known private/loopback

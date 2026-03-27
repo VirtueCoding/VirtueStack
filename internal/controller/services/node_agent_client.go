@@ -1442,6 +1442,42 @@ func (c *NodeAgentGRPCClient) BuildTemplateFromISO(ctx context.Context, nodeID s
 	}, nil
 }
 
+// EnsureTemplateCached ensures a template image is available locally on a QCOW/LVM node.
+func (c *NodeAgentGRPCClient) EnsureTemplateCached(ctx context.Context, nodeID string, req *tasks.EnsureTemplateCachedRequest) (*tasks.EnsureTemplateCachedResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.EnsureTemplateCached(ctx, &nodeagentpb.EnsureTemplateCachedRequest{
+		TemplateId:        req.TemplateID,
+		TemplateName:      req.TemplateName,
+		StorageBackend:    req.StorageBackend,
+		SourceUrl:         req.SourceURL,
+		ExpectedSizeBytes: req.ExpectedSizeBytes,
+		ChecksumSha256:    req.ChecksumSHA256,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ensure template cached: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("template caching failed: %s", resp.ErrorMessage)
+	}
+
+	return &tasks.EnsureTemplateCachedResponse{
+		LocalPath:     resp.LocalPath,
+		AlreadyCached: resp.AlreadyCached,
+		SizeBytes:     resp.SizeBytes,
+	}, nil
+}
+
 func (c *NodeAgentGRPCClient) cephMonitors() []string {
 	if c.cephCfg != nil {
 		return c.cephCfg.Monitors
