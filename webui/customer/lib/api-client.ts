@@ -244,6 +244,17 @@ export const customerAuthApi = {
       return false;
     }
   },
+
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/customer/auth/forgot-password", { email });
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>("/customer/auth/reset-password", {
+      token,
+      new_password: newPassword,
+    });
+  },
 };
 
 export interface VMMetrics {

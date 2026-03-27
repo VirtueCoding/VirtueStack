@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/notifications"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"google.golang.org/grpc"
@@ -133,11 +134,19 @@ type CustomerHandler struct {
 	consoleBaseURL  string
 	isoStoragePath  string
 	tokenStore      *consoleTokenStore
+	emailProvider        emailSender
+	passwordResetBaseURL string
 	logger          *slog.Logger
 }
 
 type nodeAgentConnPool interface {
 	GetConnection(ctx context.Context, nodeID, address string) (*grpc.ClientConn, error)
+}
+
+// emailSender is the interface for sending emails, satisfied by notifications.EmailProvider.
+type emailSender interface {
+	Send(ctx context.Context, payload *notifications.EmailPayload) error
+	IsEnabled() bool
 }
 
 // CustomerHandlerConfig holds all dependencies required to construct a CustomerHandler.
@@ -168,6 +177,8 @@ type CustomerHandlerConfig struct {
 	EncryptionKey   string
 	ConsoleBaseURL  string
 	ISOStoragePath  string
+	EmailProvider        emailSender
+	PasswordResetBaseURL string
 	Logger          *slog.Logger
 }
 
@@ -199,6 +210,8 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		consoleBaseURL:  cfg.ConsoleBaseURL,
 		isoStoragePath:  cfg.ISOStoragePath,
 		tokenStore:      newConsoleTokenStore(),
+		emailProvider:        cfg.EmailProvider,
+		passwordResetBaseURL: cfg.PasswordResetBaseURL,
 		logger:          cfg.Logger.With("component", "customer-handler"),
 	}
 }
