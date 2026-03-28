@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -172,52 +173,45 @@ func (r *BackupRepository) GetBackupByID(ctx context.Context, id string) (*model
 //  2. Use cursor.Params and cursor.BuildWhereClause for query construction
 //  3. Return models.NewCursorPaginationMeta instead of NewPaginationMeta
 func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFilter) ([]models.Backup, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("backups")
 
 	if filter.VMID != nil {
-		where = append(where, fmt.Sprintf("vm_id = $%d", idx))
-		args = append(args, *filter.VMID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"vm_id": *filter.VMID})
 	}
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 	if filter.Source != nil {
-		where = append(where, fmt.Sprintf("source = $%d", idx))
-		args = append(args, *filter.Source)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"source": *filter.Source})
 	}
 	if filter.Method != nil {
-		where = append(where, fmt.Sprintf("method = $%d", idx))
-		args = append(args, *filter.Method)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"method": *filter.Method})
 	}
 	if filter.AdminScheduleID != nil {
-		where = append(where, fmt.Sprintf("admin_schedule_id = $%d", idx))
-		args = append(args, *filter.AdminScheduleID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"admin_schedule_id": *filter.AdminScheduleID})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM backups WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	countBuilder := whereBuilder.Columns("COUNT(*)")
+	countQ, countArgs, err := countBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building backup count query: %w", err)
+	}
+	total, err := CountRows(ctx, r.db, countQ, countArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting backups: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM backups WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		backupSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
+	listBuilder := whereBuilder.Columns(backupSelectCols).
+		OrderBy("created_at DESC").
+		Limit(uint64(filter.Limit())).
+		Offset(uint64(filter.Offset()))
+	listQ, listArgs, err := listBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building backup list query: %w", err)
+	}
 
-	backups, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Backup, error) {
+	backups, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Backup, error) {
 		return scanBackup(rows)
 	})
 	if err != nil {
@@ -482,30 +476,33 @@ func (r *BackupRepository) GetSnapshotByID(ctx context.Context, id string) (*mod
 
 // ListSnapshots returns a paginated list of snapshots with optional filters and total count.
 func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotListFilter) ([]models.Snapshot, int, error) {
-	where := "1=1"
-	args := []any{}
-	idx := 1
-
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("snapshots")
 	if filter.VMID != nil {
-		where += fmt.Sprintf(" AND vm_id = $%d", idx)
-		args = append(args, *filter.VMID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"vm_id": *filter.VMID})
 	}
 
-	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM snapshots WHERE "+where, args...)
+	countBuilder := whereBuilder.Columns("COUNT(*)")
+	countQ, countArgs, err := countBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building snapshot count query: %w", err)
+	}
+
+	total, err := CountRows(ctx, r.db, countQ, countArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting snapshots: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM snapshots WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		snapshotSelectCols, where, idx, idx+1,
-	)
-	args = append(args, limit, offset)
+	listBuilder := whereBuilder.Columns(snapshotSelectCols).
+		OrderBy("created_at DESC").
+		Limit(uint64(filter.Limit())).
+		Offset(uint64(filter.Offset()))
+	listQ, listArgs, err := listBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building snapshot list query: %w", err)
+	}
 
-	snapshots, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Snapshot, error) {
+	snapshots, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Snapshot, error) {
 		return scanSnapshot(rows)
 	})
 	if err != nil {

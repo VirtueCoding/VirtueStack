@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -102,56 +103,46 @@ func (r *VMRepository) GetByIDForCustomer(ctx context.Context, tx pgx.Tx, id, cu
 
 // List returns a paginated list of VMs with optional filters and total count.
 func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]models.VM, int, error) {
-	where := []string{"deleted_at IS NULL"}
-	args := []any{}
-	idx := 1
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("vms").Where("deleted_at IS NULL")
 
 	if filter.CustomerID != nil {
-		where = append(where, fmt.Sprintf("customer_id = $%d", idx))
-		args = append(args, *filter.CustomerID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"customer_id": *filter.CustomerID})
 	}
 	if filter.NodeID != nil {
-		where = append(where, fmt.Sprintf("node_id = $%d", idx))
-		args = append(args, *filter.NodeID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"node_id": *filter.NodeID})
 	}
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 	if filter.Search != nil {
-		where = append(where, fmt.Sprintf("hostname ILIKE $%d", idx))
-		args = append(args, "%"+*filter.Search+"%")
-		idx++
+		whereBuilder = whereBuilder.Where(sq.ILike{"hostname": "%" + *filter.Search + "%"})
 	}
 	if len(filter.VMIDs) > 0 {
-		placeholders := make([]string, len(filter.VMIDs))
-		for i, vmID := range filter.VMIDs {
-			placeholders[i] = fmt.Sprintf("$%d", idx)
-			args = append(args, vmID)
-			idx++
-		}
-		where = append(where, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ",")))
+		whereBuilder = whereBuilder.Where(sq.Eq{"id": filter.VMIDs})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM vms WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	countBuilder := whereBuilder.Columns("COUNT(*)")
+	countQ, countArgs, err := countBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building VM count query: %w", err)
+	}
+
+	total, err := CountRows(ctx, r.db, countQ, countArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting VMs: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM vms WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		vmSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
+	listBuilder := whereBuilder.Columns(vmSelectCols).
+		OrderBy("created_at DESC").
+		Limit(uint64(filter.Limit())).
+		Offset(uint64(filter.Offset()))
+	listQ, listArgs, err := listBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building VM list query: %w", err)
+	}
 
-	vms, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.VM, error) {
+	vms, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.VM, error) {
 		return scanVM(rows)
 	})
 	if err != nil {

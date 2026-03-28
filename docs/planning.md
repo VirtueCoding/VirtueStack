@@ -357,8 +357,8 @@
 
 > **Note:** `internal/nodeagent/vm/domain_xml_test.go` already exists. This gap adds golden-file (snapshot) tests.
 
-- [ ] Create `internal/nodeagent/vm/testdata/` directory for golden XML files
-- [ ] Create golden-file test helper in `internal/nodeagent/vm/domain_xml_test.go`:
+- [x] Create `internal/nodeagent/vm/testdata/` directory for golden XML files
+- [x] Create golden-file test helper in `internal/nodeagent/vm/domain_xml_test.go`:
   ```go
   func goldenTest(t *testing.T, name string, got string) {
       t.Helper()
@@ -372,7 +372,7 @@
       assert.Equal(t, string(expected), got)
   }
   ```
-- [ ] Add golden-file test cases covering:
+- [x] Add golden-file test cases covering:
   - Ceph RBD disk configuration
   - QCOW2 disk configuration
   - LVM disk configuration
@@ -380,9 +380,9 @@
   - VM without ISO
   - Multiple NIC configurations
   - Various CPU/memory configurations
-- [ ] Generate initial golden files: `UPDATE_GOLDEN=1 go test ./internal/nodeagent/vm/...`
-- [ ] Commit the `testdata/*.golden.xml` files
-- [ ] Run `make test-native` (or the node-agent tests) to verify tests pass
+- [x] Generate initial golden files: `UPDATE_GOLDEN=1 go test ./internal/nodeagent/vm/...`
+- [x] Commit the `testdata/*.golden.xml` files
+- [x] Run `make test-native` (or the node-agent tests) to verify tests pass
 
 ---
 
@@ -392,20 +392,20 @@
 
 #### 15a. Add Dependency
 
-- [ ] Add squirrel to `go.mod`:
+- [x] Add squirrel to `go.mod`:
   ```bash
   go get github.com/Masterminds/squirrel
   ```
 
 #### 15b. Migrate Repository Methods
 
-- [ ] Identify repository methods with manual SQL string building (conditional WHERE clauses):
+- [x] Identify repository methods with manual SQL string building (conditional WHERE clauses):
   - `internal/controller/repository/vm_repo.go` — `List` method with `VMListFilter`
   - `internal/controller/repository/backup_repo.go` — `List` methods with filters
   - `internal/controller/repository/task_repo.go` — `List` method with filters
   - `internal/controller/repository/audit_log_repo.go` — `List` method with filters
   - `internal/controller/repository/ip_address_repo.go` — filtered queries
-- [ ] For each method, replace manual SQL concatenation with squirrel:
+- [x] For each method, replace manual SQL concatenation with squirrel:
   ```go
   q := sq.Select(vmColumns...).From("vms").PlaceholderFormat(sq.Dollar)
   if filter.CustomerID != nil {
@@ -416,8 +416,8 @@
   }
   sql, args, err := q.ToSql()
   ```
-- [ ] Keep simple single-table queries (GetByID, Create, Update) as raw SQL — no need to convert those
-- [ ] Run `make build-controller && make test-race` after each repository migration
+- [x] Keep simple single-table queries (GetByID, Create, Update) as raw SQL — no need to convert those
+- [x] Run `make build-controller && make test-race` after each repository migration
 
 ---
 

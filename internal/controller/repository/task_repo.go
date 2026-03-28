@@ -4,9 +4,9 @@ package repository
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -118,52 +118,46 @@ func (r *TaskRepository) GetByIDempotencyKey(ctx context.Context, key string) (*
 
 // List returns a paginated list of tasks with optional filters and total count.
 func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]models.Task, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("tasks")
 
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 	if filter.Type != nil {
-		where = append(where, fmt.Sprintf("type = $%d", idx))
-		args = append(args, *filter.Type)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"type": *filter.Type})
 	}
 	if filter.CreatedBy != nil {
-		where = append(where, fmt.Sprintf("created_by = $%d", idx))
-		args = append(args, *filter.CreatedBy)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"created_by": *filter.CreatedBy})
 	}
 	if filter.StartTime != nil {
-		where = append(where, fmt.Sprintf("created_at >= $%d", idx))
-		args = append(args, *filter.StartTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.GtOrEq{"created_at": *filter.StartTime})
 	}
 	if filter.EndTime != nil {
-		where = append(where, fmt.Sprintf("created_at <= $%d", idx))
-		args = append(args, *filter.EndTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.LtOrEq{"created_at": *filter.EndTime})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM tasks WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	countBuilder := whereBuilder.Columns("COUNT(*)")
+	countQ, countArgs, err := countBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building task count query: %w", err)
+	}
+
+	total, err := CountRows(ctx, r.db, countQ, countArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting tasks: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM tasks WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		taskSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
+	listBuilder := whereBuilder.Columns(taskSelectCols).
+		OrderBy("created_at DESC").
+		Limit(uint64(filter.Limit())).
+		Offset(uint64(filter.Offset()))
+	listQ, listArgs, err := listBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building task list query: %w", err)
+	}
 
-	taskList, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Task, error) {
+	taskList, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Task, error) {
 		return scanTask(rows)
 	})
 	if err != nil {

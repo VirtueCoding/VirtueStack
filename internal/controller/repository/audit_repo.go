@@ -4,8 +4,8 @@ package repository
 import (
 	"context"
 	"fmt"
-	"strings"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -73,67 +73,55 @@ func (r *AuditRepository) GetByID(ctx context.Context, id string) (*models.Audit
 
 // List returns a paginated list of audit logs with optional filters and total count.
 func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("audit_logs")
 
 	if filter.ActorID != nil {
-		where = append(where, fmt.Sprintf("actor_id = $%d", idx))
-		args = append(args, *filter.ActorID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"actor_id": *filter.ActorID})
 	}
 	if filter.ActorType != nil {
-		where = append(where, fmt.Sprintf("actor_type = $%d", idx))
-		args = append(args, *filter.ActorType)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"actor_type": *filter.ActorType})
 	}
 	if filter.Action != nil {
-		where = append(where, fmt.Sprintf("action = $%d", idx))
-		args = append(args, *filter.Action)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"action": *filter.Action})
 	}
 	if filter.ResourceType != nil {
-		where = append(where, fmt.Sprintf("resource_type = $%d", idx))
-		args = append(args, *filter.ResourceType)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"resource_type": *filter.ResourceType})
 	}
 	if filter.ResourceID != nil {
-		where = append(where, fmt.Sprintf("resource_id = $%d", idx))
-		args = append(args, *filter.ResourceID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"resource_id": *filter.ResourceID})
 	}
 	if filter.Success != nil {
-		where = append(where, fmt.Sprintf("success = $%d", idx))
-		args = append(args, *filter.Success)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"success": *filter.Success})
 	}
 	if filter.StartTime != nil {
-		where = append(where, fmt.Sprintf("timestamp >= $%d", idx))
-		args = append(args, *filter.StartTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.GtOrEq{"timestamp": *filter.StartTime})
 	}
 	if filter.EndTime != nil {
-		where = append(where, fmt.Sprintf("timestamp <= $%d", idx))
-		args = append(args, *filter.EndTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.LtOrEq{"timestamp": *filter.EndTime})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM audit_logs WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	countBuilder := whereBuilder.Columns("COUNT(*)")
+	countQ, countArgs, err := countBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building audit log count query: %w", err)
+	}
+
+	total, err := CountRows(ctx, r.db, countQ, countArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM audit_logs WHERE %s ORDER BY timestamp DESC LIMIT $%d OFFSET $%d",
-		auditLogSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
+	listBuilder := whereBuilder.Columns(auditLogSelectCols).
+		OrderBy("timestamp DESC").
+		Limit(uint64(filter.Limit())).
+		Offset(uint64(filter.Offset()))
+	listQ, listArgs, err := listBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("building audit log list query: %w", err)
+	}
 
-	logs, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.AuditLog, error) {
+	logs, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.AuditLog, error) {
 		return scanAuditLog(rows)
 	})
 	if err != nil {
