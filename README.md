@@ -266,7 +266,7 @@ Before deploying to production:
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
+See [docs/installation.md](docs/installation.md) for detailed setup instructions.
 
 ---
 
@@ -275,11 +275,11 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
 | Document | Description |
 |----------|-------------|
 | [AGENTS.md](AGENTS.md) | Technical reference for AI agents and LLM-assisted development |
-| [docs/CODEMAPS/](docs/CODEMAPS/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
-| [docs/INSTALL.md](docs/INSTALL.md) | Installation guide |
-| [docs/API.md](docs/API.md) | API reference |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture specification |
-| [docs/CODING_STANDARD.md](docs/CODING_STANDARD.md) | Quality gates and coding rules |
+| [docs/codemaps/](docs/codemaps/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
+| [docs/installation.md](docs/installation.md) | Installation guide |
+| [docs/api-reference.md](docs/api-reference.md) | API reference |
+| [docs/architecture.md](docs/architecture.md) | Detailed architecture specification |
+| [docs/coding-standard.md](docs/coding-standard.md) | Quality gates and coding rules |
 
 ---
 
@@ -301,7 +301,7 @@ We welcome contributions!
 - TypeScript: Use ESLint configuration in the repo
 - Tests: Maintain >80% coverage
 
-See [docs/CODING_STANDARD.md](docs/CODING_STANDARD.md) for complete quality gates.
+See [docs/coding-standard.md](docs/coding-standard.md) for complete quality gates.
 
 ---
 

@@ -8,13 +8,13 @@ VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting pr
 
 For a token-efficient architecture overview, read the codemaps first (~4K tokens total):
 
-- `docs/CODEMAPS/architecture.md` — System overview, service boundaries, data flow
-- `docs/CODEMAPS/backend.md` — API routes, services, repositories, middleware
-- `docs/CODEMAPS/frontend.md` — Page tree, components, state management
-- `docs/CODEMAPS/data.md` — Database schema, entity relationships, RLS policies
-- `docs/CODEMAPS/dependencies.md` — External deps, build tools
+- `docs/codemaps/architecture.md` — System overview, service boundaries, data flow
+- `docs/codemaps/backend.md` — API routes, services, repositories, middleware
+- `docs/codemaps/frontend.md` — Page tree, components, state management
+- `docs/codemaps/data.md` — Database schema, entity relationships, RLS policies
+- `docs/codemaps/dependencies.md` — External deps, build tools
 
-For full specifications, refer to `AGENTS.md` (comprehensive LLM reference) and `docs/CODING_STANDARD.md` (mandatory quality gates).
+For full specifications, refer to `AGENTS.md` (comprehensive LLM reference) and `docs/coding-standard.md` (mandatory quality gates).
 
 ## Repository Layout
 
@@ -341,7 +341,7 @@ type mockDB struct {
 6. **Error wrapping:** Use `fmt.Errorf("context: %w", err)` for proper error chain propagation.
 7. **Permission constants:** Defined in `internal/controller/models/`, enforced via middleware.
 8. **Audit logging:** Log all resource mutations with actor ID, resource type, and changes.
-9. **No TODOs/FIXMEs:** The coding standard (docs/CODING_STANDARD.md §1) prohibits leaving these in code.
+9. **No TODOs/FIXMEs:** The coding standard (docs/coding-standard.md §1) prohibits leaving these in code.
 10. **Max function length:** 40 lines (QG-01), max nesting: 3 levels.
 
 ## Adding New Features
@@ -399,8 +399,8 @@ E2E tests (`.github/workflows/e2e.yml`) run on changes to WebUI, API, or test fi
 | Purpose | File(s) |
 |---------|---------|
 | Full LLM reference | `AGENTS.md` |
-| Quality gates & coding rules | `docs/CODING_STANDARD.md` |
-| Architecture quick reference | `docs/CODEMAPS/*.md` |
+| Quality gates & coding rules | `docs/coding-standard.md` |
+| Architecture quick reference | `docs/codemaps/*.md` |
 | Admin API routes | `internal/controller/api/admin/routes.go` |
 | Customer API routes | `internal/controller/api/customer/routes.go` |
 | Provisioning API routes | `internal/controller/api/provisioning/routes.go` |

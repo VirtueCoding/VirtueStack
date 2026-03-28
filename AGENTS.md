@@ -3,8 +3,8 @@
 Machine-readable reference for LLM agents working on the VirtueStack codebase.
 
 **Audience:** LLMs and AI coding agents only.
-**Companion documents:** `docs/CODING_STANDARD.md` (rules for generated code), `docs/CODEMAPS/` (token-lean architecture summaries ~4K tokens total).
-**Boundary:** This file describes what exists. `docs/CODING_STANDARD.md` prescribes how to write code.
+**Companion documents:** `docs/coding-standard.md` (rules for generated code), `docs/codemaps/` (token-lean architecture summaries ~4K tokens total).
+**Boundary:** This file describes what exists. `docs/coding-standard.md` prescribes how to write code.
 
 ---
 
@@ -123,12 +123,13 @@ Makefile                                    # Build automation
 go.mod                                      # Go 1.26
 .env.example                                # Environment variable template
 docs/
-  API.md                                    # API reference
-  ARCHITECTURE.md                           # Architecture specification
-  CODING_STANDARD.md                        # Quality gates (mandatory)
-  INSTALL.md                                # Installation guide
-  redis-implementation-plan.md
-  CODEMAPS/                                 # Token-lean architecture summaries
+  api-reference.md                          # API reference
+  architecture.md                           # Architecture specification
+  coding-standard.md                        # Quality gates (mandatory)
+  installation.md                           # Installation guide
+  plan.md                                   # Billing architecture decision plan
+  codemaps/                                 # Token-lean architecture summaries
+  decisions/001-redis-rate-limiting.md      # ADR: Redis rate limiting
   superpowers/security-audit-report.md
 ```
 
@@ -999,7 +1000,7 @@ Follow expand-contract pattern. Never use `CREATE INDEX CONCURRENTLY` inside mig
 | Services (all) | `internal/controller/services/*.go` (41 files) |
 | Tasks (all) | `internal/controller/tasks/*.go` (25 files) |
 | Migrations | `migrations/000001–000065` |
-| Architecture summaries | `docs/CODEMAPS/*.md` |
-| Coding standard | `docs/CODING_STANDARD.md` |
+| Architecture summaries | `docs/codemaps/*.md` |
+| Coding standard | `docs/coding-standard.md` |
 | E2E test guide | `tests/e2e/README.md` |
 | Linter config | `.golangci.yml` |

@@ -1,6 +1,6 @@
 // Package tasks provides helper functions for backup restore task handling.
 // These functions decompose the handleBackupRestore function to comply with
-// docs/CODING_STANDARD.md QG-01 (functions <= 40 lines).
+// docs/coding-standard.md QG-01 (functions <= 40 lines).
 package tasks
 
 import (
