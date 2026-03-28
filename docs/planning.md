@@ -686,7 +686,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
-- [ ] Create `scripts/validate-env.sh`:
+- [x] Create `scripts/validate-env.sh`:
   ```bash
   #!/usr/bin/env bash
   set -euo pipefail
@@ -712,9 +712,9 @@
   fi
   echo "✅ All configuration validated"
   ```
-- [ ] Make script executable: `chmod +x scripts/validate-env.sh`
-- [ ] Add validation step to `docker-compose.yml` or document in `docs/INSTALL.md` as a pre-start check
-- [ ] Add unit test: run script with missing vars and verify exit code 1; run with all vars and verify exit code 0
+- [x] Make script executable: `chmod +x scripts/validate-env.sh`
+- [x] Add validation step to `docker-compose.yml` or document in `docs/INSTALL.md` as a pre-start check
+- [x] Add unit test: run script with missing vars and verify exit code 1; run with all vars and verify exit code 0
 
 ---
 

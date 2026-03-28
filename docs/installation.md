@@ -158,6 +158,19 @@ EOF
 chmod 600 .env
 ```
 
+#### Step 2.1: Validate Environment Configuration
+
+Before starting services, validate required configuration:
+
+```bash
+./scripts/validate-env.sh
+```
+
+This checks required variables and validates critical formats such as:
+- `ENCRYPTION_KEY` must be a 64-character hex string
+- optional `REDIS_URL` must start with `redis://` when set
+- optional `SMTP_PORT` must be a positive integer when set
+
 #### Step 3: Generate SSL Certificates
 
 **Option A: Let's Encrypt (Recommended for Production)**
