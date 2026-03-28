@@ -165,7 +165,7 @@ func (r *BackupRepository) GetBackupByID(ctx context.Context, id string) (*model
 //
 // Cursor-based pagination is available via the internal/controller/repository/cursor
 // package. Migration to cursor-based pagination is planned for a future release.
-// See docs/CODING_STANDARD.md QG-16 for requirements.
+// See docs/coding-standard.md QG-16 for requirements.
 //
 // To use cursor-based pagination in the future:
 //  1. Check params.IsCursorBased() to determine pagination mode

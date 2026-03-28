@@ -787,6 +787,9 @@ The E2E seed script creates predictable test data:
 | SMTP_REQUIRE_TLS | No | true | Enforce STARTTLS |
 | TELEGRAM_BOT_TOKEN | No | - | Telegram bot token |
 | PDNS_MYSQL_DSN | No | - | PowerDNS MySQL connection |
+| REDIS_URL | No | - | Redis URL for distributed rate limiting (required when APP_ENV=production) |
+| PROVISIONING_ALLOWED_IPS | No | - | Comma-separated IPs/CIDRs allowed to access provisioning API |
+| APP_ENV | No | development | Set to "production" for strict security |
 
 ### Node Agent Environment Variables
 

@@ -18,7 +18,7 @@ This document outlines the plan to implement Redis-backed distributed rate limit
 - **Implementation**: Both in-memory and Redis rate limiters are already implemented in `middleware/ratelimit.go`
 - **Warning**: `WarnIfInMemoryRateLimitInProduction()` logs a warning when running multi-instance without Redis
 
-### Target State (document in docs/INSTALL.md and README.md)
+### Target State (document in docs/installation.md and README.md)
 
 - **Single controller**: No change - in-memory rate limiting continues to work
 - **Multi controller with Redis**: Coordinated rate limiting across all instances
@@ -844,7 +844,7 @@ func TestRateLimitIntegration_MultiInstance(t *testing.T) {
 
 #### 7.1 Update Deployment Documentation
 
-**File:** `docs/INSTALL.md`
+**File:** `docs/installation.md`
 
 ```markdown
 ## High Availability Deployment
@@ -1026,7 +1026,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml stop redis
 | `nginx/conf.d/default.conf` | Modify | Load balancing config |
 | `go.mod` | Modify | Add Redis dependency |
 | `.env.example` | Modify | Add Redis variables |
-| `docs/INSTALL.md` | Modify | HA deployment docs |
+| `docs/installation.md` | Modify | HA deployment docs |
 | `AGENTS.md` | Modify | Environment variables |
 | `tests/integration/rate_limit_test.go` | Create | Integration tests |
 | `internal/controller/api/middleware/ratelimit_test.go` | Create | Unit tests |

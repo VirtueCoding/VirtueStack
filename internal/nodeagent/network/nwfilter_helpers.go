@@ -1,6 +1,6 @@
 // Package network provides helper functions for nwfilter generation.
 // These functions decompose the GenerateFilterXML function to comply with
-// docs/CODING_STANDARD.md QG-01 (functions <= 40 lines).
+// docs/coding-standard.md QG-01 (functions <= 40 lines).
 package network
 
 import (

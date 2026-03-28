@@ -95,12 +95,12 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 | Purpose | Library | Rationale |
 |---------|---------|-----------|
 | **UI Components** | shadcn/ui + Tailwind CSS | Copy-paste ownership, highly customizable, accessible |
-| **Real-time Charts** | uPlot (streaming) + Apache ECharts (dashboards) | uPlot: 150K pts in 90ms. ECharts: rich dashboard visualizations |
+| **Real-time Charts** | Recharts | React-native charting library for resource monitoring |
 | **VNC Console** | @novnc/novnc | Industry standard HTML5 VNC client |
 | **Serial Console** | @xterm/xterm + @xterm/addon-fit | Best terminal emulation, used by VS Code |
 | **ISO Upload** | tus-js-client | Resumable chunked uploads for multi-GB files |
 | **Server State** | TanStack Query | Cache invalidation, optimistic updates, background refetching |
-| **Client State** | Zustand | Lightweight, TypeScript-native, no boilerplate |
+| **Server State** | TanStack Query | Server state management with caching and invalidation |
 | **Form Validation** | Zod | Runtime validation with TypeScript type inference |
 | **HTTP Client** | ky (browser) | Lightweight fetch wrapper with retries |
 
@@ -755,7 +755,7 @@ Both Admin and Customer WebUIs are Next.js 16 applications served as Docker cont
 | **Serial Console** | Embedded xterm.js via Controller WebSocket proxy |
 | **Reinstall** | Select from available OS templates, confirm destructive action |
 | **ISO Management** | Upload ISO (tus), attach/detach ISO to VM, change boot order |
-| **Resource Graphs** | CPU, RAM, disk, network usage — real-time (uPlot) + historical (ECharts) |
+| **Resource Graphs** | CPU, RAM, disk, network usage — Recharts |
 | **Backup/Snapshot** | List backups, restore from backup, create/revert/delete snapshots |
 | **rDNS** | Change PTR record for assigned IPs (rate limited: 10/hour) |
 | **API Keys** | Create/revoke VM-scoped API keys for programmatic access |
@@ -1085,7 +1085,7 @@ A VM's storage backend is determined by its **plan** at creation time and is **i
 
 | Level | Field | Description |
 |-------|-------|-------------|
-| **Plan** | `plans.storage_backend` | Defines the default backend for VMs created under this plan (`ceph` or `qcow`) |
+| **Plan** | `plans.storage_backend` | Defines the default backend for VMs created under this plan (`ceph`, `qcow`, or `lvm`) |
 | **VM** | `vms.storage_backend` | Set from plan at creation time. **Immutable** — cannot be changed or migrated to a different backend |
 | **Node** | `nodes.storage_backend` / `nodes.storage_path` | Describes what the node is configured for. A node can have both Ceph and QCOW2 configured simultaneously |
 
@@ -1371,7 +1371,7 @@ CREATE TABLE nodes (
     status VARCHAR(20) DEFAULT 'offline'
       CHECK (status IN ('online', 'degraded', 'offline', 'draining', 'failed')),
     storage_backend VARCHAR(20) DEFAULT 'ceph'
-      CHECK (storage_backend IN ('ceph', 'qcow')),
+      CHECK (storage_backend IN ('ceph', 'qcow', 'lvm')),
     storage_path TEXT,  -- Base path for QCOW2 storage (e.g., /var/lib/virtuestack/vms)
     total_vcpu INTEGER NOT NULL,
     total_memory_mb INTEGER NOT NULL,
@@ -1415,7 +1415,7 @@ CREATE TABLE plans (
     max_iso_count INTEGER DEFAULT 1,       -- DEPRECATED
     max_iso_gb INTEGER DEFAULT 5,          -- DEPRECATED
     storage_backend VARCHAR(20) DEFAULT 'ceph'
-      CHECK (storage_backend IN ('ceph', 'qcow')),
+      CHECK (storage_backend IN ('ceph', 'qcow', 'lvm')),
     is_active BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
     snapshot_limit INTEGER NOT NULL DEFAULT 2,
@@ -1444,7 +1444,7 @@ CREATE TABLE vms (
     bandwidth_used_bytes BIGINT DEFAULT 0,
     bandwidth_reset_at TIMESTAMPTZ DEFAULT NOW(),
     storage_backend VARCHAR(20) DEFAULT 'ceph'
-      CHECK (storage_backend IN ('ceph', 'qcow')),
+      CHECK (storage_backend IN ('ceph', 'qcow', 'lvm')),
     disk_path TEXT,  -- File path for QCOW2 VM disks (e.g., /var/lib/virtuestack/vms/vs-{uuid}-disk0.qcow2)
     mac_address MACADDR NOT NULL UNIQUE,
     template_id UUID REFERENCES templates(id),
@@ -1818,7 +1818,7 @@ API Handler
     ↓ publish
 NATS JetStream (durable stream: "TASKS")
     ↓ subscribe
-Task Worker Pool (5 workers per Controller instance)
+Task Worker Pool (4 workers per Controller instance)
     ↓ execute
 Node Agent (gRPC)
     ↓ result
@@ -2288,7 +2288,7 @@ All components use `slog` with JSON output:
 | VM control actions (start/stop/restart) | WebUI |
 | NoVNC console integration | WebUI + Controller WS proxy |
 | xterm.js serial console | WebUI + Controller WS proxy |
-| Resource monitoring graphs (uPlot + ECharts) | WebUI |
+| Resource monitoring graphs (Recharts) | WebUI |
 | Admin: node management, plan management, IP sets | WebUI |
 | Customer: reinstall, ISO upload, backup/snapshot | WebUI |
 | Customer: rDNS, API keys, webhooks | WebUI |
@@ -2418,7 +2418,7 @@ Every component maps to the 19 Quality Gates from `CODING_STANDARD.md`:
 | `CEPH_POOL` | No | Default Ceph pool for VMs (Ceph backend only) | `vs-vms` |
 | `CEPH_USER` | No | Ceph auth user (Ceph backend only) | `virtuestack` |
 | `CEPH_CONF` | No | Ceph config path (Ceph backend only) | `/etc/ceph/ceph.conf` |
-| `STORAGE_BACKEND` | No | Storage backend type: `ceph` or `qcow` (default: `ceph`) | `ceph` |
+| `STORAGE_BACKEND` | No | Storage backend type: `ceph`, `qcow`, or `lvm` (default: `ceph`) | `ceph` |
 | `STORAGE_PATH` | No | Base path for QCOW2 VM storage (QCOW backend only) | `/var/lib/virtuestack/vms` |
 | `TEMPLATE_PATH` | No | Base path for QCOW2 template storage (QCOW backend only) | `/var/lib/virtuestack/templates` |
 | `TLS_CERT_FILE` | Yes | mTLS client certificate | `/etc/virtuestack/tls/node.crt` |

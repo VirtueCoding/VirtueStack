@@ -1,8 +1,8 @@
-<!-- Generated: 2026-03-22 | Files scanned: 46 migrations | Token estimate: ~950 -->
+<!-- Generated: 2026-03-28 | Files scanned: 65 migrations | Token estimate: ~1000 -->
 
 # Data Architecture
 
-## Core Tables (27 tables)
+## Core Tables (30+ tables)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -15,7 +15,8 @@ locations ──┬── nodes ────────┬── ipv6_prefixes 
             │                 │
             │                 └── vms ──────┬── snapshots
             │                               ├── backups
-            │                               └── ip_addresses
+            │                               ├── ip_addresses
+            │                               └── iso_uploads
             │
             └── ip_sets ──────── ip_addresses
 
@@ -23,15 +24,19 @@ customers ──┬── vms
             ├── sessions
             ├── customer_api_keys
             ├── customer_webhooks ── webhook_deliveries
-            └── notification_preferences
+            ├── notification_preferences
+            └── sso_tokens          # WHMCS SSO bootstrap
 
 admins ───┬── sessions
           ├── console_tokens     # Time-limited console access
-          └── admin_permissions  # RBAC permissions (NEW)
+          └── admin_permissions  # RBAC permissions
 
 plans ─── vms
 
-templates ─── vms
+templates ──┬── vms
+            └── template_node_cache  # QCOW/LVM node template caching
+
+storage_backends ── node_storage (junction) ── nodes
 
 provisioning_keys (WHMCS API keys)
 
@@ -57,8 +62,10 @@ admin_backup_schedules (mass backup campaigns)
 | `sessions` | id, user_id, user_type, refresh_token_hash, expires_at | JWT refresh |
 | `customer_api_keys` | id, customer_id, key_hash, vm_ids, permissions, allowed_ips, expires_at | API auth |
 | `provisioning_keys` | id, key_hash, allowed_ips, expires_at | WHMCS auth |
-| `console_tokens` | id, admin_id, vm_id, type, expires_at | Console access (NEW) |
-| `admin_permissions` | id, admin_id, permissions (jsonb) | RBAC (NEW) |
+| `console_tokens` | id, token_hash, user_id, user_type, vm_id, console_type, expires_at | Console access |
+| `admin_permissions` | id, admin_id, permissions (jsonb) | RBAC |
+| `sso_tokens` | id, token_hash, customer_id, vm_id, redirect_path, expires_at | SSO bootstrap |
+| `password_resets` | id, user_id, token_hash, expires_at | Password reset flow |
 
 ### Infrastructure
 
@@ -71,24 +78,28 @@ admin_backup_schedules (mass backup campaigns)
 | `ip_addresses` | id, ip_set_id, address, vm_id, rdns_hostname | IP allocations |
 | `ipv6_prefixes` | id, node_id, prefix | /48 allocations |
 | `vm_ipv6_subnets` | id, vm_id, ipv6_prefix_id, subnet | /64 subnets |
+| `storage_backends` | id, name, type, ceph_*, storage_path, lvm_*, health_* | Storage backend registry |
+| `node_storage` | node_id, storage_backend_id, enabled | Node-to-backend junction |
 
 ### VM Resources
 
 | Table | Key Columns | Purpose |
 |-------|-------------|---------|
-| `plans` | id, name, vcpu, memory_mb, disk_gb, snapshot_limit, backup_limit | VPS tiers |
-| `templates` | id, name, os_family, rbd_image, rbd_snapshot | OS images |
-| `vms` | id, customer_id, node_id, plan_id, hostname, status, storage_backend, attached_iso | Virtual machines |
+| `plans` | id, name, slug, vcpu, memory_mb, disk_gb, snapshot_limit, backup_limit, iso_upload_limit | VPS tiers |
+| `templates` | id, name, os_family, rbd_image, storage_backend, file_path | OS images |
+| `template_node_cache` | template_id, node_id, status, local_path, size_bytes | Template distribution cache |
+| `vms` | id, customer_id, node_id, plan_id, hostname, status, storage_backend, disk_path, storage_backend_id, attached_iso | Virtual machines |
 | `snapshots` | id, vm_id, name, rbd_snapshot | Point-in-time |
-| `backups` | id, vm_id, source, status, storage_path | Backups |
+| `backups` | id, vm_id, source, status, storage_path, size_bytes | Backups |
 | `backup_schedules` | id, vm_id, interval, retention | Scheduled backups |
 | `admin_backup_schedules` | id, name, frequency, target_*, retention_count | Mass backup campaigns |
+| `iso_uploads` | id, vm_id, filename, size_bytes, storage_path | Uploaded ISOs |
 
 ### Async & Audit
 
 | Table | Key Columns | Purpose |
 |-------|-------------|---------|
-| `tasks` | id, type, status, payload, result, progress | Job queue |
+| `tasks` | id, type, status, payload, result, progress, progress_message | Job queue |
 | `audit_logs` | id, timestamp, actor_id, action, resource_type, changes | Immutable trail |
 | `failover_requests` | id, source_node_id, target_node_id, status | HA tracking |
 
@@ -97,7 +108,8 @@ admin_backup_schedules (mass backup campaigns)
 | Table | Key Columns | Purpose |
 |-------|-------------|---------|
 | `customer_webhooks` | id, customer_id, url, secret, events | Webhooks |
-| `webhook_deliveries` | id, webhook_id, event_type, status, attempt | Delivery log |
+| `webhook_deliveries` | id, webhook_id, event_type, status, idempotency_key | Delivery log |
+| `notification_preferences` | id, customer_id, channels | Notification settings |
 | `system_settings` | key, value (jsonb) | Config |
 
 ## Row Level Security
@@ -110,7 +122,7 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 
 -- Also protected: customer_api_keys, ip_addresses, backups, snapshots,
 -- backup_schedules, sessions, notification_preferences, notification_events,
--- console_tokens
+-- console_tokens, customers, password_resets
 ```
 
 ## Index Strategy
@@ -122,7 +134,8 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | tasks | idx_tasks_status, idx_tasks_status_created | Queue queries |
 | audit_logs | idx_audit_logs_actor_id, idx_audit_logs_timestamp | Search |
 | backups | idx_backups_vm_id, idx_backups_status_created | List/restore |
-| console_tokens | idx_console_tokens_admin_id, idx_console_tokens_expires_at | Token lookup (NEW) |
+| console_tokens | idx_console_tokens_expires_at | Token lookup |
+| vm_ipv6_subnets | unique(vm_id, subnet) | Subnet uniqueness |
 
 ## Migration History
 
@@ -135,7 +148,11 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000022-000028 | RLS policies, constraints |
 | 000029-000034 | Performance indexes, plan limits |
 | 000035-000038 | Ceph config, admin backup schedules, API key IP whitelist |
-| 000039-000044 | Console tokens, RLS policies, plan cleanup, admin permissions (NEW) |
+| 000039-000044 | Console tokens, RLS policies, plan cleanup, admin permissions |
+| 000045-000053 | Schema indexes, RLS fixes, FK constraints, audit log partitions |
+| 000054-000057 | Rename ceph to storage stats, storage backend registry, LVM thresholds |
+| 000058-000060 | IPv6 subnet uniqueness, bandwidth snapshots, task progress messages |
+| 000061-000065 | ISO uploads, SSO tokens, provisioning key expiry, template cache, unify backup/snapshot |
 
 ## Database Roles
 
@@ -143,10 +160,3 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 app_user      -- Controller connection (read/write)
 app_customer  -- RLS isolation (SET ROLE for customer context)
 ```
-
-## New Tables (Since Last Update)
-
-| Table | Migration | Purpose |
-|-------|-----------|---------|
-| `console_tokens` | 000039 | Time-limited VNC/serial console access |
-| `admin_permissions` | 000044 | Admin role-based access control |

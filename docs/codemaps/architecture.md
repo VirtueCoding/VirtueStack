@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-22 | Files scanned: 180+ | Token estimate: ~900 -->
+<!-- Generated: 2026-03-28 | Files scanned: 220+ | Token estimate: ~900 -->
 
 # VirtueStack Architecture
 
@@ -39,11 +39,11 @@
                     │                            ▼                            │
                     │  ┌───────────────────────────────────────────────────┐  │
                     │  │              NODE AGENT (per hypervisor)           │  │
-                    │  │  Go + gRPC | libvirt | Ceph/QCOW | QEMU Guest     │  │
+                    │  │  Go + gRPC | libvirt | Ceph/QCOW/LVM | QEMU      │  │
                     │  │  Runs directly on KVM host (not containerized)    │  │
                     │  └───────────────────────────────────────────────────┘  │
                     │                                                           │
-                    │  BARE METAL NODES (KVM/QEMU, Ceph/QCOW, libvirt)        │
+                    │  BARE METAL NODES (KVM/QEMU, Ceph/QCOW/LVM, libvirt)    │
                     └──────────────────────────────────────────────────────────┘
 ```
 
@@ -57,13 +57,14 @@
 | Customer WebUI | Customer self-service (Next.js 16) | Docker container |
 | PostgreSQL | Persistent state, RLS policies | Docker container |
 | NATS JetStream | Async task queue, durable messages | Docker container |
+| Redis | Distributed rate limiting (optional, HA) | External or Docker |
 
 ## Data Flow
 
 ```
-API Request → Middleware (Auth, CSRF, Rate Limit, Permissions)
+API Request → Middleware (Correlation, Metrics, RateLimit, Recovery, Auth, CSRF, Permissions, Validation)
            → Handler → Service → Repository → PostgreSQL
-           → (async) NATS → Task Worker → Node Agent gRPC
+           → (async) NATS → Task Worker (4 workers) → Node Agent gRPC
            → Response
 ```
 
@@ -71,18 +72,23 @@ API Request → Middleware (Auth, CSRF, Rate Limit, Permissions)
 
 | Component | Entry Point | Config |
 |-----------|-------------|--------|
-| Controller | `cmd/controller/main.go` | `internal/controller/config.go` |
+| Controller | `cmd/controller/main.go` | `internal/shared/config/config.go` |
 | Node Agent | `cmd/node-agent/main.go` | `internal/nodeagent/config.go` |
 | Admin UI | `webui/admin/app/layout.tsx` | `webui/admin/next.config.js` |
 | Customer UI | `webui/customer/app/layout.tsx` | `webui/customer/next.config.js` |
-| gRPC Proto | `proto/virtuestack/node_agent.proto` | - |
-| Migrations | `migrations/000001_initial_schema.up.sql` | - |
+| gRPC Proto | `proto/virtuestack/node_agent.proto` (972 lines) | - |
+| Migrations | `migrations/` (65 migrations: 000001–000065) | - |
+| Storage Factory | `internal/nodeagent/storage/factory.go` | 3 backends: Ceph, QCOW, LVM |
 
-## New Components (Since Last Update)
+## Notable Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Audit Masking | `internal/controller/audit/` | PII masking for audit logs |
 | Permissions Middleware | `internal/controller/api/middleware/permissions.go` | Admin RBAC enforcement |
 | Console Tokens | `internal/controller/models/console_token.go` | Time-limited VNC/serial access |
-| Admin Permissions | `internal/controller/models/permission.go` | Permission constants |
+| SSO Tokens | `internal/controller/models/sso_token.go` | WHMCS single sign-on bootstrap |
+| Storage Backend Registry | `internal/controller/services/storage_backend_service.go` | Multi-backend management |
+| Template Distribution | `internal/controller/tasks/template_distribute.go` | Template caching on QCOW/LVM nodes |
+| Redis Client | `internal/controller/redis/client.go` | Distributed rate limiting |
+| SSRF Protection | `internal/shared/util/ssrf.go` | URL validation for template ISO downloads |
