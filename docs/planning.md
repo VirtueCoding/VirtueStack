@@ -89,7 +89,7 @@
 
 #### 2a. Compensation Stack Helper
 
-- [ ] Create `internal/controller/tasks/cleanup.go` with a compensation stack type:
+- [x] Create `internal/controller/tasks/cleanup.go` with a compensation stack type:
   ```go
   type CompensationStack struct {
       steps  []CompensationStep
@@ -107,21 +107,21 @@
       // Execute in reverse order, log each error but continue
   }
   ```
-- [ ] Add unit tests in `internal/controller/tasks/cleanup_test.go` — test rollback order (LIFO), test that cleanup errors are logged but don't block subsequent cleanups, test empty stack rollback is a no-op
+- [x] Add unit tests in `internal/controller/tasks/cleanup_test.go` — test rollback order (LIFO), test that cleanup errors are logged but don't block subsequent cleanups, test empty stack rollback is a no-op
 
 #### 2b. Refactor VM Create Handler
 
-- [ ] In `internal/controller/tasks/handlers_vm_create.go`, refactor the handler to use the compensation stack:
+- [x] In `internal/controller/tasks/handlers_vm_create.go`, refactor the handler to use the compensation stack:
   - After successful disk clone: `stack.Push("delete-disk", func(ctx) { nodeClient.DeleteDisk(...) })`
   - After successful cloud-init: `stack.Push("delete-cloudinit", func(ctx) { ... })`
   - After successful IP allocation: `stack.Push("release-ips", func(ctx) { ipRepo.ReleaseIPsByVM(...) })`
   - After successful VM creation via gRPC: `stack.Push("delete-vm", func(ctx) { nodeClient.DeleteVM(...) })`
   - After successful VM start: `stack.Push("stop-vm", func(ctx) { nodeClient.ForceStopVM(...) })`
   - On any step failure: `stack.Rollback(ctx)` then set VM status to error via `TransitionStatus`
-- [ ] Ensure cleanup for **StartVM failure** now includes: force-stop VM, delete VM definition, delete disk, release IPs
-- [ ] Ensure cleanup for **MAC address update failure** includes rollback to consistent state
-- [ ] Ensure cleanup for **status update to running failure** logs the inconsistency clearly (VM is actually running but DB says provisioning)
-- [ ] Run `make test-race` to verify no regressions
+- [x] Ensure cleanup for **StartVM failure** now includes: force-stop VM, delete VM definition, delete disk, release IPs
+- [x] Ensure cleanup for **MAC address update failure** includes rollback to consistent state
+- [x] Ensure cleanup for **status update to running failure** logs the inconsistency clearly (VM is actually running but DB says provisioning)
+- [x] Run `make test-race` to verify no regressions
 
 ---
 
