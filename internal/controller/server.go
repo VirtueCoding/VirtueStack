@@ -94,6 +94,8 @@ type Server struct {
 	customerHandler     *customer.CustomerHandler
 	adminHandler        *admin.AdminHandler
 	notifyHandler       *customer.NotificationsHandler
+	readinessDBPing     func(context.Context) error
+	readinessNATSStatus func() nats.Status
 }
 
 // NewServer creates a new Controller server.
@@ -125,6 +127,13 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 		jetstream: js,
 		logger:    logger.With("component", "controller"),
 		storage:   fallbackTemplateStorage{},
+	}
+	s.readinessDBPing = dbPool.Ping
+	s.readinessNATSStatus = func() nats.Status {
+		if s.natsConn == nil {
+			return nats.CLOSED
+		}
+		return s.natsConn.Status()
 	}
 
 	metrics.RegisterDBPoolMetrics(dbPool)

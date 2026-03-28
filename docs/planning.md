@@ -560,9 +560,9 @@
 
 > **Current state:** Already implemented in `readinessHandler()` in `server.go` — checks `s.natsConn.Status() != nats.CONNECTED` and includes `"nats": "connected"/"disconnected"` in response.
 
-- [ ] Verify `readinessHandler()` returns HTTP 503 (not 200) when NATS is disconnected — if it currently returns 200 with `"nats": "disconnected"`, change to return 503 for proper load balancer integration
-- [ ] Add unit test for readiness endpoint with mocked NATS connection in both connected and disconnected states
-- [ ] Document the health check behavior in `docs/API.md`
+- [x] Verify `readinessHandler()` returns HTTP 503 (not 200) when NATS is disconnected — if it currently returns 200 with `"nats": "disconnected"`, change to return 503 for proper load balancer integration
+- [x] Add unit test for readiness endpoint with mocked NATS connection in both connected and disconnected states
+- [x] Document the health check behavior in `docs/API.md`
 
 ---
 

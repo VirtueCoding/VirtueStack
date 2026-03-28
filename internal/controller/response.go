@@ -20,7 +20,7 @@ func (s *Server) readinessHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Check database connection
-	if err := s.dbPool.Ping(ctx); err != nil {
+	if err := s.readinessDBPing(ctx); err != nil {
 		respondError(c, &apierrors.APIError{
 			Code:       "DATABASE_UNAVAILABLE",
 			Message:    "Database connection failed",
@@ -32,9 +32,11 @@ func (s *Server) readinessHandler(c *gin.Context) {
 	// Check NATS connection status
 	natsStatus := "connected"
 	nodeCount := 0
+	httpStatus := http.StatusOK
 
-	if s.natsConn == nil || s.natsConn.Status() != nats.CONNECTED {
+	if s.readinessNATSStatus() != nats.CONNECTED {
 		natsStatus = "disconnected"
+		httpStatus = http.StatusServiceUnavailable
 	}
 
 	// Get node count from gRPC client
@@ -42,7 +44,7 @@ func (s *Server) readinessHandler(c *gin.Context) {
 		nodeCount = s.nodeClient.ConnectionCount()
 	}
 
-	respondJSON(c, http.StatusOK, gin.H{
+	respondJSON(c, httpStatus, gin.H{
 		"status":     "ready",
 		"database":   "connected",
 		"nats":       natsStatus,
