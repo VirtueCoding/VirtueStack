@@ -585,22 +585,22 @@
 
 #### 8b. Extract Shared UI Components
 
-- [ ] Move the 15 duplicated shadcn/ui components from both `webui/admin/components/ui/` and `webui/customer/components/ui/` to `webui/packages/ui/`:
+- [x] Move the 15 duplicated shadcn/ui components from both `webui/admin/components/ui/` and `webui/customer/components/ui/` to `webui/packages/ui/`:
   - `avatar.tsx`, `badge.tsx`, `button.tsx`, `card.tsx`, `dialog.tsx`, `dropdown-menu.tsx`, `input.tsx`, `label.tsx`, `scroll-area.tsx`, `select.tsx`, `sheet.tsx`, `switch.tsx`, `table.tsx`, `toast.tsx`, `toaster.tsx`
-- [ ] Update imports in both `admin/` and `customer/` to reference `@virtuestack/ui` package
-- [ ] Keep app-specific components (`admin/components/ui/checkbox.tsx`, `admin/components/ui/textarea.tsx`, `customer/components/ui/progress.tsx`, `customer/components/ui/tabs.tsx`) in their respective apps
+- [x] Update imports in both `admin/` and `customer/` to reference `@virtuestack/ui` package
+- [x] Keep app-specific components (`admin/components/ui/checkbox.tsx`, `admin/components/ui/textarea.tsx`, `customer/components/ui/progress.tsx`, `customer/components/ui/tabs.tsx`) in their respective apps
 
 #### 8c. Extract Shared API Client
 
-- [ ] Identify common API client base logic (fetch wrapper, auth token handling, error parsing)
-- [ ] Move to `webui/packages/api-client/`
-- [ ] Update imports in both apps
+- [x] Identify common API client base logic (fetch wrapper, auth token handling, error parsing)
+- [x] Move to `webui/packages/api-client/`
+- [x] Update imports in both apps
 
 #### 8d. Validate
 
-- [ ] Run `cd webui/admin && npm ci && npm run lint && npm run type-check && npm run build`
-- [ ] Run `cd webui/customer && npm ci && npm run lint && npm run type-check && npm run build`
-- [ ] Update CI workflow to use workspace install
+- [x] Run `cd webui/admin && npm ci && npm run lint && npm run type-check && npm run build`
+- [x] Run `cd webui/customer && npm ci && npm run lint && npm run type-check && npm run build`
+- [x] Update CI workflow to use workspace install
 
 ---
 

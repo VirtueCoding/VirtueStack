@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Loader2, Shield } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
@@ -13,9 +13,9 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import { useAuth } from "@/lib/auth-context";
 
 const loginSchema = z.object({

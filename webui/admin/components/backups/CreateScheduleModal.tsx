@@ -5,8 +5,8 @@ import { z } from "zod";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CalendarClock, Loader2, Users } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -15,20 +15,20 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
+import { ScrollArea } from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+} from "@virtuestack/ui";
+import { Switch } from "@virtuestack/ui";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import {
   adminBackupSchedulesApi,
   adminCustomersApi,

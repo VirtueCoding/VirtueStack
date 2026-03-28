@@ -2,10 +2,10 @@
 
 import { useEffect } from "react";
 import { z } from "zod";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
+import { Switch } from "@virtuestack/ui";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -14,18 +14,18 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@virtuestack/ui";
 import { HardDrive, Hash, Server, Activity, Disc, FileText, Database, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 
 export const editTemplateSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must be 100 characters or less").optional(),

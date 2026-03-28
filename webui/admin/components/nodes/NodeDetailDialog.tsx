@@ -1,14 +1,14 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+} from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
 import type { NodeDetail } from "@/lib/api-client";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import { Server, Network, Cpu, MemoryStick, MapPin, Activity, Clock, HardDrive } from "lucide-react";

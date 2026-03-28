@@ -3,25 +3,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { Eye, GitBranch, Loader2, RefreshCw } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -29,8 +29,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/use-toast";
+} from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import {
   adminFailoverRequestsApi,
   type FailoverRequest,

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import {
   Activity,
   Download,
@@ -22,7 +22,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { adminAuditLogsApi, type AuditLog } from "@/lib/api-client";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 
 const PAGE_SIZE = 20;
 

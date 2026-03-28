@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Network, Loader2, Edit2, Trash2, Globe, Save, X } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import { rdnsApi, IPAddressRecord, ApiClientError } from "@/lib/api-client";
 import {
   Dialog,
@@ -15,7 +15,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 
 interface VMRDNSTabProps {
   vmId: string;

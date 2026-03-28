@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { vmApi, ApiClientError } from "@/lib/api-client";
 
 export type VMAction = "start" | "stop" | "forceStop" | "restart";

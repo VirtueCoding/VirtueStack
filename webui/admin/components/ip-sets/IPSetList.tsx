@@ -1,7 +1,7 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -9,7 +9,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import { MapPin, Eye, Pencil } from "lucide-react";
 
 export interface IPSetDisplay {

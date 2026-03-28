@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@virtuestack/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -11,15 +11,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { useToast } from "@/components/ui/use-toast";
+} from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import { Loader2, Plus, Trash2, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
 
 interface StorageBackend {

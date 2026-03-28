@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -21,8 +21,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+} from "@virtuestack/ui";
+import { Avatar, AvatarFallback } from "@virtuestack/ui";
 import {
   Plus,
   Search,
@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { adminCustomersApi, type Customer } from "@/lib/api-client";
 import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { CustomerCreateDialog, type CreateCustomerFormData } from "@/components/customers/CustomerCreateDialog";
 import { CustomerEditDialog, type EditCustomerFormData } from "@/components/customers/CustomerEditDialog";
 

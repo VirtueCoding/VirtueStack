@@ -4,13 +4,13 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
+import { Switch } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi } from "@/lib/api-client";
 import { useMutationToast } from "@/lib/utils/toast-helpers";

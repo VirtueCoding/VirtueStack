@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Server,
   Search,
@@ -34,7 +34,7 @@ import {
   adminVMsApi,
   type VM,
 } from "@/lib/api-client";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import { VMCreateDialog, type CreateVMFormData } from "@/components/vms/VMCreateDialog";
 import { VMEditDialog, type EditVMFormData } from "@/components/vms/VMEditDialog";

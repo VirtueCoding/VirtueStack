@@ -7,9 +7,9 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+} from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
 import {
   Network,
   Router,

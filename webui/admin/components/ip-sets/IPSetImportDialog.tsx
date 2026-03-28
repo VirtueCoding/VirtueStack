@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -11,9 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import { Upload, Loader2 } from "lucide-react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { apiClient } from "@/lib/api-client";
 // Import IPSet type for the id/name fields used in the dropdown; cidr is a display-only field
 // provided by the caller (IPSetDisplay from IPSetList).

@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@virtuestack/ui"
+import { Button } from "@virtuestack/ui"
+import { Badge } from "@virtuestack/ui"
 import {
   Dialog,
   DialogContent,
@@ -12,9 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "@virtuestack/ui"
+import { Input } from "@virtuestack/ui"
+import { Label } from "@virtuestack/ui"
 import {
   Monitor,
   Maximize,

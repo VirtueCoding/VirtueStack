@@ -2,17 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, Pencil, Play, Plus, RefreshCw, Search, Trash2, Users } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -28,8 +28,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/use-toast";
+} from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import {
   adminBackupSchedulesApi,
   adminCustomersApi,

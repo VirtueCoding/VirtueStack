@@ -1,4 +1,18 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
+import {
+  ApiClientError,
+  apiRequest as sharedAPIRequest,
+  fetchCsrfToken as sharedFetchCsrfToken,
+} from "@virtuestack/api-client";
+
+import type {
+  AuthTokens,
+  LoginRequest,
+  Verify2FARequest,
+} from "@virtuestack/api-client";
+
+export { ApiClientError };
+export type { AuthTokens, LoginRequest, Verify2FARequest };
 
 // AdminUser represents the identity of the currently authenticated admin.
 // The fields are populated from the server via GET /admin/auth/me endpoint,
@@ -28,95 +42,8 @@ export interface Admin {
   updated_at: string;
 }
 
-export interface AuthTokens {
-  token_type: string;
-  expires_in: number;
-  requires_2fa?: boolean;
-  temp_token?: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface Verify2FARequest {
-  temp_token: string;
-  totp_code: string;
-}
-
-export class ApiClientError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly correlationId?: string;
-
-  constructor(message: string, code: string, status: number, correlationId?: string) {
-    super(message);
-    this.name = "ApiClientError";
-    this.code = code;
-    this.status = status;
-    this.correlationId = correlationId;
-  }
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/csrf_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 async function fetchCsrfToken(): Promise<void> {
-  // Use the /admin/auth/me endpoint to bootstrap the CSRF cookie.
-  // The server sets the CSRF cookie on any response; we use this lightweight
-  // endpoint instead of the non-existent /admin/auth/csrf route.
-  try {
-    await fetch(`${API_BASE_URL}/admin/auth/me`, {
-      method: 'GET',
-      credentials: 'include',
-    });
-    if (!getCsrfToken()) {
-      // Log for debugging CSRF issues - this indicates the server didn't set the expected cookie
-      console.warn('fetchCsrfToken: CSRF cookie was not set after bootstrap request.');
-    }
-  } catch (err) {
-    // Log for debugging - non-fatal, the request may fail if server is unreachable
-    console.warn('fetchCsrfToken: Failed to bootstrap CSRF cookie (non-fatal):', err);
-  }
-}
-
-function buildHeaders(includeCsrf = false): HeadersInit {
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-  };
-
-  if (includeCsrf) {
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
-  }
-
-  return headers;
-}
-
-async function parseError(response: Response): Promise<ApiClientError> {
-  let code = "UNKNOWN_ERROR";
-  let message = "An unexpected error occurred";
-  let correlationId: string | undefined;
-
-  try {
-    const data = await response.json();
-    if (data.error) {
-      code = data.error.code || code;
-      message = data.error.message || message;
-      correlationId = data.error.correlation_id;
-    }
-  } catch {
-    message = response.statusText || message;
-  }
-
-  return new ApiClientError(message, code, response.status, correlationId);
+  await sharedFetchCsrfToken(API_BASE_URL, "/admin/auth/me");
 }
 
 /**
@@ -160,53 +87,7 @@ export async function apiRequest<T>(
   endpoint: string,
   options: (JsonRequestOptions | VoidRequestOptions) = {},
 ): Promise<T | void> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
-    (options.method || "GET").toUpperCase()
-  );
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
-
-  const config: RequestInit = {
-    ...options,
-    signal: controller.signal,
-    credentials: "include",
-    headers: {
-      ...buildHeaders(isStateChanging),
-      ...options.headers,
-    },
-  };
-
-  try {
-    let response: Response;
-    try {
-      response = await fetch(url, config);
-    } catch (networkErr) {
-      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError";
-      throw new ApiClientError(
-        isAbort ? "Request timed out" : "Network error: unable to reach the server",
-        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
-        0,
-      );
-    }
-
-    if (!response.ok) {
-      const error = await parseError(response);
-      throw error;
-    }
-
-    if (response.status === 204) {
-      // HTTP 204 No Content - return void. This is type-safe when called with
-      // expectNoContent: true, as the overload resolves to Promise<void>.
-      return;
-    }
-
-    const data = await response.json();
-    return data.data as T;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  return sharedAPIRequest<T | void>(API_BASE_URL, endpoint, options);
 }
 
 export const apiClient = {

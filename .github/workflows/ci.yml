@@ -78,9 +78,6 @@ jobs:
   frontend-admin:
     name: Admin Frontend
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: webui/admin
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -88,19 +85,16 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: webui/admin/package-lock.json
+          cache-dependency-path: webui/package-lock.json
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run type-check
-      - run: npm run build
+      - run: cd webui && npm ci
+      - run: cd webui && npm run -w @virtuestack/admin-webui lint
+      - run: cd webui && npm run -w @virtuestack/admin-webui type-check
+      - run: cd webui && npm run -w @virtuestack/admin-webui build
 
   frontend-customer:
     name: Customer Frontend
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: webui/customer
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -108,12 +102,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: webui/customer/package-lock.json
+          cache-dependency-path: webui/package-lock.json
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run type-check
-      - run: npm run build
+      - run: cd webui && npm ci
+      - run: cd webui && npm run -w @virtuestack/customer-webui lint
+      - run: cd webui && npm run -w @virtuestack/customer-webui type-check
+      - run: cd webui && npm run -w @virtuestack/customer-webui build
 
   docker-build:
     name: Docker Build

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -12,8 +12,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+} from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -21,24 +21,24 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import { HardDrive, Plus, Search, Loader2, Pencil, Trash2, Download, MoreHorizontal, Disc, Send, Database } from "lucide-react";
 import { adminTemplatesApi, adminNodesApi, type Template, type UpdateTemplateRequest, type TemplateCacheEntry, type Node } from "@/lib/api-client";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@virtuestack/ui";
 import { TemplateEditDialog, type EditTemplateFormData } from "@/components/templates/TemplateEditDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 

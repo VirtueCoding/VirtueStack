@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
   Dialog,
@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -22,7 +22,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import {
   Server,
   Plus,
@@ -40,7 +40,7 @@ import {
   type CreateNodeRequest,
   type UpdateNodeRequest,
 } from "@/lib/api-client";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { NodeCreateDialog, type CreateNodeFormData } from "@/components/nodes/NodeCreateDialog";
 import { NodeEditDialog, type EditNodeFormData } from "@/components/nodes/NodeEditDialog";
 import { NodeDetailDialog } from "@/components/nodes/NodeDetailDialog";

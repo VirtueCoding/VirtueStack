@@ -7,8 +7,8 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { navItems } from "@/lib/nav-items";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@virtuestack/ui";
+import { ScrollArea } from "@virtuestack/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,8 +16,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+} from "@virtuestack/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@virtuestack/ui";
 
 interface SidebarProps {
   collapsed?: boolean;
