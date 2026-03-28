@@ -572,10 +572,10 @@
 
 #### 8a. Setup Workspace
 
-- [ ] Create `webui/packages/ui/` directory
-- [ ] Create `webui/packages/api-client/` directory
-- [ ] Create `webui/packages/config/` directory (shared Tailwind config, tsconfig)
-- [ ] Add `webui/package.json` with npm workspaces configuration:
+- [x] Create `webui/packages/ui/` directory
+- [x] Create `webui/packages/api-client/` directory
+- [x] Create `webui/packages/config/` directory (shared Tailwind config, tsconfig)
+- [x] Add `webui/package.json` with npm workspaces configuration:
   ```json
   {
     "private": true,
