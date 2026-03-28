@@ -429,7 +429,7 @@
 
 #### 11a. System Event Types
 
-- [ ] In `internal/controller/models/webhook.go` (or new file `system_events.go`), define system event types:
+- [x] In `internal/controller/models/webhook.go` (or new file `system_events.go`), define system event types:
   ```go
   const (
       SystemEventNodeOffline       = "system.node.offline"
@@ -444,7 +444,7 @@
 
 #### 11b. System Webhook Configuration
 
-- [ ] Create migration `migrations/000067_system_webhooks.up.sql`:
+- [x] Create migration `migrations/000067_system_webhooks.up.sql`:
   ```sql
   SET lock_timeout = '5s';
   CREATE TABLE system_webhooks (
@@ -459,31 +459,31 @@
   );
   CREATE INDEX idx_system_webhooks_active ON system_webhooks (is_active) WHERE is_active = true;
   ```
-- [ ] Create matching down migration
+- [x] Create matching down migration
 
 #### 11c. System Event Publisher
 
-- [ ] Create `internal/controller/services/system_event_service.go`:
+- [x] Create `internal/controller/services/system_event_service.go`:
   - `PublishSystemEvent(ctx, eventType string, payload map[string]any)` — publishes to NATS subject `virtuestack.events.system.*` and triggers system webhook delivery
   - Query active system webhooks matching the event type
   - Queue webhook delivery tasks via NATS
 
 #### 11d. Wire Events into Existing Services
 
-- [ ] In `internal/controller/services/heartbeat_checker.go` — publish `system.node.offline` when a node misses heartbeat threshold
-- [ ] In `internal/controller/services/failover_service.go` — publish `system.failover.triggered` and `system.failover.completed`
-- [ ] In storage health monitoring — publish `system.storage.warning` / `system.storage.critical` when thresholds exceeded
+- [x] In `internal/controller/services/heartbeat_checker.go` — publish `system.node.offline` when a node misses heartbeat threshold
+- [x] In `internal/controller/services/failover_service.go` — publish `system.failover.triggered` and `system.failover.completed`
+- [x] In storage health monitoring — publish `system.storage.warning` / `system.storage.critical` when thresholds exceeded
 
 #### 11e. Admin API for System Webhooks
 
-- [ ] Add CRUD endpoints in `internal/controller/api/admin/system_webhooks.go`:
+- [x] Add CRUD endpoints in `internal/controller/api/admin/system_webhooks.go`:
   - `GET /admin/system-webhooks`
   - `POST /admin/system-webhooks`
   - `PUT /admin/system-webhooks/:id`
   - `DELETE /admin/system-webhooks/:id`
-- [ ] Register routes in `internal/controller/api/admin/routes.go`
-- [ ] Add repository methods in `internal/controller/repository/system_webhook_repo.go`
-- [ ] Run `make build-controller && make test-race`
+- [x] Register routes in `internal/controller/api/admin/routes.go`
+- [x] Add repository methods in `internal/controller/repository/system_webhook_repo.go`
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -493,7 +493,7 @@
 
 #### 12a. NATS Event Publishing
 
-- [ ] Create `internal/controller/services/event_bus.go`:
+- [x] Create `internal/controller/services/event_bus.go`:
   ```go
   type EventBus struct {
       js     nats.JetStreamContext
@@ -504,7 +504,7 @@
       // Publish to NATS subject like "virtuestack.events.vm.created"
   }
   ```
-- [ ] Create NATS stream for events in worker initialization:
+- [x] Create NATS stream for events in worker initialization:
   ```go
   js.AddStream(&nats.StreamConfig{
       Name:     "EVENTS",
@@ -515,21 +515,21 @@
 
 #### 12b. Publish Events from Services
 
-- [ ] Add event publishing to key service methods:
+- [x] Add event publishing to key service methods:
   - `vm_service.go` — `virtuestack.events.vm.created`, `vm.started`, `vm.stopped`, `vm.deleted`, `vm.migrated`
   - `backup_service.go` — `virtuestack.events.backup.created`, `backup.restored`, `backup.deleted`
   - `services/auth_service.go` — `virtuestack.events.customer.login`
 
 #### 12c. Pre-Action Webhook
 
-- [ ] Add `pre_action_webhooks` table via migration (URL, events, timeout, fail_open flag)
-- [ ] Implement synchronous webhook call before VM creation:
+- [x] Add `pre_action_webhooks` table via migration (URL, events, timeout, fail_open flag)
+- [x] Implement synchronous webhook call before VM creation:
   - HTTP POST to webhook URL with action payload
   - 5-second timeout, fail-open by default (if webhook unreachable, proceed)
   - If webhook returns `{"approved": false}`, reject the request with 403
-- [ ] Wire into `vm_service.go` `CreateVM` before task publishing
-- [ ] Add admin API endpoints for managing pre-action webhooks
-- [ ] Run `make build-controller && make test-race`
+- [x] Wire into `vm_service.go` `CreateVM` before task publishing
+- [x] Add admin API endpoints for managing pre-action webhooks
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -537,7 +537,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
-- [ ] In `internal/controller/metrics/prometheus.go`, add pgx pool metric collectors:
+- [x] In `internal/controller/metrics/prometheus.go`, add pgx pool metric collectors:
   ```go
   var (
       DBPoolTotalConns = prometheus.NewGaugeFunc(...)
@@ -547,10 +547,10 @@
       DBPoolAcquireWaitTime = prometheus.NewGaugeFunc(...)
   )
   ```
-- [ ] Create a `RegisterDBPoolMetrics(pool *pgxpool.Pool)` function that registers the gauge funcs reading from `pool.Stat()`
-- [ ] Call `RegisterDBPoolMetrics` in `internal/controller/server.go` after pool creation
-- [ ] Add Grafana dashboard panel in `configs/grafana/` for DB pool metrics
-- [ ] Run `make build-controller && make test-race`
+- [x] Create a `RegisterDBPoolMetrics(pool *pgxpool.Pool)` function that registers the gauge funcs reading from `pool.Stat()`
+- [x] Call `RegisterDBPoolMetrics` in `internal/controller/server.go` after pool creation
+- [x] Add Grafana dashboard panel in `configs/grafana/` for DB pool metrics
+- [x] Run `make build-controller && make test-race`
 
 ---
 

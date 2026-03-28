@@ -40,6 +40,7 @@ type FailoverService struct {
 	vmRepo             *repository.VMRepository
 	nodeAgent          NodeAgentClient
 	auditRepo          *repository.AuditRepository
+	systemEventService *SystemEventService
 	failoverRepo       *repository.FailoverRepository
 	storageBackendRepo *repository.StorageBackendRepository
 	nodeStorageRepo    *repository.NodeStorageRepository
@@ -53,6 +54,7 @@ func NewFailoverService(
 	vmRepo *repository.VMRepository,
 	nodeAgent NodeAgentClient,
 	auditRepo *repository.AuditRepository,
+	systemEventService *SystemEventService,
 	failoverRepo *repository.FailoverRepository,
 	storageBackendRepo *repository.StorageBackendRepository,
 	nodeStorageRepo *repository.NodeStorageRepository,
@@ -64,6 +66,7 @@ func NewFailoverService(
 		vmRepo:             vmRepo,
 		nodeAgent:          nodeAgent,
 		auditRepo:          auditRepo,
+		systemEventService: systemEventService,
 		failoverRepo:       failoverRepo,
 		storageBackendRepo: storageBackendRepo,
 		nodeStorageRepo:    nodeStorageRepo,
@@ -103,6 +106,12 @@ type FailedMigration struct {
 // This is a destructive operation that should only be called after admin approval.
 func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNodeID string) (*FailoverResult, error) {
 	s.logger.Info("failover initiated", "admin_id", adminID, "target_node_id", targetNodeID)
+	if s.systemEventService != nil {
+		_ = s.systemEventService.PublishSystemEvent(ctx, models.SystemEventFailoverTriggered, map[string]any{
+			"admin_id":       adminID,
+			"target_node_id": targetNodeID,
+		})
+	}
 
 	node, err := s.verifyFailedNode(ctx, targetNodeID)
 	if err != nil {
@@ -143,6 +152,15 @@ func (s *FailoverService) ApproveFailover(ctx context.Context, adminID, targetNo
 
 	s.logger.Info("failover completed", "node_id", targetNodeID, "total_vms", result.TotalVMs, "migrated", len(result.MigratedVMs), "failed", len(result.FailedMigrations))
 	s.finalizeRequest(ctx, failoverReq, models.FailoverStatusCompleted, result)
+	if s.systemEventService != nil {
+		_ = s.systemEventService.PublishSystemEvent(ctx, models.SystemEventFailoverCompleted, map[string]any{
+			"admin_id":       adminID,
+			"target_node_id": targetNodeID,
+			"total_vms":      result.TotalVMs,
+			"migrated":       len(result.MigratedVMs),
+			"failed":         len(result.FailedMigrations),
+		})
+	}
 
 	return result, nil
 }

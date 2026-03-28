@@ -21,12 +21,14 @@ import (
 
 // JetStream constants.
 const (
-	StreamName     = "TASKS"
-	StreamSubject  = "tasks.>"
-	ConsumerName   = "task-worker"
-	AckWait        = 5 * time.Minute
-	MaxDeliver     = 3
-	maxTaskRetries = 3
+	StreamName         = "TASKS"
+	StreamSubject      = "tasks.>"
+	EventStreamName    = "EVENTS"
+	EventStreamSubject = "virtuestack.events.>"
+	ConsumerName       = "task-worker"
+	AckWait            = 5 * time.Minute
+	MaxDeliver         = 3
+	maxTaskRetries     = 3
 )
 
 const stuckTaskRecoveredMessage = "stuck task recovered after timeout"
@@ -90,6 +92,20 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 	if err != nil {
 		if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
 			return nil, fmt.Errorf("creating JetStream stream: %w", err)
+		}
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:      EventStreamName,
+		Subjects:  []string{EventStreamSubject},
+		Storage:   nats.FileStorage,
+		Retention: nats.LimitsPolicy,
+		MaxAge:    7 * 24 * time.Hour,
+		Replicas:  1,
+	})
+	if err != nil {
+		if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+			return nil, fmt.Errorf("creating event stream: %w", err)
 		}
 	}
 

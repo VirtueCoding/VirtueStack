@@ -28,6 +28,7 @@ func (s *Server) InitializeServices() error {
 	adminRepo := repository.NewAdminRepository(s.dbPool)
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
+	systemWebhookRepo := repository.NewSystemWebhookRepository(s.dbPool)
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 	isoUploadRepo := repository.NewISOUploadRepository(s.dbPool)
@@ -71,12 +72,19 @@ func (s *Server) InitializeServices() error {
 	failoverRepo := repository.NewFailoverRepository(s.dbPool)
 	storageBackendRepo := repository.NewStorageBackendRepository(s.dbPool)
 	nodeStorageRepo := repository.NewNodeStorageRepository(s.dbPool)
+	systemEventService := services.NewSystemEventService(
+		systemWebhookRepo,
+		taskPublisher,
+		s.logger,
+	)
+
 	storageBackendService := services.NewStorageBackendService(
 		storageBackendRepo,
 		nodeRepo,
 		nodeStorageRepo,
 		taskRepo,
 		repository.NewAdminBackupScheduleRepository(s.dbPool),
+		systemEventService,
 		s.logger,
 	)
 
@@ -143,6 +151,7 @@ func (s *Server) InitializeServices() error {
 		vmRepo,
 		nodeAgentClient,
 		auditRepo,
+		systemEventService,
 		failoverRepo,
 		storageBackendRepo,
 		nodeStorageRepo,
@@ -157,7 +166,7 @@ func (s *Server) InitializeServices() error {
 		services.DefaultFailoverMonitorConfig(),
 	)
 
-	heartbeatChecker := services.NewHeartbeatChecker(nodeRepo, s.logger, services.DefaultHeartbeatCheckerConfig())
+	heartbeatChecker := services.NewHeartbeatChecker(nodeRepo, systemEventService, s.logger, services.DefaultHeartbeatCheckerConfig())
 	s.heartbeatChecker = heartbeatChecker
 
 	webhookService := services.NewWebhookService(
@@ -256,6 +265,7 @@ func (s *Server) InitializeServices() error {
 		NodeRepo:                nodeRepo,
 		VMRepo:                  vmRepo,
 		ProvisioningKeyRepo:     repository.NewProvisioningKeyRepository(s.dbPool),
+		SystemWebhookRepo:       systemWebhookRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",

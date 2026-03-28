@@ -15,6 +15,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
+	"github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	controllerredis "github.com/AbuGosok/VirtueStack/internal/controller/redis"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -125,6 +126,8 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 		logger:    logger.With("component", "controller"),
 		storage:   fallbackTemplateStorage{},
 	}
+
+	metrics.RegisterDBPoolMetrics(dbPool)
 
 	// Setup middlewares
 	router.Use(middleware.CorrelationID())

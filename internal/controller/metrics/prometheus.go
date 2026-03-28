@@ -1,6 +1,9 @@
 package metrics
 
 import (
+	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -88,3 +91,89 @@ var (
 		[]string{"vm_id", "direction"},
 	)
 )
+
+var (
+	dbPoolMetricsMu         sync.Mutex
+	dbPoolMetricsRegistered bool
+	dbPoolStatsProvider     func() *pgxpool.Stat
+)
+
+var (
+	DBPoolTotalConns = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "vs_db_pool_total_conns",
+			Help: "Current total PostgreSQL connections in the pool",
+		},
+		func() float64 {
+			if dbPoolStatsProvider == nil {
+				return 0
+			}
+			return float64(dbPoolStatsProvider().TotalConns())
+		},
+	)
+	DBPoolIdleConns = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "vs_db_pool_idle_conns",
+			Help: "Current idle PostgreSQL connections in the pool",
+		},
+		func() float64 {
+			if dbPoolStatsProvider == nil {
+				return 0
+			}
+			return float64(dbPoolStatsProvider().IdleConns())
+		},
+	)
+	DBPoolMaxConns = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "vs_db_pool_max_conns",
+			Help: "Configured maximum PostgreSQL connections in the pool",
+		},
+		func() float64 {
+			if dbPoolStatsProvider == nil {
+				return 0
+			}
+			return float64(dbPoolStatsProvider().MaxConns())
+		},
+	)
+	DBPoolAcquiredConns = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "vs_db_pool_acquired_conns",
+			Help: "Current acquired PostgreSQL connections in the pool",
+		},
+		func() float64 {
+			if dbPoolStatsProvider == nil {
+				return 0
+			}
+			return float64(dbPoolStatsProvider().AcquiredConns())
+		},
+	)
+	DBPoolAcquireWaitTime = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "vs_db_pool_acquire_wait_seconds_total",
+			Help: "Total wait time spent acquiring PostgreSQL connections (seconds)",
+		},
+		func() float64 {
+			if dbPoolStatsProvider == nil {
+				return 0
+			}
+			return dbPoolStatsProvider().AcquireDuration().Seconds()
+		},
+	)
+)
+
+func RegisterDBPoolMetrics(pool *pgxpool.Pool) {
+	dbPoolMetricsMu.Lock()
+	defer dbPoolMetricsMu.Unlock()
+
+	dbPoolStatsProvider = pool.Stat
+	if dbPoolMetricsRegistered {
+		return
+	}
+
+	prometheus.MustRegister(DBPoolTotalConns)
+	prometheus.MustRegister(DBPoolIdleConns)
+	prometheus.MustRegister(DBPoolMaxConns)
+	prometheus.MustRegister(DBPoolAcquiredConns)
+	prometheus.MustRegister(DBPoolAcquireWaitTime)
+	dbPoolMetricsRegistered = true
+}
