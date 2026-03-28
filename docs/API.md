@@ -799,7 +799,7 @@ Register a new hypervisor node.
 | `location_id` | string | No | Valid UUID |
 | `total_vcpu` | integer | Yes | Min 1 |
 | `total_memory_mb` | integer | Yes | Min 1024 |
-| `storage_backend` | string | Yes | `ceph` or `qcow` |
+| `storage_backend` | string | Yes | `ceph`, `qcow`, or `lvm` |
 | `storage_path` | string | No | Max 500 chars (required when `storage_backend` is `qcow`) |
 | `ceph_pool` | string | No | Max 100 chars |
 | `ipmi_address` | string | No | Valid IP address |
@@ -853,7 +853,7 @@ Update node configuration. All fields are optional (partial update).
 | `total_vcpu` | integer | No | Min 1 |
 | `total_memory_mb` | integer | No | Min 1024 |
 | `ipmi_address` | string | No | Valid IP address |
-| `storage_backend` | string | No | `ceph` or `qcow` |
+| `storage_backend` | string | No | `ceph`, `qcow`, or `lvm` |
 | `storage_path` | string | No | Max 500 chars |
 
 **Response (`200 OK`):** Returns the updated `Node` object.
@@ -1141,7 +1141,7 @@ Create a new service plan.
 | `port_speed_mbps` | integer | Yes | Min 1 |
 | `price_monthly` | integer | No | Min 0 (cents) |
 | `price_hourly` | integer | No | Min 0 (cents) |
-| `storage_backend` | string | No | `ceph` or `qcow` (default: `ceph`) |
+| `storage_backend` | string | No | `ceph`, `qcow`, or `lvm` (default: `ceph`) |
 | `is_active` | boolean | No | Default: false |
 | `sort_order` | integer | No | Min 0 |
 
@@ -1214,7 +1214,7 @@ Register a new OS template.
 | `is_active` | boolean | No | Default: false |
 | `sort_order` | integer | No | Min 0 |
 | `description` | string | No | Max 500 chars |
-| `storage_backend` | string | No | `ceph` or `qcow` (default: `ceph`) |
+| `storage_backend` | string | No | `ceph`, `qcow`, or `lvm` (default: `ceph`) |
 | `file_path` | string | No | Max 500 chars (QCOW template path) |
 
 **Response (`201 Created`):** Returns the created `Template` object.
@@ -1257,11 +1257,83 @@ Import an OS image from a source path. This creates/updates the template's disk 
 | `os_family` | string | Yes | Max 50 chars |
 | `os_version` | string | Yes | Max 50 chars |
 | `source_path` | string | Yes | Max 512 chars |
-| `storage_backend` | string | No | `ceph` or `qcow` |
+| `storage_backend` | string | No | `ceph`, `qcow`, or `lvm` |
 | `supports_cloudinit` | boolean | No | Default: false |
 | `is_active` | boolean | No | Default: false |
 
 **Response (`202 Accepted`):** Import is initiated as an async operation.
+
+---
+
+#### `POST /admin/templates/build-from-iso`
+
+Build a new OS template from an ISO image. The ISO can be a local path on the build node or a URL to download. This creates an async task that runs virt-install with unattended installation (preseed/kickstart/autoinstall).
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Max 100 chars |
+| `os_family` | string | Yes | `debian`, `ubuntu`, `almalinux`, `rocky`, `centos` |
+| `os_version` | string | Yes | Max 50 chars |
+| `iso_path` | string | No | Local ISO path on build node (mutually exclusive with `iso_url`) |
+| `iso_url` | string | No | HTTP(S) URL to download ISO (mutually exclusive with `iso_path`) |
+| `node_id` | string | Yes | UUID of the node to build on |
+| `storage_backend` | string | Yes | `ceph`, `qcow`, or `lvm` |
+| `disk_gb` | integer | No | Default: 10 |
+| `memory_mb` | integer | No | Default: 2048 |
+| `vcpu` | integer | No | Default: 2 |
+
+**Response (`202 Accepted`):** Returns task ID for polling.
+
+```json
+{
+  "data": {
+    "task_id": "uuid-string"
+  }
+}
+```
+
+---
+
+#### `POST /admin/templates/:id/distribute`
+
+Distribute a template to specific QCOW/LVM nodes. Ceph nodes access templates from the shared pool and do not need distribution. Creates an async task per target node.
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `node_ids` | string[] | Yes | Array of node UUIDs |
+
+**Response (`202 Accepted`):** Returns task ID for polling.
+
+---
+
+#### `GET /admin/templates/:id/cache-status`
+
+Get the distribution/cache status of a template across all nodes.
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": {
+    "template_id": "uuid-string",
+    "nodes": [
+      {
+        "node_id": "uuid-string",
+        "status": "ready",
+        "local_path": "/var/lib/virtuestack/templates/template-name",
+        "size_bytes": 1073741824,
+        "synced_at": "2026-03-28T00:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+Cache status values: `pending`, `downloading`, `ready`, `failed`.
 
 ---
 
@@ -1596,6 +1668,182 @@ Delete a backup schedule.
 
 ---
 
+### Admin API Storage Backends
+
+#### `GET /admin/storage-backends`
+
+List all storage backends with optional filtering.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | No | Filter by type: `ceph`, `qcow`, `lvm` |
+| `health_status` | string | No | Filter by health: `healthy`, `degraded`, `critical`, `unknown` |
+
+**Response (`200 OK`):** Returns array of `StorageBackend` objects with health metrics.
+
+---
+
+#### `POST /admin/storage-backends`
+
+Register a new storage backend.
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique name |
+| `type` | string | Yes | `ceph`, `qcow`, or `lvm` |
+| `ceph_pool` | string | Ceph only | Pool name |
+| `ceph_user` | string | Ceph only | Ceph user |
+| `ceph_monitors` | string | Ceph only | Monitor addresses |
+| `ceph_keyring_path` | string | Ceph only | Keyring file path |
+| `storage_path` | string | QCOW only | Base directory path |
+| `lvm_volume_group` | string | LVM only | Volume group name |
+| `lvm_thin_pool` | string | LVM only | Thin pool name |
+| `lvm_data_percent_threshold` | integer | LVM only | 1-100 (default: 90) |
+| `lvm_metadata_percent_threshold` | integer | LVM only | 1-100 (default: 70) |
+| `node_ids` | string[] | No | Nodes to assign |
+
+**Response (`201 Created`):** Returns the created `StorageBackend` object.
+
+---
+
+#### `GET /admin/storage-backends/:id`
+
+Get a storage backend by ID with assigned nodes.
+
+**Response (`200 OK`):** Returns `StorageBackend` object with `assigned_nodes` array.
+
+---
+
+#### `PUT /admin/storage-backends/:id`
+
+Update a storage backend (partial update).
+
+**Response (`200 OK`):** Returns updated `StorageBackend` object.
+
+---
+
+#### `DELETE /admin/storage-backends/:id`
+
+Delete a storage backend. Cannot delete if VMs are using it.
+
+**Response (`200 OK`):** Returns success confirmation.
+
+---
+
+#### `GET /admin/storage-backends/:id/nodes`
+
+List nodes assigned to a storage backend.
+
+**Response (`200 OK`):** Returns array of node assignments with enabled status.
+
+---
+
+#### `POST /admin/storage-backends/:id/nodes`
+
+Assign a node to a storage backend.
+
+**Request Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `node_id` | string | Yes |
+| `enabled` | boolean | No (default: true) |
+
+**Response (`201 Created`):** Returns assignment confirmation.
+
+---
+
+#### `DELETE /admin/storage-backends/:id/nodes`
+
+Remove a node from a storage backend.
+
+**Request Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `node_id` | string | Yes |
+
+**Response (`200 OK`):** Returns success confirmation.
+
+---
+
+#### `GET /admin/storage-backends/:id/health`
+
+Get the current health metrics for a storage backend.
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": {
+    "health_status": "healthy",
+    "health_message": "",
+    "total_gb": 1000,
+    "used_gb": 450,
+    "available_gb": 550,
+    "lvm_data_percent": 45.0,
+    "lvm_metadata_percent": 12.3
+  }
+}
+```
+
+---
+
+#### `POST /admin/storage-backends/:id/health`
+
+Update health metrics for a storage backend (typically called by monitoring).
+
+**Request Body:** Same fields as health response.
+
+**Response (`200 OK`):** Returns updated health data.
+
+---
+
+#### `POST /admin/storage-backends/:id/refresh`
+
+Trigger a health refresh for a storage backend.
+
+**Response (`200 OK`):** Returns refreshed health data.
+
+---
+
+### Admin API Auth Extensions
+
+#### `POST /admin/auth/reauth`
+
+Re-authenticate for destructive operations. Required within 5-minute window.
+
+**Request Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `password` | string | Yes |
+| `totp_code` | string | If 2FA enabled |
+
+**Response (`200 OK`):** Returns re-auth token.
+
+---
+
+#### `GET /admin/admins`
+
+List all admin accounts. **Requires `super_admin` role.**
+
+**Response (`200 OK`):** Returns array of admin objects.
+
+---
+
+#### `GET /admin/plans/:id/usage`
+
+Get usage statistics for a plan (number of VMs using it, resource totals).
+
+**Response (`200 OK`):** Returns plan usage data.
+
+---
+
 ## Customer API
 
 **Base Path:** `/api/v1/customer`
@@ -1751,6 +1999,54 @@ Change the authenticated customer's password.
 - `400` — `VALIDATION_ERROR`: Password too short
 - `401` — `INVALID_CURRENT_PASSWORD`: Current password is incorrect
 - `401` — `UNAUTHORIZED`: Not authenticated
+
+---
+
+#### `POST /customer/auth/forgot-password`
+
+Request a password reset email. Always returns 200 to prevent email enumeration.
+
+**Authentication:** None required
+
+**Request Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `email` | string | Yes |
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": { "message": "If an account with that email exists, a reset link has been sent" }
+}
+```
+
+---
+
+#### `POST /customer/auth/reset-password`
+
+Reset password using a token from the reset email.
+
+**Authentication:** None required
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `token` | string | Yes | Reset token from email |
+| `new_password` | string | Yes | Min 12, max 128 chars |
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": { "message": "Password reset successfully" }
+}
+```
+
+**Error Responses:**
+- `400` — `INVALID_TOKEN`: Token expired or invalid
 
 ---
 
@@ -2473,6 +2769,30 @@ Failed deliveries are retried with exponential backoff.
 
 ---
 
+#### `POST /customer/webhooks/:id/test`
+
+Send a test delivery to a webhook endpoint with a sample payload. Useful for verifying webhook configuration.
+
+**Authentication:** JWT only (no API key access)
+**CSRF:** Required
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": {
+    "delivered": true,
+    "response_status": 200
+  }
+}
+```
+
+**Error Responses:**
+- `404` — `NOT_FOUND`: Webhook not found or not owned by customer
+- `502` — `DELIVERY_FAILED`: Webhook endpoint unreachable
+
+---
+
 ### Customer API Templates
 
 #### `GET /customer/templates`
@@ -2982,6 +3302,91 @@ When a task is `completed`, the `result` field contains the operation result (e.
 
 ---
 
+### Provisioning API Customers
+
+#### `POST /provisioning/customers`
+
+Create-or-get a customer by email. If a customer with the given email already exists, returns the existing customer. Otherwise, creates a new customer with a random password.
+
+**Request Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Valid email |
+| `name` | string | No | Customer display name |
+
+**Response (`200 OK` or `201 Created`):** Returns customer object with `id` and `email`.
+
+---
+
+### Provisioning API SSO Tokens
+
+#### `POST /provisioning/sso-tokens`
+
+Create a one-time SSO token for WHMCS → Customer Portal seamless login. The token is opaque, stored server-side, and expires after 5 minutes.
+
+**Request Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `customer_id` | string | Yes |
+| `vm_id` | string | No |
+| `redirect_path` | string | No |
+
+**Response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "token": "opaque-token-string",
+    "expires_at": "2026-03-28T00:05:00Z"
+  }
+}
+```
+
+The token is exchanged at `GET /customer/auth/sso-exchange?token={token}` which sets HttpOnly session cookies.
+
+---
+
+### Provisioning API Plans
+
+#### `GET /provisioning/plans`
+
+List all active plans available for provisioning.
+
+**Response (`200 OK`):** Returns array of `Plan` objects.
+
+---
+
+#### `GET /provisioning/plans/:id`
+
+Get a specific plan by ID.
+
+**Response (`200 OK`):** Returns `Plan` object.
+
+---
+
+### Provisioning API VM Usage
+
+#### `GET /provisioning/vms/:id/usage`
+
+Get usage metrics for a VM (bandwidth, disk).
+
+**Response (`200 OK`):**
+
+```json
+{
+  "data": {
+    "bandwidth_used_gb": 45.2,
+    "bandwidth_limit_gb": 1000,
+    "disk_used_gb": 20,
+    "disk_limit_gb": 50
+  }
+}
+```
+
+---
+
 ## Data Models Reference
 
 ### VM (Virtual Machine)
@@ -3003,7 +3408,7 @@ When a task is `completed`, the `result` field contains the operation result (e.
 | `bandwidth_reset_at` | timestamp | Next bandwidth reset |
 | `mac_address` | string | Primary NIC MAC address |
 | `template_id` | string (UUID) | OS template used |
-| `storage_backend` | string | `ceph` or `qcow` (immutable after creation) |
+| `storage_backend` | string | `ceph`, `qcow`, or `lvm` (immutable after creation) |
 | `disk_path` | string | QCOW file path (QCOW backend only) |
 | `ceph_pool` | string | Ceph pool name (Ceph backend) |
 | `rbd_image` | string | RBD image name (Ceph backend) |
@@ -3041,7 +3446,7 @@ Extends `VM` with:
 | `total_memory_mb` | integer | Total RAM |
 | `allocated_vcpu` | integer | Allocated to VMs |
 | `allocated_memory_mb` | integer | Allocated to VMs |
-| `storage_backend` | string | `ceph` or `qcow` |
+| `storage_backend` | string | `ceph`, `qcow`, or `lvm` |
 | `storage_path` | string | QCOW base path |
 | `last_heartbeat_at` | timestamp | Last health report |
 | `consecutive_heartbeat_misses` | integer | Missed heartbeat count |
@@ -3081,7 +3486,7 @@ Extends `VM` with:
 | `supports_cloudinit` | boolean | Cloud-init support |
 | `is_active` | boolean | Available for provisioning |
 | `version` | integer | Template version (incremented on update) |
-| `storage_backend` | string | `ceph` or `qcow` |
+| `storage_backend` | string | `ceph`, `qcow`, or `lvm` |
 | `file_path` | string | QCOW template file path |
 | `description` | string | Description |
 
@@ -3139,7 +3544,7 @@ Extends `VM` with:
 | `id` | string (UUID) | Unique identifier |
 | `vm_id` | string (UUID) | Source VM |
 | `type` | string | `full` |
-| `storage_backend` | string | `ceph` or `qcow` |
+| `storage_backend` | string | `ceph`, `qcow`, or `lvm` |
 | `rbd_snapshot` | string | Ceph snapshot name |
 | `file_path` | string | QCOW backup file path |
 | `size_bytes` | integer | Backup size |
@@ -3156,7 +3561,7 @@ Extends `VM` with:
 | `id` | string (UUID) | Unique identifier |
 | `vm_id` | string (UUID) | Source VM |
 | `name` | string | Snapshot name |
-| `storage_backend` | string | `ceph` or `qcow` |
+| `storage_backend` | string | `ceph`, `qcow`, or `lvm` |
 | `rbd_snapshot` | string | Ceph snapshot name |
 | `qcow_snapshot` | string | QCOW snapshot name |
 | `size_bytes` | integer | Snapshot size |

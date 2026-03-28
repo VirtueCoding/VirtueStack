@@ -70,7 +70,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
 | JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
 | RBAC | ✅ Role-based permissions (customer and admin) |
-| Fine-grained Admin Permissions | ✅ 18 granular permissions with super_admin management |
+| Fine-grained Admin Permissions | ✅ 27 granular permissions with super_admin management |
 | API Keys | ✅ Secure API access with expiration, IP whitelist, and VM scoping |
 | API Key IP Whitelist | ✅ IPv4, IPv6, CIDR support for customer and provisioning keys |
 | VM-Scoped API Keys | ✅ Restrict customer API keys to specific VMs |
