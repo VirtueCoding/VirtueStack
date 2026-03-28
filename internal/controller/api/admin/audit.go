@@ -3,8 +3,8 @@ package admin
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
-	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,7 +25,7 @@ import (
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/v1/admin/audit-logs [get]
 func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter, ok := parseAuditLogFilter(c, pagination)
 	if !ok {
@@ -41,8 +41,5 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: logs,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	common.RespondWithPaginatedList(c, logs, int(total), pagination.Page, pagination.PerPage)
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
@@ -70,5 +71,5 @@ func (h *ProvisioningHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": plans})
+	common.RespondWithCursorList(c, plans, "", false)
 }

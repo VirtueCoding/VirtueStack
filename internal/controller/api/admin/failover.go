@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -24,7 +25,7 @@ import (
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/v1/admin/failover-requests [get]
 func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter := models.FailoverRequestListFilter{
 		PaginationParams: pagination,
@@ -62,10 +63,7 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: requests,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	common.RespondWithPaginatedList(c, requests, int(total), pagination.Page, pagination.PerPage)
 }
 
 // GetFailoverRequest handles GET /failover-requests/:id - retrieves a specific failover request.

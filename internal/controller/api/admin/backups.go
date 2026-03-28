@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -34,7 +35,7 @@ type AdminBackupListFilter struct {
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/v1/admin/backups [get]
 func (h *AdminHandler) ListBackups(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	// Validate UUID query parameters before building the filter
 	if customerIDStr := c.Query("customer_id"); customerIDStr != "" {
@@ -122,10 +123,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: backups,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	common.RespondWithPaginatedList(c, backups, int(total), pagination.Page, pagination.PerPage)
 }
 
 // RestoreBackup handles POST /backups/:id/restore - restores a backup (admin override).

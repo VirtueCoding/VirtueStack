@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -146,7 +147,7 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter := repository.NotificationEventFilter{
 		PaginationParams: pagination,
@@ -183,10 +184,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 		responses[i] = *event.ToResponse()
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	common.RespondWithPaginatedList(c, responses, int(total), pagination.Page, pagination.PerPage)
 }
 
 // GetAvailableEvents handles GET /notifications/events/types.

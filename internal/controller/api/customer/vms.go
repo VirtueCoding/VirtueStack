@@ -3,6 +3,7 @@ package customer
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -26,7 +27,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	// Parse pagination
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	// Build filter with customer isolation
 	filter := models.VMListFilter{
@@ -72,10 +73,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: vms,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	common.RespondWithPaginatedList(c, vms, int(total), pagination.Page, pagination.PerPage)
 }
 
 // GetVM handles GET /vms/:id - retrieves details for a specific VM.

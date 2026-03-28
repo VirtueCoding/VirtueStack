@@ -645,20 +645,20 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1–2 days | **Dependencies:** None (parallel)
 
-- [ ] Create `internal/controller/api/common/` package (or `internal/controller/api/shared/`)
-- [ ] Extract shared pagination parsing into `common/pagination.go`:
+- [x] Create `internal/controller/api/common/` package (or `internal/controller/api/shared/`)
+- [x] Extract shared pagination parsing into `common/pagination.go`:
   ```go
   func ParsePaginationParams(c *gin.Context) (page, perPage int, err error) { ... }
   func ParseCursorParams(c *gin.Context) (cursor string, limit int, err error) { ... }
   ```
-- [ ] Extract shared response formatting into `common/response.go`:
+- [x] Extract shared response formatting into `common/response.go`:
   ```go
   func RespondWithPaginatedList(c *gin.Context, data any, total int64, page, perPage int) { ... }
   func RespondWithCursorList(c *gin.Context, data any, nextCursor string, hasMore bool) { ... }
   ```
-- [ ] Extract shared VM response enrichment (adding IPs, plan, template info) into `common/vm_response.go` if applicable
-- [ ] Update admin, customer, and provisioning handlers to use common helpers
-- [ ] Run `make build-controller && make test-race`
+- [x] Extract shared VM response enrichment (adding IPs, plan, template info) into `common/vm_response.go` if applicable
+- [x] Update admin, customer, and provisioning handlers to use common helpers
+- [x] Run `make build-controller && make test-race`
 
 ---
 
