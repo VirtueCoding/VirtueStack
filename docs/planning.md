@@ -133,7 +133,7 @@
 
 #### 4a. Task Recovery Scanner
 
-- [ ] In `internal/controller/tasks/worker.go`, add a `StartStuckTaskScanner` method on the `Worker` struct:
+- [x] In `internal/controller/tasks/worker.go`, add a `StartStuckTaskScanner` method on the `Worker` struct:
   ```go
   func (w *Worker) StartStuckTaskScanner(ctx context.Context, interval time.Duration, stuckThreshold time.Duration) {
       ticker := time.NewTicker(interval)
@@ -148,26 +148,26 @@
       }
   }
   ```
-- [ ] Implement `recoverStuckTasks` — query for tasks where `status = 'running' AND started_at < NOW() - $1` (parameterized threshold), check retry count, either reset to `pending` (if retries < max) or mark `failed` with error message `"stuck task recovered after timeout"`
-- [ ] Add a `task_repo` method `FindStuckTasks(ctx, threshold time.Duration) ([]*models.Task, error)` and `ResetTask(ctx, taskID string) error` in `internal/controller/repository/task_repo.go`
-- [ ] Add a `retry_count` column if not present (check current schema) or use the existing `attempts` field
+- [x] Implement `recoverStuckTasks` — query for tasks where `status = 'running' AND started_at < NOW() - $1` (parameterized threshold), check retry count, either reset to `pending` (if retries < max) or mark `failed` with error message `"stuck task recovered after timeout"`
+- [x] Add a `task_repo` method `FindStuckTasks(ctx, threshold time.Duration) ([]*models.Task, error)` and `ResetTask(ctx, taskID string) error` in `internal/controller/repository/task_repo.go`
+- [x] Add a `retry_count` column if not present (check current schema) or use the existing `attempts` field
 
 #### 4b. Wire Scanner into Controller Startup
 
-- [ ] In `internal/controller/server.go` (in `StartSchedulers` method), start the stuck-task scanner as a background goroutine:
+- [x] In `internal/controller/server.go` (in `StartSchedulers` method), start the stuck-task scanner as a background goroutine:
   ```go
   go w.StartStuckTaskScanner(ctx, 5*time.Minute, 30*time.Minute)
   ```
-- [ ] Ensure the scanner respects the server's context for graceful shutdown
+- [x] Ensure the scanner respects the server's context for graceful shutdown
 
 #### 4c. Tests
 
-- [ ] Add unit tests in `internal/controller/tasks/worker_test.go` (or new `stuck_task_scanner_test.go`):
+- [x] Add unit tests in `internal/controller/tasks/worker_test.go` (or new `stuck_task_scanner_test.go`):
   - Test: task stuck for 30+ minutes is reset to pending
   - Test: task stuck but under threshold is left alone
   - Test: task at max retries is marked failed instead of reset
   - Test: scanner handles empty result set gracefully
-- [ ] Run `make test-race`
+- [x] Run `make test-race`
 
 ---
 
@@ -177,13 +177,13 @@
 
 > **Current state:** `middleware.PasswordResetRateLimit()` is already applied to both `/auth/forgot-password` and `/auth/reset-password` routes in `internal/controller/api/customer/routes.go`.
 
-- [ ] Verify the rate limits in `internal/controller/api/middleware/rate_limit.go` — confirm `PasswordResetRateLimit()` enforces per-email AND per-IP limits (audit recommends: 3 requests/hour per email, 10 requests/hour per IP)
-- [ ] If the current rate limiter only uses IP-based limiting, add email-based limiting:
+- [x] Verify the rate limits in `internal/controller/api/middleware/rate_limit.go` — confirm `PasswordResetRateLimit()` enforces per-email AND per-IP limits (audit recommends: 3 requests/hour per email, 10 requests/hour per IP)
+- [x] If the current rate limiter only uses IP-based limiting, add email-based limiting:
   - Extract the email from the request body in the forgot-password handler
   - Apply a separate rate limit key using `email:<normalized_email>` in addition to IP
-- [ ] If limits are already adequate, add a comment documenting the rationale and mark this gap as addressed
-- [ ] Add or verify unit tests for the rate limiter covering: rate exceeded returns 429, rate not exceeded proceeds, different emails have independent limits
-- [ ] Run `make test-race`
+- [x] If limits are already adequate, add a comment documenting the rationale and mark this gap as addressed
+- [x] Add or verify unit tests for the rate limiter covering: rate exceeded returns 429, rate not exceeded proceeds, different emails have independent limits
+- [x] Run `make test-race`
 
 ---
 

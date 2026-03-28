@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -76,4 +78,62 @@ func TestSelectedRateLimitFallsBackToInMemoryLimiter(t *testing.T) {
 	secondW := httptest.NewRecorder()
 	router.ServeHTTP(secondW, secondReq)
 	require.Equal(t, http.StatusTooManyRequests, secondW.Code)
+}
+
+func TestPasswordResetRateLimit_ForgotPasswordEmailLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ConfigureDistributedRateLimitBackend(nil)
+
+	router := gin.New()
+	router.Use(PasswordResetRateLimit())
+	router.POST("/auth/forgot-password", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	makeReq := func(email string, ip string) int {
+		body, err := json.Marshal(map[string]string{"email": email})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = ip
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for i := 0; i < 3; i++ {
+		require.Equal(t, http.StatusNoContent, makeReq("user@example.com", "198.51.100.10:1234"))
+	}
+	require.Equal(t, http.StatusTooManyRequests, makeReq("user@example.com", "198.51.100.10:1234"))
+	require.Equal(t, http.StatusNoContent, makeReq("other@example.com", "198.51.100.10:1234"))
+}
+
+func TestPasswordResetRateLimit_ResetPasswordUsesIPLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ConfigureDistributedRateLimitBackend(nil)
+
+	router := gin.New()
+	router.Use(PasswordResetRateLimit())
+	router.POST("/auth/reset-password", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	makeReq := func(ip string) int {
+		body, err := json.Marshal(map[string]string{
+			"token":        "token-123",
+			"new_password": "ValidPassword123!",
+		})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/auth/reset-password", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = ip
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for i := 0; i < 10; i++ {
+		require.Equal(t, http.StatusNoContent, makeReq("203.0.113.20:5678"))
+	}
+	require.Equal(t, http.StatusTooManyRequests, makeReq("203.0.113.20:5678"))
 }

@@ -39,7 +39,7 @@ func scanTask(row pgx.Row) (models.Task, error) {
 	var idempotencyKey, createdBy *string
 	err := row.Scan(
 		&t.ID, &t.Type, &t.Status, &t.Payload,
-		&result, &errorMessage, &t.Progress,
+		&result, &errorMessage, &t.Progress, &t.RetryCount,
 		&idempotencyKey, &createdBy,
 		&t.CreatedAt, &t.StartedAt, &t.CompletedAt,
 	)
@@ -60,7 +60,7 @@ func scanTask(row pgx.Row) (models.Task, error) {
 
 const taskSelectCols = `
 	id, type, status, payload,
-	result, error_message, progress,
+	result, error_message, progress, retry_count,
 	idempotency_key, created_by,
 	created_at, started_at, completed_at`
 
@@ -69,9 +69,9 @@ const taskSelectCols = `
 func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	const q = `
 		INSERT INTO tasks (
-			id, type, status, payload, progress,
+			id, type, status, payload, progress, retry_count,
 			idempotency_key, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING ` + taskSelectCols
 
 	// Handle nullable UUID columns - empty string must be converted to NULL
@@ -84,7 +84,7 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	}
 
 	row := r.db.QueryRow(ctx, q,
-		task.ID, task.Type, task.Status, task.Payload, task.Progress,
+		task.ID, task.Type, task.Status, task.Payload, task.Progress, task.RetryCount,
 		idempotencyKey, createdBy,
 	)
 	created, err := scanTask(row)
@@ -284,13 +284,44 @@ func (r *TaskRepository) SetCompleted(ctx context.Context, id string, result []b
 
 // SetFailed marks a task as failed, sets completed_at to NOW(), and stores the error message.
 func (r *TaskRepository) SetFailed(ctx context.Context, id string, errorMessage string) error {
-	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2`
+	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1, retry_count = retry_count + 1 WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s failed: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("setting task %s failed: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// FindStuckTasks finds running tasks older than the provided threshold.
+func (r *TaskRepository) FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error) {
+	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'running' AND started_at IS NOT NULL AND started_at < NOW() - ($1 * INTERVAL '1 second') ORDER BY started_at ASC`
+	seconds := int64(threshold.Seconds())
+	tasks, err := ScanRows(ctx, r.db, q, []any{seconds}, func(rows pgx.Rows) (models.Task, error) {
+		return scanTask(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("finding stuck tasks: %w", err)
+	}
+	result := make([]*models.Task, 0, len(tasks))
+	for i := range tasks {
+		taskCopy := tasks[i]
+		result = append(result, &taskCopy)
+	}
+	return result, nil
+}
+
+// ResetTask resets a task to pending state for retry.
+func (r *TaskRepository) ResetTask(ctx context.Context, taskID string) error {
+	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW() WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, taskID)
+	if err != nil {
+		return fmt.Errorf("resetting task %s: %w", taskID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("resetting task %s: %w", taskID, ErrNoRowsAffected)
 	}
 	return nil
 }

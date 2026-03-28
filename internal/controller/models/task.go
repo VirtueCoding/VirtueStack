@@ -84,6 +84,7 @@ type Task struct {
 	Result         json.RawMessage `json:"result,omitempty"`
 	ErrorMessage   string          `json:"error_message,omitempty"`
 	Progress       int             `json:"progress"`
+	RetryCount     int             `json:"retry_count"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 	CreatedBy      string          `json:"created_by,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`

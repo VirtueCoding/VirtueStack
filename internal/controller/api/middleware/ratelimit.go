@@ -2,10 +2,14 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -401,11 +405,47 @@ func RDNSUpdateRateLimit() gin.HandlerFunc {
 // PasswordResetRateLimit limits password reset requests to 3 per hour per IP.
 // Prevents email enumeration and abuse of the password reset flow.
 func PasswordResetRateLimit() gin.HandlerFunc {
-	return selectedRateLimit(RateLimitConfig{
-		Requests: 3,
+	ipLimiter := selectedRateLimit(RateLimitConfig{
+		Requests: 10,
 		Window:   time.Hour,
 		KeyFunc:  keyByIP,
-	}, "ratelimit:password-reset:")
+	}, "ratelimit:password-reset:ip:")
+
+	emailLimiter := selectedRateLimit(RateLimitConfig{
+		Requests: 3,
+		Window:   time.Hour,
+		KeyFunc:  passwordResetEmailKey,
+	}, "ratelimit:password-reset:email:")
+
+	return func(c *gin.Context) {
+		ipLimiter(c)
+		if c.IsAborted() {
+			return
+		}
+		if strings.Contains(c.Request.URL.Path, "/forgot-password") {
+			emailLimiter(c)
+		}
+	}
+}
+
+func passwordResetEmailKey(c *gin.Context) string {
+	body, err := c.GetRawData()
+	if err != nil {
+		return "email:unknown"
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "email:unknown"
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		return "email:unknown"
+	}
+	return "email:" + email
 }
 
 // ─── Redis-backed distributed rate limiter ───────────────────────────────────

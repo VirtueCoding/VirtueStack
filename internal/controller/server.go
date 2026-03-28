@@ -643,6 +643,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 		go s.heartbeatChecker.Start(ctx)
 	}
 
+	if s.taskWorker != nil {
+		s.logger.Info("starting stuck task scanner")
+		go s.taskWorker.StartStuckTaskScanner(ctx, 5*time.Minute, 30*time.Minute)
+	}
+
 	s.startMetricsCollector(ctx)
 
 	if s.bandwidthRepo != nil && s.nodeClient != nil {
