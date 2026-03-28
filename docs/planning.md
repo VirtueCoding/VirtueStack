@@ -326,7 +326,7 @@
   modules:
     - path: proto
   ```
-- [ ] Create `buf.gen.yaml` (optional, for documentation):
+- [ ] Create `buf.gen.yaml`:
   ```yaml
   version: v2
   plugins:
@@ -518,9 +518,9 @@
 - [ ] Add event publishing to key service methods:
   - `vm_service.go` — `virtuestack.events.vm.created`, `vm.started`, `vm.stopped`, `vm.deleted`, `vm.migrated`
   - `backup_service.go` — `virtuestack.events.backup.created`, `backup.restored`, `backup.deleted`
-  - `services/auth_service.go` — `virtuestack.events.customer.login` (optional, security-relevant)
+  - `services/auth_service.go` — `virtuestack.events.customer.login`
 
-#### 12c. Pre-Action Webhook (Optional Enhancement)
+#### 12c. Pre-Action Webhook
 
 - [ ] Add `pre_action_webhooks` table via migration (URL, events, timeout, fail_open flag)
 - [ ] Implement synchronous webhook call before VM creation:
@@ -535,7 +535,7 @@
 
 ### Gap #19 — Database Connection Pool Metrics
 
-**Priority:** 🟢 Low | **Effort:** 0.5 day | **Dependencies:** None (parallel)
+**Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
 - [ ] In `internal/controller/metrics/prometheus.go`, add pgx pool metric collectors:
   ```go
@@ -556,7 +556,7 @@
 
 ### Gap #18 — NATS Health Check
 
-**Priority:** 🟢 Low | **Dependencies:** None
+**Priority:** 🟡 Required | **Dependencies:** None
 
 > **Current state:** Already implemented in `readinessHandler()` in `server.go` — checks `s.natsConn.Status() != nats.CONNECTED` and includes `"nats": "connected"/"disconnected"` in response.
 
@@ -606,7 +606,7 @@
 
 ### Gap #17 — Structured Logging in Task Handlers
 
-**Priority:** 🟢 Low | **Effort:** 1 day | **Dependencies:** None (parallel)
+**Priority:** 🟡 Required | **Effort:** 1 day | **Dependencies:** None (parallel)
 
 - [ ] Create a `taskLogger` helper in `internal/controller/tasks/logger.go`:
   ```go
@@ -684,7 +684,7 @@
 
 ### Gap #21 — .env Validation Script
 
-**Priority:** 🟢 Low | **Effort:** 0.5 day | **Dependencies:** None (parallel)
+**Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
 - [ ] Create `scripts/validate-env.sh`:
   ```bash
@@ -702,7 +702,7 @@
   check_required "JWT_SECRET"
   check_hex "ENCRYPTION_KEY" 64
 
-  # Optional but validated if present
+  # Validated when present
   if [ -n "${REDIS_URL:-}" ]; then check_format "REDIS_URL" "redis://"; fi
   if [ -n "${SMTP_PORT:-}" ]; then check_int "SMTP_PORT"; fi
 
@@ -718,11 +718,11 @@
 
 ---
 
-## Phase 4: Growth Features
+## Phase 4: Expansion & Scale
 
 ### Gap #20 — Customer Self-Registration
 
-**Priority:** 🟢 Low | **Effort:** 3 days | **Dependencies:** None (when needed)
+**Priority:** 🟡 Required | **Effort:** 3 days | **Dependencies:** None (parallel)
 
 #### 20a. Configuration
 
@@ -732,7 +732,7 @@
 #### 20b. Registration Endpoint
 
 - [ ] Create `internal/controller/api/customer/registration.go`:
-  - `POST /auth/register` — accepts email, password, optional name/phone
+  - `POST /auth/register` — accepts email, password, name, phone
   - Validate input (email format, password strength)
   - Check if email already exists → return appropriate error
   - Create customer with `status = "pending_verification"` if email verification enabled
@@ -771,7 +771,7 @@
 
 ### Gap #22 — Service-Layer Test Coverage for Critical Paths
 
-**Priority:** 🟢 Low | **Effort:** 3–5 days | **Dependencies:** None (parallel)
+**Priority:** 🟡 Required | **Effort:** 3–5 days | **Dependencies:** None (parallel)
 
 > **Current state:** Only `vm_service_health_test.go` exists. No tests for `backup_service` or `node_agent_client`.
 
@@ -812,7 +812,7 @@
 
 ### Gap #23 — Load Testing Expansion
 
-**Priority:** 🟢 Low | **Effort:** 2–3 days | **Dependencies:** None (parallel)
+**Priority:** 🟡 Required | **Effort:** 2–3 days | **Dependencies:** None (parallel)
 
 > **Current state:** `tests/load/k6-vm-operations.js` exists with basic VM operation tests.
 
