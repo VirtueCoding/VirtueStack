@@ -22,7 +22,7 @@ import (
 //  6. Release IP addresses
 //  7. Soft delete VM record
 func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMDelete)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload VMDeletePayload
@@ -31,7 +31,6 @@ func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		return fmt.Errorf("parsing vm.delete payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID)
 	logger.Info("vm.delete task started")
 
 	// Update task progress

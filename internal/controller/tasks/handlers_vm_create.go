@@ -23,7 +23,7 @@ import (
 //  5. Allocate IP addresses
 //  6. Update VM status
 func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMCreate)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload VMCreatePayload
@@ -39,7 +39,6 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	}
 	payload.Password = ""
 
-	logger = logger.With("vm_id", payload.VMID)
 	logger.Info("vm.create task started",
 		"node_id", payload.NodeID,
 		"hostname", payload.Hostname,

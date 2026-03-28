@@ -20,7 +20,7 @@ import (
 //  5. Regenerate cloud-init ISO
 //  6. Start VM and update database
 func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMReinstall)
+	logger := taskLogger(deps.Logger, task)
 
 	// Step 1: Parse payload
 	var payload VMReinstallPayload
@@ -28,7 +28,6 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		logger.Error("failed to parse vm.reinstall payload", "error", err)
 		return fmt.Errorf("parsing vm.reinstall payload: %w", err)
 	}
-	logger = logger.With("vm_id", payload.VMID, "template_id", payload.TemplateID)
 	logger.Info("vm.reinstall task started")
 
 	// Step 2: Gather VM and template info

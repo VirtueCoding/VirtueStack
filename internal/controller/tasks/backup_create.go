@@ -81,7 +81,7 @@ func DefaultBackupConfig() *BackupConfig {
 // 9. Create backup record in database
 // 10. Update task progress to completed
 func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeBackupCreate)
+	logger := taskLogger(deps.Logger, task)
 
 	var payload BackupCreatePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -89,7 +89,7 @@ func handleBackupCreate(ctx context.Context, task *models.Task, deps *HandlerDep
 		return fmt.Errorf("parsing backup.create payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "backup_name", payload.BackupName)
+	logger = logger.With("backup_name", payload.BackupName)
 	logger.Info("backup.create task started", "source", payload.Source)
 
 	backupStart := time.Now()

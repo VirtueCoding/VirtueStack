@@ -28,7 +28,7 @@ type VMResizePayload struct {
 //  5. Update VM resources in database
 //  6. Update task progress to completed
 func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMResize)
+	logger := taskLogger(deps.Logger, task)
 
 	var payload VMResizePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -41,7 +41,6 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		return fmt.Errorf("vm.resize payload requires vm_id and node_id")
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "node_id", payload.NodeID)
 	logger.Info("vm.resize task started",
 		"new_vcpu", payload.NewVCPU,
 		"new_memory_mb", payload.NewMemoryMB,

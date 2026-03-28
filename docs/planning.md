@@ -608,7 +608,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 1 day | **Dependencies:** None (parallel)
 
-- [ ] Create a `taskLogger` helper in `internal/controller/tasks/logger.go`:
+- [x] Create a `taskLogger` helper in `internal/controller/tasks/logger.go`:
   ```go
   func taskLogger(base *slog.Logger, task *models.Task) *slog.Logger {
       l := base.With(
@@ -625,7 +625,7 @@
       return l
   }
   ```
-- [ ] Update all task handlers in `internal/controller/tasks/` to use `taskLogger` at entry:
+- [x] Update all task handlers in `internal/controller/tasks/` to use `taskLogger` at entry:
   - `handlers_vm_create.go`
   - `handlers_vm_delete.go`
   - `vm_resize.go`
@@ -636,8 +636,8 @@
   - `webhook_deliver.go`
   - `template_build.go`
   - `template_distribute.go`
-- [ ] Replace ad-hoc `logger.With(...)` calls in each handler with the standardized `taskLogger`
-- [ ] Run `make build-controller && make test-race`
+- [x] Replace ad-hoc `logger.With(...)` calls in each handler with the standardized `taskLogger`
+- [x] Run `make build-controller && make test-race`
 
 ---
 

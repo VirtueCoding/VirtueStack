@@ -47,7 +47,7 @@ type SnapshotDeletePayload struct {
 //  5. Update snapshot record in database with RBD snapshot name
 //  6. Update task progress to completed
 func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotCreate)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload SnapshotCreatePayload
@@ -56,7 +56,6 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 		return fmt.Errorf("parsing snapshot.create payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "snapshot_id", payload.SnapshotID)
 	logger.Info("snapshot.create task started", "name", payload.Name)
 
 	// Idempotency check: Skip if already processed
@@ -167,7 +166,7 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 //  6. Start VM
 //  7. Update task progress to completed
 func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotRevert)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload SnapshotRevertPayload
@@ -176,7 +175,6 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 		return fmt.Errorf("parsing snapshot.revert payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "snapshot_id", payload.SnapshotID)
 	logger.Info("snapshot.revert task started")
 
 	// Idempotency check: Skip if already processed
@@ -291,7 +289,7 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 //  5. Delete snapshot record from database
 //  6. Update task progress to completed
 func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeSnapshotDelete)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload SnapshotDeletePayload
@@ -300,7 +298,6 @@ func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerD
 		return fmt.Errorf("parsing snapshot.delete payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "snapshot_id", payload.SnapshotID)
 	logger.Info("snapshot.delete task started")
 
 	// Idempotency check: Skip if already processed

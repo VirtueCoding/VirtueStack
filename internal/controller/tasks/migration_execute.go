@@ -52,7 +52,7 @@ func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) 
 // prepareMigrationContext validates the migration request and builds the context.
 // Returns nil context if VM is already on target (idempotent success).
 func prepareMigrationContext(ctx context.Context, task *models.Task, deps *HandlerDeps) (*MigrationContext, error) {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMMigrate)
+	logger := taskLogger(deps.Logger, task)
 
 	var payload VMMigratePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -60,8 +60,7 @@ func prepareMigrationContext(ctx context.Context, task *models.Task, deps *Handl
 		return nil, fmt.Errorf("parsing vm.migrate payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "source_node_id", payload.SourceNodeID,
-		"target_node_id", payload.TargetNodeID, "strategy", payload.MigrationStrategy)
+	logger = logger.With("strategy", payload.MigrationStrategy)
 	logger.Info("vm.migrate task started")
 
 	vm, sourceNode, targetNode, err := validateMigrationEntities(ctx, deps, payload, logger)

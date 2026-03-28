@@ -19,6 +19,8 @@ const defaultMinDiskGB = 10
 // It sends a BuildTemplateFromISO gRPC call to the target node agent,
 // then creates a template record in the database from the result.
 func handleTemplateBuild(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := taskLogger(deps.Logger, task)
+
 	var payload TemplateBuildPayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal template build payload: %w", err)
@@ -31,8 +33,7 @@ func handleTemplateBuild(ctx context.Context, task *models.Task, deps *HandlerDe
 		return fmt.Errorf("missing required fields in template build payload: iso_path or iso_url required")
 	}
 
-	deps.Logger.Info("starting template build from ISO",
-		"task_id", task.ID,
+	logger.Info("starting template build from ISO",
 		"template_name", payload.TemplateName,
 		"os_family", payload.OSFamily,
 		"iso_path", payload.ISOPath,
