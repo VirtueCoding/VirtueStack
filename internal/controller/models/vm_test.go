@@ -1,9 +1,12 @@
 package models
 
 import (
+	"errors"
 	"testing"
 
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestVMStatusConstants(t *testing.T) {
@@ -127,4 +130,52 @@ func TestVM_RootPasswordNotSerialized(t *testing.T) {
 	}
 	assert.NotNil(t, vm.RootPasswordEncrypted)
 	assert.Equal(t, "encrypted-password", *vm.RootPasswordEncrypted)
+}
+
+func TestValidateVMTransition(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    string
+		to      string
+		wantErr bool
+	}{
+		{"valid provisioning to running", VMStatusProvisioning, VMStatusRunning, false},
+		{"valid provisioning to error", VMStatusProvisioning, VMStatusError, false},
+		{"valid running to stopped", VMStatusRunning, VMStatusStopped, false},
+		{"valid running to suspended", VMStatusRunning, VMStatusSuspended, false},
+		{"valid running to migrating", VMStatusRunning, VMStatusMigrating, false},
+		{"valid running to reinstalling", VMStatusRunning, VMStatusReinstalling, false},
+		{"valid running to error", VMStatusRunning, VMStatusError, false},
+		{"valid stopped to running", VMStatusStopped, VMStatusRunning, false},
+		{"valid stopped to deleted", VMStatusStopped, VMStatusDeleted, false},
+		{"valid stopped to reinstalling", VMStatusStopped, VMStatusReinstalling, false},
+		{"valid stopped to migrating", VMStatusStopped, VMStatusMigrating, false},
+		{"valid stopped to error", VMStatusStopped, VMStatusError, false},
+		{"valid suspended to running", VMStatusSuspended, VMStatusRunning, false},
+		{"valid suspended to stopped", VMStatusSuspended, VMStatusStopped, false},
+		{"valid suspended to deleted", VMStatusSuspended, VMStatusDeleted, false},
+		{"valid migrating to running", VMStatusMigrating, VMStatusRunning, false},
+		{"valid migrating to error", VMStatusMigrating, VMStatusError, false},
+		{"valid reinstalling to running", VMStatusReinstalling, VMStatusRunning, false},
+		{"valid reinstalling to error", VMStatusReinstalling, VMStatusError, false},
+		{"valid error to stopped", VMStatusError, VMStatusStopped, false},
+		{"valid error to deleted", VMStatusError, VMStatusDeleted, false},
+		{"invalid deleted to running", VMStatusDeleted, VMStatusRunning, true},
+		{"invalid error to running", VMStatusError, VMStatusRunning, true},
+		{"invalid provisioning to deleted", VMStatusProvisioning, VMStatusDeleted, true},
+		{"invalid unknown source status", "unknown", VMStatusRunning, true},
+		{"invalid running to running", VMStatusRunning, VMStatusRunning, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateVMTransition(tt.from, tt.to)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, sharederrors.ErrConflict))
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

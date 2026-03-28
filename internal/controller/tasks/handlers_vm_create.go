@@ -7,6 +7,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -159,26 +160,26 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 	// Create VM via node agent gRPC
 	createReq := &CreateVMRequest{
-		VMID:                payload.VMID,
-		Hostname:            payload.Hostname,
-		VCPU:                payload.VCPU,
-		MemoryMB:            payload.MemoryMB,
-		DiskGB:              payload.DiskGB,
-		StorageBackend:      template.StorageBackend,
-		TemplateFilePath:    templateFilePath,
-		RootPasswordHash:    passwordHash,
-		SSHPublicKeys:       payload.SSHKeys,
-		IPv4Address:         ipv4Addr,
-		IPv4Gateway:         ipv4Gateway,
-		IPv6Address:         ipv6Addr,
-		IPv6Gateway:         ipv6Gateway,
-		MACAddress:          macAddress,
-		PortSpeedMbps:       vm.PortSpeedMbps,
-		CephPool:            node.CephPool,
-		CephUser:            deps.CephUser,
-		CephSecretUUID:      deps.CephSecretUUID,
-		CephMonitors:        append([]string(nil), deps.CephMonitors...),
-		Nameservers:         cloudInitCfg.Nameservers,
+		VMID:             payload.VMID,
+		Hostname:         payload.Hostname,
+		VCPU:             payload.VCPU,
+		MemoryMB:         payload.MemoryMB,
+		DiskGB:           payload.DiskGB,
+		StorageBackend:   template.StorageBackend,
+		TemplateFilePath: templateFilePath,
+		RootPasswordHash: passwordHash,
+		SSHPublicKeys:    payload.SSHKeys,
+		IPv4Address:      ipv4Addr,
+		IPv4Gateway:      ipv4Gateway,
+		IPv6Address:      ipv6Addr,
+		IPv6Gateway:      ipv6Gateway,
+		MACAddress:       macAddress,
+		PortSpeedMbps:    vm.PortSpeedMbps,
+		CephPool:         node.CephPool,
+		CephUser:         deps.CephUser,
+		CephSecretUUID:   deps.CephSecretUUID,
+		CephMonitors:     append([]string(nil), deps.CephMonitors...),
+		Nameservers:      cloudInitCfg.Nameservers,
 	}
 	createResp, err := deps.NodeClient.CreateVM(ctx, payload.NodeID, createReq)
 	if err != nil {
@@ -205,8 +206,12 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	}
 
 	// Update VM status to running
-	if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
-		logger.Warn("failed to update VM status", "error", err)
+	if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusProvisioning, models.VMStatusRunning); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			logger.Error("failed VM transition from provisioning to running", "error", err)
+			return fmt.Errorf("transitioning VM %s to running: %w", payload.VMID, err)
+		}
+		logger.Warn("failed to transition VM status to running", "error", err)
 	}
 
 	// Persist template_id and mac_address onto the VM record

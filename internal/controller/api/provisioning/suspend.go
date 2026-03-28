@@ -1,10 +1,13 @@
 package provisioning
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,13 +28,31 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 	}
 
 	// Force-stop before suspending so QEMU releases the vCPUs and memory.
+	stopSucceeded := false
 	if vm.Status == models.VMStatusRunning {
 		if err := h.vmService.StopVM(c.Request.Context(), vmID, vm.CustomerID, true, true); err != nil {
 			h.logger.Warn("failed to stop VM during suspend", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		} else {
+			stopSucceeded = true
 		}
 	}
 
-	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusSuspended); err != nil {
+	fromStatus := vm.Status
+	if vm.Status == models.VMStatusRunning && stopSucceeded {
+		fromStatus = models.VMStatusStopped
+	}
+
+	if err := h.vmRepo.TransitionStatus(c.Request.Context(), vmID, fromStatus, models.VMStatusSuspended); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			h.logger.Error("invalid VM status transition during suspend",
+				"vm_id", vmID,
+				"from_status", fromStatus,
+				"to_status", models.VMStatusSuspended,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			middleware.RespondWithError(c, http.StatusConflict, "INVALID_VM_STATE", fmt.Sprintf("Cannot suspend VM from status %s", fromStatus))
+			return
+		}
 		h.logger.Error("failed to update VM status to suspended", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "SUSPEND_FAILED", "Failed to suspend VM")
 		return
@@ -57,7 +78,17 @@ func (h *ProvisioningHandler) UnsuspendVM(c *gin.Context) {
 		return
 	}
 
-	if err := h.vmRepo.UpdateStatus(c.Request.Context(), vmID, models.VMStatusStopped); err != nil {
+	if err := h.vmRepo.TransitionStatus(c.Request.Context(), vmID, models.VMStatusSuspended, models.VMStatusStopped); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			h.logger.Error("invalid VM status transition during unsuspend",
+				"vm_id", vmID,
+				"from_status", models.VMStatusSuspended,
+				"to_status", models.VMStatusStopped,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			middleware.RespondWithError(c, http.StatusConflict, "INVALID_VM_STATE", "Cannot unsuspend VM because state changed")
+			return
+		}
 		h.logger.Error("failed to update VM status to stopped during unsuspend", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "UNSUSPEND_FAILED", "Failed to unsuspend VM")
 		return

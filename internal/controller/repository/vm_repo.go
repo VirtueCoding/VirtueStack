@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // VMRepository provides database operations for virtual machines.
@@ -169,6 +170,7 @@ func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, pa
 }
 
 // UpdateStatus updates the status field of a VM.
+// Deprecated: use TransitionStatus to enforce VM state machine transitions atomically.
 func (r *VMRepository) UpdateStatus(ctx context.Context, id, status string) error {
 	const q = `UPDATE vms SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
 	tag, err := r.db.Exec(ctx, q, status, id)
@@ -177,6 +179,23 @@ func (r *VMRepository) UpdateStatus(ctx context.Context, id, status string) erro
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating VM %s status: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// TransitionStatus atomically updates VM status when current status matches fromStatus.
+func (r *VMRepository) TransitionStatus(ctx context.Context, vmID, fromStatus, toStatus string) error {
+	if err := models.ValidateVMTransition(fromStatus, toStatus); err != nil {
+		return err
+	}
+
+	const q = `UPDATE vms SET status = $1, updated_at = NOW() WHERE id = $2 AND status = $3 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, toStatus, vmID, fromStatus)
+	if err != nil {
+		return fmt.Errorf("transition VM %s status from %s to %s: %w", vmID, fromStatus, toStatus, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("VM %s not in expected state %s for transition to %s: %w", vmID, fromStatus, toStatus, sharederrors.ErrConflict)
 	}
 	return nil
 }

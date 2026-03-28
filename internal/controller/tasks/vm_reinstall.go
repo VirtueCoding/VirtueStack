@@ -4,9 +4,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // handleVMReinstall handles the VM reinstallation flow.
@@ -48,8 +50,12 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		logger.Warn("failed to update task progress", "error", err)
 	}
 	if info.vm.Status != models.VMStatusReinstalling {
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusReinstalling); err != nil {
-			logger.Warn("failed to update VM status", "error", err)
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, info.vm.Status, models.VMStatusReinstalling); err != nil {
+			if errors.Is(err, sharederrors.ErrConflict) {
+				logger.Error("failed VM transition to reinstalling", "from_status", info.vm.Status, "error", err)
+				return fmt.Errorf("transitioning VM %s to reinstalling: %w", payload.VMID, err)
+			}
+			logger.Warn("failed to transition VM status", "error", err)
 		}
 	}
 	if err := stopVMForReinstall(ctx, deps, info, logger); err != nil {

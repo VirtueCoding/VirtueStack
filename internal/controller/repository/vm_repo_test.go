@@ -7,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockDB struct {
@@ -48,39 +52,39 @@ func (m mockCommandTag) String() string {
 
 func TestVMRepository_UpdatePassword(t *testing.T) {
 	tests := []struct {
-		name             string
-		vmID             string
+		name              string
+		vmID              string
 		encryptedPassword string
-		rowsAffected     int64
-		execErr          error
-		wantErr          bool
-		errContains      string
+		rowsAffected      int64
+		execErr           error
+		wantErr           bool
+		errContains       string
 	}{
 		{
-			name:             "successful update",
-			vmID:             "550e8400-e29b-41d4-a716-446655440000",
+			name:              "successful update",
+			vmID:              "550e8400-e29b-41d4-a716-446655440000",
 			encryptedPassword: "$argon2id$v=19$m=65536,t=3,p=4$...",
-			rowsAffected:     1,
-			execErr:          nil,
-			wantErr:          false,
+			rowsAffected:      1,
+			execErr:           nil,
+			wantErr:           false,
 		},
 		{
-			name:             "vm not found",
-			vmID:             "550e8400-e29b-41d4-a716-446655440000",
+			name:              "vm not found",
+			vmID:              "550e8400-e29b-41d4-a716-446655440000",
 			encryptedPassword: "$argon2id$v=19$m=65536,t=3,p=4$...",
-			rowsAffected:     0,
-			execErr:          nil,
-			wantErr:          true,
-			errContains:      "no rows affected",
+			rowsAffected:      0,
+			execErr:           nil,
+			wantErr:           true,
+			errContains:       "no rows affected",
 		},
 		{
-			name:             "database error",
-			vmID:             "550e8400-e29b-41d4-a716-446655440000",
+			name:              "database error",
+			vmID:              "550e8400-e29b-41d4-a716-446655440000",
 			encryptedPassword: "$argon2id$v=19$m=65536,t=3,p=4$...",
-			rowsAffected:     0,
-			execErr:          errors.New("connection refused"),
-			wantErr:          true,
-			errContains:      "connection refused",
+			rowsAffected:      0,
+			execErr:           errors.New("connection refused"),
+			wantErr:           true,
+			errContains:       "connection refused",
 		},
 	}
 
@@ -186,3 +190,86 @@ func TestVMRepository_UpdateMACAddress(t *testing.T) {
 	}
 }
 
+func TestVMRepository_TransitionStatus(t *testing.T) {
+	tests := []struct {
+		name         string
+		vmID         string
+		fromStatus   string
+		toStatus     string
+		rowsAffected int64
+		execErr      error
+		wantErr      bool
+		errContains  string
+		errIs        error
+	}{
+		{
+			name:         "successful transition",
+			vmID:         "550e8400-e29b-41d4-a716-446655440000",
+			fromStatus:   models.VMStatusRunning,
+			toStatus:     models.VMStatusStopped,
+			rowsAffected: 1,
+		},
+		{
+			name:         "wrong current status returns conflict",
+			vmID:         "550e8400-e29b-41d4-a716-446655440000",
+			fromStatus:   models.VMStatusRunning,
+			toStatus:     models.VMStatusStopped,
+			rowsAffected: 0,
+			wantErr:      true,
+			errContains:  "not in expected state",
+			errIs:        sharederrors.ErrConflict,
+		},
+		{
+			name:        "invalid transition rejected before query",
+			vmID:        "550e8400-e29b-41d4-a716-446655440000",
+			fromStatus:  models.VMStatusDeleted,
+			toStatus:    models.VMStatusRunning,
+			wantErr:     true,
+			errContains: "unknown VM source status",
+			errIs:       sharederrors.ErrConflict,
+		},
+		{
+			name:        "database error is wrapped",
+			vmID:        "550e8400-e29b-41d4-a716-446655440000",
+			fromStatus:  models.VMStatusRunning,
+			toStatus:    models.VMStatusStopped,
+			execErr:     errors.New("connection refused"),
+			wantErr:     true,
+			errContains: "connection refused",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			execCalled := false
+			mock := &mockDB{
+				execFunc: func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+					execCalled = true
+					if tt.execErr != nil {
+						return pgconn.CommandTag{}, tt.execErr
+					}
+					return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", tt.rowsAffected)), nil
+				},
+			}
+
+			repo := NewVMRepository(mock)
+			err := repo.TransitionStatus(context.Background(), tt.vmID, tt.fromStatus, tt.toStatus)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				if tt.errIs != nil {
+					assert.True(t, errors.Is(err, tt.errIs))
+				}
+				if tt.fromStatus == models.VMStatusDeleted {
+					assert.False(t, execCalled)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}

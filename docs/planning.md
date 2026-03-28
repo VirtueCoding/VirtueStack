@@ -14,13 +14,13 @@
 
 #### 1a. Database Migration — Status Constraint
 
-- [ ] Create migration `migrations/000066_vm_state_machine.up.sql`:
+- [x] Create migration `migrations/000066_vm_state_machine.up.sql`:
   ```sql
   SET lock_timeout = '5s';
   ALTER TABLE vms ADD CONSTRAINT vms_status_check
     CHECK (status IN ('provisioning','running','stopped','suspended','migrating','reinstalling','error','deleted'));
   ```
-- [ ] Create matching `migrations/000066_vm_state_machine.down.sql`:
+- [x] Create matching `migrations/000066_vm_state_machine.down.sql`:
   ```sql
   SET lock_timeout = '5s';
   ALTER TABLE vms DROP CONSTRAINT IF EXISTS vms_status_check;
@@ -28,7 +28,7 @@
 
 #### 1b. Transition Map in Models
 
-- [ ] In `internal/controller/models/vm.go`, add a `ValidVMTransitions` map after the status constants (around line 16):
+- [x] In `internal/controller/models/vm.go`, add a `ValidVMTransitions` map after the status constants (around line 16):
   ```go
   var ValidVMTransitions = map[string][]string{
       VMStatusProvisioning: {VMStatusRunning, VMStatusError},
@@ -40,12 +40,12 @@
       VMStatusError:        {VMStatusStopped, VMStatusDeleted},
   }
   ```
-- [ ] Add a `ValidateVMTransition(from, to string) error` function that checks the map and returns `sharederrors.ErrConflict` if the transition is invalid
-- [ ] Add unit tests in `internal/controller/models/vm_test.go` — table-driven tests covering every valid transition and a set of invalid transitions (e.g., `deleted → running`, `error → running`, `provisioning → deleted`)
+- [x] Add a `ValidateVMTransition(from, to string) error` function that checks the map and returns `sharederrors.ErrConflict` if the transition is invalid
+- [x] Add unit tests in `internal/controller/models/vm_test.go` — table-driven tests covering every valid transition and a set of invalid transitions (e.g., `deleted → running`, `error → running`, `provisioning → deleted`)
 
 #### 1c. Repository — Atomic Transition Method
 
-- [ ] In `internal/controller/repository/vm_repo.go`, add a `TransitionStatus` method:
+- [x] In `internal/controller/repository/vm_repo.go`, add a `TransitionStatus` method:
   ```go
   func (r *VMRepository) TransitionStatus(ctx context.Context, vmID, fromStatus, toStatus string) error {
       if err := models.ValidateVMTransition(fromStatus, toStatus); err != nil {
@@ -64,12 +64,12 @@
       return nil
   }
   ```
-- [ ] Keep the existing `UpdateStatus` method for backward compatibility but add a deprecation comment pointing to `TransitionStatus`
-- [ ] Add unit tests for `TransitionStatus` in `internal/controller/repository/vm_repo_test.go` — test successful transition, test wrong-state rejection (0 rows affected), test invalid transition pair
+- [x] Keep the existing `UpdateStatus` method for backward compatibility but add a deprecation comment pointing to `TransitionStatus`
+- [x] Add unit tests for `TransitionStatus` in `internal/controller/repository/vm_repo_test.go` — test successful transition, test wrong-state rejection (0 rows affected), test invalid transition pair
 
 #### 1d. Migrate Call Sites to TransitionStatus
 
-- [ ] Audit all callers of `UpdateStatus` or `UpdateVMStatus` across the codebase. Key files:
+- [x] Audit all callers of `UpdateStatus` or `UpdateVMStatus` across the codebase. Key files:
   - `internal/controller/tasks/handlers_vm_create.go` — provisioning → running, provisioning → error
   - `internal/controller/tasks/handlers_vm_delete.go` — * → deleted
   - `internal/controller/tasks/vm_resize.go` — stopped → stopped (after resize)
@@ -77,9 +77,9 @@
   - `internal/controller/tasks/migration_execute.go` — migrating → running, migrating → error
   - `internal/controller/services/vm_service.go` — start/stop/restart/suspend/unsuspend transitions
   - `internal/controller/api/provisioning/vms.go` — suspend/unsuspend calls
-- [ ] Replace each `UpdateStatus(ctx, vmID, newStatus)` call with `TransitionStatus(ctx, vmID, currentStatus, newStatus)`, passing the expected current status
-- [ ] For each call site, handle the `ErrConflict` error appropriately (log + return error, do not silently ignore)
-- [ ] Run `make test-race` to verify no regressions
+- [x] Replace each `UpdateStatus(ctx, vmID, newStatus)` call with `TransitionStatus(ctx, vmID, currentStatus, newStatus)`, passing the expected current status
+- [x] For each call site, handle the `ErrConflict` error appropriately (log + return error, do not silently ignore)
+- [x] Run `make test-race` to verify no regressions
 
 ---
 

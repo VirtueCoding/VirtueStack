@@ -3,9 +3,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // VMResizePayload represents the payload for vm.resize tasks.
@@ -77,8 +79,12 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 			logger.Error("failed to stop VM for resize", "error", err)
 			return fmt.Errorf("stopping VM %s for resize: %w", payload.VMID, err)
 		}
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusStopped); err != nil {
-			logger.Warn("failed to update VM status", "error", err)
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusRunning, models.VMStatusStopped); err != nil {
+			if errors.Is(err, sharederrors.ErrConflict) {
+				logger.Error("failed VM transition from running to stopped during resize", "error", err)
+				return fmt.Errorf("transitioning VM %s to stopped for resize: %w", payload.VMID, err)
+			}
+			logger.Warn("failed to transition VM status", "error", err)
 		}
 	}
 
@@ -108,8 +114,12 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		if err := deps.NodeClient.StartVM(ctx, nodeID, payload.VMID); err != nil {
 			logger.Warn("failed to start VM after resize", "error", err)
 		} else {
-			if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
-				logger.Warn("failed to update VM status", "error", err)
+			if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
+				if errors.Is(err, sharederrors.ErrConflict) {
+					logger.Error("failed VM transition from stopped to running after resize", "error", err)
+					return fmt.Errorf("transitioning VM %s to running after resize: %w", payload.VMID, err)
+				}
+				logger.Warn("failed to transition VM status", "error", err)
 			}
 		}
 	}

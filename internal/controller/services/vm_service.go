@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -37,18 +38,18 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo              *repository.VMRepository
-	nodeRepo            *repository.NodeRepository
-	ipRepo              *repository.IPRepository
-	planRepo            *repository.PlanRepository
-	templateRepo        *repository.TemplateRepository
-	taskRepo            *repository.TaskRepository
-	taskPublisher       TaskPublisher
-	nodeAgent           NodeAgentClient
-	ipamService         IPAllocator
-	storageBackendSvc   StorageBackendGetter
-	encryptionKey       string // For encrypting root passwords
-	logger              *slog.Logger
+	vmRepo            *repository.VMRepository
+	nodeRepo          *repository.NodeRepository
+	ipRepo            *repository.IPRepository
+	planRepo          *repository.PlanRepository
+	templateRepo      *repository.TemplateRepository
+	taskRepo          *repository.TaskRepository
+	taskPublisher     TaskPublisher
+	nodeAgent         NodeAgentClient
+	ipamService       IPAllocator
+	storageBackendSvc StorageBackendGetter
+	encryptionKey     string // For encrypting root passwords
+	logger            *slog.Logger
 }
 
 // StorageBackendGetter defines the interface for getting storage backends for a node.
@@ -250,7 +251,7 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 		"vcpu": vm.VCPU, "memory_mb": vm.MemoryMB, "disk_gb": vm.DiskGB,
 		"template_id": deps.template.ID, "template_rbd_image": deps.template.RBDImage,
 		"template_rbd_snapshot": deps.template.RBDSnapshot,
-		"mac_address": vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
+		"mac_address":           vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
 		"bandwidth_limit_gb": vm.BandwidthLimitGB, "ssh_keys": req.SSHKeys,
 		"storage_backend": deps.plan.StorageBackend,
 	}
@@ -429,9 +430,12 @@ func (s *VMService) StartVM(ctx context.Context, vmID, customerID string, isAdmi
 	}
 
 	// Update status
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
-		s.logger.Error("failed to update VM status after start - status mismatch may occur",
-			"vm_id", vm.ID, "error", err)
+	if err := s.vmRepo.TransitionStatus(ctx, vm.ID, vm.Status, models.VMStatusRunning); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			return fmt.Errorf("transitioning VM %s from %s to running: %w", vm.ID, vm.Status, err)
+		}
+		s.logger.Error("failed to transition VM status after start - status mismatch may occur",
+			"vm_id", vm.ID, "from_status", vm.Status, "error", err)
 	}
 
 	s.logger.Info("VM started", "vm_id", vm.ID, "customer_id", customerID)
@@ -470,8 +474,11 @@ func (s *VMService) StopVM(ctx context.Context, vmID, customerID string, force b
 	}
 
 	// Update status
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusStopped); err != nil {
-		s.logger.Error("failed to update VM status after stop - status mismatch may occur",
+	if err := s.vmRepo.TransitionStatus(ctx, vm.ID, models.VMStatusRunning, models.VMStatusStopped); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			return fmt.Errorf("transitioning VM %s from running to stopped: %w", vm.ID, err)
+		}
+		s.logger.Error("failed to transition VM status after stop - status mismatch may occur",
 			"vm_id", vm.ID, "error", err)
 	}
 
@@ -504,6 +511,12 @@ func (s *VMService) RestartVM(ctx context.Context, vmID, customerID string, isAd
 			return fmt.Errorf("force stopping VM during restart: %w", err)
 		}
 	}
+	if err := s.vmRepo.TransitionStatus(ctx, vm.ID, models.VMStatusRunning, models.VMStatusStopped); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			return fmt.Errorf("transitioning VM %s from running to stopped during restart: %w", vm.ID, err)
+		}
+		s.logger.Warn("failed to transition VM status to stopped during restart", "vm_id", vm.ID, "error", err)
+	}
 
 	// Start the VM
 	if err := s.nodeAgent.StartVM(ctx, *vm.NodeID, vm.ID); err != nil {
@@ -511,8 +524,11 @@ func (s *VMService) RestartVM(ctx context.Context, vmID, customerID string, isAd
 	}
 
 	// Update status to running
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
-		s.logger.Error("failed to update VM status after restart - status mismatch may occur",
+	if err := s.vmRepo.TransitionStatus(ctx, vm.ID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			return fmt.Errorf("transitioning VM %s from stopped to running after restart: %w", vm.ID, err)
+		}
+		s.logger.Error("failed to transition VM status after restart - status mismatch may occur",
 			"vm_id", vm.ID, "error", err)
 	}
 

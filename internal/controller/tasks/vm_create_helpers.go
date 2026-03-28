@@ -6,10 +6,12 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // vmCreateInfo contains the gathered information needed for VM creation.
@@ -167,8 +169,12 @@ func setVMCreateResult(
 	logger *slog.Logger,
 ) error {
 	// Update VM status to running
-	if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
-		logger.Warn("failed to update VM status", "error", err)
+	if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusProvisioning, models.VMStatusRunning); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			logger.Error("failed VM transition from provisioning to running", "error", err)
+			return fmt.Errorf("transitioning VM %s to running: %w", payload.VMID, err)
+		}
+		logger.Warn("failed to transition VM status to running", "error", err)
 	}
 
 	// Update task progress: Complete
