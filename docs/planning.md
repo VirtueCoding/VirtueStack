@@ -286,13 +286,13 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1 day | **Dependencies:** None (parallel with #6)
 
-- [ ] Create `internal/controller/services/node_agent_vm.go` — move VM power operations (`StartVM`, `StopVM`, `ForceStopVM`, `DeleteVM`), VM creation (`CreateVM`), VM metrics (`GetVMMetrics`, `GetVMStatus`), and cloud-init (`GenerateCloudInit`)
-- [ ] Create `internal/controller/services/node_agent_storage.go` — move disk operations (`DeleteDisk`, `DeleteDiskSnapshot`, `CloneFromBackup`, `CloneFromTemplate`), snapshot operations (`CreateSnapshot`, `DeleteSnapshot`, `RestoreSnapshot`)
-- [ ] Create `internal/controller/services/node_agent_network.go` — move bandwidth operations if any exist in this file, and network-related gRPC calls
-- [ ] Create `internal/controller/services/node_agent_migration.go` — move `MigrateVM`, `AbortMigration`, `PostMigrateSetup`, `EvacuateNode`
-- [ ] Keep in `node_agent_client.go`: struct definition, constructor, connection pool management, metrics cache, `GetNodeMetrics`, `PingNode`, `GetNodeResources`
-- [ ] Verify all files are in `package services` and share the `NodeAgentGRPCClient` receiver
-- [ ] Run `make build-controller && make test-race`
+- [x] Create `internal/controller/services/node_agent_vm.go` — move VM power operations (`StartVM`, `StopVM`, `ForceStopVM`, `DeleteVM`), VM creation (`CreateVM`), VM metrics (`GetVMMetrics`, `GetVMStatus`), and cloud-init (`GenerateCloudInit`)
+- [x] Create `internal/controller/services/node_agent_storage.go` — move disk operations (`DeleteDisk`, `DeleteDiskSnapshot`, `CloneFromBackup`, `CloneFromTemplate`), snapshot operations (`CreateSnapshot`, `DeleteSnapshot`, `RestoreSnapshot`)
+- [x] Create `internal/controller/services/node_agent_network.go` — move bandwidth operations if any exist in this file, and network-related gRPC calls
+- [x] Create `internal/controller/services/node_agent_migration.go` — move `MigrateVM`, `AbortMigration`, `PostMigrateSetup`, `EvacuateNode`
+- [x] Keep in `node_agent_client.go`: struct definition, constructor, connection pool management, metrics cache, `GetNodeMetrics`, `PingNode`, `GetNodeResources`
+- [x] Verify all files are in `package services` and share the `NodeAgentGRPCClient` receiver
+- [x] Run `make build-controller && make test-race`
 
 ---
 
