@@ -302,17 +302,17 @@
 
 #### backup_service.go Split
 
-- [ ] Create `internal/controller/services/backup_create_service.go` — move `CreateBackup`, `CreateBackupWithLimitCheck`, `createQCOWBackup`, `createCephBackup`
-- [ ] Create `internal/controller/services/backup_restore_service.go` — move `RestoreBackup`
-- [ ] Create `internal/controller/services/backup_scheduler_service.go` — move `StartScheduler`, `runSchedulerTick`, `processVMsForBackup`, `shouldBackupVM`, `scheduleBackupForVM`, `CreateSchedule`, `ListSchedules`, `ListSchedulesPaginated`, `UpdateSchedule`, `DeleteSchedule`, `ApplyRetentionPolicy`, `ProcessExpiredBackups`
-- [ ] Keep in `backup_service.go`: struct definition, constructor, simple CRUD (`ListBackups`, `ListBackupsWithFilter`, `DeleteBackup`), snapshot methods (`CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `GetSnapshotCount`, `CheckSnapshotQuota`, async snapshot methods)
+- [x] Create `internal/controller/services/backup_create_service.go` — move `CreateBackup`, `CreateBackupWithLimitCheck`, `createQCOWBackup`, `createCephBackup`
+- [x] Create `internal/controller/services/backup_restore_service.go` — move `RestoreBackup`
+- [x] Create `internal/controller/services/backup_scheduler_service.go` — move `StartScheduler`, `runSchedulerTick`, `processVMsForBackup`, `shouldBackupVM`, `scheduleBackupForVM`, `CreateSchedule`, `ListSchedules`, `ListSchedulesPaginated`, `UpdateSchedule`, `DeleteSchedule`, `ApplyRetentionPolicy`, `ProcessExpiredBackups`
+- [x] Keep in `backup_service.go`: struct definition, constructor, simple CRUD (`ListBackups`, `ListBackupsWithFilter`, `DeleteBackup`), snapshot methods (`CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `GetSnapshotCount`, `CheckSnapshotQuota`, async snapshot methods)
 
 #### vm_service.go Split
 
-- [ ] Create `internal/controller/services/vm_power_service.go` — move `StartVM`, `StopVM`, `RestartVM`, `ForceStopVM`, and any suspend/unsuspend methods
-- [ ] Keep in `vm_service.go`: struct definition, constructor, `CreateVM`, `DeleteVM`, `ReinstallVM`, `ResizeVM`, `ResizeVMWithPlan`, `GetVM`, `ListVMs`, `GetVMMetrics`, `GetVMStatus`, `GetVMDetail`, `UpdateVMHostname`, `UpdateVMNetworkLimits`, `GetTaskStatus`, `ListTasks`, and internal helpers
+- [x] Create `internal/controller/services/vm_power_service.go` — move `StartVM`, `StopVM`, `RestartVM`, `ForceStopVM`, and any suspend/unsuspend methods
+- [x] Keep in `vm_service.go`: struct definition, constructor, `CreateVM`, `DeleteVM`, `ReinstallVM`, `ResizeVM`, `ResizeVMWithPlan`, `GetVM`, `ListVMs`, `GetVMMetrics`, `GetVMStatus`, `GetVMDetail`, `UpdateVMHostname`, `UpdateVMNetworkLimits`, `GetTaskStatus`, `ListTasks`, and internal helpers
 
-- [ ] Run `make build-controller && make test-race`
+- [x] Run `make build-controller && make test-race`
 
 ---
 
