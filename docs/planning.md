@@ -195,14 +195,14 @@
 
 #### 3a. Install swag
 
-- [ ] Add `github.com/swaggo/swag` and `github.com/swaggo/gin-swagger` to `go.mod`:
+- [x] Add `github.com/swaggo/swag` and `github.com/swaggo/gin-swagger` to `go.mod`:
   ```bash
   go get github.com/swaggo/swag/v2/cmd/swag@latest
   go get github.com/swaggo/gin-swagger
   go get github.com/swaggo/files
   ```
-- [ ] Add `swag init` command to `Makefile` (e.g., `make swagger`)
-- [ ] Add general API info annotation in `cmd/controller/main.go`:
+- [x] Add `swag init` command to `Makefile` (e.g., `make swagger`)
+- [x] Add general API info annotation in `cmd/controller/main.go`:
   ```go
   // @title VirtueStack API
   // @version 1.0
@@ -258,14 +258,14 @@
 
 #### 3e. Generate and Serve
 
-- [ ] Run `swag init` to generate `docs/swagger.json` and `docs/swagger.yaml`
-- [ ] Add Swagger UI route in `internal/controller/server.go` (admin-only, behind auth):
+- [x] Run `swag init` to generate `docs/swagger.json` and `docs/swagger.yaml`
+- [x] Add Swagger UI route in `internal/controller/server.go` (admin-only, behind auth):
   ```go
   router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
   ```
-- [ ] Add generated swagger files to `.gitignore` or commit them (team decision — document choice)
-- [ ] Verify generated spec covers all 130+ endpoints by running `swag init` and inspecting output
-- [ ] Run `make build` to ensure annotations don't break compilation
+- [x] Add generated swagger files to `.gitignore` or commit them (team decision — document choice)
+- [x] Verify generated spec covers all 130+ endpoints by running `swag init` and inspecting output
+- [x] Run `make build` to ensure annotations don't break compilation
 
 ---
 

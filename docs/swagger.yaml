@@ -1,0 +1,16 @@
+info:
+  contact: {}
+  description: KVM/QEMU VM management platform API
+  title: VirtueStack API
+  version: "1.0"
+paths: {}
+securityDefinitions:
+  APIKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

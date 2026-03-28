@@ -69,6 +69,11 @@ type AdminHandler struct {
 	logger                    *slog.Logger
 }
 
+// AuthConfig returns the admin handler authentication configuration.
+func (h *AdminHandler) AuthConfig() middleware.AuthConfig {
+	return h.authConfig
+}
+
 // NewAdminHandler creates a new AdminHandler with the given dependencies.
 func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 	return &AdminHandler{

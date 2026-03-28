@@ -27,6 +27,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -496,6 +498,12 @@ func (s *Server) RegisterAPIRoutes() {
 	customer.RegisterCustomerRoutes(v1, s.customerHandler, s.notifyHandler, s.customerAPIKeyRepo)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
+
+	// Swagger UI is restricted to authenticated admins only.
+	s.router.GET("/swagger/*any",
+		middleware.JWTAuth(s.adminHandler.AuthConfig()),
+		middleware.RequireRole("admin", "super_admin"),
+		ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	s.logger.Info("API routes registered")
 }

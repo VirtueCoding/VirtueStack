@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto lint test test-integration test-native test-all test-race migrate-up migrate-down certs clean help backup-db
+.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race migrate-up migrate-down certs clean help backup-db
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -54,6 +54,10 @@ proto:
 		--go-grpc_out=$(PROTO_OUT) --go-grpc_opt=paths=source_relative \
 		-I $(PROTO_DIR) \
 		$(PROTO_DIR)/virtuestack/*.proto
+
+## swagger: Generate Swagger/OpenAPI docs from annotations
+swagger:
+	swag init -g cmd/controller/main.go
 
 ## lint: Run golangci-lint
 lint:
