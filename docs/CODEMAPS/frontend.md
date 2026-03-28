@@ -1,10 +1,10 @@
-<!-- Generated: 2026-03-22 | Files scanned: 82 TSX files | Token estimate: ~950 -->
+<!-- Generated: 2026-03-28 | Files scanned: 90+ TSX files | Token estimate: ~1000 -->
 
 # Frontend Architecture
 
 ## Admin Portal
 
-**Directory:** `webui/admin/` | **Port:** 3000
+**Directory:** `webui/admin/` | **Dev Port:** 3000 | **Prod Port:** 3001
 
 ### Page Tree
 
@@ -15,23 +15,34 @@ app/
 ├── providers.tsx       # TanStack Query, theme
 ├── login/
 │   └── page.tsx        # JWT auth + 2FA
-└── dashboard/
-    ├── layout.tsx      # Sidebar, auth guard
-    └── page.tsx        # Node overview, alerts
-        ├── audit-logs/page.tsx
-        ├── backups/page.tsx        # All backups management
-        ├── backup-schedules/page.tsx # Admin backup campaigns
-        ├── customers/page.tsx
-        ├── ip-sets/page.tsx
-        ├── nodes/page.tsx
-        ├── plans/page.tsx
-        ├── settings/
-        │   ├── page.tsx            # System settings
-        │   └── permissions/page.tsx # Permission management (super_admin) (NEW)
-        ├── provisioning-keys/page.tsx # Provisioning key lifecycle (create, update, revoke)
-        ├── failover-requests/page.tsx # Failover request viewer with status/node filtering
-        ├── templates/page.tsx
-        └── vms/page.tsx
+├── dashboard/
+│   └── page.tsx        # Node overview, alerts
+├── audit-logs/
+│   └── page.tsx        # Audit trail viewer
+├── backup-schedules/
+│   └── page.tsx        # Customer backup schedules
+├── customers/
+│   └── page.tsx        # Customer management
+├── failover-requests/
+│   └── page.tsx        # Failover request viewer
+├── ip-sets/
+│   └── page.tsx        # IP pool management
+├── nodes/
+│   └── page.tsx        # Node management, drain, failover
+├── plans/
+│   └── page.tsx        # Plan management with resource limits
+├── provisioning-keys/
+│   └── page.tsx        # WHMCS API key lifecycle
+├── settings/
+│   ├── page.tsx        # System settings
+│   └── permissions/
+│       └── page.tsx    # Permission management (super_admin)
+├── storage-backends/
+│   └── page.tsx        # Storage backend registry + health
+├── templates/
+│   └── page.tsx        # Template management, build from ISO, distribute
+└── vms/
+    └── page.tsx        # VM management
 ```
 
 ### Key Components
@@ -52,8 +63,8 @@ components/
 │   ├── AdminScheduleList.tsx    # Admin schedules table
 │   └── CreateScheduleModal.tsx  # Create/edit schedule
 ├── customers/
-│   ├── CustomerCreateDialog.tsx # Create customer (NEW)
-│   └── CustomerEditDialog.tsx   # Edit name/status (NEW)
+│   ├── CustomerCreateDialog.tsx # Create customer modal
+│   └── CustomerEditDialog.tsx   # Edit name/status modal
 ├── ip-sets/
 │   ├── IPSetList.tsx            # IP set table
 │   ├── IPSetCreateDialog.tsx    # Create IP set
@@ -65,8 +76,9 @@ components/
 │   └── NodeEditDialog.tsx       # Edit node config
 ├── plans/
 │   ├── PlanList.tsx             # Plans table
-│   ├── PlanCreateDialog.tsx     # Create plan (NEW)
+│   ├── PlanCreateDialog.tsx     # Create plan
 │   └── PlanEditDialog.tsx       # Edit plan
+├── storage-backends/            # Storage backend management components
 ├── templates/
 │   └── TemplateEditDialog.tsx   # Edit template
 └── vms/
@@ -74,9 +86,27 @@ components/
     └── VMEditDialog.tsx         # Edit VM properties
 ```
 
+### Auth & Permissions
+
+```
+contexts/
+└── PermissionContext.tsx    # Admin permission context provider
+
+hooks/
+└── usePermissions.ts       # Permission check hook
+
+lib/
+├── api-client.ts           # Centralized API client
+├── auth-context.tsx        # Auth state
+├── navigation.ts           # Route definitions
+├── require-auth.tsx        # Auth guard HOC
+├── status-badge.ts         # Status badge utilities
+└── utils.ts                # General utilities
+```
+
 ## Customer Portal
 
-**Directory:** `webui/customer/` | **Port:** 3001
+**Directory:** `webui/customer/` | **Dev Port:** 3001 | **Prod Port:** 3002
 
 ### Page Tree
 
@@ -87,8 +117,12 @@ app/
 ├── providers.tsx       # TanStack Query, theme
 ├── login/
 │   └── page.tsx        # JWT auth
+├── forgot-password/
+│   └── page.tsx        # Password reset request
+├── reset-password/
+│   └── page.tsx        # Password reset form
 ├── settings/
-│   └── page.tsx        # Profile, 2FA, API keys, webhooks
+│   └── page.tsx        # Profile, 2FA, API keys, webhooks, notifications
 └── vms/
     ├── layout.tsx      # VM list layout
     ├── page.tsx        # VM list
@@ -105,37 +139,36 @@ components/
 ├── theme-toggle.tsx
 ├── ui/                 # shadcn/ui primitives
 ├── charts/
-│   └── resource-charts.tsx  # uPlot + ECharts
+│   └── resource-charts.tsx  # Recharts-based resource charts
 ├── novnc-console/
-│   └── vnc-console.tsx      # noVNC WebSocket
+│   └── vnc-console.tsx      # noVNC WebSocket client
 ├── serial-console/
-│   └── serial-console.tsx   # xterm.js WebSocket
+│   └── serial-console.tsx   # xterm.js WebSocket terminal
 ├── file-upload/
-│   └── iso-upload.tsx       # tus protocol
+│   └── iso-upload.tsx       # ISO upload component
 ├── settings/
-│   ├── ProfileTab.tsx
-│   ├── SecurityTab.tsx
-│   ├── ApiKeysTab.tsx
-│   └── WebhooksTab.tsx
+│   ├── ProfileTab.tsx       # Profile management
+│   ├── SecurityTab.tsx      # 2FA management
+│   ├── ApiKeysTab.tsx       # API key management
+│   ├── WebhooksTab.tsx      # Webhook configuration
+│   └── NotificationsTab.tsx # Notification preferences
 └── vm/
-    ├── VMControls.tsx
-    ├── VMConsoleTab.tsx
-    ├── VMBackupsTab.tsx
-    ├── VMSnapshotsTab.tsx
-    └── VMSettingsTab.tsx
+    ├── VMControls.tsx       # Power control buttons
+    ├── VMConsoleTab.tsx      # VNC/serial console
+    ├── VMBackupsTab.tsx      # Backup management
+    ├── VMSnapshotsTab.tsx    # Snapshot management
+    ├── VMISOTab.tsx          # ISO upload/attach/detach
+    ├── VMRDNSTab.tsx         # Reverse DNS management
+    └── VMSettingsTab.tsx     # VM settings
 ```
 
 ## State Management
 
 ```
-TanStack Query (React Query)
+TanStack Query (React Query) — sole state management
 ├── Server state: VMs, nodes, plans, customers
 ├── Cache invalidation on mutations
 └── Optimistic updates
-
-Zustand (if used)
-├── UI state: sidebar collapse, theme
-└── Local-only state
 ```
 
 ## API Client Pattern
@@ -167,21 +200,11 @@ useMutation({ mutationFn: (id) => api.post(`customer/vms/${id}/start`) })
 | Layer | Technology |
 |-------|------------|
 | Framework | Next.js 16+ (App Router) |
-| UI Library | React 19+ |
-| Language | TypeScript 5.5+ |
+| UI Library | React 19 |
+| Language | TypeScript 5.7 |
 | Styling | Tailwind CSS |
-| Components | shadcn/ui |
-| State | TanStack Query + Zustand |
-| Charts | uPlot + Apache ECharts |
-| Console | noVNC + xterm.js |
-
-## New Components (Since Last Update)
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| Permissions Page | `app/settings/permissions/` | Super-admin permission management |
-| Provisioning Keys Page | `app/provisioning-keys/` | WHMCS API key lifecycle management |
-| Failover Requests Page | `app/failover-requests/` | Failover request viewer with debounced filtering |
-| CustomerCreateDialog | `components/customers/` | Create customer modal |
-| CustomerEditDialog | `components/customers/` | Edit customer modal |
-| PlanCreateDialog | `components/plans/` | Create plan modal |
+| Components | shadcn/ui (Radix primitives) |
+| State | TanStack Query 5.64 |
+| Forms | react-hook-form 7 + Zod 3.24 |
+| Charts | Recharts 3.8 (customer portal) |
+| Console | noVNC 1.5 + xterm.js 6.0 |

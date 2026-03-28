@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-22 | Files scanned: go.mod, package.json | Token estimate: ~650 -->
+<!-- Generated: 2026-03-28 | Files scanned: go.mod, package.json (x3) | Token estimate: ~700 -->
 
 # Dependencies
 
@@ -16,6 +16,8 @@
 |---------|---------|---------|
 | `github.com/jackc/pgx/v5` | v5.7.2 | PostgreSQL driver |
 | `github.com/golang-migrate/migrate/v4` | v4.19.1 | Migrations |
+| `github.com/redis/go-redis/v9` | latest | Redis client (distributed rate limiting) |
+| `github.com/go-sql-driver/mysql` | latest | PowerDNS MySQL driver |
 
 ### Security
 | Package | Version | Purpose |
@@ -31,42 +33,40 @@
 | `libvirt.org/go/libvirt` | v1.10005.0 | KVM/QEMU |
 | `github.com/gorilla/websocket` | v1.5.3 | WebSocket |
 | `github.com/prometheus/client_golang` | v1.20.5 | Metrics |
+| `google.golang.org/protobuf` | latest | Protocol Buffers |
 
 ### Validation & Config
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `github.com/go-playground/validator/v10` | v10.26.0 | Request validation |
 | `gopkg.in/yaml.v3` | v3.0.1 | Config parsing |
+| `github.com/google/uuid` | latest | UUID generation |
 
 ## Frontend (Node.js)
 
-### Framework
+### Admin WebUI (`webui/admin/package.json`)
 | Package | Purpose |
 |---------|---------|
-| `next` | React framework (App Router) |
-| `react` | UI library |
-| `typescript` | Type safety |
-
-### UI
-| Package | Purpose |
-|---------|---------|
+| `next` (16+) | React framework (App Router) |
+| `react` (19) | UI library |
+| `typescript` (5.7) | Type safety |
 | `tailwindcss` | Styling |
-| `@radix-ui/*` | Headless components |
+| `@radix-ui/*` | Headless components (shadcn/ui) |
+| `@tanstack/react-query` (5.64) | Server state management |
+| `react-hook-form` + `zod` | Form handling + validation |
 | `lucide-react` | Icons |
 
-### State & Data
-| Package | Purpose |
-|---------|---------|
-| `@tanstack/react-query` | Server state |
-| `zustand` | Client state |
+### Customer WebUI (`webui/customer/package.json`)
 
-### Charts & Console
+Includes everything above, plus:
 | Package | Purpose |
 |---------|---------|
-| `uplot` | Fast charts |
-| `echarts` | Complex charts |
-| `@novnc/novnc` | VNC client |
-| `xterm` | Terminal emulator |
+| `recharts` (3.8) | Resource charts |
+| `@novnc/novnc` (1.5) | VNC console client |
+| `@xterm/xterm` (6.0) | Serial console terminal |
+| `@xterm/addon-fit` | Terminal auto-resize |
+
+**Note:** Neither UI uses Zustand. TanStack Query handles all server state.
 
 ## External Services
 
@@ -76,12 +76,13 @@
 | PostgreSQL 16+ | Primary database | `DATABASE_URL` |
 | NATS JetStream | Task queue | `NATS_URL` |
 | KVM/QEMU | Hypervisor | Node Agent binary |
-| Ceph RBD OR QCOW2 | Storage | `STORAGE_BACKEND` |
+| Ceph RBD, QCOW2, or LVM | Storage | `STORAGE_BACKEND` |
 
 ### Optional
 | Service | Purpose | Config |
 |---------|---------|--------|
-| PowerDNS | rDNS management | `PDNS_MYSQL_DSN` |
+| Redis | Distributed rate limiting (HA) | `REDIS_URL` |
+| PowerDNS | rDNS management | `PDNS_MYSQL_DSN` or `PDNS_API_URL` |
 | SMTP Server | Email notifications | `SMTP_*` |
 | Telegram Bot | Notifications | `TELEGRAM_BOT_TOKEN` |
 | WHMCS | Billing integration | `modules/servers/virtuestack/` |
@@ -99,9 +100,10 @@
 | Tool | Purpose |
 |------|---------|
 | `make` | Build automation |
-| `golangci-lint` | Go linting |
+| `golangci-lint` (v2.0.2) | Go linting (25 linters) |
 | `govulncheck` | Security scanning |
-| `npm` / `pnpm` | Frontend deps |
+| `npm` | Frontend deps (WebUIs) |
+| `pnpm` | E2E test deps |
 | `playwright` | E2E testing |
 
 ## Test Dependencies
@@ -111,7 +113,3 @@
 | `github.com/stretchr/testify` | Assertions |
 | `github.com/testcontainers/*` | Integration tests |
 | `@playwright/test` | E2E tests |
-
-## New Dependencies (Since Last Update)
-
-None - dependency versions remain stable from last codemap generation.
