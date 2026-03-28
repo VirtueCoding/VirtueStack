@@ -50,7 +50,7 @@ make test-race            # Unit tests with race detector
 make test-integration     # Docker/Testcontainers integration tests
 make test-native          # Node Agent tests (requires libvirt/Ceph dev headers)
 make test-coverage        # Generate HTML coverage report
-make lint                 # golangci-lint (24 linters, see .golangci.yml)
+make lint                 # golangci-lint (25 linters, see .golangci.yml)
 make vet                  # go vet (requires native libs for full scan)
 make vuln                 # govulncheck
 make proto                # Regenerate protobuf Go code
@@ -286,7 +286,7 @@ taskID, err := h.taskPublisher.PublishTask(ctx, "vm.create", map[string]any{
 })
 
 // Task handlers in internal/controller/tasks/
-// Registered in worker.go, executed by worker pool (5 workers)
+// Registered in worker.go, executed by worker pool (4 workers)
 ```
 
 ### Testing Patterns
@@ -325,11 +325,11 @@ type mockDB struct {
 
 ### Frontend Patterns
 
-- **State management:** TanStack Query (server state) + Zustand (client state)
+- **State management:** TanStack Query (server state)
 - **Forms:** react-hook-form + Zod validation
 - **UI components:** shadcn/ui (Radix primitives + Tailwind)
 - **API calls:** Centralized in `lib/api-client.ts`
-- **Charts:** uPlot + Apache ECharts
+- **Charts:** Recharts
 
 ## Key Conventions
 
