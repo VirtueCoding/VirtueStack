@@ -320,13 +320,13 @@
 
 **Priority:** 🟡 Medium | **Effort:** 0.5 day | **Dependencies:** None (CI-only)
 
-- [ ] Create `buf.yaml` in the repository root:
+- [x] Create `buf.yaml` in the repository root:
   ```yaml
   version: v2
   modules:
     - path: proto
   ```
-- [ ] Create `buf.gen.yaml`:
+- [x] Create `buf.gen.yaml`:
   ```yaml
   version: v2
   plugins:
@@ -337,7 +337,7 @@
       out: internal/shared/proto
       opt: paths=source_relative
   ```
-- [ ] Add `buf-breaking` step to `.github/workflows/ci.yml`:
+- [x] Add `buf-breaking` step to `.github/workflows/ci.yml`:
   ```yaml
   - name: Install buf
     uses: bufbuild/buf-setup-action@v1
@@ -346,8 +346,8 @@
     with:
       against: 'https://github.com/AbuGosok/VirtueStack.git#branch=main'
   ```
-- [ ] Test locally: `buf breaking --against .git#branch=main`
-- [ ] Document in `AGENTS.md` that `buf breaking` is now part of CI
+- [x] Test locally: `buf breaking --against .git#branch=main`
+- [x] Document in `AGENTS.md` that `buf breaking` is now part of CI
 
 ---
 

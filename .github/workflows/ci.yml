@@ -59,6 +59,14 @@ jobs:
           DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@localhost:5432/virtuestack_test?sslmode=disable
           NATS_URL: nats://localhost:4222
 
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Check proto breaking changes
+        uses: bufbuild/buf-breaking-action@v1
+        with:
+          against: 'https://github.com/AbuGosok/VirtueStack.git#branch=main'
+
   php-module-check:
     name: PHP Module Check
     runs-on: ubuntu-latest

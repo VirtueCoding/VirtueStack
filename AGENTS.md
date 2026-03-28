@@ -877,6 +877,7 @@ Required `.env` variables: `POSTGRES_PASSWORD`, `NATS_AUTH_TOKEN`, `JWT_SECRET`,
 ### ci.yml (push/PR to main)
 
 1. Go lint + test (with PostgreSQL 16 + NATS service containers)
+   - Includes buf proto breaking-change check against `main`
 2. PHP syntax validation
 3. Admin frontend: `npm ci` + lint + type-check + build
 4. Customer frontend: `npm ci` + lint + type-check + build
