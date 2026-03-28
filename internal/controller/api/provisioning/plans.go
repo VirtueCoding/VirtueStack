@@ -12,6 +12,17 @@ import (
 
 // GetPlan handles GET /plans/:id - returns plan details for WHMCS integration.
 // This endpoint is used by WHMCS to fetch plan resource specs for ChangePackage operations.
+// @Tags Provisioning
+// @Summary Get plan
+// @Description Returns plan details by plan ID.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "Plan ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/plans/{id} [get]
 func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 	planID := c.Param("id")
 
@@ -40,6 +51,15 @@ func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 
 // ListPlans handles GET /plans - returns all active plans for WHMCS integration.
 // This endpoint is used by WHMCS to list available plans for product configuration.
+// @Tags Provisioning
+// @Summary List plans
+// @Description Lists active plans available to provisioning clients.
+// @Produce json
+// @Security APIKeyAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/plans [get]
 func (h *ProvisioningHandler) ListPlans(c *gin.Context) {
 	plans, err := h.planService.ListActive(c.Request.Context())
 	if err != nil {

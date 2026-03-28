@@ -12,6 +12,17 @@ import (
 )
 
 // ListPlans handles GET /plans - lists all service plans.
+// @Tags Admin
+// @Summary List plans
+// @Description Performs administrative plan management operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/plans [get]
 func (h *AdminHandler) ListPlans(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -50,6 +61,19 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 }
 
 // CreatePlan handles POST /plans - creates a new service plan.
+// @Tags Admin
+// @Summary Create plan
+// @Description Performs administrative plan management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/plans [post]
 func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	var req models.PlanCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -92,6 +116,20 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 }
 
 // UpdatePlan handles PUT /plans/:id - updates an existing plan.
+// @Tags Admin
+// @Summary Update plan
+// @Description Performs administrative plan management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Plan ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/plans/{id} [put]
 func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
 	if !ok {
@@ -143,6 +181,18 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 
 // DeletePlan handles DELETE /plans/:id - deletes a plan.
 // Plans with existing VMs cannot be deleted (FK constraint).
+// @Tags Admin
+// @Summary Delete plan
+// @Description Performs administrative plan management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Plan ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/plans/{id} [delete]
 func (h *AdminHandler) DeletePlan(c *gin.Context) {
 	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
 	if !ok {
@@ -177,6 +227,18 @@ func (h *AdminHandler) DeletePlan(c *gin.Context) {
 }
 
 // GetPlanUsage handles GET /plans/:id/usage - returns VM count for a plan.
+// @Tags Admin
+// @Summary Get plan usage
+// @Description Performs administrative plan management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Plan ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/plans/{id}/usage [get]
 func (h *AdminHandler) GetPlanUsage(c *gin.Context) {
 	planID, ok := validateUUIDParam(c, "id", "INVALID_PLAN_ID", "Plan ID must be a valid UUID")
 	if !ok {

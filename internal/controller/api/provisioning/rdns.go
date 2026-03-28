@@ -20,6 +20,17 @@ type ProvisioningRDNSResponse struct {
 	RDNSHostname *string `json:"rdns_hostname,omitempty"`
 }
 
+// @Tags Provisioning
+// @Summary Get VM rDNS
+// @Description Lists reverse DNS records for VM IP addresses.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/rdns [get]
 func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 	vmID := c.Param("id")
 	correlationID := middleware.GetCorrelationID(c)
@@ -47,6 +58,20 @@ func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: result})
 }
 
+// @Tags Provisioning
+// @Summary Set VM rDNS
+// @Description Updates reverse DNS records for VM IP addresses.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Set rDNS request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/rdns [put]
 func (h *ProvisioningHandler) SetVMRDNS(c *gin.Context) {
 	vmID := c.Param("id")
 	ipID := c.Query("ip_id")

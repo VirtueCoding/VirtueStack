@@ -28,6 +28,18 @@ type TaskStatusResponse struct {
 // GetTaskStatus handles GET /tasks/:id - retrieves the status of an async task.
 // Enforces customer isolation by verifying the task's vm_id belongs to the
 // requesting customer. Tasks without a vm_id in the payload are not accessible.
+// @Tags Customer
+// @Summary Get task status
+// @Description Returns status for an async task owned by the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Task ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/tasks/{id} [get]
 func (h *CustomerHandler) GetTaskStatus(c *gin.Context) {
 	taskID := c.Param("id")
 	customerID := middleware.GetUserID(c)

@@ -22,6 +22,17 @@ type AdminBackupListFilter struct {
 }
 
 // ListBackups handles GET /backups - lists all backups across all customers.
+// @Tags Admin
+// @Summary List backups
+// @Description Lists backups across all customers with optional filters.
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page"
+// @Param per_page query int false "Items per page"
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/backups [get]
 func (h *AdminHandler) ListBackups(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -119,6 +130,18 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 
 // RestoreBackup handles POST /backups/:id/restore - restores a backup (admin override).
 // Admins can restore any backup regardless of ownership.
+// @Tags Admin
+// @Summary Restore backup
+// @Description Starts backup restore task for a backup ID.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Backup ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backups/{id}/restore [post]
 func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 	backupID := c.Param("id")
 

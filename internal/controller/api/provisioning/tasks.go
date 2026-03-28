@@ -11,6 +11,17 @@ import (
 )
 
 // GetTask handles GET /tasks/:id - retrieves the status of an async task.
+// @Tags Provisioning
+// @Summary Get task status
+// @Description Returns provisioning task status by task ID.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "Task ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/tasks/{id} [get]
 func (h *ProvisioningHandler) GetTask(c *gin.Context) {
 	taskID := c.Param("id")
 

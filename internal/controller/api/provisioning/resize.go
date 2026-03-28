@@ -14,6 +14,20 @@ import (
 // SECURITY: plan_id is REQUIRED. All resize operations must be validated against
 // a plan to ensure billing integrity. WHMCS is responsible for price-to-plan matching.
 // Arbitrary resource values are NOT accepted - they must come from a valid plan.
+// @Tags Provisioning
+// @Summary Resize VM
+// @Description Resizes VM compute and storage resources.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Resize VM request"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/resize [post]
 func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 	vmID := c.Param("id")
 

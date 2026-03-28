@@ -24,6 +24,17 @@ type VMUsageResponse struct {
 // GetVMUsage handles GET /vms/:id/usage.
 // It returns actual monthly bandwidth usage and the VM's provisioned disk size
 // for WHMCS billing integrations.
+// @Tags Provisioning
+// @Summary Get VM usage
+// @Description Returns VM resource usage statistics for billing synchronization.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/usage [get]
 func (h *ProvisioningHandler) GetVMUsage(c *gin.Context) {
 	vmID := c.Param("id")
 

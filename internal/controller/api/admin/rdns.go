@@ -24,6 +24,18 @@ type AdminRDNSResponse struct {
 }
 
 // GetIPRDNS handles GET /vms/:id/ips/:ipId/rdns - retrieves rDNS for an IP address.
+// @Tags Admin
+// @Summary Get IP rDNS
+// @Description Retrieves reverse DNS entry for a VM IP address.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id}/ips/{ipId}/rdns [get]
 func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -55,6 +67,21 @@ func (h *AdminHandler) GetIPRDNS(c *gin.Context) {
 }
 
 // UpdateIPRDNS handles PUT /vms/:id/ips/:ipId/rdns - updates rDNS for an IP address.
+// @Tags Admin
+// @Summary Update IP rDNS
+// @Description Updates reverse DNS entry for a VM IP address.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Param request body object true "rDNS update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id}/ips/{ipId}/rdns [put]
 func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -117,6 +144,18 @@ func (h *AdminHandler) UpdateIPRDNS(c *gin.Context) {
 }
 
 // DeleteIPRDNS handles DELETE /vms/:id/ips/:ipId/rdns - clears rDNS for an IP address.
+// @Tags Admin
+// @Summary Delete IP rDNS
+// @Description Removes reverse DNS entry for a VM IP address.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id}/ips/{ipId}/rdns [delete]
 func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 	ipID := c.Param("ipId")
 
@@ -162,6 +201,17 @@ func (h *AdminHandler) DeleteIPRDNS(c *gin.Context) {
 }
 
 // GetVMIPs handles GET /vms/:id/ips - lists all IP addresses for a VM.
+// @Tags Admin
+// @Summary List VM IPs
+// @Description Lists IPv4/IPv6 addresses assigned to a VM.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id}/ips [get]
 func (h *AdminHandler) GetVMIPs(c *gin.Context) {
 	vmID := c.Param("id")
 

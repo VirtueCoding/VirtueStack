@@ -16,6 +16,17 @@ import (
 )
 
 // ListProvisioningKeys handles GET /provisioning-keys.
+// @Tags Admin
+// @Summary List provisioning keys
+// @Description Manages provisioning API keys for external integrations.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/provisioning-keys [get]
 func (h *AdminHandler) ListProvisioningKeys(c *gin.Context) {
 	includeRevoked := c.Query("include_revoked") == "true"
 
@@ -33,6 +44,18 @@ func (h *AdminHandler) ListProvisioningKeys(c *gin.Context) {
 }
 
 // GetProvisioningKey handles GET /provisioning-keys/:id.
+// @Tags Admin
+// @Summary Get provisioning key
+// @Description Manages provisioning API keys for external integrations.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Provisioning key ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/provisioning-keys/{id} [get]
 func (h *AdminHandler) GetProvisioningKey(c *gin.Context) {
 	id, ok := validateUUIDParam(c, "id", "INVALID_KEY_ID", "Provisioning key ID must be a valid UUID")
 	if !ok {
@@ -56,6 +79,19 @@ func (h *AdminHandler) GetProvisioningKey(c *gin.Context) {
 }
 
 // CreateProvisioningKey handles POST /provisioning-keys.
+// @Tags Admin
+// @Summary Create provisioning key
+// @Description Manages provisioning API keys for external integrations.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/provisioning-keys [post]
 func (h *AdminHandler) CreateProvisioningKey(c *gin.Context) {
 	var req models.ProvisioningKeyCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -115,6 +151,20 @@ func (h *AdminHandler) CreateProvisioningKey(c *gin.Context) {
 }
 
 // UpdateProvisioningKey handles PUT /provisioning-keys/:id.
+// @Tags Admin
+// @Summary Update provisioning key
+// @Description Manages provisioning API keys for external integrations.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Provisioning key ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/provisioning-keys/{id} [put]
 func (h *AdminHandler) UpdateProvisioningKey(c *gin.Context) {
 	id, ok := validateUUIDParam(c, "id", "INVALID_KEY_ID", "Provisioning key ID must be a valid UUID")
 	if !ok {
@@ -153,6 +203,18 @@ func (h *AdminHandler) UpdateProvisioningKey(c *gin.Context) {
 }
 
 // RevokeProvisioningKey handles DELETE /provisioning-keys/:id.
+// @Tags Admin
+// @Summary Revoke provisioning key
+// @Description Manages provisioning API keys for external integrations.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Provisioning key ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/provisioning-keys/{id} [delete]
 func (h *AdminHandler) RevokeProvisioningKey(c *gin.Context) {
 	id, ok := validateUUIDParam(c, "id", "INVALID_KEY_ID", "Provisioning key ID must be a valid UUID")
 	if !ok {

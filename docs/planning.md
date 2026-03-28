@@ -217,7 +217,7 @@
 
 #### 3b. Annotate Admin API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/admin/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/admin/`:
   - `auth.go` — Login, Verify2FA, Refresh, Logout
   - `nodes.go` — CRUD + Drain/Undrain/Failover
   - `vms.go` — CRUD + Migrate
@@ -236,7 +236,7 @@
 
 #### 3c. Annotate Customer API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/customer/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/customer/`:
   - `auth.go`, `auth_password_reset.go` — Auth flows
   - `vms.go` — List, Get, Power operations
   - `backups.go`, `snapshots.go` — CRUD
@@ -250,7 +250,7 @@
 
 #### 3d. Annotate Provisioning API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/provisioning/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/provisioning/`:
   - `vms.go` — Create, Get, Delete, Suspend, Unsuspend, Resize, Password, Power, Status
   - `usage.go` — GetUsage
   - `tasks.go` — GetTask
@@ -273,12 +273,12 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1 day | **Dependencies:** None (parallel with #3)
 
-- [ ] Create `internal/controller/dependencies.go` — move `InitializeServices()` and all repository/service construction logic from `server.go`
-- [ ] Create `internal/controller/schedulers.go` — move `StartSchedulers()`, `startMetricsCollector()`, `startBandwidthCollector()`, `startSessionCleanup()`, `collectControllerMetrics()`, `collectBandwidth()` from `server.go`
-- [ ] Create `internal/controller/response.go` — move `healthHandler()`, `readinessHandler()`, and `requestLogger()` from `server.go`
-- [ ] Keep in `server.go`: `Server` struct definition, `NewServer()`, `Start()`, `Stop()`, `setupRoutes()`, `RegisterAPIRoutes()`, and setter methods
-- [ ] Verify all files are in `package controller` and all methods still reference the `Server` struct correctly
-- [ ] Run `make build-controller && make test-race` to confirm no regressions
+- [x] Create `internal/controller/dependencies.go` — move `InitializeServices()` and all repository/service construction logic from `server.go`
+- [x] Create `internal/controller/schedulers.go` — move `StartSchedulers()`, `startMetricsCollector()`, `startBandwidthCollector()`, `startSessionCleanup()`, `collectControllerMetrics()`, `collectBandwidth()` from `server.go`
+- [x] Create `internal/controller/response.go` — move `healthHandler()`, `readinessHandler()`, and `requestLogger()` from `server.go`
+- [x] Keep in `server.go`: `Server` struct definition, `NewServer()`, `Start()`, `Stop()`, `setupRoutes()`, `RegisterAPIRoutes()`, and setter methods
+- [x] Verify all files are in `package controller` and all methods still reference the `Server` struct correctly
+- [x] Run `make build-controller && make test-race` to confirm no regressions
 
 ---
 

@@ -34,6 +34,18 @@ type SnapshotResponse struct {
 
 // ListSnapshots handles GET /snapshots - lists all snapshots for the customer's VMs.
 // Supports pagination and filtering by VM ID.
+// @Tags Customer
+// @Summary List snapshots
+// @Description Performs snapshot operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/snapshots [get]
 func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -88,6 +100,20 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 // CreateSnapshot handles POST /snapshots - creates a snapshot for a VM.
 // Snapshots are quick point-in-time copies stored in Ceph RBD.
 // Quota enforcement is handled atomically in the service layer to prevent race conditions.
+// @Tags Customer
+// @Summary Create snapshot
+// @Description Performs snapshot operation for customer resources.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param request body object true "Create snapshot request"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/snapshots [post]
 func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -164,6 +190,19 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 
 // DeleteSnapshot handles DELETE /snapshots/:id - deletes a snapshot.
 // Returns 200 OK on success.
+// @Tags Customer
+// @Summary Delete snapshot
+// @Description Performs snapshot operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Snapshot ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/snapshots/{id} [delete]
 func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	snapshotID := c.Param("id")
@@ -223,6 +262,19 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 
 // RestoreSnapshot handles POST /snapshots/:id/restore - restores a VM from a snapshot.
 // This is an async operation. The VM may need to be stopped during restore.
+// @Tags Customer
+// @Summary Restore snapshot
+// @Description Performs snapshot operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Snapshot ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/snapshots/{id}/restore [post]
 func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	snapshotID := c.Param("id")

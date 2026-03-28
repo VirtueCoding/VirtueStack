@@ -13,6 +13,17 @@ import (
 
 // SuspendVM handles POST /vms/:id/suspend - suspends a VM for billing purposes.
 // This endpoint is called by WHMCS when a service is suspended (e.g., non-payment).
+// @Tags Provisioning
+// @Summary Suspend VM
+// @Description Suspends a VM for billing or policy reasons.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/suspend [post]
 func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 	vmID := c.Param("id")
 
@@ -64,6 +75,17 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 
 // UnsuspendVM handles POST /vms/:id/unsuspend - unsuspends a VM.
 // This endpoint is called by WHMCS when a service is reactivated (e.g., payment received).
+// @Tags Provisioning
+// @Summary Unsuspend VM
+// @Description Lifts VM suspension and restores normal operation.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/unsuspend [post]
 func (h *ProvisioningHandler) UnsuspendVM(c *gin.Context) {
 	vmID := c.Param("id")
 

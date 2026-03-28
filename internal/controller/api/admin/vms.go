@@ -40,6 +40,17 @@ type VMMigrateRequest struct {
 }
 
 // ListVMs handles GET /vms - lists all VMs across all customers.
+// @Tags Admin
+// @Summary List VMs
+// @Description Performs administrative VM management operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms [get]
 func (h *AdminHandler) ListVMs(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -96,6 +107,19 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 }
 
 // CreateVM handles POST /vms - creates a VM for any customer (admin override).
+// @Tags Admin
+// @Summary Create VM
+// @Description Performs administrative VM management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms [post]
 func (h *AdminHandler) CreateVM(c *gin.Context) {
 	var req AdminVMCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -153,6 +177,18 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 }
 
 // GetVM handles GET /vms/:id - retrieves details for any VM.
+// @Tags Admin
+// @Summary Get VM
+// @Description Performs administrative VM management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id} [get]
 func (h *AdminHandler) GetVM(c *gin.Context) {
 	vmID, ok := validateUUIDParam(c, "id", "INVALID_VM_ID", "VM ID must be a valid UUID")
 	if !ok {
@@ -179,6 +215,20 @@ func (h *AdminHandler) GetVM(c *gin.Context) {
 
 // UpdateVM handles PUT /vms/:id - updates VM configuration.
 // Admins can modify any VM's configuration.
+// @Tags Admin
+// @Summary Update VM
+// @Description Performs administrative VM management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id} [put]
 func (h *AdminHandler) UpdateVM(c *gin.Context) {
 	vmID, ok := validateUUIDParam(c, "id", "INVALID_VM_ID", "VM ID must be a valid UUID")
 	if !ok {
@@ -311,6 +361,18 @@ func (h *AdminHandler) handleVMResize(c *gin.Context, vmID string, vm *models.VM
 }
 
 // DeleteVM handles DELETE /vms/:id - deletes any VM.
+// @Tags Admin
+// @Summary Delete VM
+// @Description Performs administrative VM management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id} [delete]
 func (h *AdminHandler) DeleteVM(c *gin.Context) {
 	vmID, ok := validateUUIDParam(c, "id", "INVALID_VM_ID", "VM ID must be a valid UUID")
 	if !ok {
@@ -345,6 +407,20 @@ func (h *AdminHandler) DeleteVM(c *gin.Context) {
 }
 
 // MigrateVM handles POST /vms/:id/migrate - migrates a VM to another node.
+// @Tags Admin
+// @Summary Migrate VM
+// @Description Performs administrative VM management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/vms/{id}/migrate [post]
 func (h *AdminHandler) MigrateVM(c *gin.Context) {
 	vmID, ok := validateUUIDParam(c, "id", "INVALID_VM_ID", "VM ID must be a valid UUID")
 	if !ok {

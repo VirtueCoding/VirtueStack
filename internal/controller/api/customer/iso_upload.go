@@ -62,6 +62,21 @@ type isoUploadContext struct {
 }
 
 // UploadISO handles POST /vms/:id/iso/upload - multipart ISO upload.
+// @Tags Customer
+// @Summary Upload ISO
+// @Description Uploads an ISO image file for a customer VM.
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param file formData file true "ISO file"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/iso/upload [post]
 func (h *CustomerHandler) UploadISO(c *gin.Context) {
 	ctx, ok := h.validateISOUploadAccess(c)
 	if !ok {
@@ -411,6 +426,18 @@ func (h *CustomerHandler) writeChecksumSidecar(destPath, checksum, correlationID
 }
 
 // ListISOs handles GET /vms/:id/iso - lists uploaded ISOs for a VM.
+// @Tags Customer
+// @Summary List ISOs
+// @Description Lists ISO uploads for a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/iso [get]
 func (h *CustomerHandler) ListISOs(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -455,6 +482,19 @@ func (h *CustomerHandler) ListISOs(c *gin.Context) {
 }
 
 // DeleteISO handles DELETE /vms/:id/iso/:isoId - deletes an uploaded ISO.
+// @Tags Customer
+// @Summary Delete ISO
+// @Description Deletes an ISO upload from a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param isoId path string true "ISO ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/iso/{isoId} [delete]
 func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -529,6 +569,20 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 }
 
 // AttachISO handles POST /vms/:id/iso/:isoId/attach - attaches an ISO to a VM.
+// @Tags Customer
+// @Summary Attach ISO
+// @Description Attaches an uploaded ISO to a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param isoId path string true "ISO ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/iso/{isoId}/attach [post]
 func (h *CustomerHandler) AttachISO(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -605,6 +659,20 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 }
 
 // DetachISO handles POST /vms/:id/iso/:isoId/detach - detaches an ISO from a VM.
+// @Tags Customer
+// @Summary Detach ISO
+// @Description Detaches an ISO from a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param isoId path string true "ISO ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/iso/{isoId}/detach [post]
 func (h *CustomerHandler) DetachISO(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

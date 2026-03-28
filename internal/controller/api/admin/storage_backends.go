@@ -19,6 +19,17 @@ type StorageBackendNodeAssignmentRequest struct {
 }
 
 // ListStorageBackends handles GET /storage-backends - lists all storage backends with optional filtering.
+// @Tags Admin
+// @Summary List storage backends
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends [get]
 func (h *AdminHandler) ListStorageBackends(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -59,6 +70,19 @@ func (h *AdminHandler) ListStorageBackends(c *gin.Context) {
 }
 
 // CreateStorageBackend handles POST /storage-backends - creates a new storage backend.
+// @Tags Admin
+// @Summary Create storage backend
+// @Description Performs administrative storage backend operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends [post]
 func (h *AdminHandler) CreateStorageBackend(c *gin.Context) {
 	var req models.StorageBackendCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -147,6 +171,18 @@ func (h *AdminHandler) CreateStorageBackend(c *gin.Context) {
 }
 
 // GetStorageBackend handles GET /storage-backends/:id - retrieves details for a specific storage backend.
+// @Tags Admin
+// @Summary Get storage backend
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id} [get]
 func (h *AdminHandler) GetStorageBackend(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -172,6 +208,20 @@ func (h *AdminHandler) GetStorageBackend(c *gin.Context) {
 }
 
 // UpdateStorageBackend handles PUT /storage-backends/:id - updates an existing storage backend.
+// @Tags Admin
+// @Summary Update storage backend
+// @Description Performs administrative storage backend operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id} [put]
 func (h *AdminHandler) UpdateStorageBackend(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -267,6 +317,18 @@ func (h *AdminHandler) UpdateStorageBackend(c *gin.Context) {
 }
 
 // DeleteStorageBackend handles DELETE /storage-backends/:id - removes a storage backend.
+// @Tags Admin
+// @Summary Delete storage backend
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Success 204 {object} string
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id} [delete]
 func (h *AdminHandler) DeleteStorageBackend(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -325,6 +387,18 @@ func (h *AdminHandler) DeleteStorageBackend(c *gin.Context) {
 }
 
 // GetStorageBackendNodes handles GET /storage-backends/:id/nodes - lists nodes assigned to a storage backend.
+// @Tags Admin
+// @Summary Get storage backend nodes
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id}/nodes [get]
 func (h *AdminHandler) GetStorageBackendNodes(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -358,6 +432,20 @@ func (h *AdminHandler) GetStorageBackendNodes(c *gin.Context) {
 }
 
 // AssignStorageBackendNodes handles POST /storage-backends/:id/nodes - assigns nodes to a storage backend.
+// @Tags Admin
+// @Summary Assign storage backend nodes
+// @Description Performs administrative storage backend operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id}/nodes [post]
 func (h *AdminHandler) AssignStorageBackendNodes(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -426,6 +514,19 @@ func (h *AdminHandler) AssignStorageBackendNodes(c *gin.Context) {
 }
 
 // RemoveStorageBackendNode handles DELETE /storage-backends/:id/nodes/:nodeId - removes a node assignment.
+// @Tags Admin
+// @Summary Remove storage backend node
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Param nodeId path string true "Node ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id}/nodes/{nodeId} [delete]
 func (h *AdminHandler) RemoveStorageBackendNode(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -468,6 +569,18 @@ func (h *AdminHandler) RemoveStorageBackendNode(c *gin.Context) {
 }
 
 // GetStorageBackendHealth handles GET /storage-backends/:id/health - retrieves health metrics for a storage backend.
+// @Tags Admin
+// @Summary Get storage backend health
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id}/health [get]
 func (h *AdminHandler) GetStorageBackendHealth(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")
@@ -507,6 +620,18 @@ func (h *AdminHandler) GetStorageBackendHealth(c *gin.Context) {
 
 // RefreshStorageBackendHealth handles POST /storage-backends/:id/refresh - triggers a health check refresh.
 // This endpoint initiates an async health check via the node-agent.
+// @Tags Admin
+// @Summary Refresh storage backend health
+// @Description Performs administrative storage backend operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Storage backend ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/storage-backends/{id}/refresh [post]
 func (h *AdminHandler) RefreshStorageBackendHealth(c *gin.Context) {
 	backendID, ok := validateUUIDParam(c, "id", "INVALID_STORAGE_BACKEND_ID",
 		"Storage backend ID must be a valid UUID")

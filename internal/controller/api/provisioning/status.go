@@ -12,6 +12,17 @@ import (
 )
 
 // GetStatus handles GET /vms/:id/status - retrieves the current status of a VM.
+// @Tags Provisioning
+// @Summary Get VM status
+// @Description Returns status information for a provisioned VM.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/status [get]
 func (h *ProvisioningHandler) GetStatus(c *gin.Context) {
 	vmID := c.Param("id")
 
@@ -46,6 +57,17 @@ func buildVMStatusResponse(vm *models.VM) VMStatusResponse {
 
 // GetVMInfo handles GET /vms/:id - retrieves detailed VM information.
 // This endpoint provides complete VM details for WHMCS module integration.
+// @Tags Provisioning
+// @Summary Get VM info
+// @Description Returns detailed VM information for provisioning integration.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id} [get]
 func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 	vmID := c.Param("id")
 
@@ -70,6 +92,17 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 
 // GetVMByWHMCSServiceID handles GET /vms/by-service/:service_id - finds a VM by WHMCS service ID.
 // This endpoint is useful for WHMCS to lookup a VM by its service ID instead of UUID.
+// @Tags Provisioning
+// @Summary Get VM by service ID
+// @Description Returns VM by WHMCS service identifier.
+// @Produce json
+// @Security APIKeyAuth
+// @Param service_id path string true "WHMCS service ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/by-service/{service_id} [get]
 func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
 	serviceIDStr := c.Param("service_id")
 
@@ -106,6 +139,20 @@ type PowerOperationRequest struct {
 
 // PowerOperation handles POST /vms/:id/power - performs power operations on a VM.
 // Supported operations: start, stop, restart.
+// @Tags Provisioning
+// @Summary Execute VM power operation
+// @Description Executes start, stop, restart, or force-stop on a VM.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Power operation request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/power [post]
 func (h *ProvisioningHandler) PowerOperation(c *gin.Context) {
 	vmID := c.Param("id")
 

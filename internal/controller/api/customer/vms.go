@@ -12,6 +12,16 @@ import (
 
 // ListVMs handles GET /vms - lists all VMs owned by the authenticated customer.
 // Supports pagination via query parameters (page, per_page).
+// @Tags Customer
+// @Summary List VMs
+// @Description Lists VMs owned by the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms [get]
 func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -70,6 +80,18 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 
 // GetVM handles GET /vms/:id - retrieves details for a specific VM.
 // Enforces customer isolation - returns 404 if VM doesn't belong to customer.
+// @Tags Customer
+// @Summary Get VM
+// @Description Returns VM details for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id} [get]
 func (h *CustomerHandler) GetVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

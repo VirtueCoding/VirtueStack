@@ -33,6 +33,17 @@ type IPSetDetail struct {
 }
 
 // ListIPSets handles GET /ip-sets - lists all IP sets.
+// @Tags Admin
+// @Summary List IP sets
+// @Description Performs administrative IP set operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets [get]
 func (h *AdminHandler) ListIPSets(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -76,6 +87,19 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 }
 
 // CreateIPSet handles POST /ip-sets - creates a new IP set.
+// @Tags Admin
+// @Summary Create IP set
+// @Description Performs administrative IP set operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets [post]
 func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 	var req models.IPSetCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -126,6 +150,18 @@ func (h *AdminHandler) CreateIPSet(c *gin.Context) {
 }
 
 // GetIPSet handles GET /ip-sets/:id - retrieves details for a specific IP set.
+// @Tags Admin
+// @Summary Get IP set
+// @Description Performs administrative IP set operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "IP set ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets/{id} [get]
 func (h *AdminHandler) GetIPSet(c *gin.Context) {
 	ipSetID := c.Param("id")
 
@@ -177,6 +213,20 @@ func (h *AdminHandler) GetIPSet(c *gin.Context) {
 }
 
 // UpdateIPSet handles PUT /ip-sets/:id - updates an existing IP set.
+// @Tags Admin
+// @Summary Update IP set
+// @Description Performs administrative IP set operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "IP set ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets/{id} [put]
 func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 	ipSetID := c.Param("id")
 
@@ -247,6 +297,18 @@ func (h *AdminHandler) UpdateIPSet(c *gin.Context) {
 
 // DeleteIPSet handles DELETE /ip-sets/:id - deletes an IP set.
 // IP sets with assigned IPs cannot be deleted.
+// @Tags Admin
+// @Summary Delete IP set
+// @Description Performs administrative IP set operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "IP set ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets/{id} [delete]
 func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 	ipSetID := c.Param("id")
 
@@ -289,6 +351,18 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 }
 
 // ListAvailableIPs handles GET /ip-sets/:id/available - lists available IPs in an IP set.
+// @Tags Admin
+// @Summary List available IPs
+// @Description Performs administrative IP set operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "IP set ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/ip-sets/{id}/available [get]
 func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 	ipSetID := c.Param("id")
 

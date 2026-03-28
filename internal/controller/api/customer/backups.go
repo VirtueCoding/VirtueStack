@@ -24,6 +24,18 @@ type CreateBackupRequest struct {
 
 // ListBackups handles GET /backups - lists all backups for the customer's VMs.
 // Supports pagination and filtering by VM ID or status.
+// @Tags Customer
+// @Summary List backups
+// @Description Performs backup operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/backups [get]
 func (h *CustomerHandler) ListBackups(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -102,6 +114,20 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 // CreateBackup handles POST /backups - creates a backup for a VM.
 // This is an async operation. Returns 202 Accepted with a task_id.
 // Quota enforcement is handled atomically in the service layer to prevent race conditions.
+// @Tags Customer
+// @Summary Create backup
+// @Description Performs backup operation for customer resources.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param request body object true "Create backup request"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/backups [post]
 func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -173,6 +199,19 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 
 // GetBackup handles GET /backups/:id - retrieves details for a specific backup.
 // Enforces customer isolation.
+// @Tags Customer
+// @Summary Get backup
+// @Description Performs backup operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Backup ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/backups/{id} [get]
 func (h *CustomerHandler) GetBackup(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	backupID := c.Param("id")
@@ -210,6 +249,19 @@ func (h *CustomerHandler) GetBackup(c *gin.Context) {
 
 // DeleteBackup handles DELETE /backups/:id - deletes a backup.
 // Returns 200 OK on success.
+// @Tags Customer
+// @Summary Delete backup
+// @Description Performs backup operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Backup ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/backups/{id} [delete]
 func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	backupID := c.Param("id")
@@ -263,6 +315,19 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 
 // RestoreBackup handles POST /backups/:id/restore - restores a VM from a backup.
 // This is an async operation. The VM will be stopped during restore.
+// @Tags Customer
+// @Summary Restore backup
+// @Description Performs backup operation for customer resources.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "Backup ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/backups/{id}/restore [post]
 func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	backupID := c.Param("id")

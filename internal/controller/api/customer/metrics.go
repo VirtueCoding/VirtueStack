@@ -27,6 +27,18 @@ type NetworkPoint struct {
 
 // GetMetrics handles GET /vms/:id/metrics - retrieves real-time VM metrics.
 // Returns CPU usage, memory usage, disk I/O, and network I/O statistics.
+// @Tags Customer
+// @Summary Get VM metrics
+// @Description Returns VM monitoring data for customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/metrics [get]
 func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -60,6 +72,18 @@ func (h *CustomerHandler) GetMetrics(c *gin.Context) {
 
 // GetBandwidth handles GET /vms/:id/bandwidth - retrieves bandwidth usage for the current billing period.
 // Shows used bandwidth, limit, and when the counter resets.
+// @Tags Customer
+// @Summary Get bandwidth usage
+// @Description Returns VM monitoring data for customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/bandwidth [get]
 func (h *CustomerHandler) GetBandwidth(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -110,6 +134,18 @@ func (h *CustomerHandler) GetBandwidth(c *gin.Context) {
 
 // GetNetworkHistory handles GET /vms/:id/network - retrieves network traffic history.
 // Supports query parameters for period selection (hour, day, week, month).
+// @Tags Customer
+// @Summary Get network history
+// @Description Returns VM monitoring data for customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/network [get]
 func (h *CustomerHandler) GetNetworkHistory(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

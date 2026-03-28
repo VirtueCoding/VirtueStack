@@ -175,6 +175,17 @@ func (h *CustomerHandler) getNodeConnection(ctx context.Context, nodeID string) 
 	return conn, nil
 }
 
+// @Tags Customer
+// @Summary Open VNC websocket
+// @Description Upgrades connection to a VNC websocket stream for a customer VM console.
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param vmId path string true "VM ID"
+// @Success 101 {string} string "Switching Protocols"
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/ws/vnc/{vmId} [get]
 func (h *CustomerHandler) HandleVNCWebSocket(c *gin.Context) {
 	h.handleConsoleWebSocket(c, consoleTypeVNC)
 }

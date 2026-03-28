@@ -36,6 +36,19 @@ type CustomerCreateRequest struct {
 }
 
 // CreateCustomer handles POST /customers - creates a new customer.
+// @Tags Admin
+// @Summary Create customer
+// @Description Performs administrative customer account operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers [post]
 func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 	var req CustomerCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -107,6 +120,17 @@ func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 }
 
 // ListCustomers handles GET /customers - lists all customers.
+// @Tags Admin
+// @Summary List customers
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers [get]
 func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -151,6 +175,18 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 }
 
 // GetCustomer handles GET /customers/:id - retrieves details for a specific customer.
+// @Tags Admin
+// @Summary Get customer
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [get]
 func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -216,6 +252,20 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 }
 
 // UpdateCustomer handles PUT /customers/:id - updates a customer's information.
+// @Tags Admin
+// @Summary Update customer
+// @Description Performs administrative customer account operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [put]
 func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -305,6 +355,18 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 }
 
 // DeleteCustomer handles DELETE /customers/:id - soft deletes a customer.
+// @Tags Admin
+// @Summary Delete customer
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [delete]
 func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -353,6 +415,18 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 }
 
 // GetCustomerAuditLogs handles GET /customers/:id/audit-logs - retrieves audit trail for a customer.
+// @Tags Admin
+// @Summary Get customer audit logs
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id}/audit-logs [get]
 func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 	customerID := c.Param("id")
 

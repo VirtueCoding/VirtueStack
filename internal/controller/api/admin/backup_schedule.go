@@ -29,6 +29,19 @@ type BackupScheduleUpdateRequest struct {
 }
 
 // CreateBackupSchedule handles POST /backup-schedules - creates a new backup schedule.
+// @Tags Admin
+// @Summary Create backup schedule
+// @Description Manages VM backup schedules from the admin API.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backup-schedules [post]
 func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 	var req BackupScheduleCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -74,6 +87,17 @@ func (h *AdminHandler) CreateBackupSchedule(c *gin.Context) {
 }
 
 // ListBackupSchedules handles GET /backup-schedules - lists all backup schedules.
+// @Tags Admin
+// @Summary List backup schedules
+// @Description Manages VM backup schedules from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backup-schedules [get]
 func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 	vmID := c.Query("vm_id")
 
@@ -103,6 +127,18 @@ func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 }
 
 // GetBackupSchedule handles GET /backup-schedules/:id - gets a backup schedule by ID.
+// @Tags Admin
+// @Summary Get backup schedule
+// @Description Manages VM backup schedules from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Backup schedule ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backup-schedules/{id} [get]
 func (h *AdminHandler) GetBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 
@@ -129,6 +165,20 @@ func (h *AdminHandler) GetBackupSchedule(c *gin.Context) {
 }
 
 // UpdateBackupSchedule handles PUT /backup-schedules/:id - updates a backup schedule.
+// @Tags Admin
+// @Summary Update backup schedule
+// @Description Manages VM backup schedules from the admin API.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Backup schedule ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backup-schedules/{id} [put]
 func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 
@@ -199,6 +249,18 @@ func (h *AdminHandler) UpdateBackupSchedule(c *gin.Context) {
 }
 
 // DeleteBackupSchedule handles DELETE /backup-schedules/:id - deletes a backup schedule.
+// @Tags Admin
+// @Summary Delete backup schedule
+// @Description Manages VM backup schedules from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Backup schedule ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backup-schedules/{id} [delete]
 func (h *AdminHandler) DeleteBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 

@@ -25,6 +25,16 @@ type ResetPasswordRequest struct {
 // ForgotPassword handles POST /auth/forgot-password - initiates a password reset.
 // Returns 200 OK for valid requests regardless of whether the email exists (anti-enumeration).
 // Internal errors are logged but return the same generic success response.
+// @Tags Customer
+// @Summary Request password reset
+// @Description Starts password reset flow and sends reset email when account exists.
+// @Accept json
+// @Produce json
+// @Param request body object true "Forgot password request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 429 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/forgot-password [post]
 func (h *CustomerHandler) ForgotPassword(c *gin.Context) {
 	var req ForgotPasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -97,6 +107,16 @@ func (h *CustomerHandler) buildPasswordResetURL(token string) string {
 }
 
 // ResetPassword handles POST /auth/reset-password - resets the password using a token.
+// @Tags Customer
+// @Summary Reset password
+// @Description Resets customer password using a valid reset token.
+// @Accept json
+// @Produce json
+// @Param request body object true "Reset password request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 429 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/reset-password [post]
 func (h *CustomerHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
