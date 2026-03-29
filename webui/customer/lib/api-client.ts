@@ -385,11 +385,17 @@ export const taskApi = {
 };
 
 export const backupApi = {
-  async listBackups(vmId?: string, method?: "full" | "snapshot"): Promise<Backup[]> {
-    const params = new URLSearchParams();
-    if (vmId) params.set("vm_id", vmId);
-    if (method) params.set("method", method);
-    const query = params.toString();
+  async listBackups(vmId?: string, method?: "full" | "snapshot", params?: { page?: number; per_page?: number; cursor?: string }): Promise<Backup[]> {
+    const searchParams = new URLSearchParams();
+    if (vmId) searchParams.set("vm_id", vmId);
+    if (method) searchParams.set("method", method);
+    if (params?.cursor) {
+      searchParams.set("cursor", params.cursor);
+    } else if (params?.page !== undefined) {
+      searchParams.set("page", String(params.page));
+    }
+    if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    const query = searchParams.toString();
     return apiClient.get<Backup[]>(`/customer/backups${query ? `?${query}` : ""}`);
   },
 
@@ -430,9 +436,17 @@ export const backupApi = {
 };
 
 export const snapshotApi = {
-  async listSnapshots(vmId?: string): Promise<Snapshot[]> {
-    const params = vmId ? `?vm_id=${vmId}` : "";
-    return apiClient.get<Snapshot[]>(`/customer/snapshots${params}`);
+  async listSnapshots(vmId?: string, params?: { page?: number; per_page?: number; cursor?: string }): Promise<Snapshot[]> {
+    const searchParams = new URLSearchParams();
+    if (vmId) searchParams.set("vm_id", vmId);
+    if (params?.cursor) {
+      searchParams.set("cursor", params.cursor);
+    } else if (params?.page !== undefined) {
+      searchParams.set("page", String(params.page));
+    }
+    if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    const query = searchParams.toString();
+    return apiClient.get<Snapshot[]>(`/customer/snapshots${query ? `?${query}` : ""}`);
   },
 
   async createSnapshot(request: CreateSnapshotRequest): Promise<CreateSnapshotResponse> {

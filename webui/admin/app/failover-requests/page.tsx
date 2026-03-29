@@ -288,13 +288,13 @@ export default function FailoverRequestsPage() {
 
             <div className="flex items-center justify-between gap-4">
               <p className="text-sm text-muted-foreground">
-                {meta ? `Page ${meta.page} of ${meta.total_pages} • ${meta.total} total request${meta.total === 1 ? "" : "s"}` : ""}
+                {meta ? `Page ${meta.page ?? 1} of ${meta.total_pages ?? 1} • ${meta.total ?? 0} total request${(meta.total ?? 0) === 1 ? "" : "s"}` : ""}
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={!meta || meta.page <= 1}>
+                <Button variant="outline" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={!meta || (meta.page ?? 1) <= 1}>
                   Previous
                 </Button>
-                <Button variant="outline" onClick={() => setPage((current) => current + 1)} disabled={!meta || meta.page >= meta.total_pages}>
+                <Button variant="outline" onClick={() => setPage((current) => current + 1)} disabled={!meta || (meta.page ?? 1) >= (meta.total_pages ?? 1)}>
                   Next
                 </Button>
               </div>

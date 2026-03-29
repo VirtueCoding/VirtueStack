@@ -302,8 +302,13 @@ export interface UpdateNodeRequest {
 }
 
 export const adminNodesApi = {
-  async getNodes(): Promise<PaginatedResponse<Node>> {
-    return apiClient.get<PaginatedResponse<Node>>("/admin/nodes");
+  async getNodes(params: { page?: number; per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<Node>> {
+    const searchParams = new URLSearchParams();
+    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<Node>>(`/admin/nodes${query ? `?${query}` : ""}`);
   },
 
   async getNode(id: string): Promise<NodeDetail> {
@@ -357,8 +362,15 @@ export interface UpdateCustomerRequest {
 }
 
 export const adminCustomersApi = {
-  async getCustomers(): Promise<PaginatedResponse<Customer>> {
-    return apiClient.get<PaginatedResponse<Customer>>("/admin/customers");
+  async getCustomers(params: { page?: number; per_page?: number; cursor?: string; status?: string; search?: string } = {}): Promise<PaginatedResponse<Customer>> {
+    const searchParams = new URLSearchParams();
+    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    if (params.status) searchParams.set("status", params.status);
+    if (params.search) searchParams.set("search", params.search);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<Customer>>(`/admin/customers${query ? `?${query}` : ""}`);
   },
 
   async getCustomer(id: string): Promise<Customer> {
@@ -493,11 +505,14 @@ export interface AuditLog {
 }
 
 export const adminAuditLogsApi = {
-  async getAuditLogs(page = 1, perPage = 20, search?: string): Promise<PaginatedResponse<AuditLog>> {
-    const searchParams = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
+  async getAuditLogs(page = 1, perPage = 20, search?: string, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams();
+    if (cursor) {
+      searchParams.set("cursor", cursor);
+    } else {
+      searchParams.set("page", String(page));
+    }
+    searchParams.set("per_page", String(perPage));
     if (search) searchParams.set("search", search);
     return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/audit-logs?${searchParams.toString()}`);
   },
@@ -759,6 +774,7 @@ export interface AdminBackup {
 export interface AdminBackupListParams {
   page?: number;
   per_page?: number;
+  cursor?: string;
   customer_id?: string;
   vm_id?: string;
   status?: string;
@@ -769,10 +785,10 @@ export interface AdminBackupListParams {
 export interface PaginatedResponse<T> {
   data: T[];
   meta: {
-    page: number;
+    page?: number;
     per_page: number;
-    total: number;
-    total_pages: number;
+    total?: number;
+    total_pages?: number;
     has_more?: boolean;
     next_cursor?: string;
     prev_cursor?: string;
@@ -782,7 +798,11 @@ export interface PaginatedResponse<T> {
 export const adminBackupsApi = {
   async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    } else if (params.page !== undefined) {
+      searchParams.set("page", String(params.page));
+    }
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.customer_id) searchParams.set("customer_id", params.customer_id);
     if (params.vm_id) searchParams.set("vm_id", params.vm_id);
@@ -844,9 +864,13 @@ export interface UpdateAdminBackupScheduleRequest {
 }
 
 export const adminBackupSchedulesApi = {
-  async getSchedules(params: { page?: number; per_page?: number; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
+  async getSchedules(params: { page?: number; per_page?: number; cursor?: string; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
     const searchParams = new URLSearchParams();
-    if (params.page) searchParams.set("page", String(params.page));
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    } else if (params.page) {
+      searchParams.set("page", String(params.page));
+    }
     if (params.per_page) searchParams.set("per_page", String(params.per_page));
     if (params.active !== undefined) searchParams.set("active", String(params.active));
 

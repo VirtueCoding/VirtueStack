@@ -64,9 +64,9 @@ export default function DashboardPage() {
       const logs = logsResult.data || [];
 
       setStats({
-        totalVMs: vmsResult.meta.total,
-        totalNodes: nodesResult.meta.total,
-        totalCustomers: customersResult.meta.total,
+        totalVMs: vmsResult.meta.total ?? 0,
+        totalNodes: nodesResult.meta.total ?? 0,
+        totalCustomers: customersResult.meta.total ?? 0,
       });
 
       const mappedActivities: ActivityItem[] = (logs as AuditLog[]).slice(0, 6).map((log) => {
