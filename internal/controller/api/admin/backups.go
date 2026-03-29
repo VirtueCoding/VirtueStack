@@ -123,6 +123,22 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
+	if pagination.IsCursorBased() {
+		hasMore := len(backups) > pagination.PerPage
+		if hasMore {
+			backups = backups[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(backups) > 0 {
+			lastID = backups[len(backups)-1].ID
+		}
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: backups,
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+		})
+		return
+	}
+
 	common.RespondWithPaginatedList(c, backups, int(total), pagination.Page, pagination.PerPage)
 }
 

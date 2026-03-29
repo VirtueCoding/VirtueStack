@@ -168,6 +168,22 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 		return
 	}
 
+	if pagination.IsCursorBased() {
+		hasMore := len(customers) > pagination.PerPage
+		if hasMore {
+			customers = customers[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(customers) > 0 {
+			lastID = customers[len(customers)-1].ID
+		}
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: customers,
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: customers,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),

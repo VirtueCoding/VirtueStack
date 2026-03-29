@@ -5,6 +5,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -38,6 +39,22 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "AUDIT_LOG_LIST_FAILED", "Failed to retrieve audit logs")
+		return
+	}
+
+	if pagination.IsCursorBased() {
+		hasMore := len(logs) > pagination.PerPage
+		if hasMore {
+			logs = logs[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(logs) > 0 {
+			lastID = logs[len(logs)-1].ID
+		}
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: logs,
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+		})
 		return
 	}
 

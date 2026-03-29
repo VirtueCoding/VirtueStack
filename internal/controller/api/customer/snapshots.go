@@ -91,6 +91,22 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		return
 	}
 
+	if pagination.IsCursorBased() {
+		hasMore := len(snapshots) > pagination.PerPage
+		if hasMore {
+			snapshots = snapshots[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(snapshots) > 0 {
+			lastID = snapshots[len(snapshots)-1].ID
+		}
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: snapshots,
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: snapshots,
 		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
