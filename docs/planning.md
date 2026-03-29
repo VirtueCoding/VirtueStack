@@ -822,7 +822,7 @@
   3. `tests/load/k6-power-operations.js` — Power operations (start/stop/restart) under concurrent load
   4. `tests/load/k6-admin-listing.js` — Admin VM/customer listing with filters and pagination
   5. `tests/load/k6-task-throughput.js` — Task creation and processing throughput measurement
-- [ ] Add k6 thresholds for each test:
+- [x] Add k6 thresholds for each test:
   ```javascript
   export const options = {
       thresholds: {
@@ -831,8 +831,8 @@
       },
   };
   ```
-- [ ] Add `make load-test` target in `Makefile` to run all k6 scripts
-- [ ] Document load testing setup in `tests/load/README.md`
+- [x] Add `make load-test` target in `Makefile` to run all k6 scripts
+- [x] Document load testing setup in `tests/load/README.md`
 
 ---
 

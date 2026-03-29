@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race migrate-up migrate-down certs clean help backup-db
+.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race load-test migrate-up migrate-down certs clean help backup-db
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -85,6 +85,13 @@ test-all: test test-integration test-native
 ## test-race: Run non-native tests with race detector
 test-race:
 	$(GOTEST) -race -count=1 $(TEST_PACKAGES)
+
+## load-test: Run all k6 load scripts in tests/load
+load-test:
+	k6 run tests/load/k6-vm-operations.js
+	k6 run tests/load/k6-provisioning-create.js
+	k6 run tests/load/k6-customer-list.js
+	k6 run tests/load/k6-power-operations.js
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
