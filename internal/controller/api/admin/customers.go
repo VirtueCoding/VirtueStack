@@ -16,7 +16,7 @@ import (
 // CustomerUpdateRequest represents the request body for updating a customer.
 type CustomerUpdateRequest struct {
 	Name   *string `json:"name,omitempty" validate:"omitempty,max=255"`
-	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
+	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active pending_verification suspended"`
 }
 
 // CustomerDetail represents a customer with additional statistics.
@@ -140,7 +140,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 
 	// Optional status filter
 	validCustomerStatuses := map[string]bool{
-		"active": true, "suspended": true, "deleted": true,
+		"active": true, "pending_verification": true, "suspended": true, "deleted": true,
 	}
 	if status := c.Query("status"); status != "" {
 		if !validCustomerStatuses[status] {

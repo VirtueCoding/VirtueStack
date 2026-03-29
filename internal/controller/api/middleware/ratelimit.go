@@ -428,6 +428,16 @@ func PasswordResetRateLimit() gin.HandlerFunc {
 	}
 }
 
+// RegistrationRateLimit limits self-registration attempts to 3 per hour per IP.
+// Endpoint: POST /customer/auth/register
+func RegistrationRateLimit() gin.HandlerFunc {
+	return selectedRateLimit(RateLimitConfig{
+		Requests: 3,
+		Window:   time.Hour,
+		KeyFunc:  keyByIP,
+	}, "ratelimit:registration:ip:")
+}
+
 func passwordResetEmailKey(c *gin.Context) string {
 	body, err := c.GetRawData()
 	if err != nil {

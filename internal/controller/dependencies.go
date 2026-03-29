@@ -241,6 +241,7 @@ func (s *Server) InitializeServices() error {
 		EncryptionKey:   s.config.EncryptionKey.Value(),
 		ConsoleBaseURL:  s.config.ConsoleBaseURL,
 		ISOStoragePath:  isoStoragePath,
+		RegistrationEmailVerification: s.config.RegistrationEmailVerification,
 		Logger:          s.logger,
 	})
 

@@ -731,20 +731,20 @@
 
 #### 20b. Registration Endpoint
 
-- [ ] Create `internal/controller/api/customer/registration.go`:
+- [x] Create `internal/controller/api/customer/registration.go`:
   - `POST /auth/register` — accepts email, password, name, phone
   - Validate input (email format, password strength)
   - Check if email already exists → return appropriate error
   - Create customer with `status = "pending_verification"` if email verification enabled
   - Send verification email with token
   - Return 201 Created
-- [ ] Add email verification endpoint:
+- [x] Add email verification endpoint:
   - `POST /auth/verify-email` — accepts token, activates customer account
-- [ ] Add rate limiting: 3 registrations/hour per IP
+- [x] Add rate limiting: 3 registrations/hour per IP
 
 #### 20c. Migration
 
-- [ ] Create migration for `email_verification_tokens` table:
+- [x] Create migration for `email_verification_tokens` table:
   ```sql
   CREATE TABLE email_verification_tokens (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -757,15 +757,15 @@
 
 #### 20d. Conditional Route Registration
 
-- [ ] In `internal/controller/api/customer/routes.go`, conditionally register the route:
+- [x] In `internal/controller/api/customer/routes.go`, conditionally register the route:
   ```go
   if cfg.AllowSelfRegistration {
       auth.POST("/register", handler.Register)
       auth.POST("/verify-email", handler.VerifyEmail)
   }
   ```
-- [ ] Add tests for both enabled and disabled states
-- [ ] Run `make build-controller && make test-race`
+- [x] Add tests for both enabled and disabled states
+- [x] Run `make build-controller && make test-race`
 
 ---
 

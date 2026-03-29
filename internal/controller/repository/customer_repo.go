@@ -187,6 +187,47 @@ func (r *CustomerRepository) UpdateWHMCSClientID(ctx context.Context, id string,
 	return nil
 }
 
+// CreateEmailVerificationToken inserts a new email verification token row.
+func (r *CustomerRepository) CreateEmailVerificationToken(ctx context.Context, token *models.EmailVerificationToken) error {
+	const q = `
+		INSERT INTO email_verification_tokens (customer_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at`
+	if err := r.db.QueryRow(ctx, q, token.CustomerID, token.TokenHash, token.ExpiresAt).Scan(&token.ID, &token.CreatedAt); err != nil {
+		return fmt.Errorf("creating email verification token: %w", err)
+	}
+	return nil
+}
+
+// GetEmailVerificationTokenByHash returns a verification token by its hash.
+func (r *CustomerRepository) GetEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*models.EmailVerificationToken, error) {
+	const q = `
+		SELECT id, customer_id, token_hash, expires_at, created_at
+		FROM email_verification_tokens
+		WHERE token_hash = $1`
+	var t models.EmailVerificationToken
+	if err := r.db.QueryRow(ctx, q, tokenHash).Scan(&t.ID, &t.CustomerID, &t.TokenHash, &t.ExpiresAt, &t.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("getting email verification token: %w", sharederrors.ErrNotFound)
+		}
+		return nil, fmt.Errorf("getting email verification token: %w", err)
+	}
+	return &t, nil
+}
+
+// DeleteEmailVerificationTokenByID deletes a verification token row after successful use.
+func (r *CustomerRepository) DeleteEmailVerificationTokenByID(ctx context.Context, id string) error {
+	const q = `DELETE FROM email_verification_tokens WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("deleting email verification token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("deleting email verification token: %w", ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // SoftDelete marks a customer as deleted by setting status to "deleted".
 func (r *CustomerRepository) SoftDelete(ctx context.Context, id string) error {
 	const q = `UPDATE customers SET status = 'deleted', updated_at = NOW() WHERE id = $1 AND status != 'deleted'`

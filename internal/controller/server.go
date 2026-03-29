@@ -208,7 +208,13 @@ func (s *Server) RegisterAPIRoutes() {
 
 	provisioning.RegisterProvisioningRoutes(v1, s.provisioningHandler, s.GetProvisioningKeyRepo(), auditRepo)
 
-	customer.RegisterCustomerRoutes(v1, s.customerHandler, s.notifyHandler, s.customerAPIKeyRepo)
+	customer.RegisterCustomerRoutes(
+		v1,
+		s.customerHandler,
+		s.notifyHandler,
+		s.customerAPIKeyRepo,
+		s.config.AllowSelfRegistration,
+	)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)
 

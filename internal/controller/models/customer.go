@@ -5,9 +5,10 @@ import "time"
 
 // Customer status constants define the account states of a customer.
 const (
-	CustomerStatusActive    = "active"
-	CustomerStatusSuspended = "suspended"
-	CustomerStatusDeleted   = "deleted"
+	CustomerStatusActive              = "active"
+	CustomerStatusPendingVerification = "pending_verification"
+	CustomerStatusSuspended           = "suspended"
+	CustomerStatusDeleted             = "deleted"
 )
 
 // Customer represents a customer account as stored in the database.
