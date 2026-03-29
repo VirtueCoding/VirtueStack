@@ -840,7 +840,7 @@
 
 ### Documentation Updates
 
-- [ ] After completing Phase 1, update `AGENTS.md` §8 (VM Lifecycle) to document the state machine and valid transitions
+- [x] After completing Phase 1, update `AGENTS.md` §8 (VM Lifecycle) to document the state machine and valid transitions
 - [ ] After completing Gap #3 (OpenAPI), update `AGENTS.md` §5 to reference the generated spec
 - [ ] After completing Gap #11 (system webhooks), update `AGENTS.md` §5 to document system webhook endpoints
 - [ ] After each god-file split (#6, #7, #13), update `AGENTS.md` §2 (Repository Structure) with new file listings

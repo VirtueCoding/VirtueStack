@@ -598,6 +598,26 @@ Enforced on Customer API only. Admin/Provisioning APIs are exempt.
 
 `provisioning`, `running`, `stopped`, `suspended`, `migrating`, `reinstalling`, `error`, `deleted`
 
+### 8.1.1 VM State Transition Rules
+
+State transitions are enforced by:
+- `models.ValidateVMTransition(from, to)` in `internal/controller/models/vm.go`
+- `VMRepository.TransitionStatus(ctx, vmID, fromStatus, toStatus)` in `internal/controller/repository/vm_repo.go`
+
+Allowed transitions:
+
+| From | To |
+|------|----|
+| `provisioning` | `running`, `error` |
+| `running` | `stopped`, `suspended`, `migrating`, `reinstalling`, `error` |
+| `stopped` | `running`, `deleted`, `reinstalling`, `migrating`, `error` |
+| `suspended` | `running`, `stopped`, `deleted` |
+| `migrating` | `running`, `error` |
+| `reinstalling` | `running`, `error` |
+| `error` | `stopped`, `deleted` |
+
+`deleted` is terminal (no outbound transitions).
+
 ### 8.2 gRPC Service (38 RPCs)
 
 **File:** `proto/virtuestack/node_agent.proto` (972 lines)
