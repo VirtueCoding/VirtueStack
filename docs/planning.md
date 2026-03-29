@@ -777,7 +777,7 @@
 
 #### 22a. VM Service Tests
 
-- [ ] Create `internal/controller/services/vm_service_test.go` with table-driven tests:
+- [x] Create `internal/controller/services/vm_service_test.go` with table-driven tests:
   - Node selection with no available nodes → returns appropriate error
   - Node selection with all nodes at capacity → returns appropriate error
   - CreateVM with invalid plan ID → returns validation error
@@ -806,7 +806,7 @@
   - Metrics cache miss → makes gRPC call and caches result
   - Node not found → returns not found error
 
-- [ ] Run `make test-race` after each test file
+- [x] Run `make test-race` after each test file
 
 ---
 
