@@ -799,7 +799,7 @@
 
 #### 22c. Node Agent Client Tests
 
-- [ ] Create `internal/controller/services/node_agent_client_test.go`:
+- [x] Create `internal/controller/services/node_agent_client_test.go`:
   - gRPC connection failure → returns appropriate error
   - gRPC timeout → returns appropriate error with context deadline exceeded
   - Metrics cache hit → returns cached data without gRPC call
