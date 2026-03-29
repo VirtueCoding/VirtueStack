@@ -789,7 +789,7 @@
 
 #### 22b. Backup Service Tests
 
-- [ ] Create `internal/controller/services/backup_service_test.go`:
+- [x] Create `internal/controller/services/backup_service_test.go`:
   - CreateBackup with quota exceeded → returns limit error
   - CreateBackup with VM not found → returns not found error
   - RestoreBackup with backup not found → returns not found error

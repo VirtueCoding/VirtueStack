@@ -24,6 +24,7 @@ type fakeDB struct {
 	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
 	queryFunc    func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	execFunc     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	beginFunc    func(ctx context.Context) (pgx.Tx, error)
 }
 
 func (f *fakeDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
@@ -48,6 +49,9 @@ func (f *fakeDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.Comm
 }
 
 func (f *fakeDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	if f.beginFunc != nil {
+		return f.beginFunc(ctx)
+	}
 	return nil, fmt.Errorf("not implemented")
 }
 
