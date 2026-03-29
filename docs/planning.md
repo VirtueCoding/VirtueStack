@@ -816,7 +816,7 @@
 
 > **Current state:** `tests/load/k6-vm-operations.js` exists with basic VM operation tests.
 
-- [ ] Expand `tests/load/k6-vm-operations.js` or create additional k6 scripts for:
+- [x] Expand `tests/load/k6-vm-operations.js` or create additional k6 scripts for:
   1. `tests/load/k6-provisioning-create.js` — VM creation under concurrent load (10, 50, 100 simultaneous provisions)
   2. `tests/load/k6-customer-list.js` — Customer VM listing with many customers and VMs (pagination performance)
   3. `tests/load/k6-power-operations.js` — Power operations (start/stop/restart) under concurrent load
