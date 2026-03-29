@@ -858,4 +858,4 @@
 - [x] After each phase, run the full test suite: `make test-race`
 - [x] After frontend changes: `cd webui/admin && npm run lint && npm run type-check && npm run build`
 - [x] After frontend changes: `cd webui/customer && npm run lint && npm run type-check && npm run build`
-- [ ] After migration changes: verify `make migrate-up && make migrate-down` cycle works
+- [x] After migration changes: verify `make migrate-up && make migrate-down` cycle works

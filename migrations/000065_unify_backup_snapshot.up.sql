@@ -22,8 +22,8 @@ ALTER TABLE backups ADD CONSTRAINT backups_method_check
 -- Map snapshot fields to backup fields:
 --   snapshot.name -> backup.name
 --   snapshot.rbd_snapshot -> backup.rbd_snapshot
---   snapshot.qcow_snapshot -> backup.snapshot_name
---   snapshot.storage_backend -> backup.storage_backend
+--   snapshot.name -> backup.snapshot_name (legacy snapshots have no qcow_snapshot column)
+--   storage_backend defaults to 'ceph' for legacy snapshots
 --   'snapshot' -> backup.method
 --   'manual' -> backup.source
 --   'completed' -> backup.status (snapshots don't have status; if they exist they're complete)
@@ -32,9 +32,9 @@ SELECT
     s.id,
     s.vm_id,
     'manual',
-    s.storage_backend,
+    'ceph',
     CASE WHEN s.rbd_snapshot != '' THEN s.rbd_snapshot ELSE NULL END,
-    s.qcow_snapshot,
+    s.name,
     s.size_bytes,
     'completed',
     'snapshot',
