@@ -726,8 +726,8 @@
 
 #### 20a. Configuration
 
-- [ ] Add `ALLOW_SELF_REGISTRATION` environment variable (default: `false`) to `internal/shared/config/config.go`
-- [ ] Add `REGISTRATION_EMAIL_VERIFICATION` environment variable (default: `true`)
+- [x] Add `ALLOW_SELF_REGISTRATION` environment variable (default: `false`) to `internal/shared/config/config.go`
+- [x] Add `REGISTRATION_EMAIL_VERIFICATION` environment variable (default: `true`)
 
 #### 20b. Registration Endpoint
 
