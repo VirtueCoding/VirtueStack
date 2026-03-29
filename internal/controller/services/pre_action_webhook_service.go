@@ -12,6 +12,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
@@ -29,7 +30,7 @@ func NewPreActionWebhookService(
 ) *PreActionWebhookService {
 	return &PreActionWebhookService{
 		repo:   repo,
-		client: &http.Client{},
+		client: tasks.DefaultHTTPClient(),
 		logger: logger.With("component", "pre-action-webhook-service"),
 	}
 }
@@ -135,7 +136,7 @@ func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.Pr
 	var result preActionResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		s.logger.Warn("failed to parse pre-action response",
-			"webhook_id", wh.ID, "body", string(respBody), "error", err)
+			"webhook_id", wh.ID, "error", err)
 		if wh.FailOpen {
 			return nil
 		}
