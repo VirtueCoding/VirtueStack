@@ -11,6 +11,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
 )
 
 // mockPlanDB implements the DB interface for testing PlanRepository.
@@ -255,24 +256,6 @@ func (m *mockPlanRows) CommandTag() pgconn.CommandTag {
 }
 
 func (m *mockPlanRows) FieldDescriptions() []pgconn.FieldDescription {
-	return nil
-}
-
-// mockCountRow implements pgx.Row for COUNT queries.
-type mockCountRow struct {
-	count int
-	err   error
-}
-
-func (m mockCountRow) Scan(dest ...any) error {
-	if m.err != nil {
-		return m.err
-	}
-	if len(dest) >= 1 {
-		if count, ok := dest[0].(*int); ok {
-			*count = m.count
-		}
-	}
 	return nil
 }
 
@@ -594,60 +577,46 @@ func TestPlanRepository_List(t *testing.T) {
 		name        string
 		filter      PlanListFilter
 		plans       []models.Plan
-		total       int
 		queryErr    error
-		queryRowErr error
 		wantErr     bool
 		errContains string
 		wantCount   int
 	}{
 		{
-			name:   "list all plans",
-			filter: PlanListFilter{},
-			plans:  []models.Plan{testPlan1, testPlan2},
-			total:  2,
+			name:      "list all plans",
+			filter:    PlanListFilter{PaginationParams: models.PaginationParams{PerPage: 20}},
+			plans:     []models.Plan{testPlan1, testPlan2},
 			wantCount: 2,
 		},
 		{
-			name: "list active plans only",
-			filter: PlanListFilter{IsActive: boolPtr(true)},
-			plans:  []models.Plan{testPlan1},
-			total:  1,
+			name:      "list active plans only",
+			filter:    PlanListFilter{IsActive: boolPtr(true), PaginationParams: models.PaginationParams{PerPage: 20}},
+			plans:     []models.Plan{testPlan1},
 			wantCount: 1,
 		},
 		{
-			name: "list inactive plans only",
-			filter: PlanListFilter{IsActive: boolPtr(false)},
-			plans:  []models.Plan{testPlan2},
-			total:  1,
+			name:      "list inactive plans only",
+			filter:    PlanListFilter{IsActive: boolPtr(false), PaginationParams: models.PaginationParams{PerPage: 20}},
+			plans:     []models.Plan{testPlan2},
 			wantCount: 1,
 		},
 		{
 			name:      "empty result",
-			filter:    PlanListFilter{},
+			filter:    PlanListFilter{PaginationParams: models.PaginationParams{PerPage: 20}},
 			plans:     []models.Plan{},
-			total:     0,
 			wantCount: 0,
 		},
 		{
-			name:   "with pagination",
-			filter: PlanListFilter{PaginationParams: models.PaginationParams{Page: 1, PerPage: 10}},
-			plans:  []models.Plan{testPlan1},
-			total:  1,
+			name:      "with pagination",
+			filter:    PlanListFilter{PaginationParams: models.PaginationParams{PerPage: 10}},
+			plans:     []models.Plan{testPlan1},
 			wantCount: 1,
 		},
 		{
-			name:        "count error",
-			filter:      PlanListFilter{},
-			queryRowErr: errors.New("count failed"),
+			name:        "query error",
+			filter:      PlanListFilter{PaginationParams: models.PaginationParams{PerPage: 20}},
+			queryErr:    errors.New("connection refused"),
 			wantErr:     true,
-			errContains: "counting plans",
-		},
-		{
-			name:     "query error",
-			filter:   PlanListFilter{},
-			queryErr: errors.New("connection refused"),
-			wantErr:  true,
 			errContains: "listing plans",
 		},
 	}
@@ -656,13 +625,6 @@ func TestPlanRepository_List(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockPlanDB{
 				queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
-					if tt.queryRowErr != nil {
-						return mockCountRow{err: tt.queryRowErr}
-					}
-					// Detect COUNT query
-					if strings.Contains(strings.ToUpper(sql), "COUNT") {
-						return mockCountRow{count: tt.total}
-					}
 					return mockPlanRow{plan: testPlan1}
 				},
 				queryFunc: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
@@ -674,7 +636,7 @@ func TestPlanRepository_List(t *testing.T) {
 			}
 
 			repo := NewPlanRepository(mock)
-			result, total, err := repo.List(context.Background(), tt.filter)
+			result, hasMore, lastID, err := repo.List(context.Background(), tt.filter)
 
 			if tt.wantErr {
 				if err == nil {
@@ -690,9 +652,10 @@ func TestPlanRepository_List(t *testing.T) {
 				if len(result) != tt.wantCount {
 					t.Fatalf("expected %d plans, got %d", tt.wantCount, len(result))
 				}
-				if total != tt.total {
-					t.Fatalf("expected total %d, got %d", tt.total, total)
+				if tt.wantCount > 0 {
+					assert.NotEmpty(t, lastID)
 				}
+				_ = hasMore
 			}
 		})
 	}

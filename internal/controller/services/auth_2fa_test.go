@@ -124,8 +124,8 @@ func (m *mock2FACustomerRepo) UpdateBackupCodesWithShown(ctx context.Context, id
 	return nil
 }
 
-func (m *mock2FACustomerRepo) List(ctx context.Context, filter repository.CustomerListFilter) ([]models.Customer, int, error) {
-	return nil, 0, nil
+func (m *mock2FACustomerRepo) List(ctx context.Context, filter repository.CustomerListFilter) ([]models.Customer, bool, string, error) {
+	return nil, false, "", nil
 }
 
 func (m *mock2FACustomerRepo) UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error {

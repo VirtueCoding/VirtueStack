@@ -16,85 +16,6 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func TestNewPaginationMeta(t *testing.T) {
-	tests := []struct {
-		name       string
-		page       int
-		perPage    int
-		total      int
-		wantPages  int
-		wantMore   bool
-	}{
-		{
-			name:      "first page of many",
-			page:      1,
-			perPage:   20,
-			total:     100,
-			wantPages: 5,
-			wantMore:  true,
-		},
-		{
-			name:      "last page",
-			page:      5,
-			perPage:   20,
-			total:     100,
-			wantPages: 5,
-			wantMore:  false,
-		},
-		{
-			name:      "single page",
-			page:      1,
-			perPage:   20,
-			total:     10,
-			wantPages: 1,
-			wantMore:  false,
-		},
-		{
-			name:      "empty result",
-			page:      1,
-			perPage:   20,
-			total:     0,
-			wantPages: 0,
-			wantMore:  false,
-		},
-		{
-			name:      "partial last page",
-			page:      1,
-			perPage:   20,
-			total:     21,
-			wantPages: 2,
-			wantMore:  true,
-		},
-		{
-			name:      "exact page boundary",
-			page:      2,
-			perPage:   10,
-			total:     20,
-			wantPages: 2,
-			wantMore:  false,
-		},
-		{
-			name:      "zero per_page does not panic",
-			page:      1,
-			perPage:   0,
-			total:     100,
-			wantPages: 0,
-			wantMore:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			meta := NewPaginationMeta(tt.page, tt.perPage, tt.total)
-			assert.Equal(t, tt.page, meta.Page)
-			assert.Equal(t, tt.perPage, meta.PerPage)
-			assert.Equal(t, tt.total, meta.Total)
-			assert.Equal(t, tt.wantPages, meta.TotalPages)
-			assert.Equal(t, tt.wantMore, meta.HasMore)
-		})
-	}
-}
-
 func TestNewCursorPaginationMeta(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -144,64 +65,34 @@ func TestParsePagination(t *testing.T) {
 	tests := []struct {
 		name        string
 		queryParams map[string]string
-		wantPage    int
 		wantPerPage int
 		wantCursor  string
 	}{
 		{
 			name:        "defaults when no params",
 			queryParams: map[string]string{},
-			wantPage:    DefaultPage,
 			wantPerPage: DefaultPerPage,
 		},
 		{
-			name:        "custom page and per_page",
-			queryParams: map[string]string{"page": "3", "per_page": "50"},
-			wantPage:    3,
+			name:        "custom per_page",
+			queryParams: map[string]string{"per_page": "50"},
 			wantPerPage: 50,
 		},
 		{
 			name:        "per_page capped at max",
 			queryParams: map[string]string{"per_page": "200"},
-			wantPage:    DefaultPage,
 			wantPerPage: MaxPerPage,
-		},
-		{
-			name:        "invalid page falls back to default",
-			queryParams: map[string]string{"page": "abc"},
-			wantPage:    DefaultPage,
-			wantPerPage: DefaultPerPage,
-		},
-		{
-			name:        "negative page falls back to default",
-			queryParams: map[string]string{"page": "-1"},
-			wantPage:    DefaultPage,
-			wantPerPage: DefaultPerPage,
-		},
-		{
-			name:        "zero page falls back to default",
-			queryParams: map[string]string{"page": "0"},
-			wantPage:    DefaultPage,
-			wantPerPage: DefaultPerPage,
 		},
 		{
 			name:        "negative per_page falls back to default",
 			queryParams: map[string]string{"per_page": "-5"},
-			wantPage:    DefaultPage,
 			wantPerPage: DefaultPerPage,
 		},
 		{
 			name:        "cursor is passed through",
 			queryParams: map[string]string{"cursor": "some-cursor-value"},
-			wantPage:    DefaultPage,
 			wantPerPage: DefaultPerPage,
 			wantCursor:  "some-cursor-value",
-		},
-		{
-			name:        "very large page number falls back to default",
-			queryParams: map[string]string{"page": "99999"},
-			wantPage:    DefaultPage,
-			wantPerPage: DefaultPerPage,
 		},
 	}
 
@@ -218,43 +109,10 @@ func TestParsePagination(t *testing.T) {
 			c.Request = req
 
 			params := ParsePagination(c)
-			assert.Equal(t, tt.wantPage, params.Page)
 			assert.Equal(t, tt.wantPerPage, params.PerPage)
 			assert.Equal(t, tt.wantCursor, params.Cursor)
 		})
 	}
-}
-
-func TestPaginationParams_IsCursorBased(t *testing.T) {
-	assert.True(t, PaginationParams{Cursor: "abc"}.IsCursorBased())
-	assert.False(t, PaginationParams{}.IsCursorBased())
-}
-
-func TestPaginationParams_Offset(t *testing.T) {
-	tests := []struct {
-		name       string
-		page       int
-		perPage    int
-		wantOffset int
-	}{
-		{"page 1", 1, 20, 0},
-		{"page 2", 2, 20, 20},
-		{"page 3 with 10 per page", 3, 10, 20},
-		{"page 0 treated as page 1", 0, 20, 0},
-		{"negative page treated as page 1", -1, 20, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := PaginationParams{Page: tt.page, PerPage: tt.perPage}
-			assert.Equal(t, tt.wantOffset, p.Offset())
-		})
-	}
-}
-
-func TestPaginationParams_Limit(t *testing.T) {
-	p := PaginationParams{PerPage: 50}
-	assert.Equal(t, 50, p.Limit())
 }
 
 func TestEncodeCursor_DecodeCursor(t *testing.T) {
