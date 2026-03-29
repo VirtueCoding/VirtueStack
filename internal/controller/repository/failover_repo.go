@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 )
 
 // FailoverRepository provides database operations for failover requests.
@@ -128,8 +129,8 @@ func (r *FailoverRepository) UpdateStatus(ctx context.Context, id, status string
 	return nil
 }
 
-// List returns a paginated list of failover requests with optional filters and total count.
-func (r *FailoverRepository) List(ctx context.Context, filter models.FailoverRequestListFilter) ([]models.FailoverRequest, int, error) {
+// List returns a paginated list of failover requests with optional filters.
+func (r *FailoverRepository) List(ctx context.Context, filter models.FailoverRequestListFilter) ([]models.FailoverRequest, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -146,23 +147,27 @@ func (r *FailoverRepository) List(ctx context.Context, filter models.FailoverReq
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM failover_requests WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting failover requests: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM failover_requests WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		failoverRequestSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM failover_requests WHERE %s ORDER BY id DESC LIMIT $%d",
+		failoverRequestSelectCols, clause, idx,
 	)
-	args = append(args, filter.Limit(), filter.Offset())
+	args = append(args, filter.PerPage+1)
 
 	requests, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.FailoverRequest, error) {
 		return scanFailoverRequest(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing failover requests: %w", err)
+		return nil, false, "", fmt.Errorf("listing failover requests: %w", err)
 	}
-	return requests, total, nil
+
+	requests, hasMore, lastID := cursor.TrimResults(requests, filter.PerPage, func(fr models.FailoverRequest) string { return fr.ID })
+	return requests, hasMore, lastID, nil
 }

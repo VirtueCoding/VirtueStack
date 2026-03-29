@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 )
 
 // StorageBackendRepository provides database operations for storage backends.
@@ -99,7 +100,7 @@ func (r *StorageBackendRepository) GetByIDWithNodes(ctx context.Context, id stri
 }
 
 // List returns a paginated list of storage backends with optional filters.
-func (r *StorageBackendRepository) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, int, error) {
+func (r *StorageBackendRepository) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -116,27 +117,29 @@ func (r *StorageBackendRepository) List(ctx context.Context, filter models.Stora
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM storage_backends WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting storage backends: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM storage_backends WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		storageBackendSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM storage_backends WHERE %s ORDER BY id DESC LIMIT $%d",
+		storageBackendSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	backends, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.StorageBackend, error) {
 		return scanStorageBackend(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing storage backends: %w", err)
+		return nil, false, "", fmt.Errorf("listing storage backends: %w", err)
 	}
-	return backends, total, nil
+
+	backends, hasMore, lastID := cursor.TrimResults(backends, filter.PerPage, func(sb models.StorageBackend) string { return sb.ID })
+	return backends, hasMore, lastID, nil
 }
 
 // ListAll returns all storage backends without pagination.

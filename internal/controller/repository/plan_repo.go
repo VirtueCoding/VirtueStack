@@ -103,8 +103,8 @@ func (r *PlanRepository) GetBySlug(ctx context.Context, slug string) (*models.Pl
 	return &plan, nil
 }
 
-// List returns a paginated list of plans with optional filters and total count.
-func (r *PlanRepository) List(ctx context.Context, filter PlanListFilter) ([]models.Plan, int, error) {
+// List returns a paginated list of plans with optional filters.
+func (r *PlanRepository) List(ctx context.Context, filter PlanListFilter) ([]models.Plan, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -117,48 +117,34 @@ func (r *PlanRepository) List(ctx context.Context, filter PlanListFilter) ([]mod
 
 	clause := strings.Join(where, " AND ")
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			clause += fmt.Sprintf(" AND id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM plans WHERE %s ORDER BY id DESC LIMIT $%d",
-			planSelectCols, clause, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		plans, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Plan, error) {
-			return scanPlan(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing plans: %w", err)
-		}
-		return plans, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	countQ := "SELECT COUNT(*) FROM plans WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting plans: %w", err)
-	}
-
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM plans WHERE %s ORDER BY sort_order ASC, name ASC LIMIT $%d OFFSET $%d",
-		planSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM plans WHERE %s ORDER BY id DESC LIMIT $%d",
+		planSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	plans, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Plan, error) {
 		return scanPlan(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing plans: %w", err)
+		return nil, false, "", fmt.Errorf("listing plans: %w", err)
 	}
-	return plans, total, nil
+
+	hasMore := len(plans) > filter.PerPage
+	if hasMore {
+		plans = plans[:filter.PerPage]
+	}
+	var lastID string
+	if len(plans) > 0 {
+		lastID = plans[len(plans)-1].ID
+	}
+	return plans, hasMore, lastID, nil
 }
 
 // ListActive returns all active plans ordered by sort_order.

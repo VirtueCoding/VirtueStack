@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
@@ -193,7 +194,7 @@ func (r *NotificationEventRepository) Create(ctx context.Context, event *models.
 }
 
 // ListByCustomer returns notification events for a customer with pagination.
-func (r *NotificationEventRepository) ListByCustomer(ctx context.Context, customerID string, filter NotificationEventFilter) ([]models.NotificationEvent, int, error) {
+func (r *NotificationEventRepository) ListByCustomer(ctx context.Context, customerID string, filter NotificationEventFilter) ([]models.NotificationEvent, bool, string, error) {
 	where := "customer_id = $1"
 	args := []any{customerID}
 	idx := 2
@@ -209,27 +210,28 @@ func (r *NotificationEventRepository) ListByCustomer(ctx context.Context, custom
 		idx++
 	}
 
-	countQ := "SELECT COUNT(*) FROM notification_events WHERE " + where
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting notification events: %w", err)
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	where, idx, extraArg = cursor.BuildWhereClause(where, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM notification_events WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		notificationEventSelectCols, where, idx, idx+1,
+		"SELECT %s FROM notification_events WHERE %s ORDER BY id DESC LIMIT $%d",
+		notificationEventSelectCols, where, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	events, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.NotificationEvent, error) {
 		return scanNotificationEvent(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing notification events: %w", err)
+		return nil, false, "", fmt.Errorf("listing notification events: %w", err)
 	}
-	return events, total, nil
+
+	events, hasMore, lastID := cursor.TrimResults(events, filter.PerPage, func(e models.NotificationEvent) string { return e.ID })
+	return events, hasMore, lastID, nil
 }
 
 // NotificationEventFilter holds query parameters for filtering notification events.

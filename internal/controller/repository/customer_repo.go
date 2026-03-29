@@ -46,7 +46,7 @@ type CustomerRepo interface {
 	UpdateBackupCodes(ctx context.Context, userID string, codes []string) error
 	UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error
 	UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error
-	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, int, error)
+	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, bool, string, error)
 	UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error
 }
 
@@ -120,8 +120,8 @@ func (r *CustomerRepository) GetByEmail(ctx context.Context, email string) (*mod
 	return &customer, nil
 }
 
-// List returns a paginated list of customers with optional filters and total count.
-func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, int, error) {
+// List returns a paginated list of customers with optional filters.
+func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, bool, string, error) {
 	where := []string{"status != 'deleted'"}
 	args := []any{}
 	idx := 1
@@ -139,48 +139,34 @@ func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter
 
 	clause := strings.Join(where, " AND ")
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			clause += fmt.Sprintf(" AND id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM customers WHERE %s ORDER BY id DESC LIMIT $%d",
-			customerSelectCols, clause, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		customers, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Customer, error) {
-			return scanCustomer(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing customers: %w", err)
-		}
-		return customers, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	countQ := "SELECT COUNT(*) FROM customers WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting customers: %w", err)
-	}
-
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM customers WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		customerSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM customers WHERE %s ORDER BY id DESC LIMIT $%d",
+		customerSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	customers, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Customer, error) {
 		return scanCustomer(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing customers: %w", err)
+		return nil, false, "", fmt.Errorf("listing customers: %w", err)
 	}
-	return customers, total, nil
+
+	hasMore := len(customers) > filter.PerPage
+	if hasMore {
+		customers = customers[:filter.PerPage]
+	}
+	var lastID string
+	if len(customers) > 0 {
+		lastID = customers[len(customers)-1].ID
+	}
+	return customers, hasMore, lastID, nil
 }
 
 // UpdateStatus updates the status field of a customer.
@@ -684,8 +670,8 @@ func (r *AdminRepository) GetByEmail(ctx context.Context, email string) (*models
 	return &admin, nil
 }
 
-// List returns a paginated list of admins with optional filters and total count.
-func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]models.Admin, int, error) {
+// List returns a paginated list of admins with optional filters.
+func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]models.Admin, bool, string, error) {
 	where := "1=1"
 	args := []any{}
 	idx := 1
@@ -696,26 +682,35 @@ func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]m
 		idx++
 	}
 
-	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM admins WHERE "+where, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting admins: %w", err)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		where += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM admins WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		adminSelectCols, where, idx, idx+1,
+		"SELECT %s FROM admins WHERE %s ORDER BY id DESC LIMIT $%d",
+		adminSelectCols, where, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	admins, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Admin, error) {
 		return scanAdmin(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing admins: %w", err)
+		return nil, false, "", fmt.Errorf("listing admins: %w", err)
 	}
-	return admins, total, nil
+
+	hasMore := len(admins) > filter.PerPage
+	if hasMore {
+		admins = admins[:filter.PerPage]
+	}
+	var lastID string
+	if len(admins) > 0 {
+		lastID = admins[len(admins)-1].ID
+	}
+	return admins, hasMore, lastID, nil
 }
 
 // UpdateTOTPEnabled updates the TOTP configuration for an admin.

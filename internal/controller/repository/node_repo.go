@@ -117,7 +117,7 @@ func (r *NodeRepository) GetByHostname(ctx context.Context, hostname string) (*m
 }
 
 // List returns all nodes with pagination and optional status filter.
-func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter) ([]models.Node, int, error) {
+func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter) ([]models.Node, bool, string, error) {
 	where := "1=1"
 	args := []any{}
 	idx := 1
@@ -133,45 +133,34 @@ func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter)
 		idx++
 	}
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			where += fmt.Sprintf(" AND id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM nodes WHERE %s ORDER BY id DESC LIMIT $%d",
-			nodeSelectCols, where, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		nodes, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Node, error) {
-			return scanNode(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing nodes: %w", err)
-		}
-		return nodes, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		where += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM nodes WHERE "+where, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting nodes: %w", err)
-	}
-
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM nodes WHERE %s ORDER BY hostname ASC LIMIT $%d OFFSET $%d",
-		nodeSelectCols, where, idx, idx+1,
+		"SELECT %s FROM nodes WHERE %s ORDER BY id DESC LIMIT $%d",
+		nodeSelectCols, where, idx,
 	)
-	args = append(args, filter.Limit(), filter.Offset())
+	args = append(args, filter.PerPage+1)
 
 	nodes, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Node, error) {
 		return scanNode(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing nodes: %w", err)
+		return nil, false, "", fmt.Errorf("listing nodes: %w", err)
 	}
-	return nodes, total, nil
+
+	hasMore := len(nodes) > filter.PerPage
+	if hasMore {
+		nodes = nodes[:filter.PerPage]
+	}
+	var lastID string
+	if len(nodes) > 0 {
+		lastID = nodes[len(nodes)-1].ID
+	}
+	return nodes, hasMore, lastID, nil
 }
 
 // ListByStatus returns all nodes matching the given status.

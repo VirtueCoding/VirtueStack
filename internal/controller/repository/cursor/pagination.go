@@ -134,6 +134,21 @@ func ComputeResult[T interface{ GetID() string }](items []T, perPage int) QueryR
 	}
 }
 
+// TrimResults applies the n+1 pagination pattern: checks if there are more
+// results than requested, trims the slice, and extracts the last item's ID
+// using the provided function. This avoids requiring a GetID() method on model types.
+func TrimResults[T any](items []T, perPage int, idFunc func(T) string) ([]T, bool, string) {
+	hasMore := len(items) > perPage
+	if hasMore {
+		items = items[:perPage]
+	}
+	var lastID string
+	if len(items) > 0 {
+		lastID = idFunc(items[len(items)-1])
+	}
+	return items, hasMore, lastID
+}
+
 // ScanRows is a generic helper to scan pgx.Rows into a slice.
 // It's similar to the ScanRows function in the repository package.
 func ScanRows[T any](ctx context.Context, rows pgx.Rows, scan func(pgx.Rows) (T, error)) ([]T, error) {

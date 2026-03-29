@@ -116,8 +116,8 @@ func (r *TaskRepository) GetByIDempotencyKey(ctx context.Context, key string) (*
 	return &task, nil
 }
 
-// List returns a paginated list of tasks with optional filters and total count.
-func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]models.Task, int, error) {
+// List returns a paginated list of tasks with optional filters.
+func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]models.Task, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("tasks")
 
@@ -137,33 +137,33 @@ func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]mod
 		whereBuilder = whereBuilder.Where(sq.LtOrEq{"created_at": *filter.EndTime})
 	}
 
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building task count query: %w", err)
+	listBuilder := whereBuilder.Columns(taskSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting tasks: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(taskSelectCols).
-		OrderBy("created_at DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building task list query: %w", err)
+		return nil, false, "", fmt.Errorf("building task list query: %w", err)
 	}
 
 	taskList, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Task, error) {
 		return scanTask(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing tasks: %w", err)
+		return nil, false, "", fmt.Errorf("listing tasks: %w", err)
 	}
-	return taskList, total, nil
+
+	hasMore := len(taskList) > filter.PerPage
+	if hasMore {
+		taskList = taskList[:filter.PerPage]
+	}
+	var lastID string
+	if len(taskList) > 0 {
+		lastID = taskList[len(taskList)-1].ID
+	}
+	return taskList, hasMore, lastID, nil
 }
 
 // ListByStatus returns tasks matching the given status with a limit.

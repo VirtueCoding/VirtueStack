@@ -157,22 +157,8 @@ func (r *BackupRepository) GetBackupByID(ctx context.Context, id string) (*model
 	return &backup, nil
 }
 
-// ListBackups returns a paginated list of backups with optional filters and total count.
-//
-// Pagination Strategy:
-// This method uses offset-based pagination (LIMIT/OFFSET). For most use cases this is
-// acceptable, but for very large datasets, cursor-based pagination (keyset pagination)
-// would be more efficient as it avoids COUNT(*) queries and provides stable results.
-//
-// Cursor-based pagination is available via the internal/controller/repository/cursor
-// package. Migration to cursor-based pagination is planned for a future release.
-// See docs/coding-standard.md QG-16 for requirements.
-//
-// To use cursor-based pagination in the future:
-//  1. Check params.IsCursorBased() to determine pagination mode
-//  2. Use cursor.Params and cursor.BuildWhereClause for query construction
-//  3. Return models.NewCursorPaginationMeta instead of NewPaginationMeta
-func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFilter) ([]models.Backup, int, error) {
+// ListBackups returns a paginated list of backups with optional filters.
+func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFilter) ([]models.Backup, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("backups")
 
@@ -192,56 +178,36 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 		whereBuilder = whereBuilder.Where(sq.Eq{"admin_schedule_id": *filter.AdminScheduleID})
 	}
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		listBuilder := whereBuilder.Columns(backupSelectCols)
-		if cursor.LastID != "" {
-			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
-		}
-		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
-		listQ, listArgs, err := listBuilder.ToSql()
-		if err != nil {
-			return nil, 0, fmt.Errorf("building backup list query: %w", err)
-		}
-		backups, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Backup, error) {
-			return scanBackup(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing backups: %w", err)
-		}
-		return backups, 0, nil
+	listBuilder := whereBuilder.Columns(backupSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building backup count query: %w", err)
-	}
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting backups: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(backupSelectCols).
-		OrderBy("created_at DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building backup list query: %w", err)
+		return nil, false, "", fmt.Errorf("building backup list query: %w", err)
 	}
-
 	backups, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Backup, error) {
 		return scanBackup(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing backups: %w", err)
+		return nil, false, "", fmt.Errorf("listing backups: %w", err)
 	}
-	return backups, total, nil
+
+	hasMore := len(backups) > filter.PerPage
+	if hasMore {
+		backups = backups[:filter.PerPage]
+	}
+	var lastID string
+	if len(backups) > 0 {
+		lastID = backups[len(backups)-1].ID
+	}
+	return backups, hasMore, lastID, nil
 }
 
 // ListBackupsByCustomer returns a paginated list of backups for a specific customer with optional filters.
-func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID string, filter BackupListFilter) ([]models.Backup, int, error) {
+func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID string, filter BackupListFilter) ([]models.Backup, bool, string, error) {
 	where := []string{"v.customer_id = $1"}
 	args := []any{customerID}
 	idx := 2
@@ -283,48 +249,34 @@ func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID
 
 	clause := strings.Join(where, " AND ")
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			clause += fmt.Sprintf(" AND b.id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM backups b JOIN vms v ON v.id = b.vm_id WHERE %s ORDER BY b.id DESC LIMIT $%d",
-			prefixSelectCols(backupSelectCols, "b"), clause, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		backups, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Backup, error) {
-			return scanBackup(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing backups by customer: %w", err)
-		}
-		return backups, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND b.id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	countQ := "SELECT COUNT(*) FROM backups b JOIN vms v ON v.id = b.vm_id WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting backups by customer: %w", err)
-	}
-
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM backups b JOIN vms v ON v.id = b.vm_id WHERE %s ORDER BY b.created_at DESC LIMIT $%d OFFSET $%d",
-		prefixSelectCols(backupSelectCols, "b"), clause, idx, idx+1,
+		"SELECT %s FROM backups b JOIN vms v ON v.id = b.vm_id WHERE %s ORDER BY b.id DESC LIMIT $%d",
+		prefixSelectCols(backupSelectCols, "b"), clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	backups, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Backup, error) {
 		return scanBackup(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing backups by customer: %w", err)
+		return nil, false, "", fmt.Errorf("listing backups by customer: %w", err)
 	}
-	return backups, total, nil
+
+	hasMore := len(backups) > filter.PerPage
+	if hasMore {
+		backups = backups[:filter.PerPage]
+	}
+	var lastID string
+	if len(backups) > 0 {
+		lastID = backups[len(backups)-1].ID
+	}
+	return backups, hasMore, lastID, nil
 }
 
 // ListBackupsByVM returns all backups for a specific VM.
@@ -516,65 +468,44 @@ func (r *BackupRepository) GetSnapshotByID(ctx context.Context, id string) (*mod
 	return &snapshot, nil
 }
 
-// ListSnapshots returns a paginated list of snapshots with optional filters and total count.
-func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotListFilter) ([]models.Snapshot, int, error) {
+// ListSnapshots returns a paginated list of snapshots with optional filters.
+func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotListFilter) ([]models.Snapshot, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("snapshots")
 	if filter.VMID != nil {
 		whereBuilder = whereBuilder.Where(sq.Eq{"vm_id": *filter.VMID})
 	}
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		listBuilder := whereBuilder.Columns(snapshotSelectCols)
-		if cursor.LastID != "" {
-			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
-		}
-		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
-		listQ, listArgs, err := listBuilder.ToSql()
-		if err != nil {
-			return nil, 0, fmt.Errorf("building snapshot list query: %w", err)
-		}
-		snapshots, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Snapshot, error) {
-			return scanSnapshot(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing snapshots: %w", err)
-		}
-		return snapshots, 0, nil
+	listBuilder := whereBuilder.Columns(snapshotSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building snapshot count query: %w", err)
-	}
-
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting snapshots: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(snapshotSelectCols).
-		OrderBy("created_at DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building snapshot list query: %w", err)
+		return nil, false, "", fmt.Errorf("building snapshot list query: %w", err)
 	}
-
 	snapshots, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Snapshot, error) {
 		return scanSnapshot(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing snapshots: %w", err)
+		return nil, false, "", fmt.Errorf("listing snapshots: %w", err)
 	}
-	return snapshots, total, nil
+
+	hasMore := len(snapshots) > filter.PerPage
+	if hasMore {
+		snapshots = snapshots[:filter.PerPage]
+	}
+	var lastID string
+	if len(snapshots) > 0 {
+		lastID = snapshots[len(snapshots)-1].ID
+	}
+	return snapshots, hasMore, lastID, nil
 }
 
 // ListSnapshotsByCustomer returns a paginated list of snapshots for a specific customer with optional filters.
-func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customerID string, filter SnapshotListFilter) ([]models.Snapshot, int, error) {
+func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customerID string, filter SnapshotListFilter) ([]models.Snapshot, bool, string, error) {
 	where := []string{"v.customer_id = $1"}
 	args := []any{customerID}
 	idx := 2
@@ -596,48 +527,34 @@ func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customer
 
 	clause := strings.Join(where, " AND ")
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			clause += fmt.Sprintf(" AND s.id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE %s ORDER BY s.id DESC LIMIT $%d",
-			prefixSelectCols(snapshotSelectCols, "s"), clause, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		snapshots, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Snapshot, error) {
-			return scanSnapshot(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing snapshots by customer: %w", err)
-		}
-		return snapshots, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND s.id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	countQ := "SELECT COUNT(*) FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting snapshots by customer: %w", err)
-	}
-
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE %s ORDER BY s.created_at DESC LIMIT $%d OFFSET $%d",
-		prefixSelectCols(snapshotSelectCols, "s"), clause, idx, idx+1,
+		"SELECT %s FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE %s ORDER BY s.id DESC LIMIT $%d",
+		prefixSelectCols(snapshotSelectCols, "s"), clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	snapshots, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Snapshot, error) {
 		return scanSnapshot(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing snapshots by customer: %w", err)
+		return nil, false, "", fmt.Errorf("listing snapshots by customer: %w", err)
 	}
-	return snapshots, total, nil
+
+	hasMore := len(snapshots) > filter.PerPage
+	if hasMore {
+		snapshots = snapshots[:filter.PerPage]
+	}
+	var lastID string
+	if len(snapshots) > 0 {
+		lastID = snapshots[len(snapshots)-1].ID
+	}
+	return snapshots, hasMore, lastID, nil
 }
 
 // prefixSelectCols prefixes each column in a comma-separated list with the given table alias.
@@ -775,8 +692,8 @@ func (r *BackupRepository) GetBackupScheduleByID(ctx context.Context, id string)
 	return &schedule, nil
 }
 
-// ListBackupSchedules returns a paginated list of backup schedules with optional filters and total count.
-func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter BackupScheduleListFilter) ([]models.BackupSchedule, int, error) {
+// ListBackupSchedules returns a paginated list of backup schedules with optional filters.
+func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter BackupScheduleListFilter) ([]models.BackupSchedule, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -799,49 +716,34 @@ func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter Backu
 
 	clause := strings.Join(where, " AND ")
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			clause += fmt.Sprintf(" AND id < $%d", idx)
-			args = append(args, cursor.LastID)
-			idx++
-		}
-		listQ := fmt.Sprintf(
-			"SELECT %s FROM backup_schedules WHERE %s ORDER BY id DESC LIMIT $%d",
-			backupScheduleSelectCols, clause, idx,
-		)
-		args = append(args, filter.PerPage+1)
-		schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.BackupSchedule, error) {
-			return scanBackupSchedule(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing backup schedules: %w", err)
-		}
-		return schedules, 0, nil
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
-	countQ := "SELECT COUNT(*) FROM backup_schedules WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting backup schedules: %w", err)
-	}
-
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM backup_schedules WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		backupScheduleSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM backup_schedules WHERE %s ORDER BY id DESC LIMIT $%d",
+		backupScheduleSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.BackupSchedule, error) {
 		return scanBackupSchedule(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing backup schedules: %w", err)
+		return nil, false, "", fmt.Errorf("listing backup schedules: %w", err)
 	}
 
-	return schedules, total, nil
+	hasMore := len(schedules) > filter.PerPage
+	if hasMore {
+		schedules = schedules[:filter.PerPage]
+	}
+	var lastID string
+	if len(schedules) > 0 {
+		lastID = schedules[len(schedules)-1].ID
+	}
+	return schedules, hasMore, lastID, nil
 }
 
 // DeleteBackupSchedule permanently removes a backup schedule from the database.

@@ -102,7 +102,7 @@ func (r *VMRepository) GetByIDForCustomer(ctx context.Context, tx pgx.Tx, id, cu
 }
 
 // List returns a paginated list of VMs with optional filters and total count.
-func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]models.VM, int, error) {
+func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]models.VM, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("vms").Where("deleted_at IS NULL")
 
@@ -122,48 +122,39 @@ func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]
 		whereBuilder = whereBuilder.Where(sq.Eq{"id": filter.VMIDs})
 	}
 
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building VM count query: %w", err)
-	}
-
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting VMs: %w", err)
-	}
-
 	listBuilder := whereBuilder.Columns(vmSelectCols)
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		if cursor.LastID != "" {
-			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
-		}
-		listBuilder = listBuilder.
-			OrderBy("id DESC").
-			Limit(uint64(filter.PerPage + 1))
-	} else {
-		listBuilder = listBuilder.
-			OrderBy("created_at DESC").
-			Limit(uint64(filter.Limit())).
-			Offset(uint64(filter.Offset()))
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
+	listBuilder = listBuilder.
+		OrderBy("id DESC").
+		Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building VM list query: %w", err)
+		return nil, false, "", fmt.Errorf("building VM list query: %w", err)
 	}
 
 	vms, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.VM, error) {
 		return scanVM(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing VMs: %w", err)
+		return nil, false, "", fmt.Errorf("listing VMs: %w", err)
 	}
-	return vms, total, nil
+
+	hasMore := len(vms) > filter.PerPage
+	if hasMore {
+		vms = vms[:filter.PerPage]
+	}
+	var lastID string
+	if len(vms) > 0 {
+		lastID = vms[len(vms)-1].ID
+	}
+	return vms, hasMore, lastID, nil
 }
 
 // ListByCustomer returns all VMs owned by a customer with pagination.
-func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, params models.PaginationParams) ([]models.VM, int, error) {
+func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, params models.PaginationParams) ([]models.VM, bool, string, error) {
 	filter := models.VMListFilter{
 		CustomerID:       &customerID,
 		PaginationParams: params,

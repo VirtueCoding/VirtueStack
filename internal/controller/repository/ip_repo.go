@@ -86,7 +86,7 @@ func (r *IPRepository) GetIPSetByName(ctx context.Context, name string) (*models
 }
 
 // ListIPSets returns a paginated list of IP sets with optional filters.
-func (r *IPRepository) ListIPSets(ctx context.Context, filter IPSetListFilter) ([]models.IPSet, int, error) {
+func (r *IPRepository) ListIPSets(ctx context.Context, filter IPSetListFilter) ([]models.IPSet, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("ip_sets")
 
@@ -97,32 +97,33 @@ func (r *IPRepository) ListIPSets(ctx context.Context, filter IPSetListFilter) (
 		whereBuilder = whereBuilder.Where(sq.Eq{"ip_version": *filter.IPVersion})
 	}
 
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building IP set count query: %w", err)
+	listBuilder := whereBuilder.Columns(ipSetSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting IP sets: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(ipSetSelectCols).
-		OrderBy("created_at DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building IP set list query: %w", err)
+		return nil, false, "", fmt.Errorf("building IP set list query: %w", err)
 	}
 
 	ipSets, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.IPSet, error) {
 		return scanIPSet(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing IP sets: %w", err)
+		return nil, false, "", fmt.Errorf("listing IP sets: %w", err)
 	}
-	return ipSets, total, nil
+
+	hasMore := len(ipSets) > filter.PerPage
+	if hasMore {
+		ipSets = ipSets[:filter.PerPage]
+	}
+	var lastID string
+	if len(ipSets) > 0 {
+		lastID = ipSets[len(ipSets)-1].ID
+	}
+	return ipSets, hasMore, lastID, nil
 }
 
 // UpdateIPSet updates all mutable fields of an IP set.
@@ -221,7 +222,7 @@ func (r *IPRepository) GetIPAddressByAddress(ctx context.Context, address string
 }
 
 // ListIPAddresses returns a paginated list of IP addresses with optional filters.
-func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressListFilter) ([]models.IPAddress, int, error) {
+func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressListFilter) ([]models.IPAddress, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("ip_addresses")
 
@@ -238,32 +239,33 @@ func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressList
 		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building IP address count query: %w", err)
+	listBuilder := whereBuilder.Columns(ipAddressSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting IP addresses: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(ipAddressSelectCols).
-		OrderBy("address ASC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building IP address list query: %w", err)
+		return nil, false, "", fmt.Errorf("building IP address list query: %w", err)
 	}
 
 	ips, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.IPAddress, error) {
 		return scanIPAddress(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing IP addresses: %w", err)
+		return nil, false, "", fmt.Errorf("listing IP addresses: %w", err)
 	}
-	return ips, total, nil
+
+	hasMore := len(ips) > filter.PerPage
+	if hasMore {
+		ips = ips[:filter.PerPage]
+	}
+	var lastID string
+	if len(ips) > 0 {
+		lastID = ips[len(ips)-1].ID
+	}
+	return ips, hasMore, lastID, nil
 }
 
 // CountIPsByStatus returns a map of IP status to count for a given IP set.

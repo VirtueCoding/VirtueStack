@@ -71,8 +71,8 @@ func (r *AuditRepository) GetByID(ctx context.Context, id string) (*models.Audit
 	return &audit, nil
 }
 
-// List returns a paginated list of audit logs with optional filters and total count.
-func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
+// List returns a paginated list of audit logs with optional filters.
+func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter) ([]models.AuditLog, bool, string, error) {
 	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 	whereBuilder := baseBuilder.Select("1").From("audit_logs")
 
@@ -101,63 +101,42 @@ func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter
 		whereBuilder = whereBuilder.Where(sq.LtOrEq{"timestamp": *filter.EndTime})
 	}
 
-	if filter.IsCursorBased() {
-		cursor := filter.DecodeCursor()
-		listBuilder := whereBuilder.Columns(auditLogSelectCols)
-		if cursor.LastID != "" {
-			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
-		}
-		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
-		listQ, listArgs, err := listBuilder.ToSql()
-		if err != nil {
-			return nil, 0, fmt.Errorf("building audit log list query: %w", err)
-		}
-		logs, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.AuditLog, error) {
-			return scanAuditLog(rows)
-		})
-		if err != nil {
-			return nil, 0, fmt.Errorf("listing audit logs: %w", err)
-		}
-		return logs, 0, nil
+	listBuilder := whereBuilder.Columns(auditLogSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
 	}
-
-	countBuilder := whereBuilder.Columns("COUNT(*)")
-	countQ, countArgs, err := countBuilder.ToSql()
-	if err != nil {
-		return nil, 0, fmt.Errorf("building audit log count query: %w", err)
-	}
-
-	total, err := CountRows(ctx, r.db, countQ, countArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
-	}
-
-	listBuilder := whereBuilder.Columns(auditLogSelectCols).
-		OrderBy("timestamp DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("building audit log list query: %w", err)
+		return nil, false, "", fmt.Errorf("building audit log list query: %w", err)
 	}
-
 	logs, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.AuditLog, error) {
 		return scanAuditLog(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing audit logs: %w", err)
+		return nil, false, "", fmt.Errorf("listing audit logs: %w", err)
 	}
-	return logs, total, nil
+
+	hasMore := len(logs) > filter.PerPage
+	if hasMore {
+		logs = logs[:filter.PerPage]
+	}
+	var lastID string
+	if len(logs) > 0 {
+		lastID = logs[len(logs)-1].ID
+	}
+	return logs, hasMore, lastID, nil
 }
 
 // ListByActor returns audit logs for a specific actor with pagination.
-func (r *AuditRepository) ListByActor(ctx context.Context, actorID string, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
+func (r *AuditRepository) ListByActor(ctx context.Context, actorID string, filter models.AuditLogFilter) ([]models.AuditLog, bool, string, error) {
 	filter.ActorID = &actorID
 	return r.List(ctx, filter)
 }
 
 // ListByResource returns audit logs for a specific resource type and ID with pagination.
-func (r *AuditRepository) ListByResource(ctx context.Context, resourceType string, resourceID string, filter models.AuditLogFilter) ([]models.AuditLog, int, error) {
+func (r *AuditRepository) ListByResource(ctx context.Context, resourceType string, resourceID string, filter models.AuditLogFilter) ([]models.AuditLog, bool, string, error) {
 	filter.ResourceType = &resourceType
 	filter.ResourceID = &resourceID
 	return r.List(ctx, filter)

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 )
 
 // WebhookMaxFailCount is the consecutive-failure threshold at which a webhook
@@ -107,8 +108,8 @@ func (r *WebhookRepository) GetByIDAndCustomer(ctx context.Context, id, customer
 	return &webhook, nil
 }
 
-// List returns a paginated list of webhooks with optional filters and total count.
-func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) ([]models.CustomerWebhook, int, error) {
+// List returns a paginated list of webhooks with optional filters.
+func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) ([]models.CustomerWebhook, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -130,27 +131,29 @@ func (r *WebhookRepository) List(ctx context.Context, filter WebhookListFilter) 
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM webhooks WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting webhooks: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM webhooks WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		webhookSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM webhooks WHERE %s ORDER BY id DESC LIMIT $%d",
+		webhookSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	webhooks, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.CustomerWebhook, error) {
 		return scanWebhook(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing webhooks: %w", err)
+		return nil, false, "", fmt.Errorf("listing webhooks: %w", err)
 	}
-	return webhooks, total, nil
+
+	webhooks, hasMore, lastID := cursor.TrimResults(webhooks, filter.PerPage, func(w models.CustomerWebhook) string { return w.ID })
+	return webhooks, hasMore, lastID, nil
 }
 
 // ListByCustomer returns all webhooks for a specific customer.
@@ -359,7 +362,7 @@ func (r *WebhookRepository) GetDeliveryByIdempotencyKey(ctx context.Context, key
 }
 
 // ListDeliveries returns a paginated list of deliveries with optional filters.
-func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryListFilter) ([]models.WebhookDelivery, int, error) {
+func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryListFilter) ([]models.WebhookDelivery, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -381,51 +384,67 @@ func (r *WebhookRepository) ListDeliveries(ctx context.Context, filter DeliveryL
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM webhook_deliveries WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting deliveries: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM webhook_deliveries WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		deliverySelectCols, clause, idx, idx+1,
+		"SELECT %s FROM webhook_deliveries WHERE %s ORDER BY id DESC LIMIT $%d",
+		deliverySelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	deliveries, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing deliveries: %w", err)
+		return nil, false, "", fmt.Errorf("listing deliveries: %w", err)
 	}
-	return deliveries, total, nil
+
+	deliveries, hasMore, lastID := cursor.TrimResults(deliveries, filter.PerPage, func(d models.WebhookDelivery) string { return d.ID })
+	return deliveries, hasMore, lastID, nil
 }
 
-// ListDeliveriesByWebhook returns deliveries for a specific webhook.
-func (r *WebhookRepository) ListDeliveriesByWebhook(ctx context.Context, webhookID string, limit, offset int) ([]models.WebhookDelivery, int, error) {
-	const countQ = `SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = $1`
-	total, err := CountRows(ctx, r.db, countQ, webhookID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting deliveries for webhook %s: %w", webhookID, err)
+// ListDeliveriesByWebhook returns deliveries for a specific webhook with cursor-based pagination.
+func (r *WebhookRepository) ListDeliveriesByWebhook(ctx context.Context, webhookID string, perPage int, cursorStr string) ([]models.WebhookDelivery, bool, string, error) {
+	where := "webhook_id = $1"
+	args := []any{webhookID}
+	idx := 2
+
+	pp := models.PaginationParams{PerPage: perPage, Cursor: cursorStr}
+	cp := pp.DecodeCursor()
+	if cp.LastID != "" {
+		where += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
 
-	const listQ = `
-		SELECT ` + deliverySelectCols + `
-		FROM webhook_deliveries
-		WHERE webhook_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3`
+	listQ := fmt.Sprintf(
+		"SELECT %s FROM webhook_deliveries WHERE %s ORDER BY id DESC LIMIT $%d",
+		deliverySelectCols, where, idx,
+	)
+	args = append(args, perPage+1)
 
-	deliveries, err := ScanRows(ctx, r.db, listQ, []any{webhookID, limit, offset}, func(rows pgx.Rows) (models.WebhookDelivery, error) {
+	deliveries, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.WebhookDelivery, error) {
 		return scanDelivery(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing deliveries for webhook %s: %w", webhookID, err)
+		return nil, false, "", fmt.Errorf("listing deliveries for webhook %s: %w", webhookID, err)
 	}
-	return deliveries, total, nil
+
+	hasMore := len(deliveries) > perPage
+	if hasMore {
+		deliveries = deliveries[:perPage]
+	}
+	var lastID string
+	if len(deliveries) > 0 {
+		lastID = deliveries[len(deliveries)-1].ID
+	}
+	return deliveries, hasMore, lastID, nil
 }
 
 // UpdateDeliveryAttempt updates a delivery after an attempt.
