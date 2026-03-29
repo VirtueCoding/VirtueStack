@@ -125,7 +125,7 @@ export function AdminScheduleList({
     setLoading(true);
     try {
       const [scheduleResponse, plansResponse, nodesResponse, customersResponse] = await Promise.all([
-        adminBackupSchedulesApi.getSchedules({ page: 1, per_page: 100 }),
+        adminBackupSchedulesApi.getSchedules({ per_page: 100 }),
         adminPlansApi.getPlans(),
         adminNodesApi.getNodes(),
         adminCustomersApi.getCustomers(),

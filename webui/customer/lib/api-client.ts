@@ -203,10 +203,7 @@ export interface VMOperationResponse {
 export interface CursorPaginatedResponse<T> {
   data: T[];
   meta: {
-    page?: number;
     per_page: number;
-    total?: number;
-    total_pages?: number;
     has_more?: boolean;
     next_cursor?: string;
     prev_cursor?: string;
@@ -238,10 +235,9 @@ export const vmApi = {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/restart`, {});
   },
 
-  async getVMs(params: { perPage?: number; page?: number; cursor?: string } = {}): Promise<CursorPaginatedResponse<VM>> {
+  async getVMs(params: { perPage?: number; cursor?: string } = {}): Promise<CursorPaginatedResponse<VM>> {
     const queryParams = new URLSearchParams();
     if (params.perPage) queryParams.set("per_page", String(params.perPage));
-    if (params.page) queryParams.set("page", String(params.page));
     if (params.cursor) queryParams.set("cursor", params.cursor);
     const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
     return apiClient.get<CursorPaginatedResponse<VM>>(`/customer/vms${query}`);
@@ -385,15 +381,11 @@ export const taskApi = {
 };
 
 export const backupApi = {
-  async listBackups(vmId?: string, method?: "full" | "snapshot", params?: { page?: number; per_page?: number; cursor?: string }): Promise<Backup[]> {
+  async listBackups(vmId?: string, method?: "full" | "snapshot", params?: { per_page?: number; cursor?: string }): Promise<Backup[]> {
     const searchParams = new URLSearchParams();
     if (vmId) searchParams.set("vm_id", vmId);
     if (method) searchParams.set("method", method);
-    if (params?.cursor) {
-      searchParams.set("cursor", params.cursor);
-    } else if (params?.page !== undefined) {
-      searchParams.set("page", String(params.page));
-    }
+    if (params?.cursor) searchParams.set("cursor", params.cursor);
     if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     const query = searchParams.toString();
     return apiClient.get<Backup[]>(`/customer/backups${query ? `?${query}` : ""}`);
@@ -436,14 +428,10 @@ export const backupApi = {
 };
 
 export const snapshotApi = {
-  async listSnapshots(vmId?: string, params?: { page?: number; per_page?: number; cursor?: string }): Promise<Snapshot[]> {
+  async listSnapshots(vmId?: string, params?: { per_page?: number; cursor?: string }): Promise<Snapshot[]> {
     const searchParams = new URLSearchParams();
     if (vmId) searchParams.set("vm_id", vmId);
-    if (params?.cursor) {
-      searchParams.set("cursor", params.cursor);
-    } else if (params?.page !== undefined) {
-      searchParams.set("page", String(params.page));
-    }
+    if (params?.cursor) searchParams.set("cursor", params.cursor);
     if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     const query = searchParams.toString();
     return apiClient.get<Snapshot[]>(`/customer/snapshots${query ? `?${query}` : ""}`);
@@ -678,8 +666,9 @@ export const settingsApi = {
     return apiClient.post<TestWebhookResponse>(`/customer/webhooks/${webhookId}/test`, {});
   },
 
-  async listWebhookDeliveries(webhookId: string, page = 1, perPage = 20): Promise<WebhookDelivery[]> {
-    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  async listWebhookDeliveries(webhookId: string, perPage = 20, cursor?: string): Promise<WebhookDelivery[]> {
+    const params = new URLSearchParams({ per_page: String(perPage) });
+    if (cursor) params.set("cursor", cursor);
     return apiClient.get<WebhookDelivery[]>(`/customer/webhooks/${webhookId}/deliveries?${params.toString()}`);
   },
 };

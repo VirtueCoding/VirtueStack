@@ -26,16 +26,16 @@ export default function SettingsPage() {
     queryKey: ["vms", "api-key-scope"],
     queryFn: async () => {
       const perPage = 100;
-      let page = 1;
+      let cursor: string | undefined;
       const allVms: VM[] = [];
       let hasMore = true;
 
       while (hasMore) {
-        const pageResponse = await vmApi.getVMs({ perPage, page });
+        const pageResponse = await vmApi.getVMs({ perPage, cursor });
         const pageVms = pageResponse.data || [];
         allVms.push(...pageVms);
-        hasMore = pageVms.length >= perPage;
-        page += 1;
+        hasMore = pageResponse.meta?.has_more ?? false;
+        cursor = pageResponse.meta?.next_cursor;
       }
 
       return allVms;

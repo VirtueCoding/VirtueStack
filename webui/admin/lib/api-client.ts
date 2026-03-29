@@ -302,9 +302,8 @@ export interface UpdateNodeRequest {
 }
 
 export const adminNodesApi = {
-  async getNodes(params: { page?: number; per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<Node>> {
+  async getNodes(params: { per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<Node>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.cursor) searchParams.set("cursor", params.cursor);
     const query = searchParams.toString();
@@ -362,9 +361,8 @@ export interface UpdateCustomerRequest {
 }
 
 export const adminCustomersApi = {
-  async getCustomers(params: { page?: number; per_page?: number; cursor?: string; status?: string; search?: string } = {}): Promise<PaginatedResponse<Customer>> {
+  async getCustomers(params: { per_page?: number; cursor?: string; status?: string; search?: string } = {}): Promise<PaginatedResponse<Customer>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.status) searchParams.set("status", params.status);
@@ -397,11 +395,10 @@ export const adminCustomersApi = {
     return apiClient.deleteVoid(`/admin/customers/${id}`);
   },
 
-  async getCustomerAuditLogs(id: string, page = 1, perPage = 20): Promise<PaginatedResponse<AuditLog>> {
-    const searchParams = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
+  async getCustomerAuditLogs(id: string, perPage = 20, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams();
+    searchParams.set("per_page", String(perPage));
+    if (cursor) searchParams.set("cursor", cursor);
     return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/customers/${id}/audit-logs?${searchParams.toString()}`);
   },
 };
@@ -505,13 +502,9 @@ export interface AuditLog {
 }
 
 export const adminAuditLogsApi = {
-  async getAuditLogs(page = 1, perPage = 20, search?: string, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
+  async getAuditLogs(perPage = 20, search?: string, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
     const searchParams = new URLSearchParams();
-    if (cursor) {
-      searchParams.set("cursor", cursor);
-    } else {
-      searchParams.set("page", String(page));
-    }
+    if (cursor) searchParams.set("cursor", cursor);
     searchParams.set("per_page", String(perPage));
     if (search) searchParams.set("search", search);
     return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/audit-logs?${searchParams.toString()}`);
@@ -562,9 +555,8 @@ export interface CreateVMResponse {
 }
 
 export const adminVMsApi = {
-  async getVMs(params: { page?: number; per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<VM>> {
+  async getVMs(params: { per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<VM>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.cursor) searchParams.set("cursor", params.cursor);
     const query = searchParams.toString();
@@ -772,7 +764,6 @@ export interface AdminBackup {
 }
 
 export interface AdminBackupListParams {
-  page?: number;
   per_page?: number;
   cursor?: string;
   customer_id?: string;
@@ -785,10 +776,7 @@ export interface AdminBackupListParams {
 export interface PaginatedResponse<T> {
   data: T[];
   meta: {
-    page?: number;
     per_page: number;
-    total?: number;
-    total_pages?: number;
     has_more?: boolean;
     next_cursor?: string;
     prev_cursor?: string;
@@ -798,11 +786,7 @@ export interface PaginatedResponse<T> {
 export const adminBackupsApi = {
   async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
     const searchParams = new URLSearchParams();
-    if (params.cursor) {
-      searchParams.set("cursor", params.cursor);
-    } else if (params.page !== undefined) {
-      searchParams.set("page", String(params.page));
-    }
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.customer_id) searchParams.set("customer_id", params.customer_id);
     if (params.vm_id) searchParams.set("vm_id", params.vm_id);
@@ -864,13 +848,9 @@ export interface UpdateAdminBackupScheduleRequest {
 }
 
 export const adminBackupSchedulesApi = {
-  async getSchedules(params: { page?: number; per_page?: number; cursor?: string; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
+  async getSchedules(params: { per_page?: number; cursor?: string; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
     const searchParams = new URLSearchParams();
-    if (params.cursor) {
-      searchParams.set("cursor", params.cursor);
-    } else if (params.page) {
-      searchParams.set("page", String(params.page));
-    }
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.per_page) searchParams.set("per_page", String(params.per_page));
     if (params.active !== undefined) searchParams.set("active", String(params.active));
 
@@ -994,9 +974,12 @@ export const adminIPSetsApi = {
     return apiClient.deleteVoid(`/admin/ip-sets/${id}`);
   },
 
-  async getAvailableIPs(id: string, page = 1, perPage = 50): Promise<PaginatedResponse<{ id: string; address: string }>> {
+  async getAvailableIPs(id: string, perPage = 50, cursor?: string): Promise<PaginatedResponse<{ id: string; address: string }>> {
+    const searchParams = new URLSearchParams();
+    searchParams.set("per_page", String(perPage));
+    if (cursor) searchParams.set("cursor", cursor);
     return apiClient.get<PaginatedResponse<{ id: string; address: string }>>(
-      `/admin/ip-sets/${id}/available?page=${page}&per_page=${perPage}`
+      `/admin/ip-sets/${id}/available?${searchParams.toString()}`
     );
   },
 };
@@ -1020,14 +1003,14 @@ export interface FailoverRequest {
 
 export const adminFailoverRequestsApi = {
   async getFailoverRequests(params: {
-    page?: number;
     per_page?: number;
+    cursor?: string;
     node_id?: string;
     status?: string;
   } = {}): Promise<PaginatedResponse<FailoverRequest>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.node_id) searchParams.set("node_id", params.node_id);
     if (params.status) searchParams.set("status", params.status);
 

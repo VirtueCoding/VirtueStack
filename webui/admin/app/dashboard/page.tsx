@@ -57,16 +57,16 @@ export default function DashboardPage() {
         adminAuditLogsApi.getAuditLogs(),
       ]);
 
-      const vmsResult = results[0].status === 'fulfilled' ? results[0].value : { data: [], meta: { total: 0 } };
-      const nodesResult = results[1].status === 'fulfilled' ? results[1].value : { data: [], meta: { total: 0 } };
-      const customersResult = results[2].status === 'fulfilled' ? results[2].value : { data: [], meta: { total: 0 } };
-      const logsResult = results[3].status === 'fulfilled' ? results[3].value : { data: [], meta: { total: 0 } };
+      const vmsResult = results[0].status === 'fulfilled' ? results[0].value : { data: [] };
+      const nodesResult = results[1].status === 'fulfilled' ? results[1].value : { data: [] };
+      const customersResult = results[2].status === 'fulfilled' ? results[2].value : { data: [] };
+      const logsResult = results[3].status === 'fulfilled' ? results[3].value : { data: [] };
       const logs = logsResult.data || [];
 
       setStats({
-        totalVMs: vmsResult.meta.total ?? 0,
-        totalNodes: nodesResult.meta.total ?? 0,
-        totalCustomers: customersResult.meta.total ?? 0,
+        totalVMs: (vmsResult.data || []).length,
+        totalNodes: (nodesResult.data || []).length,
+        totalCustomers: (customersResult.data || []).length,
       });
 
       const mappedActivities: ActivityItem[] = (logs as AuditLog[]).slice(0, 6).map((log) => {

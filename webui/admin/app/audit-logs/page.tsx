@@ -41,7 +41,7 @@ export default function AuditLogsPage() {
   const loadLogs = useCallback(async (cursor?: string, search?: string) => {
     setLoading(true);
     try {
-      const data = await adminAuditLogsApi.getAuditLogs(1, PAGE_SIZE, search || undefined, cursor);
+      const data = await adminAuditLogsApi.getAuditLogs(PAGE_SIZE, search || undefined, cursor);
       setLogs(data.data || []);
       setNextCursor(data.meta?.next_cursor ?? undefined);
       setHasMore(data.meta?.has_more ?? false);
