@@ -8,10 +8,8 @@
 // Usage pattern in repositories:
 //
 //	func (r *Repo) List(ctx context.Context, params PaginationParams) ([]Item, PaginationMeta, error) {
-//	    if params.IsCursorBased() {
-//	        return r.listWithCursor(ctx, params)
-//	    }
-//	    return r.listWithOffset(ctx, params)
+//	    cp := cursor.ParseParams(params)
+//	    return r.listWithCursor(ctx, cp)
 //	}
 package cursor
 
@@ -41,7 +39,7 @@ type Params struct {
 
 // ParseParams extracts cursor pagination params from models.PaginationParams.
 func ParseParams(p models.PaginationParams) Params {
-	if !p.IsCursorBased() {
+	if p.Cursor == "" {
 		return Params{PerPage: p.PerPage}
 	}
 	cp := p.DecodeCursor()

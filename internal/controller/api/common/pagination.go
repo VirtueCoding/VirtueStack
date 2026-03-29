@@ -13,7 +13,7 @@ const (
 	maxCursorLimit     = 100
 )
 
-// ParsePaginationParams parses offset pagination params using shared model defaults.
+// ParsePaginationParams parses cursor pagination params using shared model defaults.
 func ParsePaginationParams(c *gin.Context) models.PaginationParams {
 	return models.ParsePagination(c)
 }
