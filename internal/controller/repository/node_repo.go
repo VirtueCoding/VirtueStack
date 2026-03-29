@@ -133,6 +133,27 @@ func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter)
 		idx++
 	}
 
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			where += fmt.Sprintf(" AND id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM nodes WHERE %s ORDER BY id DESC LIMIT $%d",
+			nodeSelectCols, where, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		nodes, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Node, error) {
+			return scanNode(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing nodes: %w", err)
+		}
+		return nodes, 0, nil
+	}
+
 	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM nodes WHERE "+where, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting nodes: %w", err)

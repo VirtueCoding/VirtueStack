@@ -116,6 +116,28 @@ func (r *PlanRepository) List(ctx context.Context, filter PlanListFilter) ([]mod
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM plans WHERE %s ORDER BY id DESC LIMIT $%d",
+			planSelectCols, clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		plans, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Plan, error) {
+			return scanPlan(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing plans: %w", err)
+		}
+		return plans, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM plans WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {

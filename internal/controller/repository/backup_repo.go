@@ -192,6 +192,26 @@ func (r *BackupRepository) ListBackups(ctx context.Context, filter BackupListFil
 		whereBuilder = whereBuilder.Where(sq.Eq{"admin_schedule_id": *filter.AdminScheduleID})
 	}
 
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		listBuilder := whereBuilder.Columns(backupSelectCols)
+		if cursor.LastID != "" {
+			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
+		}
+		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+		listQ, listArgs, err := listBuilder.ToSql()
+		if err != nil {
+			return nil, 0, fmt.Errorf("building backup list query: %w", err)
+		}
+		backups, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Backup, error) {
+			return scanBackup(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing backups: %w", err)
+		}
+		return backups, 0, nil
+	}
+
 	countBuilder := whereBuilder.Columns("COUNT(*)")
 	countQ, countArgs, err := countBuilder.ToSql()
 	if err != nil {
@@ -262,6 +282,28 @@ func (r *BackupRepository) ListBackupsByCustomer(ctx context.Context, customerID
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND b.id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM backups b JOIN vms v ON v.id = b.vm_id WHERE %s ORDER BY b.id DESC LIMIT $%d",
+			prefixSelectCols(backupSelectCols, "b"), clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		backups, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Backup, error) {
+			return scanBackup(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing backups by customer: %w", err)
+		}
+		return backups, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM backups b JOIN vms v ON v.id = b.vm_id WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {
@@ -482,6 +524,26 @@ func (r *BackupRepository) ListSnapshots(ctx context.Context, filter SnapshotLis
 		whereBuilder = whereBuilder.Where(sq.Eq{"vm_id": *filter.VMID})
 	}
 
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		listBuilder := whereBuilder.Columns(snapshotSelectCols)
+		if cursor.LastID != "" {
+			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
+		}
+		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+		listQ, listArgs, err := listBuilder.ToSql()
+		if err != nil {
+			return nil, 0, fmt.Errorf("building snapshot list query: %w", err)
+		}
+		snapshots, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Snapshot, error) {
+			return scanSnapshot(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing snapshots: %w", err)
+		}
+		return snapshots, 0, nil
+	}
+
 	countBuilder := whereBuilder.Columns("COUNT(*)")
 	countQ, countArgs, err := countBuilder.ToSql()
 	if err != nil {
@@ -533,6 +595,28 @@ func (r *BackupRepository) ListSnapshotsByCustomer(ctx context.Context, customer
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND s.id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE %s ORDER BY s.id DESC LIMIT $%d",
+			prefixSelectCols(snapshotSelectCols, "s"), clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		snapshots, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Snapshot, error) {
+			return scanSnapshot(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing snapshots by customer: %w", err)
+		}
+		return snapshots, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM snapshots s JOIN vms v ON v.id = s.vm_id WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {
@@ -714,6 +798,28 @@ func (r *BackupRepository) ListBackupSchedules(ctx context.Context, filter Backu
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM backup_schedules WHERE %s ORDER BY id DESC LIMIT $%d",
+			backupScheduleSelectCols, clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.BackupSchedule, error) {
+			return scanBackupSchedule(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing backup schedules: %w", err)
+		}
+		return schedules, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM backup_schedules WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {

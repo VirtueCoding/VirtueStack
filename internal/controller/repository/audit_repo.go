@@ -101,6 +101,26 @@ func (r *AuditRepository) List(ctx context.Context, filter models.AuditLogFilter
 		whereBuilder = whereBuilder.Where(sq.LtOrEq{"timestamp": *filter.EndTime})
 	}
 
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		listBuilder := whereBuilder.Columns(auditLogSelectCols)
+		if cursor.LastID != "" {
+			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
+		}
+		listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+		listQ, listArgs, err := listBuilder.ToSql()
+		if err != nil {
+			return nil, 0, fmt.Errorf("building audit log list query: %w", err)
+		}
+		logs, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.AuditLog, error) {
+			return scanAuditLog(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing audit logs: %w", err)
+		}
+		return logs, 0, nil
+	}
+
 	countBuilder := whereBuilder.Columns("COUNT(*)")
 	countQ, countArgs, err := countBuilder.ToSql()
 	if err != nil {

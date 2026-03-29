@@ -89,6 +89,28 @@ func (r *AdminBackupScheduleRepository) List(ctx context.Context, filter AdminBa
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM admin_backup_schedules WHERE %s ORDER BY id DESC LIMIT $%d",
+			adminBackupScheduleSelectCols, clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.AdminBackupSchedule, error) {
+			return scanAdminBackupSchedule(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing admin backup schedules: %w", err)
+		}
+		return schedules, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM admin_backup_schedules WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {

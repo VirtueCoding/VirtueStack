@@ -138,6 +138,28 @@ func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter
 	}
 
 	clause := strings.Join(where, " AND ")
+
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			clause += fmt.Sprintf(" AND id < $%d", idx)
+			args = append(args, cursor.LastID)
+			idx++
+		}
+		listQ := fmt.Sprintf(
+			"SELECT %s FROM customers WHERE %s ORDER BY id DESC LIMIT $%d",
+			customerSelectCols, clause, idx,
+		)
+		args = append(args, filter.PerPage+1)
+		customers, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Customer, error) {
+			return scanCustomer(rows)
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("listing customers: %w", err)
+		}
+		return customers, 0, nil
+	}
+
 	countQ := "SELECT COUNT(*) FROM customers WHERE " + clause
 	total, err := CountRows(ctx, r.db, countQ, args...)
 	if err != nil {
