@@ -37,10 +37,13 @@ internal/
     notifications/                          # Email + Telegram notifications (+ templates/)
     redis/client.go                         # Redis client for distributed rate limiting
     repository/                             # Database access layer (30 files)
-    services/                               # Business logic (41 files)
+    services/                               # Business logic (52 files, includes split node_agent_* and VM/backup services)
     tasks/                                  # Async task handlers (25 files)
     config.go                               # Re-exports shared config
+    dependencies.go                         # Dependency wiring and service initialization
     grpc_client.go                          # gRPC client to Node Agents
+    response.go                             # Health/readiness and shared HTTP responses
+    schedulers.go                           # Background scheduler startup and collectors
     server.go                               # HTTP server wiring, route registration
   nodeagent/
     config.go                               # Node Agent config
@@ -246,6 +249,10 @@ All policies use `current_setting('app.current_customer_id')::UUID` for customer
 | Customer | `/api/v1/customer/*` | JWT or Customer API Key | 100 read/min, 30 write/min |
 | Provisioning | `/api/v1/provisioning/*` | API Key (X-API-Key) | 1000/min |
 
+OpenAPI specs are generated from annotations via `make swagger` (`swag init`) and committed at:
+- `docs/swagger.json`
+- `docs/swagger.yaml`
+
 ### 5.2 Admin API Endpoints
 
 **File:** `internal/controller/api/admin/routes.go`
@@ -353,6 +360,11 @@ POST   /provisioning-keys
 GET    /provisioning-keys/:id
 PUT    /provisioning-keys/:id
 DELETE /provisioning-keys/:id
+
+GET    /system-webhooks
+POST   /system-webhooks
+PUT    /system-webhooks/:id
+DELETE /system-webhooks/:id
 ```
 
 ### 5.3 Customer API Endpoints

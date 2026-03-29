@@ -841,21 +841,21 @@
 ### Documentation Updates
 
 - [x] After completing Phase 1, update `AGENTS.md` §8 (VM Lifecycle) to document the state machine and valid transitions
-- [ ] After completing Gap #3 (OpenAPI), update `AGENTS.md` §5 to reference the generated spec
-- [ ] After completing Gap #11 (system webhooks), update `AGENTS.md` §5 to document system webhook endpoints
-- [ ] After each god-file split (#6, #7, #13), update `AGENTS.md` §2 (Repository Structure) with new file listings
-- [ ] Keep `docs/CODEMAPS/backend.md` in sync with new files and routes
+- [x] After completing Gap #3 (OpenAPI), update `AGENTS.md` §5 to reference the generated spec
+- [x] After completing Gap #11 (system webhooks), update `AGENTS.md` §5 to document system webhook endpoints
+- [x] After each god-file split (#6, #7, #13), update `AGENTS.md` §2 (Repository Structure) with new file listings
+- [x] Keep `docs/CODEMAPS/backend.md` in sync with new files and routes
 
 ### CI Pipeline Updates
 
-- [ ] After Gap #9: `buf breaking` check in CI
-- [ ] After Gap #3: `swag init` validation step in CI (ensure generated spec is up-to-date)
-- [ ] After Gap #8: Update frontend CI jobs to use workspace-level install
-- [ ] After Gap #15: No CI change needed (squirrel is a build dependency, tested via existing tests)
+- [x] After Gap #9: `buf breaking` check in CI
+- [x] After Gap #3: `swag init` validation step in CI (ensure generated spec is up-to-date)
+- [x] After Gap #8: Update frontend CI jobs to use workspace-level install
+- [x] After Gap #15: No CI change needed (squirrel is a build dependency, tested via existing tests)
 
 ### Regression Testing
 
-- [ ] After each phase, run the full test suite: `make test-race`
-- [ ] After frontend changes: `cd webui/admin && npm run lint && npm run type-check && npm run build`
-- [ ] After frontend changes: `cd webui/customer && npm run lint && npm run type-check && npm run build`
+- [x] After each phase, run the full test suite: `make test-race`
+- [x] After frontend changes: `cd webui/admin && npm run lint && npm run type-check && npm run build`
+- [x] After frontend changes: `cd webui/customer && npm run lint && npm run type-check && npm run build`
 - [ ] After migration changes: verify `make migrate-up && make migrate-down` cycle works

@@ -67,6 +67,14 @@ jobs:
         with:
           against: 'https://github.com/AbuGosok/VirtueStack.git#branch=main'
 
+      - name: Install swag
+        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+
+      - name: Validate Swagger spec is up to date
+        run: |
+          make swagger
+          git diff --exit-code docs/swagger.json docs/swagger.yaml
+
   php-module-check:
     name: PHP Module Check
     runs-on: ubuntu-latest

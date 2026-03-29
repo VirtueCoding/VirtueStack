@@ -91,6 +91,11 @@ GET    /provisioning-keys, /provisioning-keys/:id
 POST   /provisioning-keys
 PUT    /provisioning-keys/:id
 DELETE /provisioning-keys/:id       # Requires re-auth
+
+GET    /system-webhooks
+POST   /system-webhooks
+PUT    /system-webhooks/:id
+DELETE /system-webhooks/:id         # Requires re-auth
 ```
 
 ## Customer API Routes
@@ -184,7 +189,7 @@ GET    /plans/:id              # Get plan
 
 ## Service Layer
 
-**Directory:** `internal/controller/services/` (41 files)
+**Directory:** `internal/controller/services/` (52 files)
 
 | Service | File | Purpose |
 |---------|------|---------|
@@ -204,6 +209,7 @@ GET    /plans/:id              # Get plan
 | IPAMService | `ipam_service.go` | IP allocation |
 | BandwidthService | `bandwidth_service.go` | Usage tracking |
 | StorageBackendService | `storage_backend_service.go` | Storage backend registry |
+| SystemEventService | `system_event_service.go` | System event publishing + system webhook fan-out |
 | CustomerService | `customer_service.go` | Customer management |
 | WebhookService | `webhook.go` | Webhook delivery |
 | NotificationService | `notification_service.go` | Email/Telegram |
