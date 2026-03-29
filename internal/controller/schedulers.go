@@ -74,33 +74,33 @@ func (s *Server) startMetricsCollector(ctx context.Context) {
 func (s *Server) collectControllerMetrics(ctx context.Context, vmRepo *repository.VMRepository, nodeRepo *repository.NodeRepository) {
 	vmStatuses := []string{models.VMStatusRunning, models.VMStatusStopped, models.VMStatusProvisioning, models.VMStatusSuspended, models.VMStatusMigrating, models.VMStatusError}
 	for _, status := range vmStatuses {
-		_, total, err := vmRepo.List(ctx, models.VMListFilter{
+		vms, _, _, err := vmRepo.List(ctx, models.VMListFilter{
 			Status:           util.StringPtr(status),
-			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
+			PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 		})
 		count := 0
 		if err == nil {
-			count = total
+			count = len(vms)
 		}
 		controllermetrics.VMsTotal.WithLabelValues(status).Set(float64(count))
 	}
 
 	nodeStatuses := []string{models.NodeStatusOnline, models.NodeStatusOffline, models.NodeStatusDraining, models.NodeStatusDegraded, models.NodeStatusFailed}
 	for _, status := range nodeStatuses {
-		_, total, err := nodeRepo.List(ctx, models.NodeListFilter{
+		nodes, _, _, err := nodeRepo.List(ctx, models.NodeListFilter{
 			Status:           &status,
-			PaginationParams: models.PaginationParams{Page: 1, PerPage: 1},
+			PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 		})
 		count := 0
 		if err == nil {
-			count = total
+			count = len(nodes)
 		}
 		controllermetrics.NodesTotal.WithLabelValues(status).Set(float64(count))
 	}
 
-	onlineNodes, _, err := nodeRepo.List(ctx, models.NodeListFilter{
+	onlineNodes, _, _, err := nodeRepo.List(ctx, models.NodeListFilter{
 		Status:           util.StringPtr(models.NodeStatusOnline),
-		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+		PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 	})
 	if err != nil {
 		return
@@ -168,9 +168,9 @@ func (s *Server) cleanupExpiredSessions(ctx context.Context, customerRepo *repos
 func (s *Server) collectBandwidth(ctx context.Context) {
 	vmRepo := repository.NewVMRepository(s.dbPool)
 
-	vms, _, err := vmRepo.List(ctx, models.VMListFilter{
+	vms, _, _, err := vmRepo.List(ctx, models.VMListFilter{
 		Status:           util.StringPtr(models.VMStatusRunning),
-		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+		PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 	})
 	if err != nil {
 		s.logger.Warn("failed to list running VMs for bandwidth collection", "error", err)

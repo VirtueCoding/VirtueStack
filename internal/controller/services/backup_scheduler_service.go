@@ -165,7 +165,6 @@ func (s *BackupService) CreateSchedule(ctx context.Context, schedule *models.Bac
 func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*models.BackupSchedule, error) {
 	filter := repository.BackupScheduleListFilter{
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 100, // Default limit for non-paginated list
 		},
 	}
@@ -173,7 +172,7 @@ func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*mode
 		filter.VMID = &vmID
 	}
 
-	schedules, _, err := s.backupRepo.ListBackupSchedules(ctx, filter)
+	schedules, _, _, err := s.backupRepo.ListBackupSchedules(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing schedules: %w", err)
 	}
@@ -187,7 +186,7 @@ func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*mode
 	return result, nil
 }
 
-func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string, pagination models.PaginationParams) ([]*models.BackupSchedule, int, error) {
+func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string, pagination models.PaginationParams) ([]*models.BackupSchedule, bool, string, error) {
 	filter := repository.BackupScheduleListFilter{
 		PaginationParams: pagination,
 	}
@@ -195,9 +194,9 @@ func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string,
 		filter.VMID = &vmID
 	}
 
-	schedules, total, err := s.backupRepo.ListBackupSchedules(ctx, filter)
+	schedules, hasMore, lastID, err := s.backupRepo.ListBackupSchedules(ctx, filter)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing schedules: %w", err)
+		return nil, false, "", fmt.Errorf("listing schedules: %w", err)
 	}
 
 	result := make([]*models.BackupSchedule, 0, len(schedules))
@@ -206,7 +205,7 @@ func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string,
 		result = append(result, &sched)
 	}
 
-	return result, total, nil
+	return result, hasMore, lastID, nil
 }
 
 func (s *BackupService) UpdateSchedule(ctx context.Context, scheduleID string, enabled bool) error {

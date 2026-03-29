@@ -71,7 +71,7 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 		}
 	}
 
-	ipSets, total, err := h.ipRepo.ListIPSets(c.Request.Context(), filter)
+	ipSets, hasMore, lastID, err := h.ipRepo.ListIPSets(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list IP sets",
 			"error", err,
@@ -82,7 +82,7 @@ func (h *AdminHandler) ListIPSets(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ipSets,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
@@ -320,7 +320,7 @@ func (h *AdminHandler) DeleteIPSet(c *gin.Context) {
 
 	// Check for assigned IPs
 	assignedFilter := repository.IPAddressListFilter{IPSetID: &ipSetID, Status: util.StringPtr("assigned")}
-	assignedIPs, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
+	assignedIPs, _, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), assignedFilter)
 	if err == nil && len(assignedIPs) > 0 {
 		middleware.RespondWithError(c, http.StatusConflict, "IPSET_IN_USE", "Cannot delete IP set with assigned IPs")
 		return
@@ -392,7 +392,7 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 		PaginationParams: pagination,
 	}
 
-	ips, total, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	ips, hasMore, lastID, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list available IPs",
 			"ipset_id", ipSetID,
@@ -404,6 +404,6 @@ func (h *AdminHandler) ListAvailableIPs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ips,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }

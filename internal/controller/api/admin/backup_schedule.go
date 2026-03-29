@@ -110,7 +110,7 @@ func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 
 	pagination := models.ParsePagination(c)
 
-	schedules, total, err := h.backupService.ListSchedulesPaginated(c.Request.Context(), vmID, pagination)
+	schedules, hasMore, lastID, err := h.backupService.ListSchedulesPaginated(c.Request.Context(), vmID, pagination)
 	if err != nil {
 		h.logger.Error("failed to list backup schedules",
 			"error", err,
@@ -120,25 +120,9 @@ func (h *AdminHandler) ListBackupSchedules(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(schedules) > pagination.PerPage
-		if hasMore {
-			schedules = schedules[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(schedules) > 0 {
-			lastID = schedules[len(schedules)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: schedules,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: schedules,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

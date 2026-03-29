@@ -396,12 +396,11 @@ func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID st
 		CustomerID: &customerID,
 		VMIDs:      normalized,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: len(normalized),
 		},
 	}
 
-	vms, _, err := h.vmRepo.List(ctx, filter)
+	vms, _, _, err := h.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs for api key scope: %w", err)
 	}

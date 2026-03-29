@@ -53,7 +53,7 @@ func (h *AdminHandler) ListStorageBackends(c *gin.Context) {
 		filter.Status = &status
 	}
 
-	backends, total, err := h.storageBackendRepo.List(c.Request.Context(), filter)
+	backends, hasMore, lastID, err := h.storageBackendRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list storage backends",
 			"error", err,
@@ -65,7 +65,7 @@ func (h *AdminHandler) ListStorageBackends(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: backends,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

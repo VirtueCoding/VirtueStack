@@ -92,7 +92,7 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 	}
 
 	// isAdmin=true allows viewing all VMs
-	vms, total, err := h.vmService.ListVMs(c.Request.Context(), filter, "", true)
+	vms, hasMore, lastID, err := h.vmService.ListVMs(c.Request.Context(), filter, "", true)
 	if err != nil {
 		h.logger.Error("failed to list VMs",
 			"error", err,
@@ -101,24 +101,10 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(vms) > pagination.PerPage
-		if hasMore {
-			vms = vms[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(vms) > 0 {
-			lastID = vms[len(vms)-1].ID
-		}
-		meta := models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID)
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: vms,
-			Meta: meta,
-		})
-		return
-	}
-
-	common.RespondWithPaginatedList(c, vms, total, pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: vms,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }
 
 // CreateVM handles POST /vms - creates a VM for any customer (admin override).

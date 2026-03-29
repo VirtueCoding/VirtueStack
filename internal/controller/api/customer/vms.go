@@ -63,7 +63,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 		filter.Search = &search
 	}
 
-	vms, total, err := h.vmService.ListVMs(c.Request.Context(), filter, customerID, false)
+	vms, hasMore, lastID, err := h.vmService.ListVMs(c.Request.Context(), filter, customerID, false)
 	if err != nil {
 		h.logger.Error("failed to list VMs",
 			"customer_id", customerID,
@@ -73,24 +73,10 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(vms) > pagination.PerPage
-		if hasMore {
-			vms = vms[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(vms) > 0 {
-			lastID = vms[len(vms)-1].ID
-		}
-		meta := models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID)
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: vms,
-			Meta: meta,
-		})
-		return
-	}
-
-	common.RespondWithPaginatedList(c, vms, int(total), pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: vms,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }
 
 // GetVM handles GET /vms/:id - retrieves details for a specific VM.

@@ -208,7 +208,7 @@ func (s *BackupService) ListBackups(ctx context.Context, vmID string) ([]models.
 	return backups, nil
 }
 
-func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *string, filter repository.BackupListFilter) ([]models.Backup, int, error) {
+func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *string, filter repository.BackupListFilter) ([]models.Backup, bool, string, error) {
 	if customerID != nil && *customerID != "" {
 		return s.backupRepo.ListBackupsByCustomer(ctx, *customerID, filter)
 	}

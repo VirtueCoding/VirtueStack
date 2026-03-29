@@ -95,7 +95,7 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		filter.Method = &method
 	}
 
-	backups, total, err := h.backupRepo.ListBackupsByCustomer(c.Request.Context(), customerID, filter)
+	backups, hasMore, lastID, err := h.backupRepo.ListBackupsByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		h.logger.Error("failed to list backups",
 			"customer_id", customerID,
@@ -105,25 +105,9 @@ func (h *CustomerHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(backups) > pagination.PerPage
-		if hasMore {
-			backups = backups[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(backups) > 0 {
-			lastID = backups[len(backups)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: backups,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: backups,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

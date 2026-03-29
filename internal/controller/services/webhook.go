@@ -421,23 +421,14 @@ func (s *WebhookService) queueDelivery(ctx context.Context, webhook *models.Cust
 }
 
 // ListDeliveries retrieves delivery history for a webhook.
-func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customerID string, page, perPage int) ([]models.WebhookDelivery, int, error) {
+func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customerID string, pagination models.PaginationParams) ([]models.WebhookDelivery, bool, string, error) {
 	// Verify webhook exists and belongs to customer
 	_, err := s.webhookRepo.GetByIDAndCustomer(ctx, webhookID, customerID)
 	if err != nil {
-		return nil, 0, ErrWebhookNotFound
+		return nil, false, "", ErrWebhookNotFound
 	}
 
-	limit := perPage
-	if limit > 100 {
-		limit = 100
-	}
-	offset := (page - 1) * limit
-	if offset < 0 {
-		offset = 0
-	}
-
-	return s.webhookRepo.ListDeliveriesByWebhook(ctx, webhookID, limit, offset)
+	return s.webhookRepo.ListDeliveriesByWebhook(ctx, webhookID, pagination.PerPage, pagination.Cursor)
 }
 
 // ============================================================================
@@ -718,10 +709,7 @@ func (s *WebhookService) RetryDelivery(ctx context.Context, deliveryID string) e
 	return nil
 }
 
-func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, page, perPage int) ([]models.WebhookDelivery, int, error) {
-	if page <= 0 {
-		page = 1
-	}
+func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, page, perPage int) ([]models.WebhookDelivery, bool, string, error) {
 	if perPage <= 0 {
 		perPage = 20
 	}
@@ -730,7 +718,7 @@ func (s *WebhookService) GetDeliveryLogs(ctx context.Context, webhookID string, 
 	}
 
 	filter := repository.DeliveryListFilter{
-		PaginationParams: models.PaginationParams{Page: page, PerPage: perPage},
+		PaginationParams: models.PaginationParams{PerPage: perPage},
 	}
 	if webhookID != "" {
 		filter.WebhookID = &webhookID

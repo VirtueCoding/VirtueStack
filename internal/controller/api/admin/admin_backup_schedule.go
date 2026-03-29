@@ -165,7 +165,7 @@ func (h *AdminHandler) ListAdminBackupSchedules(c *gin.Context) {
 		Active:           activeFilter,
 	}
 
-	schedules, total, err := h.adminBackupScheduleRepo.List(c.Request.Context(), filter)
+	schedules, hasMore, lastID, err := h.adminBackupScheduleRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list admin backup schedules",
 			"error", err,
@@ -181,7 +181,7 @@ func (h *AdminHandler) ListAdminBackupSchedules(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

@@ -159,7 +159,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 		filter.Search = &search
 	}
 
-	customers, total, err := h.customerService.List(c.Request.Context(), filter)
+	customers, hasMore, lastID, err := h.customerService.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list customers",
 			"error", err,
@@ -168,25 +168,9 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(customers) > pagination.PerPage
-		if hasMore {
-			customers = customers[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(customers) > 0 {
-			lastID = customers[len(customers)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: customers,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: customers,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
@@ -230,32 +214,32 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	vmFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
-			PerPage: 1, // We just need the count
+			PerPage: 1, // We just need to check existence
 		},
 	}
-	_, totalVMs, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
+	vms, _, _, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
 	if err != nil {
 		h.logger.Warn("failed to get VM count for customer",
 			"customer_id", customerID,
 			"error", err)
 	}
+	totalVMs := len(vms)
 
 	// Count active VMs
 	activeFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		Status:     util.StringPtr("running"),
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 1,
 		},
 	}
-	_, activeVMs, err := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
+	activeVMsList, _, _, err := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
 	if err != nil {
 		h.logger.Warn("failed to get active VM count for customer",
 			"customer_id", customerID,
 			"error", err)
 	}
+	activeVMs := len(activeVMsList)
 
 	detail := CustomerDetail{
 		Customer:    *customer,
@@ -396,12 +380,11 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 	vmFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 1,
 		},
 	}
-	_, vmCount, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
-	if err == nil && vmCount > 0 {
+	existingVMs, _, _, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
+	if err == nil && len(existingVMs) > 0 {
 		middleware.RespondWithError(c, http.StatusConflict, "CUSTOMER_HAS_VMS", "Cannot delete customer with existing VMs. Delete VMs first.")
 		return
 	}
@@ -465,7 +448,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 		filter.Action = &action
 	}
 
-	logs, total, err := h.auditRepo.List(c.Request.Context(), filter)
+	logs, hasMore, lastID, err := h.auditRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to get customer audit logs",
 			"customer_id", customerID,
@@ -477,6 +460,6 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: logs,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }

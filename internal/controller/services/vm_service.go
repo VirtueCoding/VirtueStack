@@ -686,7 +686,7 @@ func (s *VMService) GetVM(ctx context.Context, vmID, customerID string, isAdmin 
 
 // ListVMs lists VMs with optional filtering and pagination.
 // For non-admin users, only their own VMs are returned.
-func (s *VMService) ListVMs(ctx context.Context, filter models.VMListFilter, customerID string, isAdmin bool) ([]models.VM, int, error) {
+func (s *VMService) ListVMs(ctx context.Context, filter models.VMListFilter, customerID string, isAdmin bool) ([]models.VM, bool, string, error) {
 	// Non-admins can only see their own VMs
 	if !isAdmin {
 		filter.CustomerID = &customerID
@@ -838,7 +838,7 @@ func (s *VMService) GetTaskStatus(ctx context.Context, taskID string) (*models.T
 }
 
 // ListTasks lists tasks with optional filtering.
-func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]models.Task, int, error) {
+func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]models.Task, bool, string, error) {
 	return s.taskRepo.List(ctx, filter)
 }
 

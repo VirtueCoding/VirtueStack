@@ -252,18 +252,19 @@ func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 	throttledCount := 0
 	totalChecked := 0
 
-	for page := 1; ; page++ {
+	cursor := ""
+	for {
 		filter := models.VMListFilter{
 			Status: util.StringPtr(models.VMStatusRunning),
 			PaginationParams: models.PaginationParams{
-				Page:    page,
 				PerPage: batchSize,
+				Cursor:  cursor,
 			},
 		}
 
-		vms, total, err := s.vmRepo.List(ctx, filter)
+		vms, hasMore, lastID, err := s.vmRepo.List(ctx, filter)
 		if err != nil {
-			return throttledCount, fmt.Errorf("listing running VMs (page %d): %w", page, err)
+			return throttledCount, fmt.Errorf("listing running VMs: %w", err)
 		}
 
 		if len(vms) == 0 {
@@ -285,9 +286,10 @@ func (s *BandwidthService) CheckAllVMs(ctx context.Context) (int, error) {
 
 		totalChecked += len(vms)
 
-		if totalChecked >= total || len(vms) < batchSize {
+		if !hasMore {
 			break
 		}
+		cursor = lastID
 	}
 
 	logger.Info("bandwidth check completed", "vms_checked", totalChecked, "throttled", throttledCount)

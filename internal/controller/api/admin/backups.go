@@ -114,7 +114,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		AdminScheduleID:  filter.AdminScheduleID,
 	}
 
-	backups, total, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
+	backups, hasMore, lastID, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
 	if err != nil {
 		h.logger.Error("failed to list backups",
 			"error", err,
@@ -123,23 +123,10 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(backups) > pagination.PerPage
-		if hasMore {
-			backups = backups[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(backups) > 0 {
-			lastID = backups[len(backups)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: backups,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
-	common.RespondWithPaginatedList(c, backups, int(total), pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: backups,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }
 
 // RestoreBackup handles POST /backups/:id/restore - restores a backup (admin override).

@@ -81,7 +81,7 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		filter.VMIDs = vmIDs
 	}
 
-	snapshots, total, err := h.backupRepo.ListSnapshotsByCustomer(c.Request.Context(), customerID, filter)
+	snapshots, hasMore, lastID, err := h.backupRepo.ListSnapshotsByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		h.logger.Error("failed to list snapshots",
 			"customer_id", customerID,
@@ -91,25 +91,9 @@ func (h *CustomerHandler) ListSnapshots(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(snapshots) > pagination.PerPage
-		if hasMore {
-			snapshots = snapshots[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(snapshots) > 0 {
-			lastID = snapshots[len(snapshots)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: snapshots,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: snapshots,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

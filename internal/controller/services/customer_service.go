@@ -45,12 +45,12 @@ func (s *CustomerService) GetByID(ctx context.Context, id string) (*models.Custo
 
 // List returns a paginated list of customers with optional filtering.
 // Supports filtering by status and search query (email/name).
-func (s *CustomerService) List(ctx context.Context, filter repository.CustomerListFilter) ([]models.Customer, int, error) {
-	customers, total, err := s.customerRepo.List(ctx, filter)
+func (s *CustomerService) List(ctx context.Context, filter repository.CustomerListFilter) ([]models.Customer, bool, string, error) {
+	customers, hasMore, lastID, err := s.customerRepo.List(ctx, filter)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing customers: %w", err)
+		return nil, false, "", fmt.Errorf("listing customers: %w", err)
 	}
-	return customers, total, nil
+	return customers, hasMore, lastID, nil
 }
 
 // Update updates a customer's profile information.

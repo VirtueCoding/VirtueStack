@@ -35,12 +35,11 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 	vmFilter := models.VMListFilter{
 		NodeID: &nodeID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: models.MaxPerPage,
 		},
 	}
 
-	vms, _, err := c.vmRepo.List(ctx, vmFilter)
+	vms, _, _, err := c.vmRepo.List(ctx, vmFilter)
 	if err != nil {
 		return fmt.Errorf("listing VMs on node %s: %w", nodeID, err)
 	}
@@ -51,7 +50,7 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 	}
 
 	// Pre-fetch target nodes once to avoid an N+1 query per VM.
-	targetNodes, _, err := c.nodeRepo.List(ctx, models.NodeListFilter{
+	targetNodes, _, _, err := c.nodeRepo.List(ctx, models.NodeListFilter{
 		Status: util.StringPtr(models.NodeStatusOnline),
 	})
 	if err != nil {

@@ -33,7 +33,7 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	logs, total, err := h.auditRepo.List(c.Request.Context(), *filter)
+	logs, hasMore, lastID, err := h.auditRepo.List(c.Request.Context(), *filter)
 	if err != nil {
 		h.logger.Error("failed to list audit logs",
 			"error", err,
@@ -42,21 +42,8 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(logs) > pagination.PerPage
-		if hasMore {
-			logs = logs[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(logs) > 0 {
-			lastID = logs[len(logs)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: logs,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
-	common.RespondWithPaginatedList(c, logs, int(total), pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: logs,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }

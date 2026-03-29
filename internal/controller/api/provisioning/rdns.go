@@ -46,7 +46,7 @@ func (h *ProvisioningHandler) GetVMRDNS(c *gin.Context) {
 	}
 
 	filter := repository.IPAddressListFilter{VMID: &vmID}
-	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	ips, _, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list IPs for VM rDNS", "vm_id", vmID, "error", err, "correlation_id", correlationID)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "IP_LIST_FAILED", "Failed to retrieve VM IPs")

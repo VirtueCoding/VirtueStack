@@ -45,7 +45,7 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 		filter.IsActive = &isActive
 	}
 
-	plans, total, err := h.planService.List(c.Request.Context(), filter)
+	plans, hasMore, lastID, err := h.planService.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list plans",
 			"error", err,
@@ -54,25 +54,9 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(plans) > pagination.PerPage
-		if hasMore {
-			plans = plans[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(plans) > 0 {
-			lastID = plans[len(plans)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: plans,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: plans,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

@@ -71,7 +71,7 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 		filter.LocationID = &locationID
 	}
 
-	nodes, total, err := h.nodeService.ListNode(c.Request.Context(), filter)
+	nodes, hasMore, lastID, err := h.nodeService.ListNode(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list nodes",
 			"error", err,
@@ -80,25 +80,9 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 		return
 	}
 
-	if pagination.IsCursorBased() {
-		hasMore := len(nodes) > pagination.PerPage
-		if hasMore {
-			nodes = nodes[:pagination.PerPage]
-		}
-		lastID := ""
-		if hasMore && len(nodes) > 0 {
-			lastID = nodes[len(nodes)-1].ID
-		}
-		c.JSON(http.StatusOK, models.ListResponse{
-			Data: nodes,
-			Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: nodes,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

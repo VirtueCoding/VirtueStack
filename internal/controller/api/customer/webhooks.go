@@ -406,7 +406,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 	// Parse pagination
 	pagination := models.ParsePagination(c)
 
-	deliveries, total, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination.Page, pagination.PerPage)
+	deliveries, hasMore, lastID, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination)
 	if err != nil {
 		if errors.Is(err, services.ErrWebhookNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
@@ -429,7 +429,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 

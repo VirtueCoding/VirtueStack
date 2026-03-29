@@ -138,12 +138,12 @@ func (s *TemplateService) ListActive(ctx context.Context) ([]models.Template, er
 
 // List returns a paginated list of templates with optional filtering.
 // Supports filtering by active status, OS family, and cloud-init support.
-func (s *TemplateService) List(ctx context.Context, filter repository.TemplateListFilter) ([]models.Template, int, error) {
-	templates, total, err := s.templateRepo.List(ctx, filter)
+func (s *TemplateService) List(ctx context.Context, filter repository.TemplateListFilter) ([]models.Template, bool, string, error) {
+	templates, hasMore, lastID, err := s.templateRepo.List(ctx, filter)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing templates: %w", err)
+		return nil, false, "", fmt.Errorf("listing templates: %w", err)
 	}
-	return templates, total, nil
+	return templates, hasMore, lastID, nil
 }
 
 func (s *TemplateService) Create(ctx context.Context, template *models.Template) error {

@@ -531,12 +531,11 @@ func (s *FailoverService) getVMsOnNode(ctx context.Context, nodeID string) ([]mo
 	filter := models.VMListFilter{
 		NodeID: &nodeID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: models.MaxPerPage,
 		},
 	}
 
-	vms, _, err := s.vmRepo.List(ctx, filter)
+	vms, _, _, err := s.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs on node %s: %w", nodeID, err)
 	}
@@ -552,7 +551,7 @@ func (s *FailoverService) findSurvivingNodes(ctx context.Context, failedNode *mo
 		Status: util.StringPtr(models.NodeStatusOnline),
 	}
 
-	nodes, _, err := s.nodeRepo.List(ctx, filter)
+	nodes, _, _, err := s.nodeRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing online nodes: %w", err)
 	}

@@ -54,7 +54,7 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 		return
 	}
 
-	requests, total, err := h.failoverRepo.List(c.Request.Context(), filter)
+	requests, hasMore, lastID, err := h.failoverRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list failover requests",
 			"error", err,
@@ -63,7 +63,10 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 		return
 	}
 
-	common.RespondWithPaginatedList(c, requests, int(total), pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: requests,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }
 
 // GetFailoverRequest handles GET /failover-requests/:id - retrieves a specific failover request.

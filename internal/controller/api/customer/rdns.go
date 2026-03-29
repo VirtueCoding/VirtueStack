@@ -66,7 +66,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 	filter := repository.IPAddressListFilter{
 		VMID: &vmID,
 	}
-	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	ips, _, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list IPs for VM",
 			"vm_id", vmID,
@@ -79,7 +79,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ips,
-		Meta: models.NewPaginationMeta(1, len(ips), len(ips)),
+		Meta: models.NewCursorPaginationMeta(len(ips), false, ""),
 	})
 }
 

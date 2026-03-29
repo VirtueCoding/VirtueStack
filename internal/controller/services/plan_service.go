@@ -16,7 +16,7 @@ type PlanRepository interface {
 	Create(ctx context.Context, plan *models.Plan) error
 	GetByID(ctx context.Context, id string) (*models.Plan, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Plan, error)
-	List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, int, error)
+	List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, bool, string, error)
 	ListActive(ctx context.Context) ([]models.Plan, error)
 	Update(ctx context.Context, plan *models.Plan) error
 	Delete(ctx context.Context, id string) error
@@ -51,12 +51,12 @@ func (s *PlanService) ListActive(ctx context.Context) ([]models.Plan, error) {
 
 // List returns a paginated list of plans with optional filtering.
 // Supports filtering by active status and pagination.
-func (s *PlanService) List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, int, error) {
-	plans, total, err := s.planRepo.List(ctx, filter)
+func (s *PlanService) List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, bool, string, error) {
+	plans, hasMore, lastID, err := s.planRepo.List(ctx, filter)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing plans: %w", err)
+		return nil, false, "", fmt.Errorf("listing plans: %w", err)
 	}
-	return plans, total, nil
+	return plans, hasMore, lastID, nil
 }
 
 // GetByID retrieves a plan by its UUID.

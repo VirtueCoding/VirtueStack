@@ -54,7 +54,7 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 		templates := []models.Template{}
 		c.JSON(http.StatusOK, models.ListResponse{
 			Data: templates,
-			Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, 0),
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, false, ""),
 		})
 		return
 	}
@@ -86,6 +86,6 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: templates,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, len(templates)),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, false, ""),
 	})
 }

@@ -136,7 +136,7 @@ func (s *StorageBackendService) GetByIDWithNodes(ctx context.Context, id string)
 }
 
 // List returns a paginated list of storage backends.
-func (s *StorageBackendService) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, int, error) {
+func (s *StorageBackendService) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, bool, string, error) {
 	return s.repo.List(ctx, filter)
 }
 

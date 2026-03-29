@@ -172,7 +172,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 		filter.Status = &status
 	}
 
-	events, total, err := h.eventRepo.ListByCustomer(c.Request.Context(), customerID, filter)
+	events, hasMore, lastID, err := h.eventRepo.ListByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list notification events")
 		return
@@ -184,7 +184,10 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 		responses[i] = *event.ToResponse()
 	}
 
-	common.RespondWithPaginatedList(c, responses, int(total), pagination.Page, pagination.PerPage)
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: responses,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
 }
 
 // GetAvailableEvents handles GET /notifications/events/types.

@@ -110,7 +110,7 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		"actor_id": actorID,
 	}, true)
 
-	admins, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
+	admins, _, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
 		PaginationParams: pagination,
 	})
 	if err != nil {

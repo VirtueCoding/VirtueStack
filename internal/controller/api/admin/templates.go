@@ -62,7 +62,7 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 		filter.OSFamily = &osFamily
 	}
 
-	templates, total, err := h.templateService.List(c.Request.Context(), filter)
+	templates, hasMore, lastID, err := h.templateService.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list templates",
 			"error", err,
@@ -73,7 +73,7 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: templates,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
