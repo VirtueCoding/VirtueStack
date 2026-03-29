@@ -30,20 +30,21 @@ export default function AuditLogsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  const loadLogs = useCallback(async (currentPage: number, search?: string) => {
+  const loadLogs = useCallback(async (cursor?: string, search?: string) => {
     setLoading(true);
     try {
-      const data = await adminAuditLogsApi.getAuditLogs(currentPage, PAGE_SIZE, search || undefined);
+      const data = await adminAuditLogsApi.getAuditLogs(1, PAGE_SIZE, search || undefined, cursor);
       setLogs(data.data || []);
-      setTotal(data.meta?.total || 0);
+      setNextCursor(data.meta?.next_cursor ?? undefined);
+      setHasMore(data.meta?.has_more ?? false);
     } catch {
       toast({
         title: "Error",
@@ -55,19 +56,19 @@ export default function AuditLogsPage() {
     }
   }, [toast]);
 
-  // Debounce search term changes and reset to page 1
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setDebouncedSearch(value);
-      setPage(1);
+      setCurrentCursor(undefined);
+      setCursorStack([]);
     }, 400);
   };
 
   useEffect(() => {
-    loadLogs(page, debouncedSearch);
-  }, [page, debouncedSearch, loadLogs]);
+    loadLogs(currentCursor, debouncedSearch);
+  }, [currentCursor, debouncedSearch, loadLogs]);
 
   const filteredLogs = logs;
 
@@ -111,6 +112,22 @@ export default function AuditLogsPage() {
     }
   };
 
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
@@ -136,7 +153,7 @@ export default function AuditLogsPage() {
               System Activity
             </CardTitle>
             <CardDescription>
-              Detailed record of all administrative and customer actions ({total} total entries)
+              Detailed record of all administrative and customer actions
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -227,31 +244,33 @@ export default function AuditLogsPage() {
               </Table>
             </div>
 
-            <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Page {page} of {totalPages}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1 || loading}
-                >
-                  <ChevronLeft className="mr-1 h-4 w-4" />
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page >= totalPages || loading}
-                >
-                  Next
-                  <ChevronRight className="ml-1 h-4 w-4" />
-                </Button>
+            {(cursorStack.length > 0 || hasMore) && (
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredLogs.length} items
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={cursorStack.length === 0 || loading}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
 import { Badge } from "@virtuestack/ui";
@@ -29,6 +29,8 @@ import {
   Eye,
   Plus,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   adminVMsApi,
@@ -55,23 +57,32 @@ export default function VMsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    async function fetchVMs() {
-      try {
-        const response = await adminVMsApi.getVMs();
-        setVMs(response.data || []);
-      } catch (err) {
-        toast({
-          title: "Error",
-          description: "Failed to load VMs.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
+  const PAGE_SIZE = 20;
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
+
+  const fetchVMs = useCallback(async () => {
+    try {
+      const response = await adminVMsApi.getVMs({ per_page: PAGE_SIZE, cursor: currentCursor });
+      setVMs(response.data || []);
+      setNextCursor(response.meta?.next_cursor ?? undefined);
+      setHasMore(response.meta?.has_more ?? false);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to load VMs.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
+  }, [toast, currentCursor]);
+
+  useEffect(() => {
     fetchVMs();
-  }, [toast]);
+  }, [fetchVMs]);
 
   const filteredVMs = vms.filter(
     (vm) =>
@@ -113,8 +124,7 @@ export default function VMsPage() {
         description: `VM is being provisioned. Task ID: ${result.task_id}`,
       });
       // Refresh the list to show the new VM
-      const updatedResponse = await adminVMsApi.getVMs();
-      setVMs(updatedResponse.data || []);
+      await fetchVMs();
     } catch (error) {
       throw error;
     } finally {
@@ -132,8 +142,7 @@ export default function VMsPage() {
         description: `VM "${editVM.name}" has been updated.`,
       });
       // Refresh the list
-      const updatedResponse = await adminVMsApi.getVMs();
-      setVMs(updatedResponse.data || []);
+      await fetchVMs();
     } catch (error) {
       throw error;
     } finally {
@@ -144,6 +153,22 @@ export default function VMsPage() {
   const openEditDialog = (vm: VM) => {
     setEditVM(vm);
     setEditDialogOpen(true);
+  };
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
   };
 
   return (
@@ -275,6 +300,33 @@ export default function VMsPage() {
                 </TableBody>
               </Table>
             </div>
+            {(cursorStack.length > 0 || hasMore) && (
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredVMs.length} items
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={cursorStack.length === 0 || loading}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
