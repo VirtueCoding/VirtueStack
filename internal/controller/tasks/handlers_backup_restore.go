@@ -156,7 +156,7 @@ func handleBackupRestore(ctx context.Context, task *models.Task, deps *HandlerDe
 	}
 
 	// Update VM status
-	if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
+	if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
 		logger.Warn("failed to update VM status", "error", err)
 	}
 

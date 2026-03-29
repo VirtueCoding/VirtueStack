@@ -221,7 +221,7 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 			return fmt.Errorf("stopping VM %s: %w", payload.VMID, err)
 		}
 		// Update VM status
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusStopped); err != nil {
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusRunning, models.VMStatusStopped); err != nil {
 			logger.Warn("failed to update VM status", "error", err)
 		}
 	}
@@ -249,7 +249,7 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 			return fmt.Errorf("starting VM %s after revert: %w", payload.VMID, err)
 		}
 		// Update VM status
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
 			logger.Warn("failed to update VM status", "error", err)
 		}
 	}
