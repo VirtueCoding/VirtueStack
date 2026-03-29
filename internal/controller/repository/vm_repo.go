@@ -133,10 +133,21 @@ func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]
 		return nil, 0, fmt.Errorf("counting VMs: %w", err)
 	}
 
-	listBuilder := whereBuilder.Columns(vmSelectCols).
-		OrderBy("created_at DESC").
-		Limit(uint64(filter.Limit())).
-		Offset(uint64(filter.Offset()))
+	listBuilder := whereBuilder.Columns(vmSelectCols)
+	if filter.IsCursorBased() {
+		cursor := filter.DecodeCursor()
+		if cursor.LastID != "" {
+			listBuilder = listBuilder.Where(sq.Lt{"id": cursor.LastID})
+		}
+		listBuilder = listBuilder.
+			OrderBy("id DESC").
+			Limit(uint64(filter.PerPage + 1))
+	} else {
+		listBuilder = listBuilder.
+			OrderBy("created_at DESC").
+			Limit(uint64(filter.Limit())).
+			Offset(uint64(filter.Offset()))
+	}
 	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
 		return nil, 0, fmt.Errorf("building VM list query: %w", err)

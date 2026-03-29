@@ -73,6 +73,23 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 		return
 	}
 
+	if pagination.IsCursorBased() {
+		hasMore := len(vms) > pagination.PerPage
+		if hasMore {
+			vms = vms[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(vms) > 0 {
+			lastID = vms[len(vms)-1].ID
+		}
+		meta := models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID)
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: vms,
+			Meta: meta,
+		})
+		return
+	}
+
 	common.RespondWithPaginatedList(c, vms, int(total), pagination.Page, pagination.PerPage)
 }
 

@@ -31,7 +31,8 @@ export default function SettingsPage() {
       let hasMore = true;
 
       while (hasMore) {
-        const pageVms = await vmApi.getVMs(perPage, page);
+        const pageResponse = await vmApi.getVMs({ perPage, page });
+        const pageVms = pageResponse.data || [];
         allVms.push(...pageVms);
         hasMore = pageVms.length >= perPage;
         page += 1;

@@ -200,6 +200,19 @@ export interface VMOperationResponse {
   message: string;
 }
 
+export interface CursorPaginatedResponse<T> {
+  data: T[];
+  meta: {
+    page?: number;
+    per_page: number;
+    total?: number;
+    total_pages?: number;
+    has_more?: boolean;
+    next_cursor?: string;
+    prev_cursor?: string;
+  };
+}
+
 export const vmApi = {
   async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
     return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
@@ -225,12 +238,13 @@ export const vmApi = {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/restart`, {});
   },
 
-  async getVMs(perPage?: number, page?: number): Promise<VM[]> {
-    const params = new URLSearchParams();
-    if (perPage) params.set("per_page", String(perPage));
-    if (page) params.set("page", String(page));
-    const query = params.toString() ? `?${params.toString()}` : "";
-    return apiClient.get<VM[]>(`/customer/vms${query}`);
+  async getVMs(params: { perPage?: number; page?: number; cursor?: string } = {}): Promise<CursorPaginatedResponse<VM>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.page) queryParams.set("page", String(params.page));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<CursorPaginatedResponse<VM>>(`/customer/vms${query}`);
   },
 
   async getVM(vmId: string): Promise<VM> {

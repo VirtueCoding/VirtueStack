@@ -46,8 +46,8 @@ export default function VMsPage() {
 
   const fetchVMs = useCallback(async () => {
     try {
-      const data = await vmApi.getVMs();
-      setVms(data);
+      const response = await vmApi.getVMs();
+      setVms(response.data || []);
     } catch (error) {
       toast({
         title: "Error",

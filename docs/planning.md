@@ -666,19 +666,19 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1–2 days | **Dependencies:** Gap #14 (uses common pagination helpers)
 
-- [ ] Audit all list endpoints and identify which use offset-based vs cursor-based pagination:
+- [x] Audit all list endpoints and identify which use offset-based vs cursor-based pagination:
   - Check admin: `/admin/vms`, `/admin/nodes`, `/admin/customers`, `/admin/plans`, `/admin/audit-logs`, `/admin/backups`, `/admin/backup-schedules`
   - Check customer: `/customer/vms`, `/customer/backups`, `/customer/snapshots`
   - Check provisioning: any list endpoints
-- [ ] For each offset-based endpoint, migrate to cursor-based:
+- [x] For each offset-based endpoint, migrate to cursor-based:
   - Update repository method to accept cursor parameter and use keyset pagination
   - Update handler to parse `cursor` query param instead of `page`
   - Use existing `internal/controller/repository/cursor/pagination.go` utilities
   - Return `next_cursor` and `has_more` in response meta
-- [ ] Maintain backward compatibility: accept both `page` and `cursor` params during transition, prefer cursor if both provided
-- [ ] Update frontend API clients in `webui/admin/` and `webui/customer/` to use cursor-based pagination
-- [ ] Run `make build-controller && make test-race`
-- [ ] Run `cd webui/admin && npm run type-check && cd ../customer && npm run type-check`
+- [x] Maintain backward compatibility: accept both `page` and `cursor` params during transition, prefer cursor if both provided
+- [x] Update frontend API clients in `webui/admin/` and `webui/customer/` to use cursor-based pagination
+- [x] Run `make build-controller && make test-race`
+- [x] Run `cd webui/admin && npm run type-check && cd ../customer && npm run type-check`
 
 ---
 

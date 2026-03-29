@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -52,7 +53,7 @@ type VMMigrateRequest struct {
 // @Failure 404 {object} models.ErrorResponse
 // @Router /api/v1/admin/vms [get]
 func (h *AdminHandler) ListVMs(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter := models.VMListFilter{
 		PaginationParams: pagination,
@@ -100,10 +101,24 @@ func (h *AdminHandler) ListVMs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.ListResponse{
-		Data: vms,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
-	})
+	if pagination.IsCursorBased() {
+		hasMore := len(vms) > pagination.PerPage
+		if hasMore {
+			vms = vms[:pagination.PerPage]
+		}
+		lastID := ""
+		if hasMore && len(vms) > 0 {
+			lastID = vms[len(vms)-1].ID
+		}
+		meta := models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID)
+		c.JSON(http.StatusOK, models.ListResponse{
+			Data: vms,
+			Meta: meta,
+		})
+		return
+	}
+
+	common.RespondWithPaginatedList(c, vms, total, pagination.Page, pagination.PerPage)
 }
 
 // CreateVM handles POST /vms - creates a VM for any customer (admin override).

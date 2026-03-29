@@ -547,8 +547,13 @@ export interface CreateVMResponse {
 }
 
 export const adminVMsApi = {
-  async getVMs(): Promise<PaginatedResponse<VM>> {
-    return apiClient.get<PaginatedResponse<VM>>('/admin/vms');
+  async getVMs(params: { page?: number; per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<VM>> {
+    const searchParams = new URLSearchParams();
+    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<VM>>(`/admin/vms${query ? `?${query}` : ""}`);
   },
 
   async getVM(id: string): Promise<VM> {
@@ -768,6 +773,9 @@ export interface PaginatedResponse<T> {
     per_page: number;
     total: number;
     total_pages: number;
+    has_more?: boolean;
+    next_cursor?: string;
+    prev_cursor?: string;
   };
 }
 
