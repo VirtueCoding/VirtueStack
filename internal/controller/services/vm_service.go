@@ -37,18 +37,19 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo            *repository.VMRepository
-	nodeRepo          *repository.NodeRepository
-	ipRepo            *repository.IPRepository
-	planRepo          *repository.PlanRepository
-	templateRepo      *repository.TemplateRepository
-	taskRepo          *repository.TaskRepository
-	taskPublisher     TaskPublisher
-	nodeAgent         NodeAgentClient
-	ipamService       IPAllocator
-	storageBackendSvc StorageBackendGetter
-	encryptionKey     string // For encrypting root passwords
-	logger            *slog.Logger
+	vmRepo               *repository.VMRepository
+	nodeRepo             *repository.NodeRepository
+	ipRepo               *repository.IPRepository
+	planRepo             *repository.PlanRepository
+	templateRepo         *repository.TemplateRepository
+	taskRepo             *repository.TaskRepository
+	taskPublisher        TaskPublisher
+	nodeAgent            NodeAgentClient
+	ipamService          IPAllocator
+	storageBackendSvc    StorageBackendGetter
+	preActionWebhookSvc  PreActionChecker
+	encryptionKey        string // For encrypting root passwords
+	logger               *slog.Logger
 }
 
 // StorageBackendGetter defines the interface for getting storage backends for a node.
@@ -56,39 +57,46 @@ type StorageBackendGetter interface {
 	GetBackendsForNodeByType(ctx context.Context, nodeID string, backendType string) ([]models.StorageBackend, error)
 }
 
+// PreActionChecker evaluates pre-action webhooks before protected operations.
+type PreActionChecker interface {
+	CheckPreAction(ctx context.Context, event string, customerID string, data map[string]any) error
+}
+
 // VMServiceConfig holds all dependencies for VMService construction.
 // Using a config struct keeps NewVMService compliant with the ≤4-parameter
 // constructor rule (QG-01) and makes future dependency additions non-breaking.
 type VMServiceConfig struct {
-	VMRepo            *repository.VMRepository
-	NodeRepo          *repository.NodeRepository
-	IPRepo            *repository.IPRepository
-	PlanRepo          *repository.PlanRepository
-	TemplateRepo      *repository.TemplateRepository
-	TaskRepo          *repository.TaskRepository
-	TaskPublisher     TaskPublisher
-	NodeAgent         NodeAgentClient
-	IPAMService       IPAllocator
-	StorageBackendSvc StorageBackendGetter
-	EncryptionKey     string
-	Logger            *slog.Logger
+	VMRepo              *repository.VMRepository
+	NodeRepo            *repository.NodeRepository
+	IPRepo              *repository.IPRepository
+	PlanRepo            *repository.PlanRepository
+	TemplateRepo        *repository.TemplateRepository
+	TaskRepo            *repository.TaskRepository
+	TaskPublisher       TaskPublisher
+	NodeAgent           NodeAgentClient
+	IPAMService         IPAllocator
+	StorageBackendSvc   StorageBackendGetter
+	PreActionWebhookSvc PreActionChecker
+	EncryptionKey       string
+	Logger              *slog.Logger
 }
 
 // NewVMService creates a new VMService with the given configuration.
 func NewVMService(cfg VMServiceConfig) *VMService {
 	return &VMService{
-		vmRepo:            cfg.VMRepo,
-		nodeRepo:          cfg.NodeRepo,
-		ipRepo:            cfg.IPRepo,
-		planRepo:          cfg.PlanRepo,
-		templateRepo:      cfg.TemplateRepo,
-		taskRepo:          cfg.TaskRepo,
-		taskPublisher:     cfg.TaskPublisher,
-		nodeAgent:         cfg.NodeAgent,
-		ipamService:       cfg.IPAMService,
-		storageBackendSvc: cfg.StorageBackendSvc,
-		encryptionKey:     cfg.EncryptionKey,
-		logger:            cfg.Logger.With("component", "vm-service"),
+		vmRepo:              cfg.VMRepo,
+		nodeRepo:            cfg.NodeRepo,
+		ipRepo:              cfg.IPRepo,
+		planRepo:            cfg.PlanRepo,
+		templateRepo:        cfg.TemplateRepo,
+		taskRepo:            cfg.TaskRepo,
+		taskPublisher:       cfg.TaskPublisher,
+		nodeAgent:           cfg.NodeAgent,
+		ipamService:         cfg.IPAMService,
+		storageBackendSvc:   cfg.StorageBackendSvc,
+		preActionWebhookSvc: cfg.PreActionWebhookSvc,
+		encryptionKey:       cfg.EncryptionKey,
+		logger:              cfg.Logger.With("component", "vm-service"),
 	}
 }
 
@@ -347,6 +355,17 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 			}
 			// Task exists but VM not found - return task ID only
 			return nil, existingTask.ID, nil
+		}
+	}
+
+	// PRE-ACTION WEBHOOK CHECK
+	if s.preActionWebhookSvc != nil {
+		whData := map[string]any{
+			"hostname": req.Hostname,
+			"plan_id":  req.PlanID,
+		}
+		if err := s.preActionWebhookSvc.CheckPreAction(ctx, models.PreActionEventVMCreate, customerID, whData); err != nil {
+			return nil, "", err
 		}
 	}
 

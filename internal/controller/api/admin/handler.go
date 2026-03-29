@@ -34,6 +34,7 @@ type AdminHandlerConfig struct {
 	VMRepo                  *repository.VMRepository
 	ProvisioningKeyRepo     *repository.ProvisioningKeyRepository
 	SystemWebhookRepo       *repository.SystemWebhookRepository
+	PreActionWebhookRepo    *repository.PreActionWebhookRepository
 	RDNSService             *services.RDNSService
 	JWTSecret               string
 	Issuer                  string
@@ -66,6 +67,7 @@ type AdminHandler struct {
 	vmRepo                  *repository.VMRepository
 	provisioningKeyRepo     *repository.ProvisioningKeyRepository
 	systemWebhookRepo       *repository.SystemWebhookRepository
+	preActionWebhookRepo    *repository.PreActionWebhookRepository
 	rdnsService             *services.RDNSService
 	authConfig              middleware.AuthConfig
 	logger                  *slog.Logger
@@ -100,6 +102,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		vmRepo:                  cfg.VMRepo,
 		provisioningKeyRepo:     cfg.ProvisioningKeyRepo,
 		systemWebhookRepo:       cfg.SystemWebhookRepo,
+		preActionWebhookRepo:    cfg.PreActionWebhookRepo,
 		rdnsService:             cfg.RDNSService,
 		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		logger:                  cfg.Logger.With("component", "admin-handler"),

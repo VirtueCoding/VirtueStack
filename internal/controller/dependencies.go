@@ -29,6 +29,7 @@ func (s *Server) InitializeServices() error {
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
 	systemWebhookRepo := repository.NewSystemWebhookRepository(s.dbPool)
+	preActionWebhookRepo := repository.NewPreActionWebhookRepository(s.dbPool)
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 	isoUploadRepo := repository.NewISOUploadRepository(s.dbPool)
@@ -88,19 +89,22 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 	)
 
+	preActionWebhookService := services.NewPreActionWebhookService(preActionWebhookRepo, s.logger)
+
 	s.vmService = services.NewVMService(services.VMServiceConfig{
-		VMRepo:            vmRepo,
-		NodeRepo:          nodeRepo,
-		IPRepo:            ipRepo,
-		PlanRepo:          planRepo,
-		TemplateRepo:      templateRepo,
-		TaskRepo:          taskRepo,
-		TaskPublisher:     taskPublisher,
-		NodeAgent:         nodeAgentClient,
-		IPAMService:       s.ipamService,
-		StorageBackendSvc: storageBackendService,
-		EncryptionKey:     s.config.EncryptionKey.Value(),
-		Logger:            s.logger,
+		VMRepo:              vmRepo,
+		NodeRepo:            nodeRepo,
+		IPRepo:              ipRepo,
+		PlanRepo:            planRepo,
+		TemplateRepo:        templateRepo,
+		TaskRepo:            taskRepo,
+		TaskPublisher:       taskPublisher,
+		NodeAgent:           nodeAgentClient,
+		IPAMService:         s.ipamService,
+		StorageBackendSvc:   storageBackendService,
+		PreActionWebhookSvc: preActionWebhookService,
+		EncryptionKey:       s.config.EncryptionKey.Value(),
+		Logger:              s.logger,
 	})
 
 	s.nodeService = services.NewNodeServiceWithDefaults(
@@ -267,6 +271,7 @@ func (s *Server) InitializeServices() error {
 		VMRepo:                  vmRepo,
 		ProvisioningKeyRepo:     repository.NewProvisioningKeyRepository(s.dbPool),
 		SystemWebhookRepo:       systemWebhookRepo,
+		PreActionWebhookRepo:    preActionWebhookRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",
