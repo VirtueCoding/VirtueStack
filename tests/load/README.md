@@ -66,6 +66,35 @@ Optional:
 
 - `BASE_URL`
 
+### 5) Admin listing with filters/pagination
+
+```bash
+k6 run /home/runner/work/VirtueStack/VirtueStack/tests/load/k6-admin-listing.js
+```
+
+Required:
+
+- `ADMIN_TOKEN`
+
+Optional:
+
+- `BASE_URL`
+
+### 6) Task throughput (create + poll)
+
+```bash
+k6 run /home/runner/work/VirtueStack/VirtueStack/tests/load/k6-task-throughput.js
+```
+
+Required:
+
+- `PROVISIONING_API_KEY`
+- `TEST_VM_ID`
+
+Optional:
+
+- `BASE_URL`
+
 ## Run all load scripts
 
 From repository root:
@@ -80,3 +109,5 @@ This target runs all scripts in sequence:
 2. `k6-provisioning-create.js`
 3. `k6-customer-list.js`
 4. `k6-power-operations.js`
+5. `k6-admin-listing.js`
+6. `k6-task-throughput.js`

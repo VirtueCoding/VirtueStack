@@ -92,6 +92,8 @@ load-test:
 	k6 run tests/load/k6-provisioning-create.js
 	k6 run tests/load/k6-customer-list.js
 	k6 run tests/load/k6-power-operations.js
+	k6 run tests/load/k6-admin-listing.js
+	k6 run tests/load/k6-task-throughput.js
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
