@@ -747,7 +747,7 @@ VirtueStack must support multiple billing sources running simultaneously or indi
 
 | File | WHMCS-Specific Code | What It Does |
 |------|---------------------|-------------|
-| `internal/controller/api/provisioning/handler.go` | `ProvisioningHandler` struct, `ProvisioningCreateVMRequest.WHMCSServiceID` | Handler struct with 11 service/repo dependencies. Request types include WHMCS-specific fields. |
+| `internal/controller/api/provisioning/handler.go` | `ProvisioningHandler` struct, `ProvisioningCreateVMRequest.WHMCSServiceID` | Handler struct with multiple service/repo dependencies. Request types include WHMCS-specific fields. |
 | `internal/controller/api/provisioning/routes.go` | `RegisterProvisioningRoutes()`, `APIKeyValidatorFunc()` | Registers all 19 provisioning endpoints. API key auth middleware. |
 | `internal/controller/api/provisioning/customers.go` | `CreateOrGetCustomer()`, `updateWHMCSClientID()` | Idempotent customer creation with `whmcs_client_id` linking. |
 | `internal/controller/api/provisioning/vms.go` | `CreateVM()`, `DeleteVM()`, `ProvisioningCreateVMRequest.WHMCSServiceID` | VM lifecycle operations. `WHMCSServiceID` attached to create request. |
@@ -1088,9 +1088,12 @@ All new tables follow VirtueStack conventions: UUID primary keys (`gen_random_uu
 SET lock_timeout = '5s';
 
 ALTER TABLE customers
-    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20) NOT NULL DEFAULT 'whmcs';
+    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20) NOT NULL DEFAULT 'whmcs'
+    CHECK (billing_provider IN ('whmcs', 'native', 'blesta'));
 
--- All existing customers are managed by WHMCS
+-- Explicitly set all existing customers to WHMCS (redundant with DEFAULT but makes intent clear)
+UPDATE customers SET billing_provider = 'whmcs' WHERE billing_provider IS NULL;
+
 COMMENT ON COLUMN customers.billing_provider IS 'Which billing system manages this customer: whmcs, native, blesta';
 ```
 
@@ -1175,7 +1178,7 @@ SET lock_timeout = '5s';
 CREATE TABLE billing_payments (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id         UUID NOT NULL REFERENCES billing_accounts(id),
-    gateway            VARCHAR(20) NOT NULL CHECK (gateway IN ('stripe', 'paypal', 'crypto')),
+    gateway            VARCHAR(20) NOT NULL CHECK (gateway IN ('stripe', 'paypal', 'btcpay', 'nowpayments')),
     gateway_payment_id VARCHAR(255),
     amount_cents       BIGINT NOT NULL CHECK (amount_cents > 0),
     currency           VARCHAR(3) NOT NULL DEFAULT 'USD',
