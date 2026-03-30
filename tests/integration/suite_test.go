@@ -138,7 +138,7 @@ func TestMain(m *testing.M) {
 	}))
 
 	// Start PostgreSQL container
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
+	pgContainer, err := postgres.Run(ctx, "postgres:18-alpine",
 		postgres.WithDatabase("virtuestack_test"),
 		postgres.WithUsername(TestDBUser),
 		postgres.WithPassword(TestDBPassword),
@@ -186,7 +186,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Start NATS container
-	natsContainer, err := natsmodule.Run(ctx, "nats:2.10-alpine")
+	natsContainer, err := natsmodule.Run(ctx, "nats:2.12-alpine")
 	if err != nil {
 		logger.Error("failed to start nats container", "error", err)
 		dbPool.Close()

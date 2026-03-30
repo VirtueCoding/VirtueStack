@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting providers. It consists of a **Go backend** (Controller + Node Agent), **TypeScript/React frontends** (Next.js admin and customer portals), **PostgreSQL 16** database with Row-Level Security, and **NATS JetStream** for async task processing. The Controller communicates with Node Agents over **gRPC with mTLS**.
+VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting providers. It consists of a **Go backend** (Controller + Node Agent), **TypeScript/React frontends** (Next.js admin and customer portals), **PostgreSQL 18** database with Row-Level Security, and **NATS JetStream** for async task processing. The Controller communicates with Node Agents over **gRPC with mTLS**.
 
 ## Quick Context Loading
 
@@ -138,7 +138,7 @@ sudo apt install -y pkg-config libvirt-dev librados-dev librbd-dev
 
 `golangci-lint` is not installed by default. CI installs it via the GitHub Action. To run locally:
 ```bash
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.0.2
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.11.4
 ```
 
 ### 5. Environment Variables Required for Docker Stack

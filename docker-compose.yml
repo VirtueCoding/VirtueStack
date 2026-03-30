@@ -13,7 +13,7 @@ services:
   # QG-19: Postgres official image runs as non-root 'postgres' user (UID 70)
   # by default. Explicit user directive not required for this image.
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: virtuestack-postgres
     restart: unless-stopped
     environment:
@@ -50,7 +50,7 @@ services:
   # QG-19: NATS official image runs as non-root 'nats' user (UID 100)
   # by default. Explicit user directive not required for this image.
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.12-alpine
     container_name: virtuestack-nats
     restart: unless-stopped
     # SECURITY: NATS_AUTH_TOKEN must be set in .env - no default fallback.
@@ -86,7 +86,7 @@ services:
       context: .
       dockerfile: Dockerfile.controller
       args:
-        GO_VERSION: ${GO_VERSION:-1.24.2}
+        GO_VERSION: ${GO_VERSION:-1.26}
     image: virtuestack/controller:${CONTROLLER_TAG:-v2.1.0}
     container_name: virtuestack-controller
     restart: unless-stopped
@@ -132,7 +132,7 @@ services:
       context: .
       dockerfile: Dockerfile.admin-webui
       args:
-        NODE_VERSION: ${NODE_VERSION:-22.14.0}
+        NODE_VERSION: ${NODE_VERSION:-24}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
     image: virtuestack/admin-webui:${ADMIN_WEBUI_TAG:-v2.1.0}
     container_name: virtuestack-admin-webui
@@ -167,7 +167,7 @@ services:
       context: .
       dockerfile: Dockerfile.customer-webui
       args:
-        NODE_VERSION: ${NODE_VERSION:-22.14.0}
+        NODE_VERSION: ${NODE_VERSION:-24}
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
     image: virtuestack/customer-webui:${CUSTOMER_WEBUI_TAG:-v2.1.0}
     container_name: virtuestack-customer-webui
@@ -198,7 +198,7 @@ services:
   # Nginx Reverse Proxy
   # ===========================================================================
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.28-alpine
     container_name: virtuestack-nginx
     restart: unless-stopped
     user: "101:101"

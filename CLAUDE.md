@@ -83,7 +83,7 @@ See `tests/e2e/README.md` for detailed E2E testing guide.
 ## CI Pipeline
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to main:
-1. Go lint + test with race detector (with PostgreSQL 16 + NATS service containers)
+1. Go lint + test with race detector (with PostgreSQL 18 + NATS service containers)
 2. PHP module syntax check
 3. Admin frontend: `npm ci` + lint + type-check + build
 4. Customer frontend: `npm ci` + lint + type-check + build

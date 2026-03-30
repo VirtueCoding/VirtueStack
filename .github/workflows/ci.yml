@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: virtuestack
           POSTGRES_PASSWORD: virtuestack_test_password
@@ -25,7 +25,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       nats:
-        image: nats:2.10.25-alpine
+        image: nats:2.12-alpine
         ports:
           - 4222:4222
     steps:
@@ -48,7 +48,7 @@ jobs:
       - name: Install golangci-lint
         run: |
           GOTOOLCHAIN=go1.26.0 GOBIN=/home/runner/go/bin \
-            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.2
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
       - name: Run golangci-lint
         run: /home/runner/go/bin/golangci-lint run --timeout=5m ./...

@@ -82,9 +82,9 @@ VirtueStack is a fully-secured, optimized, modern platform for managing KVM (QEM
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| **Database** | PostgreSQL | 16+ |
-| **Message Queue** | NATS JetStream | 2.10+ |
-| **Reverse Proxy** | Nginx | 1.25+ |
+| **Database** | PostgreSQL | 18+ |
+| **Message Queue** | NATS JetStream | 2.12+ |
+| **Reverse Proxy** | Nginx | 1.28+ |
 | **VM Hypervisor** | KVM/QEMU via libvirt | libvirt 10.x, QEMU 8.x |
 | **Storage** | Ceph RBD / QCOW2 file-based | Reef (18.x) or Squid (19.x) / local filesystem |
 | **DNS** | PowerDNS (MySQL backend) | 4.9+ |
@@ -2437,7 +2437,7 @@ version: "3.9"
 
 services:
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.28-alpine
     ports:
       - "80:80"
       - "443:443"
@@ -2479,7 +2479,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       - POSTGRES_DB=virtuestack
       - POSTGRES_USER=${DB_USER}
@@ -2494,7 +2494,7 @@ services:
     restart: unless-stopped
 
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.12-alpine
     command: ["-js", "-sd", "/data"]
     volumes:
       - natsdata:/data
