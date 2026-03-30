@@ -10,10 +10,10 @@ VirtueStack treats billing as an **external concern**, delegated entirely to WHM
 
 | File | Lines | Role |
 |------|-------|------|
-| `virtuestack.php` | 1,185 | Main provisioning module. Implements 16 WHMCS hook functions: `CreateAccount`, `SuspendAccount`, `UnsuspendAccount`, `TerminateAccount`, `ChangePackage`, `ChangePassword`, `ClientArea`, `AdminServicesTabFields`, `TestConnection`, `SingleSignOn`, `UsageUpdate`, plus custom power-operation buttons. |
-| `hooks.php` | 1,057 | Registers 11 WHMCS hooks. Key: `Cron` (polls pending provisioning tasks every 5 min as webhook fallback), `AfterModuleCreate`, `ProductConfigurationPage` (plan/template dropdowns), `IntelligentSearchUpdate` (bulk VM status sync). |
+| `virtuestack.php` | 1,185 | Main provisioning module. Exposes the WHMCS module entrypoints (`CreateAccount`, `SuspendAccount`, `UnsuspendAccount`, `TerminateAccount`, `ChangePackage`, `ChangePassword`, `ClientArea`, `AdminServicesTabFields`, `TestConnection`, `SingleSignOn`, `UsageUpdate`, custom power-operation buttons) plus helper/validation functions. |
+| `hooks.php` | 1,057 | Registers 12 WHMCS hooks. Key: `Cron` (polls pending provisioning tasks every 5 min as webhook fallback), `AfterModuleCreate`, `ProductConfigurationPage` (plan/template/location dropdowns), `IntelligentSearchUpdate` (bulk VM status sync). |
 | `webhook.php` | 617 | Receives async notifications from the Controller. Handles 14 event types (`vm.created`, `vm.creation_failed`, `vm.deleted`, `vm.suspended`, `vm.unsuspended`, `vm.resized`, `vm.started`, `vm.stopped`, `vm.reinstalled`, `vm.migrated`, `backup.completed`, `backup.failed`, `task.completed`, `task.failed`). Security: HMAC-SHA256 signature verification, 64 KB body limit, event whitelist. |
-| `lib/ApiClient.php` | 730 | HTTP client for the Provisioning API. Calls 20 endpoints over HTTPS with `X-API-Key` auth, 30 s timeout, idempotency-key support, and async task polling (3 s interval, 60 max polls). |
+| `lib/ApiClient.php` | 730 | HTTP client for the Provisioning/Admin APIs. Calls provisioning endpoints over HTTPS with `X-API-Key` auth, 30 s timeout, idempotency-key support, async task polling (3 s interval, 60 max polls), and helper lookups for templates/locations. |
 | `lib/VirtueStackHelper.php` | 439 | Crypto-safe password generation (Fisher-Yates via `random_int`), AES-256-CBC encryption for stored credentials, log sanitization, SSO URL builder, hostname/UUID validation. |
 | `lib/shared_functions.php` | 401 | Custom-field CRUD, webhook signature verification (`hash_equals` timing-safe), field value validation (UUID, IP, status enums). |
 
@@ -35,7 +35,7 @@ Key billing-relevant endpoints:
 | `POST /sso-tokens` | `sso.go` | Issues 5-minute single-use opaque token. WHMCS redirects browser to `/customer/auth/sso-exchange?token={token}`. |
 | `GET /plans`, `GET /plans/:id` | `plans.go` | Plan listing for WHMCS product config dropdowns. |
 
-**SSO flow**: WHMCS calls `POST /provisioning/sso-tokens` → gets opaque token → redirects customer to Controller → Controller hashes token, looks up in `sso_tokens` table, consumes atomically → sets HttpOnly session cookies → redirects to `/vms/{vm_id}`.
+**SSO flow**: WHMCS calls `POST /provisioning/sso-tokens` → gets opaque token → redirects customer to Controller → Controller hashes the presented token for lookup against the stored hash in `sso_tokens`, consumes the token atomically → sets HttpOnly session cookies → redirects to `/vms/{vm_id}`.
 
 **Models**: `SSOToken` (`internal/controller/models/sso_token.go`), `ProvisioningKey` (`internal/controller/models/provisioning_key.go`).
 **Repositories**: `sso_token_repo.go`, `provisioning_key_repo.go` in `internal/controller/repository/`.
@@ -143,7 +143,7 @@ There is no feature-flag framework (no LaunchDarkly, no DB-backed toggles). New 
 
 1. **Single-binary deployment.** Self-hosted operators `apt install virtuestack` or `docker compose up`. No second service to configure, monitor, or upgrade.
 2. **Shared database.** New `billing_*` tables in the same PostgreSQL instance. Leverages existing migration tooling (`make migrate-create`), connection pooling, and RLS infrastructure. Foreign keys to `customers`, `plans`, and `vms` tables enforce referential integrity without cross-service calls.
-3. **WHMCS coexistence.** A billing provider config (`BILLING_PROVIDER=whmcs|native|disabled`) gates route registration — identical pattern to `ALLOW_SELF_REGISTRATION`. When set to `whmcs` (default), the Provisioning API continues to serve WHMCS exactly as today. When set to `native`, billing routes are registered under `/api/v1/customer/billing/*` and the customer WebUI gains billing pages.
+3. **WHMCS coexistence.** Per-provider billing config gates route registration, identical in spirit to `ALLOW_SELF_REGISTRATION` but modeled as enabled providers plus a single primary owner for new native users. WHMCS-owned customers continue using the Provisioning API exactly as today, while native billing routes are only registered when the native provider is enabled.
 4. **Two-package architecture.** `internal/controller/billing/` contains the provider abstraction (interface, registry, WHMCS/native/Blesta adapters) and credit ledger logic. `internal/controller/payments/` contains payment gateway integrations (Stripe, PayPal, crypto). Billing consumes payment confirmations; payments know nothing about billing state. Both are leaf packages imported only by `server.go` wiring.
 5. **Database safety.** New tables only — no ALTER on existing columns in the initial phase. One additive column (`billing_provider` on `customers`). Existing WHMCS deployments are unaffected. The `plans` table already has `price_monthly` and `price_hourly` in cents, which native billing can consume directly.
 
@@ -340,7 +340,16 @@ Feature flags follow VirtueStack's existing pattern: YAML config file with envir
 ```yaml
 # internal/shared/config — Config struct additions
 billing:
-  provider: "whmcs"                   # "whmcs" | "native" | "disabled"
+  providers:
+    whmcs:
+      enabled: true
+      primary: false
+    native:
+      enabled: false   # enables native billing routes/ledger/payment processing
+      primary: false   # default owner for newly created non-WHMCS users
+    blesta:
+      enabled: false
+      primary: false
 
 auth:
   native_registration: false          # Enable email+password self-registration
@@ -359,7 +368,12 @@ auth:
 
 ```bash
 # Billing
-BILLING_PROVIDER=whmcs                # "whmcs" | "native" | "disabled"
+BILLING_WHMCS_ENABLED=true
+BILLING_WHMCS_PRIMARY=false
+BILLING_NATIVE_ENABLED=false
+BILLING_NATIVE_PRIMARY=false
+BILLING_BLESTA_ENABLED=false
+BILLING_BLESTA_PRIMARY=false
 
 # Registration (existing)
 ALLOW_SELF_REGISTRATION=false         # Already exists — gates /register and /verify-email
@@ -377,9 +391,10 @@ OAUTH_GITHUB_CLIENT_SECRET=
 
 | Flag | Default | Effect when disabled | Effect when enabled |
 |------|---------|---------------------|---------------------|
-| `BILLING_PROVIDER=whmcs` | Default | N/A (this IS the default) | Provisioning API serves WHMCS as today. No native billing routes registered. No credit ledger. |
-| `BILLING_PROVIDER=native` | — | — | Native billing routes registered at `/api/v1/customer/billing/*`. Credit ledger active. Hourly deduction cron active. Payment webhooks active. WHMCS provisioning API still works (coexistence). |
-| `BILLING_PROVIDER=disabled` | — | — | No billing at all. Admin creates VMs manually. For dev/testing. |
+| `BILLING_WHMCS_ENABLED` | `true` | Disables WHMCS ownership inside the controller-side billing registry for newly evaluated ownership decisions. Existing provisioning API behavior is left unchanged unless the WHMCS integration is intentionally removed in a later release. | WHMCS ownership is available for customers whose `billing_provider='whmcs'`. |
+| `BILLING_NATIVE_ENABLED` | `false` | Native billing routes, ledger, and payment processing stay off. | Native billing routes registered at `/api/v1/customer/billing/*`. Credit ledger active. Hourly deduction cron active. Payment webhooks active. |
+| `BILLING_BLESTA_ENABLED` | `false` | Blesta support unavailable. | Blesta ownership available once an adapter exists. |
+| `*_PRIMARY` | all `false` by default | Provider cannot be selected as default for newly created native users. | Exactly one enabled provider must be marked primary. Config validation at startup rejects zero or multiple primary providers. |
 | `ALLOW_SELF_REGISTRATION` | `false` | Registration routes not registered. WHMCS creates customers via provisioning API. | `/customer/auth/register` and `/customer/auth/verify-email` routes active. |
 | `OAUTH_GOOGLE_ENABLED` | `false` | No Google sign-in routes. | `/customer/auth/oauth/google` and `/customer/auth/oauth/google/callback` routes registered. |
 | `OAUTH_GITHUB_ENABLED` | `false` | No GitHub sign-in routes. | `/customer/auth/oauth/github` and `/customer/auth/oauth/github/callback` routes registered. |
@@ -389,6 +404,7 @@ OAUTH_GITHUB_CLIENT_SECRET=
 - **Primary:** YAML file at path specified by `VS_CONFIG_FILE` env var (existing pattern).
 - **Override:** Environment variables (existing pattern — env always wins over YAML).
 - **No database-backed toggles.** Feature flags are set at deploy time, not runtime. This matches VirtueStack's existing approach and avoids complexity for self-hosted operators.
+- **Operational note:** changing billing-provider flags requires a process restart (and, in HA deployments, a coordinated rollout) because config is loaded at startup.
 
 ---
 
@@ -713,8 +729,8 @@ WHMCS-created and native-registered customers share the same `customers` table:
 
 **Billing ownership rule:**
 - `whmcs_client_id IS NOT NULL` → billing managed by WHMCS. Native billing system ignores this customer.
-- `whmcs_client_id IS NULL` AND `BILLING_PROVIDER=native` → billing managed by native credit system.
-- `whmcs_client_id IS NULL` AND `BILLING_PROVIDER=whmcs` → customer has no billing (admin-managed).
+- `whmcs_client_id IS NULL` AND `billing_provider = 'native'` → billing managed by native credit system.
+- `whmcs_client_id IS NULL` AND `billing_provider = 'unmanaged'` → customer is a legacy/manual account that must be explicitly assigned before native billing is enabled.
 
 ### 8.7 User Model Additions
 
@@ -794,10 +810,7 @@ Based on the actual WHMCS integration code and the native billing requirements f
 ```go
 package billing
 
-import (
-    "context"
-    "net/http"
-)
+import "context"
 
 // BillingProvider abstracts billing system operations.
 // Implementations: WHMCS adapter (wraps existing Provisioning API behavior),
@@ -857,13 +870,6 @@ type BillingProvider interface {
 
     // GetUsageHistory returns the hourly charge history for a customer.
     GetUsageHistory(ctx context.Context, customerID string, opts PaginationOpts) (*UsageHistory, error)
-
-    // --- Webhook Handling ---
-
-    // HandleWebhook processes an inbound webhook/callback from the billing system.
-    // WHMCS: not used (WHMCS sends webhooks TO its own webhook.php, not to the controller).
-    // Native: dispatches to Stripe/PayPal/crypto webhook handlers.
-    HandleWebhook(ctx context.Context, provider string, headers http.Header, body []byte) (*WebhookResult, error)
 
     // --- Configuration ---
 
@@ -926,7 +932,7 @@ type TopUpResult struct {
 }
 ```
 
-**Note:** The `BillingProvider` interface does NOT include payment gateway operations (Stripe Checkout, PayPal orders, crypto invoices). Those belong to the separate `PaymentProvider` interface in `internal/controller/payments/` (section 7). The billing provider _consumes_ payment confirmations via `ProcessTopUp()` but does not orchestrate payment flows directly.
+**Note:** The `BillingProvider` interface does NOT include payment gateway webhook dispatch or payment-session orchestration. Those belong to the separate `PaymentProvider` interface in `internal/controller/payments/` (section 7). The billing provider consumes confirmed top-ups via `ProcessTopUp()` after the payment layer has already validated and normalized the event.
 
 ### 9c. Provider Registry & Multi-Provider Support
 
@@ -974,11 +980,12 @@ func (r *Registry) All() []BillingProvider { /* ... */ }
 ```
 
 **Multi-provider rules:**
-- Each customer record has a `billing_provider` column (default: `"whmcs"` for existing users).
+- Each customer record has a `billing_provider` column, but existing rows must be backfilled from current state rather than globally defaulted to `"whmcs"`.
 - When a new customer is created via the Provisioning API (WHMCS), `billing_provider` is set to `"whmcs"`.
 - When a new customer self-registers (native registration), `billing_provider` is set to the config's `primary` provider (typically `"native"`).
 - Controller/handler code calls `registry.ForCustomer(customer.BillingProvider)`, never a specific provider directly.
 - Multiple providers CAN be active simultaneously. Example: WHMCS for legacy users + native for new users.
+- `unmanaged` is a temporary migration state for legacy/manual customers with no verified external billing owner yet. The registry must reject native billing actions for `unmanaged` rows until the operator explicitly assigns ownership.
 
 **Config:**
 
@@ -987,7 +994,7 @@ billing:
   providers:
     whmcs:
       enabled: true
-      primary: true    # default for new users when native reg is off
+      primary: false   # WHMCS-created users are assigned explicitly by the provisioning path
     native:
       enabled: false
       primary: false   # set to true when migrating away from WHMCS
@@ -1017,7 +1024,7 @@ BILLING_BLESTA_PRIMARY=false
 |-----------------|---------------|-----------|
 | `api/provisioning/handler.go` | **Stays** (minor changes) | The Provisioning API remains as-is — it's the WHMCS adapter's external interface. |
 | `api/provisioning/routes.go` | **Stays** | Route registration unchanged. |
-| `api/provisioning/customers.go` | **Stays** | `CreateOrGetCustomer` now also calls `registry.Primary().CreateUser()` to set up billing for new customers. |
+| `api/provisioning/customers.go` | **Stays** | `CreateOrGetCustomer` explicitly assigns `billing_provider="whmcs"` for WHMCS-created users. It must NOT call the registry's primary provider for this path. |
 | `api/provisioning/suspend.go` | **Stays** | Suspend/unsuspend logic is provider-agnostic (operates on VM state). The native billing cron calls the same `VMService.Suspend/Unsuspend` methods. |
 | `api/provisioning/vms.go` | **Stays** | VM create/delete unchanged. After create, fires `provider.OnVMCreated()` hook. |
 | `api/provisioning/usage.go` | **Stays** | Usage reporting is consumed by WHMCS but is provider-agnostic data. |
@@ -1088,13 +1095,22 @@ All new tables follow VirtueStack conventions: UUID primary keys (`gen_random_uu
 SET lock_timeout = '5s';
 
 ALTER TABLE customers
-    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20) NOT NULL DEFAULT 'whmcs'
-    CHECK (billing_provider IN ('whmcs', 'native', 'blesta'));
+    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20)
+    CHECK (billing_provider IN ('whmcs', 'native', 'blesta', 'unmanaged'));
 
--- Explicitly set all existing customers to WHMCS (redundant with DEFAULT but makes intent clear)
-UPDATE customers SET billing_provider = 'whmcs' WHERE billing_provider IS NULL;
+-- Backfill from existing ownership data instead of forcing every legacy row to WHMCS.
+-- This update is intentionally scoped to rows that have never been assigned.
+UPDATE customers
+SET billing_provider = CASE
+    WHEN whmcs_client_id IS NOT NULL THEN 'whmcs'
+    ELSE 'unmanaged'
+END
+WHERE billing_provider IS NULL;
 
-COMMENT ON COLUMN customers.billing_provider IS 'Which billing system manages this customer: whmcs, native, blesta';
+ALTER TABLE customers
+    ALTER COLUMN billing_provider SET NOT NULL;
+
+COMMENT ON COLUMN customers.billing_provider IS 'Which billing system manages this customer: whmcs, native, blesta, or unmanaged legacy/manual ownership';
 ```
 
 Rollback:
@@ -1237,7 +1253,8 @@ DROP TABLE IF EXISTS customer_oauth_links;
 ### 10.2 Migration Strategy
 
 1. **Expand-only:** All migrations add new tables or nullable columns. No ALTER on existing columns. No renames.
-2. **Default values:** `billing_provider` defaults to `'whmcs'` — existing users are unaffected.
+2. **Backfill strategy:** existing rows are backfilled from `whmcs_client_id`; rows without a WHMCS link become `unmanaged` until the operator intentionally migrates them.
+   - Recommended operator workflow: review `billing_provider='unmanaged'` customers in the admin UI or via a one-time migration script, bulk-assign the intended owner, then enable native billing for that cohort.
 3. **Billing tables only populated for native users:** `billing_accounts`, `billing_transactions`, and `billing_payments` rows are only created for customers with `billing_provider = 'native'`. WHMCS customers never get billing_accounts rows.
 4. **Idempotent:** All `CREATE TABLE` and `CREATE INDEX` use `IF NOT EXISTS` guards.
 5. **Lock timeout:** Every migration starts with `SET lock_timeout = '5s'` to prevent long locks.
@@ -1250,29 +1267,29 @@ Each migration has a corresponding `.down.sql` that drops the table or column in
 
 ## 11. API Endpoints
 
-### 11.1 Billing Endpoints (Native — Gated by `BILLING_PROVIDER=native`)
+### 11.1 Billing Endpoints (Native — Gated by `BILLING_NATIVE_ENABLED=true`)
 
 Base path: `/api/v1/customer/billing/`
-Auth: JWT (customer session) or Customer API Key with `billing:read` / `billing:write` scopes.
+Auth: JWT only (no customer API key support) in the initial implementation. Rationale: the current codebase does not define `billing:*` customer API key scopes, and money-moving endpoints should stay aligned with the existing JWT-only account-management route group until a separate scope expansion is designed. Adding billing scopes later would require coordinated changes to customer API key validation, route authorization, and API key management UX.
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| `GET` | `/balance` | Get current credit balance and billing status | JWT or API Key (`billing:read`) |
-| `GET` | `/transactions` | List transaction history (paginated, cursor-based) | JWT or API Key (`billing:read`) |
-| `GET` | `/transactions/:id` | Get single transaction details | JWT or API Key (`billing:read`) |
+| `GET` | `/balance` | Get current credit balance and billing status | JWT only |
+| `GET` | `/transactions` | List transaction history (paginated, cursor-based) | JWT only |
+| `GET` | `/transactions/:id` | Get single transaction details | JWT only |
 | `POST` | `/top-up` | Initiate credit top-up (returns payment session URL) | JWT only (CSRF protection) |
-| `GET` | `/payments` | List payment history | JWT or API Key (`billing:read`) |
-| `GET` | `/usage` | Get hourly usage breakdown for current billing period | JWT or API Key (`billing:read`) |
+| `GET` | `/payments` | List payment history | JWT only |
+| `GET` | `/usage` | Get hourly usage breakdown for current billing period | JWT only |
 
 Admin billing endpoints (base path: `/api/v1/admin/billing/`):
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| `GET` | `/accounts` | List all billing accounts (paginated) | Admin JWT + `billing:read` permission |
-| `GET` | `/accounts/:customer_id` | Get specific customer's billing account | Admin JWT + `billing:read` |
-| `POST` | `/accounts/:customer_id/adjust` | Manual credit adjustment (add/deduct) | Admin JWT + `billing:write` |
-| `GET` | `/payments` | List all payments across customers | Admin JWT + `billing:read` |
-| `POST` | `/payments/:id/refund` | Issue refund for a payment | Admin JWT + `billing:write` |
+| `GET` | `/accounts` | List all billing accounts (paginated) | Admin JWT + new billing-read permission (or temporary mapping to settings/backups permissions until RBAC is extended) |
+| `GET` | `/accounts/:customer_id` | Get specific customer's billing account | Admin JWT + billing-read permission (to be added as part of the billing RBAC expansion) |
+| `POST` | `/accounts/:customer_id/adjust` | Manual credit adjustment (add/deduct) | Admin JWT + billing-write permission (to be added as part of the billing RBAC expansion) |
+| `GET` | `/payments` | List all payments across customers | Admin JWT + billing-read permission (to be added as part of the billing RBAC expansion) |
+| `POST` | `/payments/:id/refund` | Issue refund for a payment | Admin JWT + billing-write permission (to be added as part of the billing RBAC expansion) |
 
 ### 11.2 Payment Webhook Endpoints
 
@@ -1289,12 +1306,12 @@ Auth: Per-gateway signature verification (no JWT — webhooks come from external
 **Provider-agnostic routing:** The webhook router at `/api/v1/webhooks/{provider}` is a thin dispatcher. Each handler:
 1. Reads raw body (preserves for signature verification).
 2. Verifies signature using provider-specific logic.
-3. Calls `billingRegistry.ForProvider(provider).HandleWebhook()`.
+3. Calls `paymentRegistry.ForProvider(provider).HandleWebhook()`.
 4. Returns `200 OK` on success (webhooks must return 2xx quickly).
 
 ### 11.3 Registration & OAuth Endpoints
 
-These are already defined in section 8.3 and partially exist. For completeness:
+These are already defined in section 8.3. Registration and verify-email already exist; OAuth routes remain future work:
 
 | Method | Path | Description | Gate |
 |--------|------|-------------|------|
@@ -1309,12 +1326,12 @@ These are already defined in section 8.3 and partially exist. For completeness:
 
 | Endpoint Group | Middleware Stack |
 |---------------|-----------------|
-| `/customer/billing/*` | `JWTOrCustomerAPIKeyAuth` → `CustomerRateLimit` → `Audit` |
+| `/customer/billing/*` | `JWTAuth` → `RequireUserType("customer")` → `CSRF(DefaultCSRFConfig())` → `CustomerRateLimits` → `Audit` (JWT-only route group; no `SkipCSRFForAPIKey(...)`) |
 | `/webhooks/*` | Raw body preservation → Provider-specific signature verification → `WebhookRateLimit` |
 | `/customer/auth/register` | `RegistrationRateLimit` (IP-based, strict: 5 per hour per IP) |
 | `/customer/auth/verify-email` | `VerificationRateLimit` (token-based, 10 per minute) |
 | `/customer/auth/oauth/*` | `OAuthRateLimit` (IP-based, 20 per minute) → CSRF state validation |
-| `/admin/billing/*` | `JWTAuth` → `Require2FA` → `RequirePermission("billing:read"/"billing:write")` → `AdminRateLimit` → `Audit` |
+| `/admin/billing/*` | `JWTAuth` → `Require2FA` → `RequirePermission(...)` → `AdminRateLimit` → `Audit` |
 
 ---
 
@@ -1387,7 +1404,7 @@ Uses VirtueStack's existing rate limiter middleware (`internal/controller/api/mi
 
 Payment initiation (`POST /customer/billing/top-up`) requires:
 - JWT-only auth (no API key — prevents automated billing attacks).
-- CSRF token validation via existing middleware (`middleware.CSRFProtection()`).
+- CSRF token validation via the existing middleware pattern (`middleware.CSRF(middleware.DefaultCSRFConfig())`).
 - Same-origin check on `Referer` / `Origin` headers.
 
 OAuth flows use the `state` parameter as CSRF protection (cryptographically random, short-lived, server-validated).
@@ -1413,7 +1430,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 - Migration 000072: Add `billing_provider` column to `customers` (default `'whmcs'`).
 - `server.go` wiring: create `Registry`, pass to services.
 - Lifecycle hooks in `VMService`: call `OnVMCreated/OnVMDeleted/OnVMResized` after operations.
-- Feature flag: `BILLING_PROVIDER` env var (only `"whmcs"` supported initially).
+- Provider config wiring in `config.go` (`BILLING_*_ENABLED`, `BILLING_*_PRIMARY`).
 
 **Dependencies:** None (builds on existing code).
 
