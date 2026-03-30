@@ -59,6 +59,17 @@ var validPermissions = map[string]bool{
 }
 
 // ListAPIKeys handles GET /api-keys - lists all API keys for the customer.
+// @Tags Customer
+// @Summary List API keys
+// @Description Manages customer-scoped API keys for programmatic access.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/api-keys [get]
 func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	correlationID := middleware.GetCorrelationID(c)
@@ -89,6 +100,19 @@ func (h *CustomerHandler) ListAPIKeys(c *gin.Context) {
 }
 
 // CreateAPIKey handles POST /api-keys - creates a new API key for the customer.
+// @Tags Customer
+// @Summary Create API key
+// @Description Manages customer-scoped API keys for programmatic access.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/api-keys [post]
 func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	correlationID := middleware.GetCorrelationID(c)
@@ -180,6 +204,20 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 }
 
 // RotateAPIKey handles POST /api-keys/:id/rotate - rotates an existing API key.
+// @Tags Customer
+// @Summary Rotate API key
+// @Description Manages customer-scoped API keys for programmatic access.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "API key ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/api-keys/{id}/rotate [post]
 func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	keyID := c.Param("id")
@@ -241,6 +279,18 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 }
 
 // DeleteAPIKey handles DELETE /api-keys/:id - revokes an API key.
+// @Tags Customer
+// @Summary Delete API key
+// @Description Manages customer-scoped API keys for programmatic access.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "API key ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/api-keys/{id} [delete]
 func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	keyID := c.Param("id")
@@ -346,12 +396,11 @@ func (h *CustomerHandler) validateScopedVMIDs(ctx context.Context, customerID st
 		CustomerID: &customerID,
 		VMIDs:      normalized,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: len(normalized),
 		},
 	}
 
-	vms, _, err := h.vmRepo.List(ctx, filter)
+	vms, _, _, err := h.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs for api key scope: %w", err)
 	}

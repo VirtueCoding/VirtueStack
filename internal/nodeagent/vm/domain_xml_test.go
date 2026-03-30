@@ -1,14 +1,33 @@
 package vm
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func goldenTest(t *testing.T, name string, got string) {
+	t.Helper()
+
+	golden := filepath.Join("testdata", name+".golden.xml")
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		require.NoError(t, os.WriteFile(golden, []byte(got), 0o644))
+		return
+	}
+
+	expected, err := os.ReadFile(golden)
+	require.NoError(t, err, "golden file missing, run with UPDATE_GOLDEN=1")
+	assert.Equal(t, string(expected), got)
+}
 
 // TestGenerateLVMDiskXMLStructure tests that generateLVMDiskXML produces correct XML structure.
 func TestGenerateLVMDiskXMLStructure(t *testing.T) {
 	cfg := &DomainConfig{
-		VMID:       "test-vm-123",
+		VMID:        "test-vm-123",
 		LVMDiskPath: "/dev/vgvs/vs-test-vm-123-disk0",
 	}
 
@@ -68,12 +87,12 @@ func TestGenerateLVMDiskXMLXMLSpecialCharsEscaping(t *testing.T) {
 		{
 			name:    "path with less than",
 			lvmPath: "/dev/vgvs/disk<special",
-			wantLt: true, // Should be escaped to &lt;
+			wantLt:  true, // Should be escaped to &lt;
 		},
 		{
 			name:    "path with greater than",
 			lvmPath: "/dev/vgvs/disk>special",
-			wantGt: true, // Should be escaped to &gt;
+			wantGt:  true, // Should be escaped to &gt;
 		},
 		{
 			name:     "path with quote",
@@ -121,7 +140,7 @@ func TestGenerateLVMDiskXMLXMLSpecialCharsEscaping(t *testing.T) {
 // TestGenerateLVMDiskXMLNoRawChars tests that raw XML special characters don't appear.
 func TestGenerateLVMDiskXMLNoRawChars(t *testing.T) {
 	cfg := &DomainConfig{
-		VMID:       "test-vm",
+		VMID:        "test-vm",
 		LVMDiskPath: "/dev/vgvs/test&vm<path>disk",
 	}
 
@@ -153,12 +172,12 @@ func TestValidateDomainConfigWithLVM(t *testing.T) {
 		{
 			name: "valid LVM config",
 			cfg: &DomainConfig{
-				VMID:         "test-vm-123",
-				VCPU:         2,
-				MemoryMB:     2048,
-				MACAddress:   "52:54:00:00:00:01",
+				VMID:           "test-vm-123",
+				VCPU:           2,
+				MemoryMB:       2048,
+				MACAddress:     "52:54:00:00:00:01",
 				StorageBackend: StorageBackendLVM,
-				LVMDiskPath:  "/dev/vgvs/vs-test-vm-123-disk0",
+				LVMDiskPath:    "/dev/vgvs/vs-test-vm-123-disk0",
 			},
 			wantErr: false,
 		},
@@ -176,8 +195,8 @@ func TestValidateDomainConfigWithLVM(t *testing.T) {
 			errMsg:  "LVMDiskPath",
 		},
 		{
-			name: "nil config",
-			cfg:  nil,
+			name:    "nil config",
+			cfg:     nil,
 			wantErr: true,
 			errMsg:  "nil",
 		},
@@ -294,7 +313,7 @@ func TestEscapeXMLFunction(t *testing.T) {
 		{"normal", "normal", false, false, false},
 		{"<test>", "&lt;test&gt;", false, true, true},
 		{"a & b", "a &amp; b", true, false, false},
-		{"it's", "it&#39;s", false, false, false},  // xml.EscapeText uses numeric ref for apostrophe
+		{"it's", "it&#39;s", false, false, false},             // xml.EscapeText uses numeric ref for apostrophe
 		{`quote"test`, "quote&#34;test", false, false, false}, // xml.EscapeText uses numeric ref for quote
 		{"", "", false, false, false},
 		{"<>&\"'", "&lt;&gt;&amp;&#34;&#39;", true, true, true},
@@ -351,9 +370,9 @@ func TestGenerateLVMDiskXMLCompleteOutput(t *testing.T) {
 // when cloud-init ISO is also attached. This verifies both disk types coexist properly.
 func TestGenerateLVMDiskXMLWithCloudInit(t *testing.T) {
 	vmCfg := &DomainConfig{
-		VMID:              "550e8400-e29b-41d4-a716-446655440000",
-		LVMDiskPath:       "/dev/vgvs/vs-550e8400-e29b-41d4-a716-446655440000-disk0",
-		CloudInitISOPath:  "/var/lib/virtuestack/cloud-init/vs-550e8400-e29b-41d4-a716-446655440000.iso",
+		VMID:             "550e8400-e29b-41d4-a716-446655440000",
+		LVMDiskPath:      "/dev/vgvs/vs-550e8400-e29b-41d4-a716-446655440000-disk0",
+		CloudInitISOPath: "/var/lib/virtuestack/cloud-init/vs-550e8400-e29b-41d4-a716-446655440000.iso",
 	}
 
 	// Test that cloud-init path is preserved in the config
@@ -372,16 +391,16 @@ func TestGenerateLVMDiskXMLWithCloudInit(t *testing.T) {
 func TestLVMWithCloudInitDomainXMLGeneration(t *testing.T) {
 	// This test verifies the pattern for LVM + cloud-init VM configuration
 	cfg := &DomainConfig{
-		VMID:              "test-vm-cloudinit",
-		VCPU:               2,
-		MemoryMB:           2048,
-		MACAddress:         "52:54:00:00:00:01",
-		StorageBackend:     StorageBackendLVM,
-		LVMDiskPath:       "/dev/vgvs/vs-test-vm-cloudinit-disk0",
-		CloudInitISOPath:   "/var/lib/virtuestack/cloud-init/vs-test-vm-cloudinit.iso",
-		IPv4Address:        "192.168.1.100",
-		IPv6Address:        "2001:db8::100",
-		PortSpeedKbps:     1000000,
+		VMID:             "test-vm-cloudinit",
+		VCPU:             2,
+		MemoryMB:         2048,
+		MACAddress:       "52:54:00:00:00:01",
+		StorageBackend:   StorageBackendLVM,
+		LVMDiskPath:      "/dev/vgvs/vs-test-vm-cloudinit-disk0",
+		CloudInitISOPath: "/var/lib/virtuestack/cloud-init/vs-test-vm-cloudinit.iso",
+		IPv4Address:      "192.168.1.100",
+		IPv6Address:      "2001:db8::100",
+		PortSpeedKbps:    1000000,
 	}
 
 	// Validate the config
@@ -407,4 +426,105 @@ func TestLVMWithCloudInitDomainXMLGeneration(t *testing.T) {
 
 	t.Logf("LVM VM with cloud-init configured: disk=%s, cloudinit=%s",
 		cfg.LVMDiskPath, cfg.CloudInitISOPath)
+}
+
+func TestGenerateDomainXMLGoldenFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *DomainConfig
+	}{
+		{
+			name: "ceph_rbd_with_iso",
+			cfg: &DomainConfig{
+				VMID:             "11111111-1111-1111-1111-111111111111",
+				VCPU:             2,
+				MemoryMB:         2048,
+				MACAddress:       "52:54:00:aa:bb:01",
+				StorageBackend:   StorageBackendCeph,
+				CephPool:         "vs-vms",
+				CephMonitors:     []string{"10.0.0.1:6789", "10.0.0.2:6789"},
+				CephUser:         "admin",
+				CephSecretUUID:   "12345678-1234-1234-1234-123456789012",
+				CloudInitISOPath: "/var/lib/virtuestack/cloud-init/vm-ceph.iso",
+				IPv4Address:      "192.0.2.10",
+				IPv6Address:      "2001:db8::10",
+				PortSpeedKbps:    1000000,
+				BurstKB:          1024,
+			},
+		},
+		{
+			name: "qcow_without_iso",
+			cfg: &DomainConfig{
+				VMID:           "22222222-2222-2222-2222-222222222222",
+				VCPU:           1,
+				MemoryMB:       1024,
+				MACAddress:     "52:54:00:aa:bb:02",
+				StorageBackend: StorageBackendQcow,
+				DiskPath:       "/var/lib/virtuestack/vms/vm-qcow-disk0.qcow2",
+				IPv4Address:    "198.51.100.20",
+				PortSpeedKbps:  0,
+			},
+		},
+		{
+			name: "lvm_with_iso",
+			cfg: &DomainConfig{
+				VMID:             "33333333-3333-3333-3333-333333333333",
+				VCPU:             4,
+				MemoryMB:         4096,
+				MACAddress:       "52:54:00:aa:bb:03",
+				StorageBackend:   StorageBackendLVM,
+				LVMDiskPath:      "/dev/vgvs/vs-33333333-3333-3333-3333-333333333333-disk0",
+				CloudInitISOPath: "/var/lib/virtuestack/cloud-init/vm-lvm.iso",
+				IPv4Address:      "203.0.113.30",
+				IPv6Address:      "2001:db8:1::30",
+				PortSpeedKbps:    2000000,
+				BurstKB:          2048,
+			},
+		},
+		{
+			name: "nic_ipv4_only",
+			cfg: &DomainConfig{
+				VMID:           "44444444-4444-4444-4444-444444444444",
+				VCPU:           2,
+				MemoryMB:       1536,
+				MACAddress:     "52:54:00:aa:bb:04",
+				StorageBackend: StorageBackendQcow,
+				DiskPath:       "/var/lib/virtuestack/vms/vm-ipv4-only.qcow2",
+				IPv4Address:    "192.0.2.44",
+			},
+		},
+		{
+			name: "nic_ipv6_only",
+			cfg: &DomainConfig{
+				VMID:           "55555555-5555-5555-5555-555555555555",
+				VCPU:           2,
+				MemoryMB:       1536,
+				MACAddress:     "52:54:00:aa:bb:05",
+				StorageBackend: StorageBackendQcow,
+				DiskPath:       "/var/lib/virtuestack/vms/vm-ipv6-only.qcow2",
+				IPv6Address:    "2001:db8:2::55",
+			},
+		},
+		{
+			name: "cpu_mem_high_profile",
+			cfg: &DomainConfig{
+				VMID:           "66666666-6666-6666-6666-666666666666",
+				VCPU:           8,
+				MemoryMB:       16384,
+				MACAddress:     "52:54:00:aa:bb:06",
+				StorageBackend: StorageBackendQcow,
+				DiskPath:       "/var/lib/virtuestack/vms/vm-high-profile.qcow2",
+				IPv4Address:    "198.51.100.66",
+				IPv6Address:    "2001:db8:3::66",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GenerateDomainXML(tt.cfg)
+			require.NoError(t, err)
+			goldenTest(t, tt.name, got)
+		})
+	}
 }

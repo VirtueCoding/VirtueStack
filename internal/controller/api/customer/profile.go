@@ -31,6 +31,17 @@ type ProfileResponse struct {
 
 // UpdateProfile handles PUT /profile - updates the authenticated customer's profile.
 // Supports partial updates; only provided fields are modified.
+// @Tags Customer
+// @Summary Update profile
+// @Description Updates profile details for the authenticated customer.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Profile update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/profile [put]
 func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -100,6 +111,14 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 }
 
 // GetProfile handles GET /profile - retrieves the authenticated customer's profile.
+// @Tags Customer
+// @Summary Get profile
+// @Description Returns profile information for the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/profile [get]
 func (h *CustomerHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {

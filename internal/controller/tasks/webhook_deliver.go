@@ -76,7 +76,7 @@ func RegisterWebhookDeliveryHandler(worker *Worker, deps *WebhookDeliveryDeps) {
 //  6. Update delivery status
 //  7. Update webhook fail_count
 func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookDeliveryDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", TaskTypeWebhookDeliver)
+	logger := taskLogger(deps.Logger, task)
 
 	// Parse payload
 	var payload WebhookDeliveryPayload
@@ -85,7 +85,6 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 		return fmt.Errorf("parsing webhook.deliver payload: %w", err)
 	}
 
-	logger = logger.With("delivery_id", payload.DeliveryID, "webhook_id", payload.WebhookID)
 	logger.Info("webhook.deliver task started")
 
 	// Get delivery record

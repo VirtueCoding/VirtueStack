@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -8,7 +8,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import { Cpu, MemoryStick, HardDrive, Network, DollarSign, Camera, Archive, Disc, Edit, Trash2 } from "lucide-react";
 import type { Plan } from "@/lib/api-client";
 

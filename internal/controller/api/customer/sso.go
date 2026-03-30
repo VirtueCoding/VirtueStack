@@ -13,6 +13,15 @@ import (
 
 // ExchangeSSOToken consumes a one-time opaque WHMCS SSO token, mints the normal
 // browser session cookies, and redirects to the clean customer WebUI URL.
+// @Tags Customer
+// @Summary Exchange SSO token
+// @Description Exchanges one-time provisioning SSO token for customer session cookies.
+// @Produce json
+// @Param token query string true "One-time SSO token"
+// @Success 302 {string} string "Redirect to customer portal"
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/sso-exchange [get]
 func (h *CustomerHandler) ExchangeSSOToken(c *gin.Context) {
 	rawToken := c.Query("token")
 	if rawToken == "" {

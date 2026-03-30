@@ -16,6 +16,18 @@ import (
 
 // CreateVM handles POST /vms - creates a new VM asynchronously.
 // This endpoint is called by WHMCS when a new service is provisioned.
+// @Tags Provisioning
+// @Summary Create VM
+// @Description Creates a VM for a provisioning request and returns async task details.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param request body object true "Provisioning VM create request"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms [post]
 func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 	var req ProvisioningCreateVMRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -50,6 +62,18 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 
 // DeleteVM handles DELETE /vms/:id - terminates a VM asynchronously.
 // This endpoint is called by WHMCS when a service is cancelled/terminated.
+// @Tags Provisioning
+// @Summary Delete VM
+// @Description Deletes a VM through provisioning workflow and returns async task details.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id} [delete]
 func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
 	vmID := c.Param("id")
 

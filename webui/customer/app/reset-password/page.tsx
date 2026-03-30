@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Loader2, KeyRound, ArrowLeft, CheckCircle2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
@@ -16,9 +16,9 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import { customerAuthApi, ApiClientError } from "@/lib/api-client";
 
 const resetPasswordSchema = z.object({

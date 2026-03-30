@@ -1,4 +1,14 @@
 // Package main is the entrypoint for the VirtueStack Controller.
+//
+// @title VirtueStack API
+// @version 1.0
+// @description KVM/QEMU VM management platform API
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @securityDefinitions.apikey APIKeyAuth
+// @in header
+// @name X-API-Key
 package main
 
 import (
@@ -10,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/AbuGosok/VirtueStack/docs"
 	"github.com/AbuGosok/VirtueStack/internal/controller"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"

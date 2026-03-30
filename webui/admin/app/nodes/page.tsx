@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
   Dialog,
@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -22,7 +22,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@virtuestack/ui";
 import {
   Server,
   Plus,
@@ -32,6 +32,8 @@ import {
   RefreshCcw,
   Loader2,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   adminNodesApi,
@@ -40,7 +42,7 @@ import {
   type CreateNodeRequest,
   type UpdateNodeRequest,
 } from "@/lib/api-client";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { NodeCreateDialog, type CreateNodeFormData } from "@/components/nodes/NodeCreateDialog";
 import { NodeEditDialog, type EditNodeFormData } from "@/components/nodes/NodeEditDialog";
 import { NodeDetailDialog } from "@/components/nodes/NodeDetailDialog";
@@ -63,10 +65,18 @@ export default function NodesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
+  const PAGE_SIZE = 20;
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
+
   const fetchNodes = useCallback(async () => {
     try {
-      const response = await adminNodesApi.getNodes();
+      const response = await adminNodesApi.getNodes({ per_page: PAGE_SIZE, cursor: currentCursor });
       setNodes(response.data || []);
+      setNextCursor(response.meta?.next_cursor ?? undefined);
+      setHasMore(response.meta?.has_more ?? false);
     } catch (err) {
       toast({
         title: "Error",
@@ -76,7 +86,7 @@ export default function NodesPage() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, currentCursor]);
 
   useEffect(() => {
     fetchNodes();
@@ -207,6 +217,22 @@ export default function NodesPage() {
       setSelectedNode(null);
       setDialogAction(null);
     }
+  };
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
   };
 
   return (
@@ -422,6 +448,33 @@ export default function NodesPage() {
                 </TableBody>
               </Table>
             </div>
+            {(cursorStack.length > 0 || hasMore) && (
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredNodes.length} items
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={cursorStack.length === 0 || loading}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

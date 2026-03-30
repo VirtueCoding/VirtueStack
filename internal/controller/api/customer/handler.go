@@ -136,6 +136,7 @@ type CustomerHandler struct {
 	tokenStore           *consoleTokenStore
 	emailProvider        emailSender
 	passwordResetBaseURL string
+	registrationEmailVerification bool
 	logger               *slog.Logger
 }
 
@@ -179,6 +180,7 @@ type CustomerHandlerConfig struct {
 	ISOStoragePath       string
 	EmailProvider        emailSender
 	PasswordResetBaseURL string
+	RegistrationEmailVerification bool
 	Logger               *slog.Logger
 }
 
@@ -212,6 +214,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		tokenStore:           newConsoleTokenStore(),
 		emailProvider:        cfg.EmailProvider,
 		passwordResetBaseURL: cfg.PasswordResetBaseURL,
+		registrationEmailVerification: cfg.RegistrationEmailVerification,
 		logger:               cfg.Logger.With("component", "customer-handler"),
 	}
 }

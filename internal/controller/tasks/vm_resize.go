@@ -3,9 +3,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // VMResizePayload represents the payload for vm.resize tasks.
@@ -26,7 +28,7 @@ type VMResizePayload struct {
 //  5. Update VM resources in database
 //  6. Update task progress to completed
 func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMResize)
+	logger := taskLogger(deps.Logger, task)
 
 	var payload VMResizePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -39,7 +41,6 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		return fmt.Errorf("vm.resize payload requires vm_id and node_id")
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "node_id", payload.NodeID)
 	logger.Info("vm.resize task started",
 		"new_vcpu", payload.NewVCPU,
 		"new_memory_mb", payload.NewMemoryMB,
@@ -77,8 +78,12 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 			logger.Error("failed to stop VM for resize", "error", err)
 			return fmt.Errorf("stopping VM %s for resize: %w", payload.VMID, err)
 		}
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusStopped); err != nil {
-			logger.Warn("failed to update VM status", "error", err)
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusRunning, models.VMStatusStopped); err != nil {
+			if errors.Is(err, sharederrors.ErrConflict) {
+				logger.Error("failed VM transition from running to stopped during resize", "error", err)
+				return fmt.Errorf("transitioning VM %s to stopped for resize: %w", payload.VMID, err)
+			}
+			logger.Warn("failed to transition VM status", "error", err)
 		}
 	}
 
@@ -108,8 +113,12 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		if err := deps.NodeClient.StartVM(ctx, nodeID, payload.VMID); err != nil {
 			logger.Warn("failed to start VM after resize", "error", err)
 		} else {
-			if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusRunning); err != nil {
-				logger.Warn("failed to update VM status", "error", err)
+			if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
+				if errors.Is(err, sharederrors.ErrConflict) {
+					logger.Error("failed VM transition from stopped to running after resize", "error", err)
+					return fmt.Errorf("transitioning VM %s to running after resize: %w", payload.VMID, err)
+				}
+				logger.Warn("failed to transition VM status", "error", err)
 			}
 		}
 	}

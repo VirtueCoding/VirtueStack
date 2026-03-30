@@ -39,6 +39,12 @@ const customerRefreshCookiePath = "/api/v1/customer/auth/refresh"
 
 // CSRF handles GET /customer/auth/csrf - returns the CSRF token in the response header.
 // The CSRF middleware sets the cookie before this handler runs.
+// @Tags Customer
+// @Summary Get CSRF token
+// @Description Issues CSRF cookie/token pair for customer frontend authentication flows.
+// @Produce json
+// @Success 200 {object} models.Response
+// @Router /api/v1/customer/auth/csrf [get]
 func (h *CustomerHandler) CSRF(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "CSRF token set"}})
 }
@@ -95,6 +101,17 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// @Tags Customer
+// @Summary Verify customer 2FA
+// @Description Verifies customer TOTP code and returns session tokens.
+// @Accept json
+// @Produce json
+// @Param request body object true "2FA verification request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 429 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/verify-2fa [post]
 func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -165,6 +182,16 @@ func extractTempTokenJTI(tempToken string, authConfig middleware.AuthConfig) str
 	return claims.ID
 }
 
+// @Tags Customer
+// @Summary Refresh customer token
+// @Description Refreshes customer access token using refresh token.
+// @Accept json
+// @Produce json
+// @Param request body object true "Refresh token request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/refresh [post]
 func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 	// F-005: Refresh tokens are read exclusively from the HttpOnly cookie.
 	// The JSON body fallback has been removed to prevent token leakage via
@@ -206,6 +233,14 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// @Tags Customer
+// @Summary Customer logout
+// @Description Invalidates customer session and refresh token.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/auth/logout [post]
 func (h *CustomerHandler) Logout(c *gin.Context) {
 	refreshToken := middleware.GetRefreshTokenFromCookie(c)
 
@@ -237,6 +272,17 @@ func (h *CustomerHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
 
+// @Tags Customer
+// @Summary Change password
+// @Description Changes password for the authenticated customer.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Password change request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/password [put]
 func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {

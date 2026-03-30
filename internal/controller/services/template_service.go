@@ -138,12 +138,12 @@ func (s *TemplateService) ListActive(ctx context.Context) ([]models.Template, er
 
 // List returns a paginated list of templates with optional filtering.
 // Supports filtering by active status, OS family, and cloud-init support.
-func (s *TemplateService) List(ctx context.Context, filter repository.TemplateListFilter) ([]models.Template, int, error) {
-	templates, total, err := s.templateRepo.List(ctx, filter)
+func (s *TemplateService) List(ctx context.Context, filter repository.TemplateListFilter) ([]models.Template, bool, string, error) {
+	templates, hasMore, lastID, err := s.templateRepo.List(ctx, filter)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing templates: %w", err)
+		return nil, false, "", fmt.Errorf("listing templates: %w", err)
 	}
-	return templates, total, nil
+	return templates, hasMore, lastID, nil
 }
 
 func (s *TemplateService) Create(ctx context.Context, template *models.Template) error {
@@ -491,11 +491,23 @@ func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID stri
 		return "", fmt.Errorf("%w: %v", sharederrors.ErrValidation, err)
 	}
 
-	for _, nodeID := range nodeIDs {
-		node, nodeErr := s.nodeRepo.GetByID(ctx, nodeID)
-		if nodeErr != nil {
-			return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, nodeID)
+	// Validate all nodes exist and are online (single bulk query instead of N+1)
+	nodes, err := s.nodeRepo.GetByIDs(ctx, nodeIDs)
+	if err != nil {
+		return "", fmt.Errorf("getting nodes: %w", err)
+	}
+	if len(nodes) != len(nodeIDs) {
+		found := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			found[n.ID] = true
 		}
+		for _, id := range nodeIDs {
+			if !found[id] {
+				return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, id)
+			}
+		}
+	}
+	for _, node := range nodes {
 		if node.Status != "online" {
 			return "", fmt.Errorf("%w: node %s is not online (status: %s)",
 				sharederrors.ErrValidation, node.Hostname, node.Status)

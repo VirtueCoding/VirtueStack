@@ -333,9 +333,9 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 		return nil, fmt.Errorf("getting source node: %w", err)
 	}
 
-	nodes, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{
+	nodes, _, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{
 		Status: util.StringPtr(models.NodeStatusOnline),
-		PaginationParams: models.PaginationParams{Page: 1, PerPage: models.MaxPerPage},
+		PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing online nodes: %w", err)
@@ -510,11 +510,10 @@ func (s *MigrationService) CancelMigration(ctx context.Context, vmID, adminID st
 	filter := repository.TaskListFilter{
 		Type: util.StringPtr(models.TaskTypeVMMigrate),
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 20,
 		},
 	}
-	if tasks, _, listErr := s.taskRepo.List(ctx, filter); listErr == nil {
+	if tasks, _, _, listErr := s.taskRepo.List(ctx, filter); listErr == nil {
 		for _, task := range tasks {
 			var payload struct {
 				VMID              string `json:"vm_id"`

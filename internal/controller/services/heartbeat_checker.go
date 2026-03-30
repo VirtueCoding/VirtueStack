@@ -37,17 +37,19 @@ func DefaultHeartbeatCheckerConfig() HeartbeatCheckerConfig {
 // HeartbeatChecker periodically checks node heartbeats and marks unresponsive
 // nodes as degraded or offline to enable automated failover decisions.
 type HeartbeatChecker struct {
-	nodeRepo *repository.NodeRepository
-	logger   *slog.Logger
-	config   HeartbeatCheckerConfig
+	nodeRepo           *repository.NodeRepository
+	systemEventService *SystemEventService
+	logger             *slog.Logger
+	config             HeartbeatCheckerConfig
 }
 
 // NewHeartbeatChecker creates a HeartbeatChecker with the given node repository, logger, and config.
-func NewHeartbeatChecker(nodeRepo *repository.NodeRepository, logger *slog.Logger, config HeartbeatCheckerConfig) *HeartbeatChecker {
+func NewHeartbeatChecker(nodeRepo *repository.NodeRepository, systemEventService *SystemEventService, logger *slog.Logger, config HeartbeatCheckerConfig) *HeartbeatChecker {
 	return &HeartbeatChecker{
-		nodeRepo: nodeRepo,
-		logger:   logger.With("component", "heartbeat-checker"),
-		config:   config,
+		nodeRepo:           nodeRepo,
+		systemEventService: systemEventService,
+		logger:             logger.With("component", "heartbeat-checker"),
+		config:             config,
 	}
 }
 
@@ -100,6 +102,14 @@ func (hc *HeartbeatChecker) checkAllNodes(ctx context.Context) {
 				continue
 			}
 
+			if misses == FailoverHeartbeatThreshold && hc.systemEventService != nil {
+				_ = hc.systemEventService.PublishSystemEvent(ctx, models.SystemEventNodeOffline, map[string]any{
+					"node_id":  node.ID,
+					"hostname": node.Hostname,
+					"misses":   misses,
+				})
+			}
+
 			if misses == 1 {
 				hc.logger.Warn("node has no heartbeat recorded, incrementing misses",
 					"node_id", node.ID, "hostname", node.Hostname, "misses", misses)
@@ -113,12 +123,26 @@ func (hc *HeartbeatChecker) checkAllNodes(ctx context.Context) {
 				hc.logger.Warn("failed to increment heartbeat misses", "node_id", node.ID, "error", err)
 				continue
 			}
+			if misses == FailoverHeartbeatThreshold && hc.systemEventService != nil {
+				_ = hc.systemEventService.PublishSystemEvent(ctx, models.SystemEventNodeOffline, map[string]any{
+					"node_id":  node.ID,
+					"hostname": node.Hostname,
+					"misses":   misses,
+				})
+			}
 
 			newStatus := node.Status
 			if misses >= FailoverHeartbeatThreshold && newStatus == models.NodeStatusOnline {
 				newStatus = models.NodeStatusDegraded
 				if err := hc.nodeRepo.UpdateStatus(ctx, node.ID, newStatus); err != nil {
 					hc.logger.Warn("failed to set node to degraded", "node_id", node.ID, "error", err)
+				} else if hc.systemEventService != nil {
+					_ = hc.systemEventService.PublishSystemEvent(ctx, models.SystemEventNodeDegraded, map[string]any{
+						"node_id":    node.ID,
+						"hostname":   node.Hostname,
+						"new_status": newStatus,
+						"misses":     misses,
+					})
 				}
 			}
 

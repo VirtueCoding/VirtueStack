@@ -32,6 +32,17 @@ func validateStorageConfig(storageBackend, storagePath string) error {
 }
 
 // ListNodes handles GET /nodes - lists all hypervisor nodes with optional filtering.
+// @Tags Admin
+// @Summary List nodes
+// @Description Lists all compute nodes registered in the platform.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes [get]
 func (h *AdminHandler) ListNodes(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -60,7 +71,7 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 		filter.LocationID = &locationID
 	}
 
-	nodes, total, err := h.nodeService.ListNode(c.Request.Context(), filter)
+	nodes, hasMore, lastID, err := h.nodeService.ListNode(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list nodes",
 			"error", err,
@@ -71,11 +82,24 @@ func (h *AdminHandler) ListNodes(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: nodes,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // RegisterNode handles POST /nodes - registers a new hypervisor node.
+// @Tags Admin
+// @Summary Register node
+// @Description Registers a new compute node.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object false "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes [post]
 func (h *AdminHandler) RegisterNode(c *gin.Context) {
 	var req models.NodeCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -119,6 +143,18 @@ func (h *AdminHandler) RegisterNode(c *gin.Context) {
 }
 
 // GetNode handles GET /nodes/:id - retrieves details for a specific node.
+// @Tags Admin
+// @Summary Get node
+// @Description Returns details for a compute node.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id} [get]
 func (h *AdminHandler) GetNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {
@@ -152,6 +188,20 @@ func (h *AdminHandler) GetNode(c *gin.Context) {
 }
 
 // UpdateNode handles PUT /nodes/:id - updates an existing node's configuration.
+// @Tags Admin
+// @Summary Update node
+// @Description Updates compute node configuration.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Param request body object false "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id} [put]
 func (h *AdminHandler) UpdateNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {
@@ -217,6 +267,18 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 }
 
 // DeleteNode handles DELETE /nodes/:id - permanently removes a node.
+// @Tags Admin
+// @Summary Delete node
+// @Description Deletes a compute node. Requires re-authentication.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Success 204 {object} string
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id} [delete]
 func (h *AdminHandler) DeleteNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {
@@ -247,6 +309,20 @@ func (h *AdminHandler) DeleteNode(c *gin.Context) {
 
 // DrainNode handles POST /nodes/:id/drain - sets a node to draining mode.
 // Draining prevents new VM placements while allowing existing VMs to run.
+// @Tags Admin
+// @Summary Drain node
+// @Description Marks a node as draining to stop new placements.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Param request body object false "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id}/drain [post]
 func (h *AdminHandler) DrainNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {
@@ -277,6 +353,20 @@ func (h *AdminHandler) DrainNode(c *gin.Context) {
 
 // FailoverNode handles POST /nodes/:id/failover - marks a node as failed.
 // This triggers alerting and potentially automatic VM migration.
+// @Tags Admin
+// @Summary Failover node
+// @Description Initiates failover workflow for a node.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Param request body object false "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id}/failover [post]
 func (h *AdminHandler) FailoverNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {
@@ -306,6 +396,20 @@ func (h *AdminHandler) FailoverNode(c *gin.Context) {
 }
 
 // UndrainNode handles POST /nodes/:id/undrain - restores a node to online mode.
+// @Tags Admin
+// @Summary Undrain node
+// @Description Removes draining status from a node.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Node ID"
+// @Param request body object false "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/nodes/{id}/undrain [post]
 func (h *AdminHandler) UndrainNode(c *gin.Context) {
 	nodeID, ok := validateUUIDParam(c, "id", "INVALID_NODE_ID", "Node ID must be a valid UUID")
 	if !ok {

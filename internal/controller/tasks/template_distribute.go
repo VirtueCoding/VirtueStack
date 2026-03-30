@@ -11,6 +11,8 @@ import (
 // handleTemplateDistribute distributes a template to specified QCOW/LVM nodes.
 // For each node, it calls EnsureTemplateCached via gRPC and updates the cache status.
 func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
+	logger := taskLogger(deps.Logger, task)
+
 	var payload TemplateDistributePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal template distribute payload: %w", err)
@@ -26,7 +28,7 @@ func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *Hand
 	}
 
 	if template.StorageBackend == "ceph" {
-		deps.Logger.Info("skipping distribution for ceph template (shared pool access)",
+		logger.Info("skipping distribution for ceph template (shared pool access)",
 			"template_id", template.ID, "template_name", template.Name)
 		return nil
 	}
@@ -40,13 +42,13 @@ func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *Hand
 	for _, nodeID := range payload.NodeIDs {
 		node, nodeErr := deps.NodeRepo.GetByID(ctx, nodeID)
 		if nodeErr != nil {
-			deps.Logger.Warn("skipping node: not found",
+			logger.Warn("skipping node: not found",
 				"node_id", nodeID, "error", nodeErr)
 			failed++
 			continue
 		}
 		if node.Status != "online" {
-			deps.Logger.Warn("skipping offline node",
+			logger.Warn("skipping offline node",
 				"node_id", nodeID, "status", node.Status)
 			failed++
 			continue
@@ -54,7 +56,7 @@ func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *Hand
 
 		cacheErr := ensureTemplateCachedOnNode(ctx, deps, template, nodeID, sourceURL)
 		if cacheErr != nil {
-			deps.Logger.Error("failed to cache template on node",
+			logger.Error("failed to cache template on node",
 				"template_id", template.ID,
 				"node_id", nodeID,
 				"error", cacheErr)
@@ -76,7 +78,7 @@ func handleTemplateDistribute(ctx context.Context, task *models.Task, deps *Hand
 		return fmt.Errorf("failed to distribute template to all %d nodes", failed)
 	}
 
-	deps.Logger.Info("template distribution completed",
+	logger.Info("template distribution completed",
 		"template_id", template.ID,
 		"distributed", distributed,
 		"failed", failed)

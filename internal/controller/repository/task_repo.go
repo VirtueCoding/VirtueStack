@@ -4,9 +4,9 @@ package repository
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -39,7 +39,7 @@ func scanTask(row pgx.Row) (models.Task, error) {
 	var idempotencyKey, createdBy *string
 	err := row.Scan(
 		&t.ID, &t.Type, &t.Status, &t.Payload,
-		&result, &errorMessage, &t.Progress,
+		&result, &errorMessage, &t.Progress, &t.RetryCount,
 		&idempotencyKey, &createdBy,
 		&t.CreatedAt, &t.StartedAt, &t.CompletedAt,
 	)
@@ -60,7 +60,7 @@ func scanTask(row pgx.Row) (models.Task, error) {
 
 const taskSelectCols = `
 	id, type, status, payload,
-	result, error_message, progress,
+	result, error_message, progress, retry_count,
 	idempotency_key, created_by,
 	created_at, started_at, completed_at`
 
@@ -69,9 +69,9 @@ const taskSelectCols = `
 func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	const q = `
 		INSERT INTO tasks (
-			id, type, status, payload, progress,
+			id, type, status, payload, progress, retry_count,
 			idempotency_key, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING ` + taskSelectCols
 
 	// Handle nullable UUID columns - empty string must be converted to NULL
@@ -84,7 +84,7 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	}
 
 	row := r.db.QueryRow(ctx, q,
-		task.ID, task.Type, task.Status, task.Payload, task.Progress,
+		task.ID, task.Type, task.Status, task.Payload, task.Progress, task.RetryCount,
 		idempotencyKey, createdBy,
 	)
 	created, err := scanTask(row)
@@ -116,60 +116,54 @@ func (r *TaskRepository) GetByIDempotencyKey(ctx context.Context, key string) (*
 	return &task, nil
 }
 
-// List returns a paginated list of tasks with optional filters and total count.
-func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]models.Task, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+// List returns a paginated list of tasks with optional filters.
+func (r *TaskRepository) List(ctx context.Context, filter TaskListFilter) ([]models.Task, bool, string, error) {
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("tasks")
 
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 	if filter.Type != nil {
-		where = append(where, fmt.Sprintf("type = $%d", idx))
-		args = append(args, *filter.Type)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"type": *filter.Type})
 	}
 	if filter.CreatedBy != nil {
-		where = append(where, fmt.Sprintf("created_by = $%d", idx))
-		args = append(args, *filter.CreatedBy)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"created_by": *filter.CreatedBy})
 	}
 	if filter.StartTime != nil {
-		where = append(where, fmt.Sprintf("created_at >= $%d", idx))
-		args = append(args, *filter.StartTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.GtOrEq{"created_at": *filter.StartTime})
 	}
 	if filter.EndTime != nil {
-		where = append(where, fmt.Sprintf("created_at <= $%d", idx))
-		args = append(args, *filter.EndTime)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.LtOrEq{"created_at": *filter.EndTime})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM tasks WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	listBuilder := whereBuilder.Columns(taskSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
+	}
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting tasks: %w", err)
+		return nil, false, "", fmt.Errorf("building task list query: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM tasks WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		taskSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
-
-	taskList, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Task, error) {
+	taskList, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.Task, error) {
 		return scanTask(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing tasks: %w", err)
+		return nil, false, "", fmt.Errorf("listing tasks: %w", err)
 	}
-	return taskList, total, nil
+
+	hasMore := len(taskList) > filter.PerPage
+	if hasMore {
+		taskList = taskList[:filter.PerPage]
+	}
+	var lastID string
+	if len(taskList) > 0 {
+		lastID = taskList[len(taskList)-1].ID
+	}
+	return taskList, hasMore, lastID, nil
 }
 
 // ListByStatus returns tasks matching the given status with a limit.
@@ -284,13 +278,44 @@ func (r *TaskRepository) SetCompleted(ctx context.Context, id string, result []b
 
 // SetFailed marks a task as failed, sets completed_at to NOW(), and stores the error message.
 func (r *TaskRepository) SetFailed(ctx context.Context, id string, errorMessage string) error {
-	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2`
+	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1, retry_count = retry_count + 1 WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s failed: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("setting task %s failed: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// FindStuckTasks finds running tasks older than the provided threshold.
+func (r *TaskRepository) FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error) {
+	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'running' AND started_at IS NOT NULL AND started_at < NOW() - ($1 * INTERVAL '1 second') ORDER BY started_at ASC`
+	seconds := int64(threshold.Seconds())
+	tasks, err := ScanRows(ctx, r.db, q, []any{seconds}, func(rows pgx.Rows) (models.Task, error) {
+		return scanTask(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("finding stuck tasks: %w", err)
+	}
+	result := make([]*models.Task, 0, len(tasks))
+	for i := range tasks {
+		taskCopy := tasks[i]
+		result = append(result, &taskCopy)
+	}
+	return result, nil
+}
+
+// ResetTask resets a task to pending state for retry.
+func (r *TaskRepository) ResetTask(ctx context.Context, taskID string) error {
+	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW() WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, taskID)
+	if err != nil {
+		return fmt.Errorf("resetting task %s: %w", taskID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("resetting task %s: %w", taskID, ErrNoRowsAffected)
 	}
 	return nil
 }

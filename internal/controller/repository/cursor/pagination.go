@@ -8,10 +8,8 @@
 // Usage pattern in repositories:
 //
 //	func (r *Repo) List(ctx context.Context, params PaginationParams) ([]Item, PaginationMeta, error) {
-//	    if params.IsCursorBased() {
-//	        return r.listWithCursor(ctx, params)
-//	    }
-//	    return r.listWithOffset(ctx, params)
+//	    cp := cursor.ParseParams(params)
+//	    return r.listWithCursor(ctx, cp)
 //	}
 package cursor
 
@@ -41,7 +39,7 @@ type Params struct {
 
 // ParseParams extracts cursor pagination params from models.PaginationParams.
 func ParseParams(p models.PaginationParams) Params {
-	if !p.IsCursorBased() {
+	if p.Cursor == "" {
 		return Params{PerPage: p.PerPage}
 	}
 	cp := p.DecodeCursor()
@@ -134,6 +132,21 @@ func ComputeResult[T interface{ GetID() string }](items []T, perPage int) QueryR
 		HasMore: hasMore,
 		LastID:  lastID,
 	}
+}
+
+// TrimResults applies the n+1 pagination pattern: checks if there are more
+// results than requested, trims the slice, and extracts the last item's ID
+// using the provided function. This avoids requiring a GetID() method on model types.
+func TrimResults[T any](items []T, perPage int, idFunc func(T) string) ([]T, bool, string) {
+	hasMore := len(items) > perPage
+	if hasMore {
+		items = items[:perPage]
+	}
+	var lastID string
+	if len(items) > 0 {
+		lastID = idFunc(items[len(items)-1])
+	}
+	return items, hasMore, lastID
 }
 
 // ScanRows is a generic helper to scan pgx.Rows into a slice.

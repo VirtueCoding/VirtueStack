@@ -14,18 +14,24 @@ import (
 
 	taskmetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
 // JetStream constants.
 const (
-	StreamName    = "TASKS"
-	StreamSubject = "tasks.>"
-	ConsumerName  = "task-worker"
-	AckWait       = 5 * time.Minute
-	MaxDeliver    = 3
+	StreamName         = "TASKS"
+	StreamSubject      = "tasks.>"
+	EventStreamName    = "EVENTS"
+	EventStreamSubject = "virtuestack.events.>"
+	ConsumerName       = "task-worker"
+	AckWait            = 5 * time.Minute
+	MaxDeliver         = 3
+	maxTaskRetries     = 3
 )
+
+const stuckTaskRecoveredMessage = "stuck task recovered after timeout"
 
 // nakDelays defines the exponential backoff delays applied when a task fails and
 // must be redelivered. The index corresponds to (NumDelivered - 1): first failure
@@ -52,10 +58,17 @@ func nakDelay(numDelivered uint64) time.Duration {
 // TaskHandler processes a task of a specific type.
 type TaskHandler func(ctx context.Context, task *models.Task) error
 
+type workerTaskRepository interface {
+	FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error)
+	ResetTask(ctx context.Context, taskID string) error
+	SetFailed(ctx context.Context, id string, errorMessage string) error
+}
+
 // Worker processes tasks from NATS JetStream.
 type Worker struct {
 	js       nats.JetStreamContext
 	dbPool   *pgxpool.Pool
+	taskRepo workerTaskRepository
 	handlers map[string]TaskHandler
 	logger   *slog.Logger
 	mu       sync.RWMutex
@@ -72,6 +85,7 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 		Storage:   nats.FileStorage,
 		Retention: nats.LimitsPolicy,
 		MaxAge:    7 * 24 * time.Hour,
+		MaxMsgs:   1_000_000,
 		Replicas:  1,
 	}
 
@@ -82,9 +96,25 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 		}
 	}
 
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:      EventStreamName,
+		Subjects:  []string{EventStreamSubject},
+		Storage:   nats.FileStorage,
+		Retention: nats.LimitsPolicy,
+		MaxAge:    7 * 24 * time.Hour,
+		MaxMsgs:   1_000_000,
+		Replicas:  1,
+	})
+	if err != nil {
+		if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+			return nil, fmt.Errorf("creating event stream: %w", err)
+		}
+	}
+
 	return &Worker{
 		js:       js,
 		dbPool:   dbPool,
+		taskRepo: repository.NewTaskRepository(dbPool),
 		handlers: make(map[string]TaskHandler),
 		logger:   logger.With("component", "task-worker"),
 	}, nil
@@ -152,6 +182,21 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 	})
 
 	return nil
+}
+
+// StartStuckTaskScanner starts periodic scanning and recovery of stuck running tasks.
+func (w *Worker) StartStuckTaskScanner(ctx context.Context, interval, stuckThreshold time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.recoverStuckTasks(ctx, stuckThreshold)
+		}
+	}
 }
 
 // Stop gracefully stops the worker.
@@ -329,6 +374,34 @@ func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status
 
 	task.Status = status
 	return nil
+}
+
+func (w *Worker) recoverStuckTasks(ctx context.Context, stuckThreshold time.Duration) {
+	stuckTasks, err := w.taskRepo.FindStuckTasks(ctx, stuckThreshold)
+	if err != nil {
+		w.logger.Error("failed to find stuck tasks", "error", err)
+		return
+	}
+	if len(stuckTasks) == 0 {
+		return
+	}
+
+	for _, task := range stuckTasks {
+		logger := w.logger.With("task_id", task.ID, "task_type", task.Type, "retry_count", task.RetryCount)
+		if task.RetryCount >= maxTaskRetries {
+			if setFailedErr := w.taskRepo.SetFailed(ctx, task.ID, stuckTaskRecoveredMessage); setFailedErr != nil {
+				logger.Error("failed to mark stuck task as failed", "error", setFailedErr)
+				continue
+			}
+			logger.Warn("stuck task marked failed after max retries")
+			continue
+		}
+		if resetErr := w.taskRepo.ResetTask(ctx, task.ID); resetErr != nil {
+			logger.Error("failed to reset stuck task", "error", resetErr)
+			continue
+		}
+		logger.Warn("stuck task reset to pending for retry")
+	}
 }
 
 // CreateTaskRecord creates a new task record in the database.

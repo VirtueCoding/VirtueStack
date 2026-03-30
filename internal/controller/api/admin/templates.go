@@ -24,6 +24,17 @@ type TemplateImportRequest struct {
 }
 
 // ListTemplates handles GET /templates - lists all OS templates.
+// @Tags Admin
+// @Summary List templates
+// @Description Performs administrative template management operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates [get]
 func (h *AdminHandler) ListTemplates(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -51,7 +62,7 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 		filter.OSFamily = &osFamily
 	}
 
-	templates, total, err := h.templateService.List(c.Request.Context(), filter)
+	templates, hasMore, lastID, err := h.templateService.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list templates",
 			"error", err,
@@ -62,11 +73,24 @@ func (h *AdminHandler) ListTemplates(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: templates,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // CreateTemplate handles POST /templates - creates a new OS template.
+// @Tags Admin
+// @Summary Create template
+// @Description Performs administrative template management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object false "Request body"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates [post]
 func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 	var req models.TemplateCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -120,6 +144,18 @@ func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 }
 
 // GetTemplate handles GET /templates/:id - retrieves a specific template.
+// @Tags Admin
+// @Summary Get template
+// @Description Performs administrative template management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id} [get]
 func (h *AdminHandler) GetTemplate(c *gin.Context) {
 	templateID := c.Param("id")
 
@@ -147,6 +183,20 @@ func (h *AdminHandler) GetTemplate(c *gin.Context) {
 }
 
 // UpdateTemplate handles PUT /templates/:id - updates an existing template.
+// @Tags Admin
+// @Summary Update template
+// @Description Performs administrative template management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Param request body object false "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id} [put]
 func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 	templateID := c.Param("id")
 
@@ -192,6 +242,18 @@ func (h *AdminHandler) UpdateTemplate(c *gin.Context) {
 }
 
 // DeleteTemplate handles DELETE /templates/:id - deletes a template.
+// @Tags Admin
+// @Summary Delete template
+// @Description Performs administrative template management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Success 204 {object} string
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id} [delete]
 func (h *AdminHandler) DeleteTemplate(c *gin.Context) {
 	templateID := c.Param("id")
 
@@ -227,6 +289,20 @@ func (h *AdminHandler) DeleteTemplate(c *gin.Context) {
 
 // ImportTemplate handles POST /templates/:id/import - imports an OS image.
 // This is used to upload/import a disk image into Ceph RBD.
+// @Tags Admin
+// @Summary Import template image
+// @Description Performs administrative template management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Param request body object false "Request body"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id}/import [post]
 func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 	templateID := c.Param("id")
 
@@ -278,6 +354,19 @@ func (h *AdminHandler) ImportTemplate(c *gin.Context) {
 // BuildTemplateFromISO handles POST /templates/build-from-iso.
 // Starts an async task to build a VM template from an ISO using unattended installation.
 // The ISO can be specified as a local filesystem path (iso_path) or an HTTP/HTTPS URL (iso_url).
+// @Tags Admin
+// @Summary Build template from ISO
+// @Description Performs administrative template management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object false "Request body"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/build-from-iso [post]
 func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 	var req models.TemplateBuildFromISORequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -357,6 +446,20 @@ func (h *AdminHandler) BuildTemplateFromISO(c *gin.Context) {
 // DistributeTemplate handles POST /templates/:id/distribute - distributes a template to nodes.
 // This triggers an async task that pushes the template to the specified QCOW/LVM nodes.
 // Ceph templates are rejected since they use shared pool access.
+// @Tags Admin
+// @Summary Distribute template
+// @Description Performs administrative template management operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Param request body object false "Request body"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id}/distribute [post]
 func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
 	id := c.Param("id")
 	if _, err := uuid.Parse(id); err != nil {
@@ -404,6 +507,18 @@ func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
 }
 
 // GetTemplateCacheStatus handles GET /templates/:id/cache-status - returns cache status across nodes.
+// @Tags Admin
+// @Summary Get template cache status
+// @Description Performs administrative template management operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Template ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/templates/{id}/cache-status [get]
 func (h *AdminHandler) GetTemplateCacheStatus(c *gin.Context) {
 	id := c.Param("id")
 	if _, err := uuid.Parse(id); err != nil {

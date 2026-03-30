@@ -29,7 +29,8 @@ Your job is to catch bugs, security vulnerabilities, missed requirements, and de
 - **Architecture:** Handler → Service → Repository → PostgreSQL, async tasks via NATS JetStream
 - **Error pattern:** `middleware.RespondWithError()` for HTTP errors, `fmt.Errorf("context: %w", err)` for wrapping
 - **Test pattern:** Table-driven tests, testify assert/require, function-field mock structs
-- **Migrations:** Sequential 000001–000065 (existing), new ones start at 000066
+- **Migrations:** Sequential 000001–000070
+- **Pagination:** Cursor-only (no offset pagination). All list endpoints return `{has_more, next_cursor, per_page}` meta
 
 ## Coding Standard Reference (docs/CODING_STANDARD.md)
 
@@ -79,6 +80,7 @@ For each file changed, evaluate:
 - [ ] Event bus publishes on correct NATS subjects
 - [ ] Pre-action webhook respects timeout and fail-open semantics
 - [ ] Cursor pagination implementation handles empty sets and first-page correctly
+- [ ] No offset pagination remnants (no COUNT(*) for pagination totals, no OFFSET clauses, no `page` query params)
 - [ ] Customer self-registration respects `ALLOW_SELF_REGISTRATION` flag
 
 ### 3. Completeness Audit

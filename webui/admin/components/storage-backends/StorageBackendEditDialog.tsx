@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -13,12 +13,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+} from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
 import { HardDrive, Loader2, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { adminNodesApi, type StorageBackend, type Node } from "@/lib/api-client";
 
 const editStorageBackendSchema = z.object({

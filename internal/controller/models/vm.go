@@ -1,7 +1,13 @@
 // Package models provides data model types for VirtueStack Controller.
 package models
 
-import "time"
+import (
+	"fmt"
+	"slices"
+	"time"
+
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+)
 
 // VM status constants define the lifecycle states of a virtual machine.
 const (
@@ -14,6 +20,29 @@ const (
 	VMStatusError        = "error"
 	VMStatusDeleted      = "deleted"
 )
+
+// ValidVMTransitions defines all allowed VM lifecycle state transitions.
+var ValidVMTransitions = map[string][]string{
+	VMStatusProvisioning: {VMStatusRunning, VMStatusError},
+	VMStatusRunning:      {VMStatusStopped, VMStatusSuspended, VMStatusMigrating, VMStatusReinstalling, VMStatusError},
+	VMStatusStopped:      {VMStatusRunning, VMStatusDeleted, VMStatusReinstalling, VMStatusMigrating, VMStatusError},
+	VMStatusSuspended:    {VMStatusRunning, VMStatusStopped, VMStatusDeleted},
+	VMStatusMigrating:    {VMStatusRunning, VMStatusError},
+	VMStatusReinstalling: {VMStatusRunning, VMStatusError},
+	VMStatusError:        {VMStatusStopped, VMStatusDeleted},
+}
+
+// ValidateVMTransition validates whether a VM status transition is allowed.
+func ValidateVMTransition(from, to string) error {
+	allowedTargets, ok := ValidVMTransitions[from]
+	if !ok {
+		return fmt.Errorf("unknown VM source status %q for transition to %q: %w", from, to, sharederrors.ErrConflict)
+	}
+	if !slices.Contains(allowedTargets, to) {
+		return fmt.Errorf("invalid VM transition from %q to %q: %w", from, to, sharederrors.ErrConflict)
+	}
+	return nil
+}
 
 // VM represents a virtual machine record as stored in the database.
 type VM struct {

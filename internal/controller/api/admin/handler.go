@@ -13,30 +13,32 @@ import (
 
 // AdminHandlerConfig holds all dependencies required to construct an AdminHandler.
 type AdminHandlerConfig struct {
-	NodeService               *services.NodeService
-	VMService                 *services.VMService
-	MigrationService          *services.MigrationService
-	PlanService               *services.PlanService
-	TemplateService           *services.TemplateService
-	IPAMService               *services.IPAMService
-	CustomerService           *services.CustomerService
-	BackupService             *services.BackupService
-	AuthService               *services.AuthService
-	AuditRepo                 *repository.AuditRepository
-	IPRepo                    *repository.IPRepository
-	SettingsRepo              *repository.SettingsRepository
-	FailoverRepo              *repository.FailoverRepository
-	AdminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
-	AdminRepo                 *repository.AdminRepository
-	StorageBackendRepo        *repository.StorageBackendRepository
-	NodeStorageRepo           *repository.NodeStorageRepository
-	NodeRepo                  *repository.NodeRepository
-	VMRepo                    *repository.VMRepository
-	ProvisioningKeyRepo       *repository.ProvisioningKeyRepository
-	RDNSService               *services.RDNSService
-	JWTSecret                 string
-	Issuer                    string
-	Logger                    *slog.Logger
+	NodeService             *services.NodeService
+	VMService               *services.VMService
+	MigrationService        *services.MigrationService
+	PlanService             *services.PlanService
+	TemplateService         *services.TemplateService
+	IPAMService             *services.IPAMService
+	CustomerService         *services.CustomerService
+	BackupService           *services.BackupService
+	AuthService             *services.AuthService
+	AuditRepo               *repository.AuditRepository
+	IPRepo                  *repository.IPRepository
+	SettingsRepo            *repository.SettingsRepository
+	FailoverRepo            *repository.FailoverRepository
+	AdminBackupScheduleRepo *repository.AdminBackupScheduleRepository
+	AdminRepo               *repository.AdminRepository
+	StorageBackendRepo      *repository.StorageBackendRepository
+	NodeStorageRepo         *repository.NodeStorageRepository
+	NodeRepo                *repository.NodeRepository
+	VMRepo                  *repository.VMRepository
+	ProvisioningKeyRepo     *repository.ProvisioningKeyRepository
+	SystemWebhookRepo       *repository.SystemWebhookRepository
+	PreActionWebhookRepo    *repository.PreActionWebhookRepository
+	RDNSService             *services.RDNSService
+	JWTSecret               string
+	Issuer                  string
+	Logger                  *slog.Logger
 }
 
 // AdminHandler handles admin-facing API requests.
@@ -44,29 +46,36 @@ type AdminHandlerConfig struct {
 // plans, templates, IP pools, customers, audit logs, settings, and backups.
 // All operations are authenticated via JWT with role=admin and require 2FA.
 type AdminHandler struct {
-	nodeService               *services.NodeService
-	vmService                 *services.VMService
-	migrationService          *services.MigrationService
-	planService               *services.PlanService
-	templateService           *services.TemplateService
-	ipamService               *services.IPAMService
-	customerService           *services.CustomerService
-	backupService             *services.BackupService
-	authService               *services.AuthService
-	auditRepo                 *repository.AuditRepository
-	ipRepo                    *repository.IPRepository
-	settingsRepo              *repository.SettingsRepository
-	failoverRepo              *repository.FailoverRepository
-	adminBackupScheduleRepo   *repository.AdminBackupScheduleRepository
-	adminRepo                 *repository.AdminRepository
-	storageBackendRepo        *repository.StorageBackendRepository
-	nodeStorageRepo           *repository.NodeStorageRepository
-	nodeRepo                  *repository.NodeRepository
-	vmRepo                    *repository.VMRepository
-	provisioningKeyRepo       *repository.ProvisioningKeyRepository
-	rdnsService               *services.RDNSService
-	authConfig                middleware.AuthConfig
-	logger                    *slog.Logger
+	nodeService             *services.NodeService
+	vmService               *services.VMService
+	migrationService        *services.MigrationService
+	planService             *services.PlanService
+	templateService         *services.TemplateService
+	ipamService             *services.IPAMService
+	customerService         *services.CustomerService
+	backupService           *services.BackupService
+	authService             *services.AuthService
+	auditRepo               *repository.AuditRepository
+	ipRepo                  *repository.IPRepository
+	settingsRepo            *repository.SettingsRepository
+	failoverRepo            *repository.FailoverRepository
+	adminBackupScheduleRepo *repository.AdminBackupScheduleRepository
+	adminRepo               *repository.AdminRepository
+	storageBackendRepo      *repository.StorageBackendRepository
+	nodeStorageRepo         *repository.NodeStorageRepository
+	nodeRepo                *repository.NodeRepository
+	vmRepo                  *repository.VMRepository
+	provisioningKeyRepo     *repository.ProvisioningKeyRepository
+	systemWebhookRepo       *repository.SystemWebhookRepository
+	preActionWebhookRepo    *repository.PreActionWebhookRepository
+	rdnsService             *services.RDNSService
+	authConfig              middleware.AuthConfig
+	logger                  *slog.Logger
+}
+
+// AuthConfig returns the admin handler authentication configuration.
+func (h *AdminHandler) AuthConfig() middleware.AuthConfig {
+	return h.authConfig
 }
 
 // NewAdminHandler creates a new AdminHandler with the given dependencies.
@@ -92,6 +101,8 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		nodeRepo:                cfg.NodeRepo,
 		vmRepo:                  cfg.VMRepo,
 		provisioningKeyRepo:     cfg.ProvisioningKeyRepo,
+		systemWebhookRepo:       cfg.SystemWebhookRepo,
+		preActionWebhookRepo:    cfg.PreActionWebhookRepo,
 		rdnsService:             cfg.RDNSService,
 		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		logger:                  cfg.Logger.With("component", "admin-handler"),

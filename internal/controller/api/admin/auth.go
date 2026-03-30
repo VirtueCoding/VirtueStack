@@ -81,6 +81,17 @@ type AuthResponse struct {
 
 const adminRefreshCookiePath = "/api/v1/admin/auth/refresh"
 
+// @Tags Admin
+// @Summary Admin login
+// @Description Authenticates an admin with email and password and starts 2FA flow when required.
+// @Accept json
+// @Produce json
+// @Param request body object true "Admin login request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 429 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/login [post]
 func (h *AdminHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -127,6 +138,17 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// @Tags Admin
+// @Summary Verify admin 2FA
+// @Description Verifies TOTP code and returns authenticated admin session tokens.
+// @Accept json
+// @Produce json
+// @Param request body object true "2FA verification request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 429 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/verify-2fa [post]
 func (h *AdminHandler) Verify2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -191,6 +213,16 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// @Tags Admin
+// @Summary Refresh admin token
+// @Description Refreshes admin access token using a valid refresh token.
+// @Accept json
+// @Produce json
+// @Param request body object true "Refresh token request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/refresh [post]
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	refreshToken := middleware.GetRefreshTokenFromCookie(c)
 
@@ -229,6 +261,14 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
+// @Tags Admin
+// @Summary Admin logout
+// @Description Invalidates the current admin session and refresh token.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/logout [post]
 func (h *AdminHandler) Logout(c *gin.Context) {
 	refreshToken := middleware.GetRefreshTokenFromCookie(c)
 
@@ -274,6 +314,14 @@ type ReauthResponse struct {
 // This is a lightweight endpoint used for session validation that returns
 // only the essential user fields (id, email, role) without any heavy queries.
 // The user is identified from the JWT claims set by the JWTAuth middleware.
+// @Tags Admin
+// @Summary Get current admin
+// @Description Returns profile data for the authenticated admin user.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/me [get]
 func (h *AdminHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -312,6 +360,17 @@ func (h *AdminHandler) Me(c *gin.Context) {
 // Reauth handles POST /api/v1/admin/auth/reauth.
 // It verifies the admin's password and issues a short-lived re-auth token
 // that can be used to authorize destructive operations within 15 minutes.
+// @Tags Admin
+// @Summary Re-authenticate admin
+// @Description Verifies credentials and returns a short-lived X-Reauth-Token for destructive operations.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Re-authentication request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/reauth [post]
 func (h *AdminHandler) Reauth(c *gin.Context) {
 	var req ReauthRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {

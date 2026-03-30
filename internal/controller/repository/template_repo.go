@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 )
 
 // TemplateRepository provides database operations for OS templates.
@@ -95,8 +96,8 @@ func (r *TemplateRepository) GetByName(ctx context.Context, name string) (*model
 	return &template, nil
 }
 
-// List returns a paginated list of templates with optional filters and total count.
-func (r *TemplateRepository) List(ctx context.Context, filter TemplateListFilter) ([]models.Template, int, error) {
+// List returns a paginated list of templates with optional filters.
+func (r *TemplateRepository) List(ctx context.Context, filter TemplateListFilter) ([]models.Template, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -118,27 +119,29 @@ func (r *TemplateRepository) List(ctx context.Context, filter TemplateListFilter
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM templates WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting templates: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM templates WHERE %s ORDER BY sort_order ASC, name ASC LIMIT $%d OFFSET $%d",
-		templateSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM templates WHERE %s ORDER BY id DESC LIMIT $%d",
+		templateSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	templates, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Template, error) {
 		return scanTemplate(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing templates: %w", err)
+		return nil, false, "", fmt.Errorf("listing templates: %w", err)
 	}
-	return templates, total, nil
+
+	templates, hasMore, lastID := cursor.TrimResults(templates, filter.PerPage, func(t models.Template) string { return t.ID })
+	return templates, hasMore, lastID, nil
 }
 
 // ListActive returns all active templates ordered by sort_order.

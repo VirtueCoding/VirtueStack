@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -12,8 +13,19 @@ import (
 
 // ListFailoverRequests handles GET /failover-requests - lists all failover requests.
 // Supports filtering by node_id and status.
+// @Tags Admin
+// @Summary List failover requests
+// @Description Lists failover requests with optional pagination and filters.
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page"
+// @Param per_page query int false "Items per page"
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/failover-requests [get]
 func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter := models.FailoverRequestListFilter{
 		PaginationParams: pagination,
@@ -42,7 +54,7 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 		return
 	}
 
-	requests, total, err := h.failoverRepo.List(c.Request.Context(), filter)
+	requests, hasMore, lastID, err := h.failoverRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list failover requests",
 			"error", err,
@@ -53,11 +65,22 @@ func (h *AdminHandler) ListFailoverRequests(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: requests,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // GetFailoverRequest handles GET /failover-requests/:id - retrieves a specific failover request.
+// @Tags Admin
+// @Summary Get failover request
+// @Description Returns details for a single failover request.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Failover request ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/failover-requests/{id} [get]
 func (h *AdminHandler) GetFailoverRequest(c *gin.Context) {
 	requestID := c.Param("id")
 

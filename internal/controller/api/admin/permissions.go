@@ -54,6 +54,15 @@ type UpdatePermissionsRequest struct {
 
 // ListPermissions returns all available permissions with their descriptions.
 // Any authenticated admin can call this endpoint.
+// @Tags Admin
+// @Summary List permissions
+// @Description Lists all available admin RBAC permissions.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/permissions [get]
 func (h *AdminHandler) ListPermissions(c *gin.Context) {
 	allPerms := models.GetAllPermissions()
 	permissions := make([]PermissionInfo, 0, len(allPerms))
@@ -79,6 +88,15 @@ const listAdminsMaxPerPage = 100
 
 // ListAdmins returns a paginated list of all admins with their permissions.
 // Only super_admin can call this endpoint.
+// @Tags Admin
+// @Summary List admins
+// @Description Lists administrator accounts. Super admin only.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/admins [get]
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -92,7 +110,7 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		"actor_id": actorID,
 	}, true)
 
-	admins, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
+	admins, _, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
 		PaginationParams: pagination,
 	})
 	if err != nil {
@@ -108,6 +126,20 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 
 // UpdateAdminPermissions updates an admin's permissions.
 // Only super_admin can call this endpoint.
+// @Tags Admin
+// @Summary Update admin permissions
+// @Description Replaces permission assignments for a target admin account. Super admin only.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param admin_id path string true "Admin ID"
+// @Param request body object true "Permission update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/auth/permissions/{admin_id} [put]
 func (h *AdminHandler) UpdateAdminPermissions(c *gin.Context) {
 	adminID := c.Param("admin_id")
 	if adminID == "" {

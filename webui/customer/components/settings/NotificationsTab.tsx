@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Bell, Mail, MessageCircle, Loader2, Save } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Switch } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import { notificationApi, NotificationPreferences, ApiClientError } from "@/lib/api-client";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {

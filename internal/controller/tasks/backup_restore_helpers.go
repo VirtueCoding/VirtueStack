@@ -110,7 +110,7 @@ func startAndFinalizeRestore(
 	}
 
 	// Update VM status
-	if err := deps.VMRepo.UpdateStatus(ctx, vmID, models.VMStatusRunning); err != nil {
+	if err := deps.VMRepo.TransitionStatus(ctx, vmID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
 		logger.Warn("failed to update VM status", "error", err)
 	}
 

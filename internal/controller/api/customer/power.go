@@ -12,6 +12,19 @@ import (
 
 // StartVM handles POST /vms/:id/start - starts a stopped or suspended VM.
 // Returns 200 OK on success, appropriate error codes on failure.
+// @Tags Customer
+// @Summary Start VM
+// @Description Performs VM power operation for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/start [post]
 func (h *CustomerHandler) StartVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -49,6 +62,19 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 
 // StopVM handles POST /vms/:id/stop - gracefully stops a running VM.
 // Uses ACPI shutdown with a timeout. Returns 200 OK on success.
+// @Tags Customer
+// @Summary Stop VM
+// @Description Performs VM power operation for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/stop [post]
 func (h *CustomerHandler) StopVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -86,6 +112,19 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 
 // RestartVM handles POST /vms/:id/restart - restarts a running VM.
 // Performs graceful ACPI shutdown followed by start.
+// @Tags Customer
+// @Summary Restart VM
+// @Description Performs VM power operation for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/restart [post]
 func (h *CustomerHandler) RestartVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -123,6 +162,19 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 
 // ForceStopVM handles POST /vms/:id/force-stop - forcefully powers off a VM.
 // This is equivalent to pulling the power plug. Use with caution.
+// @Tags Customer
+// @Summary Force stop VM
+// @Description Performs VM power operation for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/force-stop [post]
 func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

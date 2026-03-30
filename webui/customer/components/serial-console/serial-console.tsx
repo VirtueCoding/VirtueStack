@@ -5,14 +5,14 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as TerminalIcon, Trash2, Power, Wifi, WifiOff } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+} from "@virtuestack/ui";
 
 import "@xterm/xterm/css/xterm.css";
 

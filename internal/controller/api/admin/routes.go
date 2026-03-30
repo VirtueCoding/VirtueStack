@@ -314,6 +314,24 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			provisioningKeys.PUT("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdateProvisioningKey)
 			provisioningKeys.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.RevokeProvisioningKey)
 		}
+
+		// System webhook management
+		systemWebhooks := protected.Group("/system-webhooks")
+		{
+			systemWebhooks.GET("", middleware.RequireAdminPermission(models.PermissionSettingsRead), handler.ListSystemWebhooks)
+			systemWebhooks.POST("", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.CreateSystemWebhook)
+			systemWebhooks.PUT("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdateSystemWebhook)
+			systemWebhooks.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.DeleteSystemWebhook)
+		}
+
+		// Pre-action webhook management
+		preActionWebhooks := protected.Group("/pre-action-webhooks")
+		{
+			preActionWebhooks.GET("", middleware.RequireAdminPermission(models.PermissionSettingsRead), handler.ListPreActionWebhooks)
+			preActionWebhooks.POST("", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.CreatePreActionWebhook)
+			preActionWebhooks.PUT("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdatePreActionWebhook)
+			preActionWebhooks.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.DeletePreActionWebhook)
+		}
 	}
 }
 

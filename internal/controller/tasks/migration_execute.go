@@ -4,10 +4,12 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // defaultMigrationBandwidthMbps is the default bandwidth limit for VM migrations in Mbps.
@@ -17,14 +19,14 @@ const defaultMigrationBandwidthMbps = 1000
 // It bundles the 8 parameters previously passed individually to migration sub-functions,
 // reducing parameter count to comply with QG-01 (max 4 parameters).
 type MigrationContext struct {
-	Ctx         context.Context
-	Task        *models.Task
-	Deps        *HandlerDeps
-	Payload     VMMigratePayload
-	VM          *models.VM
-	SourceNode  *models.Node
-	TargetNode  *models.Node
-	Logger      *slog.Logger
+	Ctx        context.Context
+	Task       *models.Task
+	Deps       *HandlerDeps
+	Payload    VMMigratePayload
+	VM         *models.VM
+	SourceNode *models.Node
+	TargetNode *models.Node
+	Logger     *slog.Logger
 }
 
 // handleVMMigrate handles the VM migration flow with storage-aware logic.
@@ -50,7 +52,7 @@ func handleVMMigrate(ctx context.Context, task *models.Task, deps *HandlerDeps) 
 // prepareMigrationContext validates the migration request and builds the context.
 // Returns nil context if VM is already on target (idempotent success).
 func prepareMigrationContext(ctx context.Context, task *models.Task, deps *HandlerDeps) (*MigrationContext, error) {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMMigrate)
+	logger := taskLogger(deps.Logger, task)
 
 	var payload VMMigratePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -58,8 +60,7 @@ func prepareMigrationContext(ctx context.Context, task *models.Task, deps *Handl
 		return nil, fmt.Errorf("parsing vm.migrate payload: %w", err)
 	}
 
-	logger = logger.With("vm_id", payload.VMID, "source_node_id", payload.SourceNodeID,
-		"target_node_id", payload.TargetNodeID, "strategy", payload.MigrationStrategy)
+	logger = logger.With("strategy", payload.MigrationStrategy)
 	logger.Info("vm.migrate task started")
 
 	vm, sourceNode, targetNode, err := validateMigrationEntities(ctx, deps, payload, logger)
@@ -74,7 +75,11 @@ func prepareMigrationContext(ctx context.Context, task *models.Task, deps *Handl
 		return nil, nil
 	}
 
-	if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusMigrating); err != nil {
+	fromStatus := payload.PreMigrationState
+	if fromStatus == "" {
+		fromStatus = vm.Status
+	}
+	if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, fromStatus, models.VMStatusMigrating); err != nil {
 		return nil, fmt.Errorf("updating VM %s status to migrating: %w", payload.VMID, err)
 	}
 
@@ -156,11 +161,11 @@ func executeMigrationStrategy(mc *MigrationContext) error {
 // handleMigrationFailure restores VM status after a failed migration.
 func handleMigrationFailure(mc *MigrationContext, err error) {
 	mc.Logger.Error("migration failed", "error", err)
-	restoreStatus := mc.Payload.PreMigrationState
-	if restoreStatus == "" {
-		restoreStatus = models.VMStatusError
-	}
-	if err := mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, restoreStatus); err != nil {
+	if err := mc.Deps.VMRepo.TransitionStatus(mc.Ctx, mc.Payload.VMID, models.VMStatusMigrating, models.VMStatusError); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			mc.Logger.Error("failed VM transition from migrating to error during failure recovery", "error", err)
+			return
+		}
 		mc.Logger.Warn("failed to restore VM status after migration failure", "error", err)
 	}
 }
@@ -175,12 +180,12 @@ func finalizeMigration(mc *MigrationContext) error {
 		return fmt.Errorf("updating VM %s node assignment: %w", mc.Payload.VMID, err)
 	}
 
-	finalStatus := models.VMStatusRunning
-	if mc.Payload.PreMigrationState == models.VMStatusStopped || mc.Payload.PreMigrationState == models.VMStatusSuspended {
-		finalStatus = mc.Payload.PreMigrationState
-	}
-	if err := mc.Deps.VMRepo.UpdateStatus(mc.Ctx, mc.Payload.VMID, finalStatus); err != nil {
-		mc.Logger.Warn("failed to update VM status after migration", "error", err)
+	if err := mc.Deps.VMRepo.TransitionStatus(mc.Ctx, mc.Payload.VMID, models.VMStatusMigrating, models.VMStatusRunning); err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			mc.Logger.Error("failed VM transition from migrating to running after migration completion", "error", err)
+			return fmt.Errorf("transitioning VM %s to running after migration: %w", mc.Payload.VMID, err)
+		}
+		mc.Logger.Warn("failed to transition VM status after migration", "error", err)
 	}
 
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 100, "Migration completed successfully"); err != nil {
@@ -190,7 +195,7 @@ func finalizeMigration(mc *MigrationContext) error {
 		VMID: mc.Payload.VMID, SourceNodeID: mc.Payload.SourceNodeID,
 		SourceNodeAddress: mc.SourceNode.GRPCAddress, TargetNodeID: mc.Payload.TargetNodeID,
 		TargetNodeAddress: mc.TargetNode.GRPCAddress, Status: "migrated",
-		MigrationStrategy: string(mc.Payload.MigrationStrategy),
+		MigrationStrategy:    string(mc.Payload.MigrationStrategy),
 		SourceStorageBackend: mc.Payload.SourceStorageBackend, TargetStorageBackend: mc.Payload.TargetStorageBackend,
 	}
 	resultJSON, _ := json.Marshal(result)

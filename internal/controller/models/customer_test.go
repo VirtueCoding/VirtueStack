@@ -8,6 +8,7 @@ import (
 
 func TestCustomerStatusConstants(t *testing.T) {
 	assert.Equal(t, "active", CustomerStatusActive)
+	assert.Equal(t, "pending_verification", CustomerStatusPendingVerification)
 	assert.Equal(t, "suspended", CustomerStatusSuspended)
 	assert.Equal(t, "deleted", CustomerStatusDeleted)
 }

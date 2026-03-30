@@ -26,6 +26,19 @@ type CreateSSOTokenResponse struct {
 }
 
 // CreateSSOToken issues a short-lived opaque token for WHMCS browser SSO.
+// @Tags Provisioning
+// @Summary Create SSO token
+// @Description Creates one-time SSO token for customer portal login from billing system.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param request body object true "Create SSO token request"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/sso-tokens [post]
 func (h *ProvisioningHandler) CreateSSOToken(c *gin.Context) {
 	var req CreateSSOTokenRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {

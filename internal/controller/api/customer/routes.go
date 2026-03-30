@@ -35,10 +35,16 @@ const (
 //
 // Account management endpoints (profile, 2FA, webhooks, API keys) require JWT authentication.
 // CSRF protection is applied only for JWT-authenticated requests; API key requests are exempt.
-func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, notifyHandler *NotificationsHandler, apiKeyRepo *repository.CustomerAPIKeyRepository) {
+func RegisterCustomerRoutes(
+	router *gin.RouterGroup,
+	handler *CustomerHandler,
+	notifyHandler *NotificationsHandler,
+	apiKeyRepo *repository.CustomerAPIKeyRepository,
+	allowSelfRegistration bool,
+) {
 	customer := router.Group("/customer")
 
-	registerAuthRoutes(customer, handler)
+	registerAuthRoutes(customer, handler, allowSelfRegistration)
 
 	// Account management routes - JWT only, no API key access
 	// These handle sensitive account-level operations that should require browser session.
@@ -84,7 +90,7 @@ func RegisterCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler, n
 // registerAuthRoutes registers authentication endpoints (no auth required).
 // F-007: LoginRateLimit is applied to /login and /verify-2fa to protect against
 // brute-force attacks. A separate refresh rate limit applies to /refresh.
-func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
+func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler, allowSelfRegistration bool) {
 	auth := customer.Group("/auth")
 	{
 		// GET /auth/csrf sets the CSRF cookie and returns the token in the X-CSRF-Token header.
@@ -94,11 +100,15 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler) {
 		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
 		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
 		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)
-		auth.GET("/sso-exchange", handler.ExchangeSSOToken)
+		auth.GET("/sso-exchange", middleware.LoginRateLimit(), handler.ExchangeSSOToken)
 
 		// Password reset flow (no auth required, rate-limited to prevent abuse)
 		auth.POST("/forgot-password", middleware.PasswordResetRateLimit(), handler.ForgotPassword)
 		auth.POST("/reset-password", middleware.PasswordResetRateLimit(), handler.ResetPassword)
+		if allowSelfRegistration {
+			auth.POST("/register", middleware.RegistrationRateLimit(), handler.Register)
+			auth.POST("/verify-email", middleware.RegistrationRateLimit(), handler.VerifyEmail)
+		}
 	}
 }
 

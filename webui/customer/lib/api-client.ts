@@ -1,140 +1,29 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
+import {
+  ApiClientError,
+  apiRequest as sharedAPIRequest,
+  fetchCsrfToken as sharedFetchCsrfToken,
+  getCsrfToken,
+} from "@virtuestack/api-client";
 
-export interface AuthTokens {
-  token_type: string;
-  expires_in: number;
-  requires_2fa?: boolean;
-  temp_token?: string;
-}
+import type {
+  AuthTokens,
+  LoginRequest,
+  Verify2FARequest,
+} from "@virtuestack/api-client";
 
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface Verify2FARequest {
-  temp_token: string;
-  totp_code: string;
-}
-
-export class ApiClientError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly correlationId?: string;
-
-  constructor(message: string, code: string, status: number, correlationId?: string) {
-    super(message);
-    this.name = "ApiClientError";
-    this.code = code;
-    this.status = status;
-    this.correlationId = correlationId;
-  }
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/csrf_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
+export { ApiClientError };
+export type { AuthTokens, LoginRequest, Verify2FARequest };
 
 async function fetchCsrfToken(): Promise<void> {
-  try {
-    // Use the dedicated public CSRF endpoint so this works on the login page
-    // without requiring JWT auth. Falls back silently on any failure (e.g.
-    // server unreachable, 401 on unauthenticated pages).
-    await fetch(`${API_BASE_URL}/customer/auth/csrf`, { method: "GET", credentials: "include" });
-  } catch (err) {
-    // Non-fatal — silently ignore. The CSRF cookie may already be set, or the
-    // subsequent state-changing request will fail with a clear error.
-    console.warn('fetchCsrfToken: Failed (non-fatal):', err);
-  }
-}
-
-function buildHeaders(includeCsrf = false): HeadersInit {
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-  };
-
-  if (includeCsrf) {
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
-  }
-
-  return headers;
-}
-
-async function parseError(response: Response): Promise<ApiClientError> {
-  let code = "UNKNOWN_ERROR";
-  let message = "An unexpected error occurred";
-  let correlationId: string | undefined;
-
-  try {
-    const data = await response.json();
-    if (data.error) {
-      code = data.error.code || code;
-      message = data.error.message || message;
-      correlationId = data.error.correlation_id;
-    }
-  } catch {
-    message = response.statusText || message;
-  }
-
-  return new ApiClientError(message, code, response.status, correlationId);
+  await sharedFetchCsrfToken(API_BASE_URL, "/customer/auth/csrf");
 }
 
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
-    (options.method || "GET").toUpperCase()
-  );
-
-  const config: RequestInit = {
-    ...options,
-    credentials: "include",
-    headers: {
-      ...buildHeaders(isStateChanging),
-      ...options.headers,
-    },
-  };
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
-  let response: Response;
-  try {
-    try {
-      response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
-    } catch (networkErr) {
-      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError";
-      throw new ApiClientError(
-        isAbort ? "Request timed out" : "Network error: unable to reach the server",
-        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
-        0,
-      );
-    }
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    const error = await parseError(response);
-    throw error;
-  }
-
-  if (response.status === 204) {
-    return undefined as unknown as T;
-  }
-
-  const data = await response.json();
-  return data.data as T;
+  return sharedAPIRequest<T>(API_BASE_URL, endpoint, options);
 }
 
 export const apiClient = {
@@ -311,6 +200,16 @@ export interface VMOperationResponse {
   message: string;
 }
 
+export interface CursorPaginatedResponse<T> {
+  data: T[];
+  meta: {
+    per_page: number;
+    has_more?: boolean;
+    next_cursor?: string;
+    prev_cursor?: string;
+  };
+}
+
 export const vmApi = {
   async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
     return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
@@ -336,12 +235,12 @@ export const vmApi = {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/restart`, {});
   },
 
-  async getVMs(perPage?: number, page?: number): Promise<VM[]> {
-    const params = new URLSearchParams();
-    if (perPage) params.set("per_page", String(perPage));
-    if (page) params.set("page", String(page));
-    const query = params.toString() ? `?${params.toString()}` : "";
-    return apiClient.get<VM[]>(`/customer/vms${query}`);
+  async getVMs(params: { perPage?: number; cursor?: string } = {}): Promise<CursorPaginatedResponse<VM>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<CursorPaginatedResponse<VM>>(`/customer/vms${query}`);
   },
 
   async getVM(vmId: string): Promise<VM> {
@@ -482,11 +381,13 @@ export const taskApi = {
 };
 
 export const backupApi = {
-  async listBackups(vmId?: string, method?: "full" | "snapshot"): Promise<Backup[]> {
-    const params = new URLSearchParams();
-    if (vmId) params.set("vm_id", vmId);
-    if (method) params.set("method", method);
-    const query = params.toString();
+  async listBackups(vmId?: string, method?: "full" | "snapshot", params?: { per_page?: number; cursor?: string }): Promise<Backup[]> {
+    const searchParams = new URLSearchParams();
+    if (vmId) searchParams.set("vm_id", vmId);
+    if (method) searchParams.set("method", method);
+    if (params?.cursor) searchParams.set("cursor", params.cursor);
+    if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    const query = searchParams.toString();
     return apiClient.get<Backup[]>(`/customer/backups${query ? `?${query}` : ""}`);
   },
 
@@ -527,9 +428,13 @@ export const backupApi = {
 };
 
 export const snapshotApi = {
-  async listSnapshots(vmId?: string): Promise<Snapshot[]> {
-    const params = vmId ? `?vm_id=${vmId}` : "";
-    return apiClient.get<Snapshot[]>(`/customer/snapshots${params}`);
+  async listSnapshots(vmId?: string, params?: { per_page?: number; cursor?: string }): Promise<Snapshot[]> {
+    const searchParams = new URLSearchParams();
+    if (vmId) searchParams.set("vm_id", vmId);
+    if (params?.cursor) searchParams.set("cursor", params.cursor);
+    if (params?.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    const query = searchParams.toString();
+    return apiClient.get<Snapshot[]>(`/customer/snapshots${query ? `?${query}` : ""}`);
   },
 
   async createSnapshot(request: CreateSnapshotRequest): Promise<CreateSnapshotResponse> {
@@ -761,8 +666,9 @@ export const settingsApi = {
     return apiClient.post<TestWebhookResponse>(`/customer/webhooks/${webhookId}/test`, {});
   },
 
-  async listWebhookDeliveries(webhookId: string, page = 1, perPage = 20): Promise<WebhookDelivery[]> {
-    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  async listWebhookDeliveries(webhookId: string, perPage = 20, cursor?: string): Promise<WebhookDelivery[]> {
+    const params = new URLSearchParams({ per_page: String(perPage) });
+    if (cursor) params.set("cursor", cursor);
     return apiClient.get<WebhookDelivery[]>(`/customer/webhooks/${webhookId}/deliveries?${params.toString()}`);
   },
 };

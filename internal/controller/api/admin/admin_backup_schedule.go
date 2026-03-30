@@ -59,6 +59,19 @@ type AdminBackupScheduleResponse struct {
 }
 
 // CreateAdminBackupSchedule handles POST /admin-backup-schedules - creates a new admin backup schedule.
+// @Tags Admin
+// @Summary Create admin backup schedule
+// @Description Manages mass backup campaigns from the admin API.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules [post]
 func (h *AdminHandler) CreateAdminBackupSchedule(c *gin.Context) {
 	var req AdminBackupScheduleCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -127,6 +140,17 @@ func (h *AdminHandler) CreateAdminBackupSchedule(c *gin.Context) {
 }
 
 // ListAdminBackupSchedules handles GET /admin-backup-schedules - lists all admin backup schedules.
+// @Tags Admin
+// @Summary List admin backup schedules
+// @Description Manages mass backup campaigns from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules [get]
 func (h *AdminHandler) ListAdminBackupSchedules(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -141,7 +165,7 @@ func (h *AdminHandler) ListAdminBackupSchedules(c *gin.Context) {
 		Active:           activeFilter,
 	}
 
-	schedules, total, err := h.adminBackupScheduleRepo.List(c.Request.Context(), filter)
+	schedules, hasMore, lastID, err := h.adminBackupScheduleRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list admin backup schedules",
 			"error", err,
@@ -157,11 +181,23 @@ func (h *AdminHandler) ListAdminBackupSchedules(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // GetAdminBackupSchedule handles GET /admin-backup-schedules/:id - gets an admin backup schedule by ID.
+// @Tags Admin
+// @Summary Get admin backup schedule
+// @Description Manages mass backup campaigns from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Admin backup schedule ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules/{id} [get]
 func (h *AdminHandler) GetAdminBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 
@@ -188,6 +224,20 @@ func (h *AdminHandler) GetAdminBackupSchedule(c *gin.Context) {
 }
 
 // UpdateAdminBackupSchedule handles PUT /admin-backup-schedules/:id - updates an admin backup schedule.
+// @Tags Admin
+// @Summary Update admin backup schedule
+// @Description Manages mass backup campaigns from the admin API.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Admin backup schedule ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules/{id} [put]
 func (h *AdminHandler) UpdateAdminBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 
@@ -277,6 +327,18 @@ func (h *AdminHandler) UpdateAdminBackupSchedule(c *gin.Context) {
 }
 
 // DeleteAdminBackupSchedule handles DELETE /admin-backup-schedules/:id - deletes an admin backup schedule.
+// @Tags Admin
+// @Summary Delete admin backup schedule
+// @Description Manages mass backup campaigns from the admin API.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Admin backup schedule ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules/{id} [delete]
 func (h *AdminHandler) DeleteAdminBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 
@@ -308,6 +370,19 @@ func (h *AdminHandler) DeleteAdminBackupSchedule(c *gin.Context) {
 }
 
 // RunAdminBackupSchedule handles POST /admin-backup-schedules/:id/run - triggers immediate execution of a schedule.
+// @Tags Admin
+// @Summary Run admin backup schedule
+// @Description Manages mass backup campaigns from the admin API.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Admin backup schedule ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/admin-backup-schedules/{id}/run [post]
 func (h *AdminHandler) RunAdminBackupSchedule(c *gin.Context) {
 	scheduleID := c.Param("id")
 

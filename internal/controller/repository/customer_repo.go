@@ -46,7 +46,7 @@ type CustomerRepo interface {
 	UpdateBackupCodes(ctx context.Context, userID string, codes []string) error
 	UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error
 	UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error
-	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, int, error)
+	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, bool, string, error)
 	UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error
 }
 
@@ -120,8 +120,8 @@ func (r *CustomerRepository) GetByEmail(ctx context.Context, email string) (*mod
 	return &customer, nil
 }
 
-// List returns a paginated list of customers with optional filters and total count.
-func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, int, error) {
+// List returns a paginated list of customers with optional filters.
+func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, bool, string, error) {
 	where := []string{"status != 'deleted'"}
 	args := []any{}
 	idx := 1
@@ -138,27 +138,35 @@ func (r *CustomerRepository) List(ctx context.Context, filter CustomerListFilter
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM customers WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting customers: %w", err)
-	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		clause += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
+	}
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM customers WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		customerSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM customers WHERE %s ORDER BY id DESC LIMIT $%d",
+		customerSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	customers, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Customer, error) {
 		return scanCustomer(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing customers: %w", err)
+		return nil, false, "", fmt.Errorf("listing customers: %w", err)
 	}
-	return customers, total, nil
+
+	hasMore := len(customers) > filter.PerPage
+	if hasMore {
+		customers = customers[:filter.PerPage]
+	}
+	var lastID string
+	if len(customers) > 0 {
+		lastID = customers[len(customers)-1].ID
+	}
+	return customers, hasMore, lastID, nil
 }
 
 // UpdateStatus updates the status field of a customer.
@@ -183,6 +191,47 @@ func (r *CustomerRepository) UpdateWHMCSClientID(ctx context.Context, id string,
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating customer %s WHMCS client ID: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// CreateEmailVerificationToken inserts a new email verification token row.
+func (r *CustomerRepository) CreateEmailVerificationToken(ctx context.Context, token *models.EmailVerificationToken) error {
+	const q = `
+		INSERT INTO email_verification_tokens (customer_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at`
+	if err := r.db.QueryRow(ctx, q, token.CustomerID, token.TokenHash, token.ExpiresAt).Scan(&token.ID, &token.CreatedAt); err != nil {
+		return fmt.Errorf("creating email verification token: %w", err)
+	}
+	return nil
+}
+
+// GetEmailVerificationTokenByHash returns a verification token by its hash.
+func (r *CustomerRepository) GetEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*models.EmailVerificationToken, error) {
+	const q = `
+		SELECT id, customer_id, token_hash, expires_at, created_at
+		FROM email_verification_tokens
+		WHERE token_hash = $1`
+	var t models.EmailVerificationToken
+	if err := r.db.QueryRow(ctx, q, tokenHash).Scan(&t.ID, &t.CustomerID, &t.TokenHash, &t.ExpiresAt, &t.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("getting email verification token: %w", sharederrors.ErrNotFound)
+		}
+		return nil, fmt.Errorf("getting email verification token: %w", err)
+	}
+	return &t, nil
+}
+
+// DeleteEmailVerificationTokenByID deletes a verification token row after successful use.
+func (r *CustomerRepository) DeleteEmailVerificationTokenByID(ctx context.Context, id string) error {
+	const q = `DELETE FROM email_verification_tokens WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("deleting email verification token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("deleting email verification token: %w", ErrNoRowsAffected)
 	}
 	return nil
 }
@@ -621,8 +670,8 @@ func (r *AdminRepository) GetByEmail(ctx context.Context, email string) (*models
 	return &admin, nil
 }
 
-// List returns a paginated list of admins with optional filters and total count.
-func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]models.Admin, int, error) {
+// List returns a paginated list of admins with optional filters.
+func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]models.Admin, bool, string, error) {
 	where := "1=1"
 	args := []any{}
 	idx := 1
@@ -633,26 +682,35 @@ func (r *AdminRepository) List(ctx context.Context, filter AdminListFilter) ([]m
 		idx++
 	}
 
-	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM admins WHERE "+where, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting admins: %w", err)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		where += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM admins WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		adminSelectCols, where, idx, idx+1,
+		"SELECT %s FROM admins WHERE %s ORDER BY id DESC LIMIT $%d",
+		adminSelectCols, where, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	admins, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Admin, error) {
 		return scanAdmin(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing admins: %w", err)
+		return nil, false, "", fmt.Errorf("listing admins: %w", err)
 	}
-	return admins, total, nil
+
+	hasMore := len(admins) > filter.PerPage
+	if hasMore {
+		admins = admins[:filter.PerPage]
+	}
+	var lastID string
+	if len(admins) > 0 {
+		lastID = admins[len(admins)-1].ID
+	}
+	return admins, hasMore, lastID, nil
 }
 
 // UpdateTOTPEnabled updates the TOTP configuration for an admin.

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { getStatusBadgeVariant } from "@/lib/status-badge";
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -21,8 +21,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+} from "@virtuestack/ui";
+import { Avatar, AvatarFallback } from "@virtuestack/ui";
 import {
   Plus,
   Search,
@@ -32,10 +32,12 @@ import {
   Trash2,
   Loader2,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { adminCustomersApi, type Customer } from "@/lib/api-client";
 import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { CustomerCreateDialog, type CreateCustomerFormData } from "@/components/customers/CustomerCreateDialog";
 import { CustomerEditDialog, type EditCustomerFormData } from "@/components/customers/CustomerEditDialog";
 
@@ -57,10 +59,18 @@ export default function CustomersPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
+  const PAGE_SIZE = 20;
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
+
   const loadCustomers = useCallback(async () => {
     try {
-      const response = await adminCustomersApi.getCustomers();
+      const response = await adminCustomersApi.getCustomers({ per_page: PAGE_SIZE, cursor: currentCursor });
       setCustomers(response.data || []);
+      setNextCursor(response.meta?.next_cursor ?? undefined);
+      setHasMore(response.meta?.has_more ?? false);
     } catch (err) {
       toast({
         title: "Error",
@@ -68,7 +78,7 @@ export default function CustomersPage() {
         variant: "destructive",
       });
     }
-  }, [toast]);
+  }, [toast, currentCursor]);
 
   useEffect(() => {
     async function loadData() {
@@ -190,6 +200,22 @@ export default function CustomersPage() {
       .toUpperCase()
       .substring(0, 2);
   }
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
+  };
 
   return (
     <div className="min-h-screen bg-background p-6 md:p-8">
@@ -357,6 +383,33 @@ export default function CustomersPage() {
                 </TableBody>
               </Table>
             </div>
+            {(cursorStack.length > 0 || hasMore) && (
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredCustomers.length} items
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={cursorStack.length === 0 || loading}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

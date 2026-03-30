@@ -24,6 +24,16 @@ var validOSFamilies = map[string]bool{
 // ListTemplates handles GET /templates - lists all available OS templates.
 // Templates are public and can be viewed by all authenticated customers.
 // This endpoint does not require a specific customer context.
+// @Tags Customer
+// @Summary List templates
+// @Description Lists templates available for customer VM operations.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/templates [get]
 func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 	// Templates are public (no customer isolation needed)
 	// But we still require authentication
@@ -44,7 +54,7 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 		templates := []models.Template{}
 		c.JSON(http.StatusOK, models.ListResponse{
 			Data: templates,
-			Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, 0),
+			Meta: models.NewCursorPaginationMeta(pagination.PerPage, false, ""),
 		})
 		return
 	}
@@ -76,6 +86,6 @@ func (h *CustomerHandler) ListTemplates(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: templates,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, len(templates)),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, false, ""),
 	})
 }

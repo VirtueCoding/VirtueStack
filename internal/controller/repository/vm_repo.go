@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // VMRepository provides database operations for virtual machines.
@@ -100,67 +102,59 @@ func (r *VMRepository) GetByIDForCustomer(ctx context.Context, tx pgx.Tx, id, cu
 }
 
 // List returns a paginated list of VMs with optional filters and total count.
-func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]models.VM, int, error) {
-	where := []string{"deleted_at IS NULL"}
-	args := []any{}
-	idx := 1
+func (r *VMRepository) List(ctx context.Context, filter models.VMListFilter) ([]models.VM, bool, string, error) {
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("vms").Where("deleted_at IS NULL")
 
 	if filter.CustomerID != nil {
-		where = append(where, fmt.Sprintf("customer_id = $%d", idx))
-		args = append(args, *filter.CustomerID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"customer_id": *filter.CustomerID})
 	}
 	if filter.NodeID != nil {
-		where = append(where, fmt.Sprintf("node_id = $%d", idx))
-		args = append(args, *filter.NodeID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"node_id": *filter.NodeID})
 	}
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 	if filter.Search != nil {
-		where = append(where, fmt.Sprintf("hostname ILIKE $%d", idx))
-		args = append(args, "%"+*filter.Search+"%")
-		idx++
+		whereBuilder = whereBuilder.Where(sq.ILike{"hostname": "%" + *filter.Search + "%"})
 	}
 	if len(filter.VMIDs) > 0 {
-		placeholders := make([]string, len(filter.VMIDs))
-		for i, vmID := range filter.VMIDs {
-			placeholders[i] = fmt.Sprintf("$%d", idx)
-			args = append(args, vmID)
-			idx++
-		}
-		where = append(where, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ",")))
+		whereBuilder = whereBuilder.Where(sq.Eq{"id": filter.VMIDs})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM vms WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	listBuilder := whereBuilder.Columns(vmSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
+	}
+	listBuilder = listBuilder.
+		OrderBy("id DESC").
+		Limit(uint64(filter.PerPage + 1))
+	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting VMs: %w", err)
+		return nil, false, "", fmt.Errorf("building VM list query: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM vms WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		vmSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
-
-	vms, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.VM, error) {
+	vms, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.VM, error) {
 		return scanVM(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing VMs: %w", err)
+		return nil, false, "", fmt.Errorf("listing VMs: %w", err)
 	}
-	return vms, total, nil
+
+	hasMore := len(vms) > filter.PerPage
+	if hasMore {
+		vms = vms[:filter.PerPage]
+	}
+	var lastID string
+	if len(vms) > 0 {
+		lastID = vms[len(vms)-1].ID
+	}
+	return vms, hasMore, lastID, nil
 }
 
 // ListByCustomer returns all VMs owned by a customer with pagination.
-func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, params models.PaginationParams) ([]models.VM, int, error) {
+func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, params models.PaginationParams) ([]models.VM, bool, string, error) {
 	filter := models.VMListFilter{
 		CustomerID:       &customerID,
 		PaginationParams: params,
@@ -169,6 +163,7 @@ func (r *VMRepository) ListByCustomer(ctx context.Context, customerID string, pa
 }
 
 // UpdateStatus updates the status field of a VM.
+// Deprecated: use TransitionStatus to enforce VM state machine transitions atomically.
 func (r *VMRepository) UpdateStatus(ctx context.Context, id, status string) error {
 	const q = `UPDATE vms SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
 	tag, err := r.db.Exec(ctx, q, status, id)
@@ -177,6 +172,23 @@ func (r *VMRepository) UpdateStatus(ctx context.Context, id, status string) erro
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating VM %s status: %w", id, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// TransitionStatus atomically updates VM status when current status matches fromStatus.
+func (r *VMRepository) TransitionStatus(ctx context.Context, vmID, fromStatus, toStatus string) error {
+	if err := models.ValidateVMTransition(fromStatus, toStatus); err != nil {
+		return err
+	}
+
+	const q = `UPDATE vms SET status = $1, updated_at = NOW() WHERE id = $2 AND status = $3 AND deleted_at IS NULL`
+	tag, err := r.db.Exec(ctx, q, toStatus, vmID, fromStatus)
+	if err != nil {
+		return fmt.Errorf("transition VM %s status from %s to %s: %w", vmID, fromStatus, toStatus, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("VM %s not in expected state %s for transition to %s: %w", vmID, fromStatus, toStatus, sharederrors.ErrConflict)
 	}
 	return nil
 }

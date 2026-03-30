@@ -345,6 +345,9 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 	defer cancel()
 
 	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: ssrfSafeDialContext(),
+		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
 				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
@@ -423,6 +426,9 @@ func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath 
 	defer cancel()
 
 	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: ssrfSafeDialContext(),
+		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
 				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
@@ -596,6 +602,31 @@ func isoFilenameFromURL(isoURL string) string {
 		return "download.iso"
 	}
 	return safe + ".iso"
+}
+
+// ssrfSafeDialContext returns a dial function that blocks connections to private/loopback IPs.
+func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	baseDialer := &net.Dialer{Timeout: 30 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %q: %w", host, err)
+		}
+		for _, ip := range ips {
+			if isBlockedIP(ip.IP) {
+				return nil, fmt.Errorf("blocked connection to private/loopback IP %s for host %q", ip.IP, host)
+			}
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no addresses resolved for host %q", host)
+		}
+		resolved := net.JoinHostPort(ips[0].IP.String(), port)
+		return baseDialer.DialContext(ctx, network, resolved)
+	}
 }
 
 // ============================================================================

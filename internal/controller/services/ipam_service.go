@@ -41,7 +41,7 @@ func NewIPAMService(
 // Parameter order matches the IPAllocator interface: (locationID, vmID, customerID).
 func (s *IPAMService) AllocateIPv4(ctx context.Context, locationID, vmID, customerID string) (*models.IPAddress, error) {
 	// Find IP set for the location
-	ipSets, _, err := s.ipRepo.ListIPSets(ctx, repository.IPSetListFilter{
+	ipSets, _, _, err := s.ipRepo.ListIPSets(ctx, repository.IPSetListFilter{
 		LocationID: &locationID,
 		IPVersion:  ptrInt16(4),
 	})
@@ -203,7 +203,7 @@ func (s *IPAMService) GetRDNS(ctx context.Context, ipID string) (string, error) 
 // Returns ErrNotFound if the VM has no primary IPv4 address.
 func (s *IPAMService) GetPrimaryIPv4(ctx context.Context, vmID string) (*models.IPAddress, error) {
 	// List all IPs for the VM
-	ips, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
+	ips, _, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
 		VMID: &vmID,
 	})
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *IPAMService) GetPrimaryIPv4(ctx context.Context, vmID string) (*models.
 
 // ListVMAddresses returns all IP addresses assigned to a VM.
 func (s *IPAMService) ListVMAddresses(ctx context.Context, vmID string) ([]models.IPAddress, error) {
-	ips, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
+	ips, _, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
 		VMID: &vmID,
 	})
 	if err != nil {
@@ -236,7 +236,7 @@ func (s *IPAMService) ListVMAddresses(ctx context.Context, vmID string) ([]model
 // This is used during VM deletion to free up all assigned IPs.
 func (s *IPAMService) ReleaseIPsByVM(ctx context.Context, vmID string) error {
 	// Get all IPs for the VM
-	ips, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
+	ips, _, _, err := s.ipRepo.ListIPAddresses(ctx, repository.IPAddressListFilter{
 		VMID: &vmID,
 	})
 	if err != nil {

@@ -32,6 +32,18 @@ type CreateCustomerResponse struct {
 // If a customer with the given email already exists, the existing customer is
 // returned (with created=false). Otherwise a new customer is created with a
 // random password and returned (with created=true).
+// @Tags Provisioning
+// @Summary Create or get customer
+// @Description Creates a customer account or returns existing customer by email for provisioning workflow.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param request body object true "Create or get customer request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/customers [post]
 func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 	var req CreateCustomerRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {

@@ -23,6 +23,18 @@ const (
 // GetConsoleToken handles POST /vms/:id/console-token - generates a NoVNC access token.
 // The token is valid for 1 hour and provides graphical console access.
 // The token is single-use and bound to the specific VM.
+// @Tags Customer
+// @Summary Get VNC console token
+// @Description Issues short-lived VNC console token for a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/console-token [post]
 func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -101,6 +113,18 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 
 // GetSerialToken handles POST /vms/:id/serial-token - generates a serial console access token.
 // Serial console provides text-based console access (useful for troubleshooting).
+// @Tags Customer
+// @Summary Get serial console token
+// @Description Issues short-lived serial console token for a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/serial-token [post]
 func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

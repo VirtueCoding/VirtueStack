@@ -66,7 +66,7 @@ func (m *MockPlanRepository) GetByName(ctx context.Context, name string) (*model
 	return nil, sharederrors.ErrNotFound
 }
 
-func (m *MockPlanRepository) List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, int, error) {
+func (m *MockPlanRepository) List(ctx context.Context, filter repository.PlanListFilter) ([]models.Plan, bool, string, error) {
 	var plans []models.Plan
 	for _, plan := range m.Plans {
 		if filter.IsActive != nil && plan.IsActive != *filter.IsActive {
@@ -74,7 +74,11 @@ func (m *MockPlanRepository) List(ctx context.Context, filter repository.PlanLis
 		}
 		plans = append(plans, *plan)
 	}
-	return plans, len(plans), nil
+	var lastID string
+	if len(plans) > 0 {
+		lastID = plans[len(plans)-1].ID
+	}
+	return plans, false, lastID, nil
 }
 
 func (m *MockPlanRepository) ListActive(ctx context.Context) ([]models.Plan, error) {
@@ -250,7 +254,6 @@ func TestPlanService_List(t *testing.T) {
 		filter     repository.PlanListFilter
 		setupMock  func(*MockPlanRepository)
 		wantCount  int
-		wantTotal  int
 		wantErr    bool
 		errContain string
 	}{
@@ -262,7 +265,6 @@ func TestPlanService_List(t *testing.T) {
 				m.Plans["plan-2"] = testPlan("plan-2", "Plan 2", "plan-2")
 			},
 			wantCount: 2,
-			wantTotal: 2,
 			wantErr:   false,
 		},
 		{
@@ -277,7 +279,6 @@ func TestPlanService_List(t *testing.T) {
 				m.Plans["plan-2"].IsActive = false
 			},
 			wantCount: 1,
-			wantTotal: 1,
 			wantErr:   false,
 		},
 		{
@@ -292,7 +293,6 @@ func TestPlanService_List(t *testing.T) {
 				m.Plans["plan-2"].IsActive = false
 			},
 			wantCount: 1,
-			wantTotal: 1,
 			wantErr:   false,
 		},
 		{
@@ -303,7 +303,6 @@ func TestPlanService_List(t *testing.T) {
 				m.Plans["plan-1"].IsActive = false
 			},
 			wantCount: 0,
-			wantTotal: 0,
 			wantErr:   false,
 		},
 	}
@@ -314,7 +313,7 @@ func TestPlanService_List(t *testing.T) {
 			tt.setupMock(mockRepo)
 			svc := NewPlanService(mockRepo, testPlanLogger())
 
-			plans, total, err := svc.List(context.Background(), tt.filter)
+			plans, _, _, err := svc.List(context.Background(), tt.filter)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -326,7 +325,6 @@ func TestPlanService_List(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Len(t, plans, tt.wantCount)
-			assert.Equal(t, tt.wantTotal, total)
 		})
 	}
 }

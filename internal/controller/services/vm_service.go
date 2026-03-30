@@ -37,18 +37,19 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo              *repository.VMRepository
-	nodeRepo            *repository.NodeRepository
-	ipRepo              *repository.IPRepository
-	planRepo            *repository.PlanRepository
-	templateRepo        *repository.TemplateRepository
-	taskRepo            *repository.TaskRepository
-	taskPublisher       TaskPublisher
-	nodeAgent           NodeAgentClient
-	ipamService         IPAllocator
-	storageBackendSvc   StorageBackendGetter
-	encryptionKey       string // For encrypting root passwords
-	logger              *slog.Logger
+	vmRepo               *repository.VMRepository
+	nodeRepo             *repository.NodeRepository
+	ipRepo               *repository.IPRepository
+	planRepo             *repository.PlanRepository
+	templateRepo         *repository.TemplateRepository
+	taskRepo             *repository.TaskRepository
+	taskPublisher        TaskPublisher
+	nodeAgent            NodeAgentClient
+	ipamService          IPAllocator
+	storageBackendSvc    StorageBackendGetter
+	preActionWebhookSvc  PreActionChecker
+	encryptionKey        string // For encrypting root passwords
+	logger               *slog.Logger
 }
 
 // StorageBackendGetter defines the interface for getting storage backends for a node.
@@ -56,39 +57,46 @@ type StorageBackendGetter interface {
 	GetBackendsForNodeByType(ctx context.Context, nodeID string, backendType string) ([]models.StorageBackend, error)
 }
 
+// PreActionChecker evaluates pre-action webhooks before protected operations.
+type PreActionChecker interface {
+	CheckPreAction(ctx context.Context, event string, customerID string, data map[string]any) error
+}
+
 // VMServiceConfig holds all dependencies for VMService construction.
 // Using a config struct keeps NewVMService compliant with the ≤4-parameter
 // constructor rule (QG-01) and makes future dependency additions non-breaking.
 type VMServiceConfig struct {
-	VMRepo            *repository.VMRepository
-	NodeRepo          *repository.NodeRepository
-	IPRepo            *repository.IPRepository
-	PlanRepo          *repository.PlanRepository
-	TemplateRepo      *repository.TemplateRepository
-	TaskRepo          *repository.TaskRepository
-	TaskPublisher     TaskPublisher
-	NodeAgent         NodeAgentClient
-	IPAMService       IPAllocator
-	StorageBackendSvc StorageBackendGetter
-	EncryptionKey     string
-	Logger            *slog.Logger
+	VMRepo              *repository.VMRepository
+	NodeRepo            *repository.NodeRepository
+	IPRepo              *repository.IPRepository
+	PlanRepo            *repository.PlanRepository
+	TemplateRepo        *repository.TemplateRepository
+	TaskRepo            *repository.TaskRepository
+	TaskPublisher       TaskPublisher
+	NodeAgent           NodeAgentClient
+	IPAMService         IPAllocator
+	StorageBackendSvc   StorageBackendGetter
+	PreActionWebhookSvc PreActionChecker
+	EncryptionKey       string
+	Logger              *slog.Logger
 }
 
 // NewVMService creates a new VMService with the given configuration.
 func NewVMService(cfg VMServiceConfig) *VMService {
 	return &VMService{
-		vmRepo:            cfg.VMRepo,
-		nodeRepo:          cfg.NodeRepo,
-		ipRepo:            cfg.IPRepo,
-		planRepo:          cfg.PlanRepo,
-		templateRepo:      cfg.TemplateRepo,
-		taskRepo:          cfg.TaskRepo,
-		taskPublisher:     cfg.TaskPublisher,
-		nodeAgent:         cfg.NodeAgent,
-		ipamService:       cfg.IPAMService,
-		storageBackendSvc: cfg.StorageBackendSvc,
-		encryptionKey:     cfg.EncryptionKey,
-		logger:            cfg.Logger.With("component", "vm-service"),
+		vmRepo:              cfg.VMRepo,
+		nodeRepo:            cfg.NodeRepo,
+		ipRepo:              cfg.IPRepo,
+		planRepo:            cfg.PlanRepo,
+		templateRepo:        cfg.TemplateRepo,
+		taskRepo:            cfg.TaskRepo,
+		taskPublisher:       cfg.TaskPublisher,
+		nodeAgent:           cfg.NodeAgent,
+		ipamService:         cfg.IPAMService,
+		storageBackendSvc:   cfg.StorageBackendSvc,
+		preActionWebhookSvc: cfg.PreActionWebhookSvc,
+		encryptionKey:       cfg.EncryptionKey,
+		logger:              cfg.Logger.With("component", "vm-service"),
 	}
 }
 
@@ -250,7 +258,7 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 		"vcpu": vm.VCPU, "memory_mb": vm.MemoryMB, "disk_gb": vm.DiskGB,
 		"template_id": deps.template.ID, "template_rbd_image": deps.template.RBDImage,
 		"template_rbd_snapshot": deps.template.RBDSnapshot,
-		"mac_address": vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
+		"mac_address":           vm.MACAddress, "port_speed_mbps": vm.PortSpeedMbps,
 		"bandwidth_limit_gb": vm.BandwidthLimitGB, "ssh_keys": req.SSHKeys,
 		"storage_backend": deps.plan.StorageBackend,
 	}
@@ -350,6 +358,17 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 		}
 	}
 
+	// PRE-ACTION WEBHOOK CHECK
+	if s.preActionWebhookSvc != nil {
+		whData := map[string]any{
+			"hostname": req.Hostname,
+			"plan_id":  req.PlanID,
+		}
+		if err := s.preActionWebhookSvc.CheckPreAction(ctx, models.PreActionEventVMCreate, customerID, whData); err != nil {
+			return nil, "", err
+		}
+	}
+
 	plan, template, err := s.validateCreateVMRequest(ctx, req)
 	if err != nil {
 		return nil, "", err
@@ -406,119 +425,11 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 
 // StartVM starts a stopped or suspended VM.
 // This is a synchronous operation that calls the node agent directly.
-func (s *VMService) StartVM(ctx context.Context, vmID, customerID string, isAdmin bool) error {
-	// Get VM and verify ownership
-	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
-	if err != nil {
-		return fmt.Errorf("verifying ownership for start: %w", err)
-	}
-
-	// Verify status allows starting
-	if vm.Status != models.VMStatusStopped && vm.Status != models.VMStatusSuspended {
-		return fmt.Errorf("cannot start VM in status %s", vm.Status)
-	}
-
-	// Check if node is assigned
-	if vm.NodeID == nil {
-		return fmt.Errorf("VM has no node assigned")
-	}
-
-	// Call node agent to start VM
-	if err := s.nodeAgent.StartVM(ctx, *vm.NodeID, vm.ID); err != nil {
-		return fmt.Errorf("starting VM on node agent: %w", err)
-	}
-
-	// Update status
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
-		s.logger.Error("failed to update VM status after start - status mismatch may occur",
-			"vm_id", vm.ID, "error", err)
-	}
-
-	s.logger.Info("VM started", "vm_id", vm.ID, "customer_id", customerID)
-	return nil
-}
 
 // StopVM stops a running VM.
 // If force is true, performs a hard power-off; otherwise graceful ACPI shutdown.
-func (s *VMService) StopVM(ctx context.Context, vmID, customerID string, force bool, isAdmin bool) error {
-	// Get VM and verify ownership
-	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
-	if err != nil {
-		return fmt.Errorf("verifying ownership for stop: %w", err)
-	}
-
-	// Verify status allows stopping
-	if vm.Status != models.VMStatusRunning {
-		return fmt.Errorf("cannot stop VM in status %s", vm.Status)
-	}
-
-	// Check if node is assigned
-	if vm.NodeID == nil {
-		return fmt.Errorf("VM has no node assigned")
-	}
-
-	// Call appropriate stop method
-	if force {
-		if err := s.nodeAgent.ForceStopVM(ctx, *vm.NodeID, vm.ID); err != nil {
-			return fmt.Errorf("force stopping VM on node agent: %w", err)
-		}
-	} else {
-		// Graceful shutdown with 120 second timeout
-		if err := s.nodeAgent.StopVM(ctx, *vm.NodeID, vm.ID, 120); err != nil {
-			return fmt.Errorf("stopping VM on node agent: %w", err)
-		}
-	}
-
-	// Update status
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusStopped); err != nil {
-		s.logger.Error("failed to update VM status after stop - status mismatch may occur",
-			"vm_id", vm.ID, "error", err)
-	}
-
-	s.logger.Info("VM stopped", "vm_id", vm.ID, "force", force, "customer_id", customerID)
-	return nil
-}
 
 // RestartVM restarts a VM by stopping and starting it.
-func (s *VMService) RestartVM(ctx context.Context, vmID, customerID string, isAdmin bool) error {
-	// Get VM and verify ownership
-	vm, err := s.getVMAndVerifyOwnership(ctx, vmID, customerID, isAdmin)
-	if err != nil {
-		return fmt.Errorf("verifying ownership for restart: %w", err)
-	}
-
-	// Verify status allows restart
-	if vm.Status != models.VMStatusRunning {
-		return fmt.Errorf("cannot restart VM in status %s", vm.Status)
-	}
-
-	// Check if node is assigned
-	if vm.NodeID == nil {
-		return fmt.Errorf("VM has no node assigned")
-	}
-
-	// Graceful shutdown with 60 second timeout
-	if err := s.nodeAgent.StopVM(ctx, *vm.NodeID, vm.ID, 60); err != nil {
-		s.logger.Warn("graceful stop failed during restart, attempting force stop", "vm_id", vm.ID, "error", err)
-		if err := s.nodeAgent.ForceStopVM(ctx, *vm.NodeID, vm.ID); err != nil {
-			return fmt.Errorf("force stopping VM during restart: %w", err)
-		}
-	}
-
-	// Start the VM
-	if err := s.nodeAgent.StartVM(ctx, *vm.NodeID, vm.ID); err != nil {
-		return fmt.Errorf("starting VM during restart: %w", err)
-	}
-
-	// Update status to running
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusRunning); err != nil {
-		s.logger.Error("failed to update VM status after restart - status mismatch may occur",
-			"vm_id", vm.ID, "error", err)
-	}
-
-	s.logger.Info("VM restarted", "vm_id", vm.ID, "customer_id", customerID)
-	return nil
-}
 
 // DeleteVM deletes a VM.
 // This is an async operation that publishes a vm.delete task.
@@ -775,7 +686,7 @@ func (s *VMService) GetVM(ctx context.Context, vmID, customerID string, isAdmin 
 
 // ListVMs lists VMs with optional filtering and pagination.
 // For non-admin users, only their own VMs are returned.
-func (s *VMService) ListVMs(ctx context.Context, filter models.VMListFilter, customerID string, isAdmin bool) ([]models.VM, int, error) {
+func (s *VMService) ListVMs(ctx context.Context, filter models.VMListFilter, customerID string, isAdmin bool) ([]models.VM, bool, string, error) {
 	// Non-admins can only see their own VMs
 	if !isAdmin {
 		filter.CustomerID = &customerID
@@ -927,7 +838,7 @@ func (s *VMService) GetTaskStatus(ctx context.Context, taskID string) (*models.T
 }
 
 // ListTasks lists tasks with optional filtering.
-func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]models.Task, int, error) {
+func (s *VMService) ListTasks(ctx context.Context, filter repository.TaskListFilter) ([]models.Task, bool, string, error) {
 	return s.taskRepo.List(ctx, filter)
 }
 

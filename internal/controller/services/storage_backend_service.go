@@ -14,12 +14,13 @@ import (
 // StorageBackendService provides business logic for managing storage backends.
 // It handles CRUD operations, node assignments, and deletion guards.
 type StorageBackendService struct {
-	repo            *repository.StorageBackendRepository
-	nodeRepo        *repository.NodeRepository
-	nodeStorage     *repository.NodeStorageRepository
-	taskRepo        *repository.TaskRepository
+	repo                    *repository.StorageBackendRepository
+	nodeRepo                *repository.NodeRepository
+	nodeStorage             *repository.NodeStorageRepository
+	taskRepo                *repository.TaskRepository
 	adminBackupScheduleRepo *repository.AdminBackupScheduleRepository
-	logger          *slog.Logger
+	systemEventService      *SystemEventService
+	logger                  *slog.Logger
 }
 
 // NewStorageBackendService creates a new StorageBackendService with the given dependencies.
@@ -29,15 +30,17 @@ func NewStorageBackendService(
 	nodeStorage *repository.NodeStorageRepository,
 	taskRepo *repository.TaskRepository,
 	adminBackupScheduleRepo *repository.AdminBackupScheduleRepository,
+	systemEventService *SystemEventService,
 	logger *slog.Logger,
 ) *StorageBackendService {
 	return &StorageBackendService{
-		repo:               repo,
-		nodeRepo:           nodeRepo,
-		nodeStorage:        nodeStorage,
-		taskRepo:           taskRepo,
+		repo:                    repo,
+		nodeRepo:                nodeRepo,
+		nodeStorage:             nodeStorage,
+		taskRepo:                taskRepo,
 		adminBackupScheduleRepo: adminBackupScheduleRepo,
-		logger:             logger.With("component", "storage-backend-service"),
+		systemEventService:      systemEventService,
+		logger:                  logger.With("component", "storage-backend-service"),
 	}
 }
 
@@ -71,18 +74,18 @@ func (s *StorageBackendService) Create(ctx context.Context, req *models.StorageB
 
 	// Create the storage backend record
 	sb := &models.StorageBackend{
-		Name:             req.Name,
-		Type:             req.Type,
-		CephPool:         req.CephPool,
-		CephUser:         req.CephUser,
-		CephMonitors:     req.CephMonitors,
-		CephKeyringPath:  req.CephKeyringPath,
-		StoragePath:      req.StoragePath,
-		LVMVolumeGroup:   req.LVMVolumeGroup,
-		LVMThinPool:      req.LVMThinPool,
+		Name:                        req.Name,
+		Type:                        req.Type,
+		CephPool:                    req.CephPool,
+		CephUser:                    req.CephUser,
+		CephMonitors:                req.CephMonitors,
+		CephKeyringPath:             req.CephKeyringPath,
+		StoragePath:                 req.StoragePath,
+		LVMVolumeGroup:              req.LVMVolumeGroup,
+		LVMThinPool:                 req.LVMThinPool,
 		LVMDataPercentThreshold:     req.LVMDataPercentThreshold,
 		LVMMetadataPercentThreshold: req.LVMMetadataPercentThreshold,
-		HealthStatus:     "unknown",
+		HealthStatus:                "unknown",
 	}
 
 	if err := s.repo.Create(ctx, sb); err != nil {
@@ -133,7 +136,7 @@ func (s *StorageBackendService) GetByIDWithNodes(ctx context.Context, id string)
 }
 
 // List returns a paginated list of storage backends.
-func (s *StorageBackendService) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, int, error) {
+func (s *StorageBackendService) List(ctx context.Context, filter models.StorageBackendListFilter) ([]models.StorageBackend, bool, string, error) {
 	return s.repo.List(ctx, filter)
 }
 
@@ -280,14 +283,21 @@ func (s *StorageBackendService) AssignToNodes(ctx context.Context, id string, no
 		return fmt.Errorf("getting storage backend: %w", err)
 	}
 
-	// Verify all nodes exist
-	for _, nodeID := range nodeIDs {
-		_, err := s.nodeRepo.GetByID(ctx, nodeID)
-		if err != nil {
-			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return fmt.Errorf("node not found: %s", nodeID)
+	// Verify all nodes exist (single bulk query instead of N+1)
+	nodes, err := s.nodeRepo.GetByIDs(ctx, nodeIDs)
+	if err != nil {
+		return fmt.Errorf("getting nodes: %w", err)
+	}
+	if len(nodes) != len(nodeIDs) {
+		// Find which node(s) are missing
+		found := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			found[n.ID] = true
+		}
+		for _, id := range nodeIDs {
+			if !found[id] {
+				return fmt.Errorf("node not found: %s", id)
 			}
-			return fmt.Errorf("getting node %s: %w", nodeID, err)
 		}
 	}
 
@@ -374,21 +384,21 @@ func (s *StorageBackendService) validateTypeConfig(req *models.StorageBackendCre
 // PollStorageBackendHealth polls storage backend health from assigned nodes and updates the backend.
 //
 // Implementation Architecture:
-// 
+//
 // Storage backend health is updated through the node heartbeat system, not direct polling:
 //
-// 1. Node Agent Heartbeat: Each node agent periodically sends heartbeat messages to the controller
-//    containing node health metrics (CPU, memory, disk, VM count). This is implemented in
-//    internal/controller/services/heartbeat_checker.go.
+//  1. Node Agent Heartbeat: Each node agent periodically sends heartbeat messages to the controller
+//     containing node health metrics (CPU, memory, disk, VM count). This is implemented in
+//     internal/controller/services/heartbeat_checker.go.
 //
-// 2. Storage Metrics: For nodes assigned storage backends (via node_storage_backends junction),
-//    the heartbeat includes storage backend health metrics:
-//    - Ceph: Output of 'ceph df' (total_gb, used_gb, available_gb, health_status)
-//    - QCOW: Disk usage of storage_path directory
-//    - LVM: Output of 'lvs' (data_percent, metadata_percent)
+//  2. Storage Metrics: For nodes assigned storage backends (via node_storage_backends junction),
+//     the heartbeat includes storage backend health metrics:
+//     - Ceph: Output of 'ceph df' (total_gb, used_gb, available_gb, health_status)
+//     - QCOW: Disk usage of storage_path directory
+//     - LVM: Output of 'lvs' (data_percent, metadata_percent)
 //
-// 3. Database Update: The heartbeat processor calls UpdateStorageBackendHealth() to persist
-//    the metrics to storage_backends.health_status, health_message, total_gb, used_gb, etc.
+//  3. Database Update: The heartbeat processor calls UpdateStorageBackendHealth() to persist
+//     the metrics to storage_backends.health_status, health_message, total_gb, used_gb, etc.
 //
 // This method (PollStorageBackendHealth) is a placeholder for on-demand polling. The actual
 // implementation lives in the heartbeat checker service, which calls UpdateStorageBackendHealth()
@@ -428,6 +438,23 @@ func (s *StorageBackendService) UpdateStorageBackendHealth(ctx context.Context, 
 	s.logger.Debug("storage backend health updated",
 		"storage_backend_id", id,
 		"status", health.HealthStatus)
+
+	if s.systemEventService != nil {
+		switch health.HealthStatus {
+		case "warning":
+			_ = s.systemEventService.PublishSystemEvent(ctx, models.SystemEventStorageWarning, map[string]any{
+				"storage_backend_id": id,
+				"status":             health.HealthStatus,
+				"message":            health.HealthMessage,
+			})
+		case "critical":
+			_ = s.systemEventService.PublishSystemEvent(ctx, models.SystemEventStorageCritical, map[string]any{
+				"storage_backend_id": id,
+				"status":             health.HealthStatus,
+				"message":            health.HealthMessage,
+			})
+		}
+	}
 
 	return nil
 }

@@ -501,12 +501,11 @@ func (s *NodeService) ListNodeVMs(ctx context.Context, nodeID string) ([]models.
 	filter := models.VMListFilter{
 		NodeID: &nodeID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: models.MaxPerPage,
 		},
 	}
 
-	vms, _, err := s.vmRepo.List(ctx, filter)
+	vms, _, _, err := s.vmRepo.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing VMs on node: %w", err)
 	}
@@ -592,7 +591,7 @@ func (s *NodeService) GetNode(ctx context.Context, nodeID string) (*models.Node,
 }
 
 // ListNode retrieves all nodes with optional filtering.
-func (s *NodeService) ListNode(ctx context.Context, filter models.NodeListFilter) ([]models.Node, int, error) {
+func (s *NodeService) ListNode(ctx context.Context, filter models.NodeListFilter) ([]models.Node, bool, string, error) {
 	return s.nodeRepo.List(ctx, filter)
 }
 

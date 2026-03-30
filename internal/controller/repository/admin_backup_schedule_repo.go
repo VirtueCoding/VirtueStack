@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository/cursor"
 )
 
 // AdminBackupScheduleRepository provides database operations for admin backup schedules.
@@ -76,8 +77,8 @@ func (r *AdminBackupScheduleRepository) GetByID(ctx context.Context, id string) 
 	return &schedule, nil
 }
 
-// List returns a paginated list of admin backup schedules with optional filters and total count.
-func (r *AdminBackupScheduleRepository) List(ctx context.Context, filter AdminBackupScheduleListFilter) ([]models.AdminBackupSchedule, int, error) {
+// List returns a paginated list of admin backup schedules with optional filters.
+func (r *AdminBackupScheduleRepository) List(ctx context.Context, filter AdminBackupScheduleListFilter) ([]models.AdminBackupSchedule, bool, string, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -89,28 +90,29 @@ func (r *AdminBackupScheduleRepository) List(ctx context.Context, filter AdminBa
 	}
 
 	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM admin_backup_schedules WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting admin backup schedules: %w", err)
+
+	cp := cursor.ParseParams(filter.PaginationParams)
+	var extraArg any
+	clause, idx, extraArg = cursor.BuildWhereClause(clause, cp, true, idx)
+	if extraArg != nil {
+		args = append(args, extraArg)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM admin_backup_schedules WHERE %s ORDER BY next_run_at ASC LIMIT $%d OFFSET $%d",
-		adminBackupScheduleSelectCols, clause, idx, idx+1,
+		"SELECT %s FROM admin_backup_schedules WHERE %s ORDER BY id DESC LIMIT $%d",
+		adminBackupScheduleSelectCols, clause, idx,
 	)
-	args = append(args, limit, offset)
+	args = append(args, filter.PerPage+1)
 
 	schedules, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.AdminBackupSchedule, error) {
 		return scanAdminBackupSchedule(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing admin backup schedules: %w", err)
+		return nil, false, "", fmt.Errorf("listing admin backup schedules: %w", err)
 	}
 
-	return schedules, total, nil
+	schedules, hasMore, lastID := cursor.TrimResults(schedules, filter.PerPage, func(s models.AdminBackupSchedule) string { return s.ID })
+	return schedules, hasMore, lastID, nil
 }
 
 // ListDueSchedules returns all active schedules that are due to run.

@@ -116,6 +116,15 @@ var settingValidators = map[string]settingValueValidator{
 }
 
 // GetSettings handles GET /settings - retrieves all system settings.
+// @Tags Admin
+// @Summary Get settings
+// @Description Returns all platform settings visible to admins.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/settings [get]
 func (h *AdminHandler) GetSettings(c *gin.Context) {
 	settings := make([]Setting, 0, len(defaultSettings))
 	for _, s := range defaultSettings {
@@ -149,6 +158,20 @@ func (h *AdminHandler) GetSettings(c *gin.Context) {
 }
 
 // UpdateSetting handles PUT /settings/:key - updates a specific setting.
+// @Tags Admin
+// @Summary Update setting
+// @Description Updates a platform setting by key.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Setting key"
+// @Param request body object true "Setting update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/settings/{key} [put]
 func (h *AdminHandler) UpdateSetting(c *gin.Context) {
 	key := c.Param("key")
 

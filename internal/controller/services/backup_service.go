@@ -191,52 +191,6 @@ func NewBackupService(cfg BackupServiceConfig) *BackupService {
 // The backup is stored in the configured backup storage location.
 // For Ceph VMs: creates RBD snapshot and clones to backup pool.
 // For QCOW VMs: creates qemu-img snapshot and copies to backup directory.
-func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*models.Backup, error) {
-	vm, err := s.vmRepo.GetByID(ctx, vmID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("VM not found: %s", vmID)
-		}
-		return nil, fmt.Errorf("getting VM: %w", err)
-	}
-
-	if vm.NodeID == nil {
-		return nil, fmt.Errorf("VM has no node assigned")
-	}
-
-	storageBackend := vm.StorageBackend
-	if storageBackend == "" {
-		storageBackend = storageBackendCeph
-	}
-
-	backup := &models.Backup{
-		ID:             uuid.New().String(),
-		VMID:           vmID,
-		Method:         models.BackupMethodFull,
-		Source:         models.BackupSourceManual,
-		Status:         models.BackupStatusCreating,
-		StorageBackend: storageBackend,
-	}
-
-	if err := s.backupRepo.CreateBackup(ctx, backup); err != nil {
-		return nil, fmt.Errorf("creating backup record: %w", err)
-	}
-
-	snapshotName := fmt.Sprintf("backup-%s-%d", backup.ID[:8], time.Now().Unix())
-
-	if s.nodeAgent == nil {
-		s.logger.Warn("nodeAgent not configured, skipping backup storage operations",
-			"vm_id", vmID,
-			"backup_id", backup.ID)
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted)
-		return backup, nil
-	}
-
-	if storageBackend == storageBackendQCOW {
-		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
-	}
-	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
-}
 
 // ErrBackupLimitExceeded is returned when a VM has reached its backup limit.
 var ErrBackupLimitExceeded = fmt.Errorf("backup limit exceeded")
@@ -244,140 +198,6 @@ var ErrBackupLimitExceeded = fmt.Errorf("backup limit exceeded")
 // CreateBackupWithLimitCheck creates a backup with atomic limit checking.
 // This prevents TOCTOU race conditions when multiple concurrent requests check the limit.
 // Returns ErrBackupLimitExceeded if the VM already has limit or more backups.
-func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, name string, limit int) (*models.Backup, error) {
-	vm, err := s.vmRepo.GetByID(ctx, vmID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("VM not found: %s", vmID)
-		}
-		return nil, fmt.Errorf("getting VM: %w", err)
-	}
-
-	if vm.NodeID == nil {
-		return nil, fmt.Errorf("VM has no node assigned")
-	}
-
-	storageBackend := vm.StorageBackend
-	if storageBackend == "" {
-		storageBackend = storageBackendCeph
-	}
-
-	backup := &models.Backup{
-		ID:             uuid.New().String(),
-		VMID:           vmID,
-		Method:         models.BackupMethodFull,
-		Source:         models.BackupSourceManual,
-		Status:         models.BackupStatusCreating,
-		StorageBackend: storageBackend,
-	}
-
-	// Use atomic create with limit check to prevent TOCTOU race condition
-	if err := s.backupRepo.CreateBackupWithLimitCheck(ctx, backup, limit); err != nil {
-		if strings.Contains(err.Error(), "limit exceeded") {
-			return nil, fmt.Errorf("%w: %s", ErrBackupLimitExceeded, err.Error())
-		}
-		return nil, fmt.Errorf("creating backup record: %w", err)
-	}
-
-	snapshotName := fmt.Sprintf("backup-%s-%d", backup.ID[:8], time.Now().Unix())
-
-	if s.nodeAgent == nil {
-		s.logger.Warn("nodeAgent not configured, skipping backup storage operations",
-			"vm_id", vmID,
-			"backup_id", backup.ID)
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted)
-		return backup, nil
-	}
-
-	if storageBackend == storageBackendQCOW {
-		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
-	}
-	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
-}
-
-func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
-	nodeID := *vm.NodeID
-	diskPath := ""
-	if vm.DiskPath != nil {
-		diskPath = *vm.DiskPath
-	}
-	if diskPath == "" {
-		diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
-	}
-
-	if err := s.nodeAgent.CreateQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, snapshotName); err != nil {
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("creating QCOW snapshot: %w", err)
-	}
-
-	backupDir := fmt.Sprintf("%s/%s", s.backupPath, vm.ID)
-	backupFileName := fmt.Sprintf("%s-%s.qcow2", backup.ID[:8], time.Now().Format("20060102-150405"))
-	backupFilePath := fmt.Sprintf("%s/%s", backupDir, backupFileName)
-
-	sizeBytes, err := s.nodeAgent.CreateQCOWBackup(ctx, nodeID, vm.ID, diskPath, snapshotName, backupFilePath, false)
-	if err != nil {
-		_ = s.nodeAgent.DeleteQCOWSnapshot(ctx, nodeID, vm.ID, diskPath, snapshotName)
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("creating QCOW backup file: %w", err)
-	}
-
-	backup.FilePath = &backupFilePath
-	backup.SnapshotName = &snapshotName
-	backup.SizeBytes = &sizeBytes
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
-		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
-	}
-
-	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
-	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
-		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
-	}
-
-	s.logger.Info("QCOW backup created",
-		"backup_id", backup.ID,
-		"vm_id", vm.ID,
-		"name", name,
-		"file_path", backupFilePath,
-		"size_bytes", sizeBytes)
-
-	return backup, nil
-}
-
-func (s *BackupService) createCephBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
-	nodeID := *vm.NodeID
-
-	if err := s.nodeAgent.CreateSnapshot(ctx, nodeID, vm.ID, snapshotName); err != nil {
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("creating backup snapshot: %w", err)
-	}
-
-	backupPath := fmt.Sprintf("backups/%s/%s", vm.ID, backup.ID)
-	if err := s.nodeAgent.CloneSnapshot(ctx, nodeID, vm.ID, snapshotName, backupPath); err != nil {
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("cloning backup: %w", err)
-	}
-
-	backup.StoragePath = &backupPath
-	backup.RBDSnapshot = &snapshotName
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
-		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
-	}
-
-	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
-	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
-		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
-	}
-
-	s.logger.Info("Ceph backup created",
-		"backup_id", backup.ID,
-		"vm_id", vm.ID,
-		"name", name,
-		"source", backup.Source)
-
-	return backup, nil
-}
 
 // ListBackups returns all backups for a specific VM.
 func (s *BackupService) ListBackups(ctx context.Context, vmID string) ([]models.Backup, error) {
@@ -388,7 +208,7 @@ func (s *BackupService) ListBackups(ctx context.Context, vmID string) ([]models.
 	return backups, nil
 }
 
-func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *string, filter repository.BackupListFilter) ([]models.Backup, int, error) {
+func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *string, filter repository.BackupListFilter) ([]models.Backup, bool, string, error) {
 	if customerID != nil && *customerID != "" {
 		return s.backupRepo.ListBackupsByCustomer(ctx, *customerID, filter)
 	}
@@ -397,88 +217,6 @@ func (s *BackupService) ListBackupsWithFilter(ctx context.Context, customerID *s
 
 // RestoreBackup restores a VM from a backup.
 // This operation stops the VM, restores the disk, and leaves the VM stopped.
-func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) error {
-	backup, err := s.backupRepo.GetBackupByID(ctx, backupID)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("backup not found: %s", backupID)
-		}
-		return fmt.Errorf("getting backup: %w", err)
-	}
-
-	if backup.Status != models.BackupStatusCompleted {
-		return fmt.Errorf("backup is not in completed state (status: %s)", backup.Status)
-	}
-
-	vm, err := s.vmRepo.GetByID(ctx, backup.VMID)
-	if err != nil {
-		return fmt.Errorf("getting VM: %w", err)
-	}
-
-	if vm.NodeID == nil {
-		return fmt.Errorf("VM has no node assigned")
-	}
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusRestoring); err != nil {
-		return fmt.Errorf("updating backup status: %w", err)
-	}
-
-	storageBackend := backup.StorageBackend
-	if storageBackend == "" {
-		storageBackend = storageBackendCeph
-	}
-
-	if s.nodeAgent == nil {
-		s.logger.Warn("nodeAgent not configured, skipping backup restore",
-			"backup_id", backupID,
-			"vm_id", backup.VMID)
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-		return fmt.Errorf("node agent not configured, cannot restore backup %s", backupID)
-	}
-
-	nodeID := *vm.NodeID
-
-	if storageBackend == storageBackendQCOW {
-		if backup.FilePath == nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-			return fmt.Errorf("backup has no file path for QCOW restore")
-		}
-
-		diskPath := ""
-		if vm.DiskPath != nil {
-			diskPath = *vm.DiskPath
-		}
-		if diskPath == "" {
-			diskPath = fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
-		}
-
-		if err := s.nodeAgent.RestoreQCOWBackup(ctx, nodeID, vm.ID, *backup.FilePath, diskPath); err != nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-			return fmt.Errorf("restoring QCOW backup: %w", err)
-		}
-	} else {
-		if backup.RBDSnapshot == nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-			return fmt.Errorf("backup has no RBD snapshot for Ceph restore")
-		}
-
-		if err := s.nodeAgent.RestoreSnapshot(ctx, nodeID, vm.ID, *backup.RBDSnapshot); err != nil {
-			_ = s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusFailed)
-			return fmt.Errorf("restoring backup: %w", err)
-		}
-	}
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backupID, models.BackupStatusCompleted); err != nil {
-		s.logger.Warn("failed to update backup status after restore", "backup_id", backupID, "error", err)
-	}
-
-	s.logger.Info("backup restored",
-		"backup_id", backupID,
-		"vm_id", backup.VMID,
-		"storage_backend", storageBackend)
-
-	return nil
-}
 
 // DeleteBackup removes a backup from storage and the database.
 func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error {
@@ -884,53 +622,10 @@ const (
 // monthly backups for VMs. It uses a staggered approach where each VM is assigned
 // a specific day of the month based on its VM ID hash, spreading the backup load.
 // The scheduler runs until the context is cancelled.
-func (s *BackupService) StartScheduler(ctx context.Context) {
-	s.logger.Info("backup scheduler started")
-
-	ticker := time.NewTicker(schedulerInterval)
-	defer ticker.Stop()
-
-	// Run immediately on start
-	s.runSchedulerTick(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Info("backup scheduler stopped", "reason", ctx.Err())
-			return
-		case <-ticker.C:
-			s.runSchedulerTick(ctx)
-		}
-	}
-}
 
 // runSchedulerTick performs a single iteration of the backup scheduler.
 // It queries all active VMs and creates backup tasks for those that need
 // a monthly backup and haven't been backed up this month.
-func (s *BackupService) runSchedulerTick(ctx context.Context) {
-	now := time.Now().UTC()
-	currentDay := now.Day()
-	currentYear, currentMonth, _ := now.Date()
-
-	s.logger.Debug("running backup scheduler tick",
-		"day", currentDay,
-		"month", currentMonth,
-		"year", currentYear)
-
-	vms, err := s.vmRepo.ListAllActive(ctx)
-	if err != nil {
-		s.logger.Error("failed to list active VMs for backup scheduling", "error", err)
-		return
-	}
-
-	stats := s.processVMsForBackup(ctx, vms, currentDay, currentYear, int(currentMonth))
-
-	s.logger.Info("backup scheduler tick completed",
-		"total_vms", len(vms),
-		"backups_scheduled", stats.backupsScheduled,
-		"skipped_has_backup", stats.skippedCount,
-		"errors", stats.errorCount)
-}
 
 // schedulerStats tracks backup scheduling statistics.
 type schedulerStats struct {
@@ -940,79 +635,10 @@ type schedulerStats struct {
 }
 
 // processVMsForBackup iterates through VMs and schedules backups for those eligible.
-func (s *BackupService) processVMsForBackup(ctx context.Context, vms []models.VM, currentDay, currentYear, currentMonth int) schedulerStats {
-	var stats schedulerStats
-
-	for _, vm := range vms {
-		assignedDay := s.getVMBackupDay(vm.ID)
-		if assignedDay != currentDay {
-			continue
-		}
-
-		shouldBackup, err := s.shouldBackupVM(ctx, vm.ID, currentYear, currentMonth)
-		if err != nil {
-			stats.errorCount++
-			continue
-		}
-		if !shouldBackup {
-			stats.skippedCount++
-			continue
-		}
-
-		if s.scheduleBackupForVM(ctx, vm.ID, currentYear, currentMonth) {
-			stats.backupsScheduled++
-		}
-	}
-
-	return stats
-}
 
 // shouldBackupVM checks if a VM needs a backup this month.
-func (s *BackupService) shouldBackupVM(ctx context.Context, vmID string, year, month int) (bool, error) {
-	hasBackup, err := s.backupRepo.HasBackupInMonth(ctx, vmID, year, month)
-	if err != nil {
-		s.logger.Error("failed to check backup status for VM",
-			"vm_id", vmID,
-			"error", err)
-		return false, err
-	}
-
-	if hasBackup {
-		s.logger.Debug("VM already has backup this month, skipping",
-			"vm_id", vmID)
-		return false, nil
-	}
-
-	return true, nil
-}
 
 // scheduleBackupForVM publishes a backup task for the specified VM.
-func (s *BackupService) scheduleBackupForVM(ctx context.Context, vmID string, year, month int) bool {
-	if s.taskPublisher == nil {
-		s.logger.Warn("task publisher not configured, cannot schedule backup",
-			"vm_id", vmID)
-		return false
-	}
-
-	taskID, err := s.taskPublisher.PublishTask(ctx, "backup.create", map[string]any{
-		"vm_id":       vmID,
-		"backup_name": fmt.Sprintf("monthly-%d-%02d", year, month),
-		"source":      models.BackupSourceCustomerSchedule,
-	})
-	if err != nil {
-		s.logger.Error("failed to publish backup task for VM",
-			"vm_id", vmID,
-			"error", err)
-		return false
-	}
-
-	s.logger.Info("scheduled monthly backup for VM",
-		"vm_id", vmID,
-		"task_id", taskID,
-		"assigned_day", s.getVMBackupDay(vmID))
-
-	return true
-}
 
 // getVMBackupDay calculates the assigned backup day for a VM using a deterministic
 // hash of the VM ID. This ensures VMs are evenly distributed across the first
@@ -1030,143 +656,8 @@ func (s *BackupService) getVMBackupDay(vmID string) int {
 	return day
 }
 
-func (s *BackupService) CreateSchedule(ctx context.Context, schedule *models.BackupSchedule) (string, error) {
-	if schedule == nil {
-		return "", fmt.Errorf("schedule is required")
-	}
-	if schedule.VMID == "" || schedule.CustomerID == "" {
-		return "", fmt.Errorf("vm_id and customer_id are required")
-	}
-
-	frequency := strings.ToLower(strings.TrimSpace(schedule.Frequency))
-	if frequency != "daily" && frequency != "weekly" && frequency != "monthly" {
-		return "", fmt.Errorf("invalid frequency: %s", schedule.Frequency)
-	}
-
-	if schedule.RetentionCount <= 0 {
-		schedule.RetentionCount = 30
-	}
-
-	schedule.Frequency = frequency
-	schedule.NextRunAt = computeNextRun(time.Now().UTC(), frequency)
-	schedule.Active = true
-
-	if err := s.backupRepo.CreateBackupSchedule(ctx, schedule); err != nil {
-		return "", fmt.Errorf("creating schedule: %w", err)
-	}
-
-	s.logger.Info("backup schedule created",
-		"schedule_id", schedule.ID,
-		"vm_id", schedule.VMID,
-		"customer_id", schedule.CustomerID,
-		"frequency", schedule.Frequency)
-
-	return schedule.ID, nil
-}
-
-func (s *BackupService) ListSchedules(ctx context.Context, vmID string) ([]*models.BackupSchedule, error) {
-	filter := repository.BackupScheduleListFilter{
-		PaginationParams: models.PaginationParams{
-			Page:    1,
-			PerPage: 100, // Default limit for non-paginated list
-		},
-	}
-	if vmID != "" {
-		filter.VMID = &vmID
-	}
-
-	schedules, _, err := s.backupRepo.ListBackupSchedules(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("listing schedules: %w", err)
-	}
-
-	result := make([]*models.BackupSchedule, 0, len(schedules))
-	for i := range schedules {
-		sched := schedules[i]
-		result = append(result, &sched)
-	}
-
-	return result, nil
-}
-
 // ListSchedulesPaginated returns backup schedules with pagination support,
 // returning the slice, total count, and any error.
-func (s *BackupService) ListSchedulesPaginated(ctx context.Context, vmID string, pagination models.PaginationParams) ([]*models.BackupSchedule, int, error) {
-	filter := repository.BackupScheduleListFilter{
-		PaginationParams: pagination,
-	}
-	if vmID != "" {
-		filter.VMID = &vmID
-	}
-
-	schedules, total, err := s.backupRepo.ListBackupSchedules(ctx, filter)
-	if err != nil {
-		return nil, 0, fmt.Errorf("listing schedules: %w", err)
-	}
-
-	result := make([]*models.BackupSchedule, 0, len(schedules))
-	for i := range schedules {
-		sched := schedules[i]
-		result = append(result, &sched)
-	}
-
-	return result, total, nil
-}
-
-func (s *BackupService) UpdateSchedule(ctx context.Context, scheduleID string, enabled bool) error {
-	if err := s.backupRepo.UpdateBackupScheduleActive(ctx, scheduleID, enabled); err != nil {
-		return fmt.Errorf("updating schedule: %w", err)
-	}
-	return nil
-}
-
-func (s *BackupService) DeleteSchedule(ctx context.Context, scheduleID string) error {
-	if err := s.backupRepo.DeleteBackupSchedule(ctx, scheduleID); err != nil {
-		return fmt.Errorf("deleting schedule: %w", err)
-	}
-	return nil
-}
-
-func (s *BackupService) ApplyRetentionPolicy(ctx context.Context, vmID string, retention int) error {
-	if retention < 0 {
-		return fmt.Errorf("retention must be >= 0")
-	}
-
-	backups, err := s.backupRepo.ListBackupsByVM(ctx, vmID)
-	if err != nil {
-		return fmt.Errorf("listing backups: %w", err)
-	}
-
-	if retention >= len(backups) {
-		return nil
-	}
-
-	for i := retention; i < len(backups); i++ {
-		if err := s.backupRepo.DeleteBackup(ctx, backups[i].ID); err != nil {
-			return fmt.Errorf("deleting backup %s: %w", backups[i].ID, err)
-		}
-	}
-
-	return nil
-}
-
-func (s *BackupService) ProcessExpiredBackups(ctx context.Context) (int, error) {
-	expired, err := s.backupRepo.ListExpiredBackups(ctx, time.Now().UTC())
-	if err != nil {
-		return 0, fmt.Errorf("listing expired backups: %w", err)
-	}
-
-	deleted := 0
-	for _, b := range expired {
-		if err := s.backupRepo.DeleteBackup(ctx, b.ID); err != nil {
-			s.logger.Warn("failed to delete expired backup", "backup_id", b.ID, "error", err)
-			continue
-		}
-		deleted++
-	}
-
-	return deleted, nil
-}
 
 func (s *BackupService) BackupRepo() *repository.BackupRepository {
 	return s.backupRepo

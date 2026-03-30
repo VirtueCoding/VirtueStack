@@ -14,6 +14,20 @@ import (
 
 // SetPassword handles POST /vms/:id/password - sets the root password for a VM.
 // This endpoint is called by WHMCS to set or change the root password.
+// @Tags Provisioning
+// @Summary Set VM password
+// @Description Sets guest OS password for a VM.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param request body object true "Set password request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/password [post]
 func (h *ProvisioningHandler) SetPassword(c *gin.Context) {
 	ctx := c.Request.Context()
 	vmID := c.Param("id")
@@ -57,6 +71,17 @@ func (h *ProvisioningHandler) SetPassword(c *gin.Context) {
 }
 
 // ResetPassword handles POST /vms/:id/password/reset - generates and sets a new random password.
+// @Tags Provisioning
+// @Summary Reset VM password
+// @Description Resets guest OS password and returns a generated credential.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id}/password/reset [post]
 func (h *ProvisioningHandler) ResetPassword(c *gin.Context) {
 	ctx := c.Request.Context()
 	vmID := c.Param("id")

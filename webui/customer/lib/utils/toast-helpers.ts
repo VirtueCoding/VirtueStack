@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { ApiClientError } from "@/lib/api-client";
 
 export interface ToastOptions {

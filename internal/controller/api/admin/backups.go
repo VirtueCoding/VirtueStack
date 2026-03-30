@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -22,8 +23,19 @@ type AdminBackupListFilter struct {
 }
 
 // ListBackups handles GET /backups - lists all backups across all customers.
+// @Tags Admin
+// @Summary List backups
+// @Description Lists backups across all customers with optional filters.
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page"
+// @Param per_page query int false "Items per page"
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/admin/backups [get]
 func (h *AdminHandler) ListBackups(c *gin.Context) {
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	// Validate UUID query parameters before building the filter
 	if customerIDStr := c.Query("customer_id"); customerIDStr != "" {
@@ -102,7 +114,7 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 		AdminScheduleID:  filter.AdminScheduleID,
 	}
 
-	backups, total, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
+	backups, hasMore, lastID, err := h.backupService.ListBackupsWithFilter(c.Request.Context(), filter.CustomerID, repoFilter)
 	if err != nil {
 		h.logger.Error("failed to list backups",
 			"error", err,
@@ -113,12 +125,24 @@ func (h *AdminHandler) ListBackups(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: backups,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // RestoreBackup handles POST /backups/:id/restore - restores a backup (admin override).
 // Admins can restore any backup regardless of ownership.
+// @Tags Admin
+// @Summary Restore backup
+// @Description Starts backup restore task for a backup ID.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Backup ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/backups/{id}/restore [post]
 func (h *AdminHandler) RestoreBackup(c *gin.Context) {
 	backupID := c.Param("id")
 

@@ -79,6 +79,33 @@ VirtueStack exposes a three-tier RESTful API designed for different consumers:
 
 All requests and responses use JSON. The API is stateless — all necessary state is carried in JWT tokens or API keys.
 
+### Platform Health Endpoints
+
+#### `GET /health`
+
+Lightweight liveness endpoint.
+
+- Returns `200 OK` when the controller process is running.
+
+#### `GET /ready`
+
+Readiness endpoint for load balancers and orchestrators.
+
+- Returns `200 OK` when both PostgreSQL and NATS are connected.
+- Returns `503 Service Unavailable` when PostgreSQL is unavailable.
+- Returns `503 Service Unavailable` when NATS is disconnected.
+
+Sample successful response:
+
+```json
+{
+  "status": "ready",
+  "database": "connected",
+  "nats": "connected",
+  "node_count": 3
+}
+```
+
 **Customer API dual authentication:**
 
 The Customer API supports two authentication methods:

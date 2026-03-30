@@ -238,10 +238,15 @@ func TestWebhookDelivery(t *testing.T) {
 	})
 
 	t.Run("DeliveryTimeout", func(t *testing.T) {
-		// Create a slow test HTTPS server
+		// Create a slow test HTTPS server that respects context cancellation
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(10 * time.Second) // Exceed typical timeout
-			w.WriteHeader(http.StatusOK)
+			select {
+			case <-time.After(10 * time.Second):
+				w.WriteHeader(http.StatusOK)
+			case <-r.Context().Done():
+				// Client disconnected; exit promptly instead of blocking
+				return
+			}
 		}))
 		defer server.Close()
 

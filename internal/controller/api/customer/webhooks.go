@@ -93,6 +93,17 @@ func toDeliveryResponse(d *models.WebhookDelivery) WebhookDeliveryResponse {
 }
 
 // ListWebhooks handles GET /webhooks - lists all webhooks for the customer.
+// @Tags Customer
+// @Summary List webhooks
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks [get]
 func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -120,6 +131,19 @@ func (h *CustomerHandler) ListWebhooks(c *gin.Context) {
 
 // CreateWebhook handles POST /webhooks - creates a new webhook endpoint.
 // The secret is used to sign webhook payloads for verification.
+// @Tags Customer
+// @Summary Create webhook
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks [post]
 func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -182,6 +206,18 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 }
 
 // GetWebhook handles GET /webhooks/:id - gets a specific webhook.
+// @Tags Customer
+// @Summary Get webhook
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks/{id} [get]
 func (h *CustomerHandler) GetWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	webhookID := c.Param("id")
@@ -211,6 +247,20 @@ func (h *CustomerHandler) GetWebhook(c *gin.Context) {
 }
 
 // UpdateWebhook handles PUT /webhooks/:id - updates a webhook endpoint.
+// @Tags Customer
+// @Summary Update webhook
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks/{id} [put]
 func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	webhookID := c.Param("id")
@@ -285,6 +335,18 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 }
 
 // DeleteWebhook handles DELETE /webhooks/:id - deletes a webhook endpoint.
+// @Tags Customer
+// @Summary Delete webhook
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks/{id} [delete]
 func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	webhookID := c.Param("id")
@@ -319,6 +381,18 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 }
 
 // ListWebhookDeliveries handles GET /webhooks/:id/deliveries - lists delivery attempts for a webhook.
+// @Tags Customer
+// @Summary List webhook deliveries
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Success 200 {object} models.ListResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks/{id}/deliveries [get]
 func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	webhookID := c.Param("id")
@@ -332,7 +406,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 	// Parse pagination
 	pagination := models.ParsePagination(c)
 
-	deliveries, total, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination.Page, pagination.PerPage)
+	deliveries, hasMore, lastID, err := h.webhookService.ListDeliveries(c.Request.Context(), webhookID, customerID, pagination)
 	if err != nil {
 		if errors.Is(err, services.ErrWebhookNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
@@ -355,7 +429,7 @@ func (h *CustomerHandler) ListWebhookDeliveries(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
@@ -369,6 +443,18 @@ type TestWebhookResponse struct {
 }
 
 // TestWebhook handles POST /webhooks/:id/test - sends a test payload to the webhook endpoint.
+// @Tags Customer
+// @Summary Test webhook
+// @Description Manages customer webhooks and delivery diagnostics.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Webhook ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/webhooks/{id}/test [post]
 func (h *CustomerHandler) TestWebhook(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	webhookID := c.Param("id")

@@ -4,9 +4,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // handleVMReinstall handles the VM reinstallation flow.
@@ -18,7 +20,7 @@ import (
 //  5. Regenerate cloud-init ISO
 //  6. Start VM and update database
 func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := deps.Logger.With("task_id", task.ID, "task_type", models.TaskTypeVMReinstall)
+	logger := taskLogger(deps.Logger, task)
 
 	// Step 1: Parse payload
 	var payload VMReinstallPayload
@@ -26,7 +28,6 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		logger.Error("failed to parse vm.reinstall payload", "error", err)
 		return fmt.Errorf("parsing vm.reinstall payload: %w", err)
 	}
-	logger = logger.With("vm_id", payload.VMID, "template_id", payload.TemplateID)
 	logger.Info("vm.reinstall task started")
 
 	// Step 2: Gather VM and template info
@@ -48,8 +49,12 @@ func handleVMReinstall(ctx context.Context, task *models.Task, deps *HandlerDeps
 		logger.Warn("failed to update task progress", "error", err)
 	}
 	if info.vm.Status != models.VMStatusReinstalling {
-		if err := deps.VMRepo.UpdateStatus(ctx, payload.VMID, models.VMStatusReinstalling); err != nil {
-			logger.Warn("failed to update VM status", "error", err)
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, info.vm.Status, models.VMStatusReinstalling); err != nil {
+			if errors.Is(err, sharederrors.ErrConflict) {
+				logger.Error("failed VM transition to reinstalling", "from_status", info.vm.Status, "error", err)
+				return fmt.Errorf("transitioning VM %s to reinstalling: %w", payload.VMID, err)
+			}
+			logger.Warn("failed to transition VM status", "error", err)
 		}
 	}
 	if err := stopVMForReinstall(ctx, deps, info, logger); err != nil {

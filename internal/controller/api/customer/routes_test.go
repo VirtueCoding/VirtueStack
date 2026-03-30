@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -437,6 +438,47 @@ func TestAllPermissionsNeeded(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusForbidden, w.Code, "Should not have permission %s", perm)
+		})
+	}
+}
+
+func TestRegisterAuthRoutes_SelfRegistrationToggle(t *testing.T) {
+	tests := []struct {
+		name              string
+		allowRegistration bool
+		wantRegister      bool
+		wantVerify        bool
+	}{
+		{
+			name:              "enabled registers self-registration endpoints",
+			allowRegistration: true,
+			wantRegister:      true,
+			wantVerify:        true,
+		},
+		{
+			name:              "disabled omits self-registration endpoints",
+			allowRegistration: false,
+			wantRegister:      false,
+			wantVerify:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			customerGroup := r.Group("/customer")
+			registerAuthRoutes(customerGroup, &CustomerHandler{}, tt.allowRegistration)
+
+			routes := r.Routes()
+			hasRegister := slices.ContainsFunc(routes, func(route gin.RouteInfo) bool {
+				return route.Method == http.MethodPost && route.Path == "/customer/auth/register"
+			})
+			hasVerify := slices.ContainsFunc(routes, func(route gin.RouteInfo) bool {
+				return route.Method == http.MethodPost && route.Path == "/customer/auth/verify-email"
+			})
+
+			assert.Equal(t, tt.wantRegister, hasRegister)
+			assert.Equal(t, tt.wantVerify, hasVerify)
 		})
 	}
 }

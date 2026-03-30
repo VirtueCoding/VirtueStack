@@ -106,6 +106,22 @@ func (r *NodeRepository) GetAllNodeIDs(ctx context.Context, ids []string) ([]str
 	return foundIDs, nil
 }
 
+// GetByIDs returns full node objects for all given IDs in a single query.
+// Missing IDs are silently skipped; callers should compare len(result) vs len(ids).
+func (r *NodeRepository) GetByIDs(ctx context.Context, ids []string) ([]models.Node, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE id = ANY($1)`
+	nodes, err := ScanRows(ctx, r.db, q, []any{ids}, func(rows pgx.Rows) (models.Node, error) {
+		return scanNode(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting nodes by IDs: %w", err)
+	}
+	return nodes, nil
+}
+
 // GetByHostname returns a node by its hostname. Returns ErrNotFound if no node matches.
 func (r *NodeRepository) GetByHostname(ctx context.Context, hostname string) (*models.Node, error) {
 	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE hostname = $1`
@@ -117,7 +133,7 @@ func (r *NodeRepository) GetByHostname(ctx context.Context, hostname string) (*m
 }
 
 // List returns all nodes with pagination and optional status filter.
-func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter) ([]models.Node, int, error) {
+func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter) ([]models.Node, bool, string, error) {
 	where := "1=1"
 	args := []any{}
 	idx := 1
@@ -133,24 +149,34 @@ func (r *NodeRepository) List(ctx context.Context, filter models.NodeListFilter)
 		idx++
 	}
 
-	total, err := CountRows(ctx, r.db, "SELECT COUNT(*) FROM nodes WHERE "+where, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting nodes: %w", err)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		where += fmt.Sprintf(" AND id < $%d", idx)
+		args = append(args, cp.LastID)
+		idx++
 	}
-
 	listQ := fmt.Sprintf(
-		"SELECT %s FROM nodes WHERE %s ORDER BY hostname ASC LIMIT $%d OFFSET $%d",
-		nodeSelectCols, where, idx, idx+1,
+		"SELECT %s FROM nodes WHERE %s ORDER BY id DESC LIMIT $%d",
+		nodeSelectCols, where, idx,
 	)
-	args = append(args, filter.Limit(), filter.Offset())
+	args = append(args, filter.PerPage+1)
 
 	nodes, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.Node, error) {
 		return scanNode(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing nodes: %w", err)
+		return nil, false, "", fmt.Errorf("listing nodes: %w", err)
 	}
-	return nodes, total, nil
+
+	hasMore := len(nodes) > filter.PerPage
+	if hasMore {
+		nodes = nodes[:filter.PerPage]
+	}
+	var lastID string
+	if len(nodes) > 0 {
+		lastID = nodes[len(nodes)-1].ID
+	}
+	return nodes, hasMore, lastID, nil
 }
 
 // ListByStatus returns all nodes matching the given status.

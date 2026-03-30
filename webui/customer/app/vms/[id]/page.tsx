@@ -12,17 +12,17 @@ import {
   Monitor,
   BarChart3,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+} from "@virtuestack/ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { ResourceCharts } from "@/components/charts/resource-charts";
 import { SerialConsole } from "@/components/serial-console/serial-console";
 import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot, ApiClientError } from "@/lib/api-client";

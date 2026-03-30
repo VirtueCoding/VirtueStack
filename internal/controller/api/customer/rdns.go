@@ -25,6 +25,18 @@ type RDNSResponse struct {
 
 // ListVMIPs handles GET /vms/:id/ips - lists all IP addresses for a VM with rDNS info.
 // Customers can only view IPs for their own VMs.
+// @Tags Customer
+// @Summary List VM IPs
+// @Description Lists IP addresses assigned to a customer VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/ips [get]
 func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -54,7 +66,7 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 	filter := repository.IPAddressListFilter{
 		VMID: &vmID,
 	}
-	ips, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
+	ips, _, _, err := h.ipRepo.ListIPAddresses(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list IPs for VM",
 			"vm_id", vmID,
@@ -67,12 +79,25 @@ func (h *CustomerHandler) ListVMIPs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: ips,
-		Meta: models.NewPaginationMeta(1, len(ips), len(ips)),
+		Meta: models.NewCursorPaginationMeta(len(ips), false, ""),
 	})
 }
 
 // GetRDNS handles GET /vms/:id/ips/:ipId/rdns - gets the rDNS for a specific IP.
 // Customers can only view rDNS for IPs assigned to their own VMs.
+// @Tags Customer
+// @Summary Get IP rDNS
+// @Description Retrieves reverse DNS entry for VM IP address.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/ips/{ipId}/rdns [get]
 func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -142,6 +167,22 @@ func (h *CustomerHandler) GetRDNS(c *gin.Context) {
 // UpdateRDNS handles PUT /vms/:id/ips/:ipId/rdns - updates the rDNS for a specific IP.
 // Customers can only update rDNS for IPs assigned to their own VMs.
 // Rate limited: 10 requests per hour per customer.
+// @Tags Customer
+// @Summary Update IP rDNS
+// @Description Updates reverse DNS entry for VM IP address.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Param request body object true "rDNS update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/ips/{ipId}/rdns [put]
 func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")
@@ -258,6 +299,19 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 
 // DeleteRDNS handles DELETE /vms/:id/ips/:ipId/rdns - removes the rDNS for a specific IP.
 // Customers can only delete rDNS for IPs assigned to their own VMs.
+// @Tags Customer
+// @Summary Delete IP rDNS
+// @Description Deletes reverse DNS entry for VM IP address.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Param ipId path string true "IP ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id}/ips/{ipId}/rdns [delete]
 func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

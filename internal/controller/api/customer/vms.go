@@ -3,6 +3,7 @@ package customer
 import (
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -12,11 +13,21 @@ import (
 
 // ListVMs handles GET /vms - lists all VMs owned by the authenticated customer.
 // Supports pagination via query parameters (page, per_page).
+// @Tags Customer
+// @Summary List VMs
+// @Description Lists VMs owned by the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.ListResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms [get]
 func (h *CustomerHandler) ListVMs(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
 	// Parse pagination
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	// Build filter with customer isolation
 	filter := models.VMListFilter{
@@ -52,7 +63,7 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 		filter.Search = &search
 	}
 
-	vms, total, err := h.vmService.ListVMs(c.Request.Context(), filter, customerID, false)
+	vms, hasMore, lastID, err := h.vmService.ListVMs(c.Request.Context(), filter, customerID, false)
 	if err != nil {
 		h.logger.Error("failed to list VMs",
 			"customer_id", customerID,
@@ -64,12 +75,24 @@ func (h *CustomerHandler) ListVMs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: vms,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // GetVM handles GET /vms/:id - retrieves details for a specific VM.
 // Enforces customer isolation - returns 404 if VM doesn't belong to customer.
+// @Tags Customer
+// @Summary Get VM
+// @Description Returns VM details for a customer-owned VM.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/customer/vms/{id} [get]
 func (h *CustomerHandler) GetVM(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	vmID := c.Param("id")

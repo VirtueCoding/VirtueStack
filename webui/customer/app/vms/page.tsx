@@ -2,16 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Play, Square, RotateCw, Server, Loader2, Search } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Play, Square, RotateCw, Server, Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+} from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -27,9 +27,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/use-toast";
-import { Input } from "@/components/ui/input";
+} from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { vmApi, VM } from "@/lib/api-client";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 import { useVMAction } from "@/lib/hooks/useVMAction";
@@ -44,10 +44,18 @@ export default function VMsPage() {
   const [searchTerm, setSearchTerm] = useState(searchFromUrl);
   const { executeAction, isVMLoading } = useVMAction();
 
+  const PAGE_SIZE = 20;
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
+
   const fetchVMs = useCallback(async () => {
     try {
-      const data = await vmApi.getVMs();
-      setVms(data);
+      const response = await vmApi.getVMs({ perPage: PAGE_SIZE, cursor: currentCursor });
+      setVms(response.data || []);
+      setNextCursor(response.meta?.next_cursor ?? undefined);
+      setHasMore(response.meta?.has_more ?? false);
     } catch (error) {
       toast({
         title: "Error",
@@ -57,7 +65,7 @@ export default function VMsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [toast, currentCursor]);
 
   useEffect(() => {
     fetchVMs();
@@ -112,6 +120,22 @@ export default function VMsPage() {
           vm.ipv4?.toLowerCase().includes(searchTerm.toLowerCase())
       )
     : vms;
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
+  };
 
   if (isLoading) {
     return (
@@ -270,6 +294,33 @@ export default function VMsPage() {
               ))}
             </TableBody>
           </Table>
+          {(cursorStack.length > 0 || hasMore) && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Showing {filteredVMs.length} items
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrevPage}
+                  disabled={cursorStack.length === 0 || isLoading}
+                >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleNextPage}
+                  disabled={!hasMore || isLoading}
+                >
+                  Next
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -3,25 +3,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { Eye, GitBranch, Loader2, RefreshCw } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import { Label } from "@virtuestack/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@virtuestack/ui";
 import {
   Table,
   TableBody,
@@ -29,8 +29,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/use-toast";
+} from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import {
   adminFailoverRequestsApi,
   type FailoverRequest,
@@ -75,18 +75,21 @@ export default function FailoverRequestsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [nodeFilter, setNodeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>("all");
-  const [page, setPage] = useState(1);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
     try {
+      const currentCursor = cursorStack.length > 0 ? cursorStack[cursorStack.length - 1] : undefined;
       const data = await adminFailoverRequestsApi.getFailoverRequests({
-        page,
         per_page: 20,
+        cursor: currentCursor,
         node_id: nodeFilter.trim() || undefined,
         status: statusFilter === "all" ? undefined : statusFilter,
       });
       setResponse(data);
+      setNextCursor(data.meta.next_cursor);
     } catch (error) {
       toast({
         title: "Error",
@@ -96,7 +99,7 @@ export default function FailoverRequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [nodeFilter, page, statusFilter, toast]);
+  }, [nodeFilter, cursorStack, statusFilter, toast]);
 
   useEffect(() => {
     loadRequests();
@@ -121,7 +124,8 @@ export default function FailoverRequestsPage() {
 
   const handleStatusChange = (value: (typeof statusOptions)[number]) => {
     setStatusFilter(value);
-    setPage(1);
+    setCursorStack([]);
+    setNextCursor(undefined);
   };
 
   const requests = response?.data || [];
@@ -170,7 +174,7 @@ export default function FailoverRequestsPage() {
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Current page</CardTitle>
               <CardDescription>
-                {meta?.total ?? 0} request{meta?.total === 1 ? "" : "s"} matched the current filters.
+                Showing results for the current filters.
               </CardDescription>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
@@ -198,7 +202,8 @@ export default function FailoverRequestsPage() {
                   value={nodeFilter}
                   onChange={(event) => {
                     setNodeFilter(event.target.value);
-                    setPage(1);
+                    setCursorStack([]);
+                    setNextCursor(undefined);
                   }}
                   placeholder="Optional node UUID"
                 />
@@ -286,15 +291,12 @@ export default function FailoverRequestsPage() {
               </Table>
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">
-                {meta ? `Page ${meta.page} of ${meta.total_pages} • ${meta.total} total request${meta.total === 1 ? "" : "s"}` : ""}
-              </p>
+            <div className="flex items-center justify-end gap-4">
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={!meta || meta.page <= 1}>
+                <Button variant="outline" onClick={() => setCursorStack((s) => s.slice(0, -1))} disabled={cursorStack.length === 0}>
                   Previous
                 </Button>
-                <Button variant="outline" onClick={() => setPage((current) => current + 1)} disabled={!meta || meta.page >= meta.total_pages}>
+                <Button variant="outline" onClick={() => { if (nextCursor) setCursorStack((s) => [...s, nextCursor]); }} disabled={!nextCursor}>
                   Next
                 </Button>
               </div>

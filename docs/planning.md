@@ -14,13 +14,13 @@
 
 #### 1a. Database Migration — Status Constraint
 
-- [ ] Create migration `migrations/000066_vm_state_machine.up.sql`:
+- [x] Create migration `migrations/000066_vm_state_machine.up.sql`:
   ```sql
   SET lock_timeout = '5s';
   ALTER TABLE vms ADD CONSTRAINT vms_status_check
     CHECK (status IN ('provisioning','running','stopped','suspended','migrating','reinstalling','error','deleted'));
   ```
-- [ ] Create matching `migrations/000066_vm_state_machine.down.sql`:
+- [x] Create matching `migrations/000066_vm_state_machine.down.sql`:
   ```sql
   SET lock_timeout = '5s';
   ALTER TABLE vms DROP CONSTRAINT IF EXISTS vms_status_check;
@@ -28,7 +28,7 @@
 
 #### 1b. Transition Map in Models
 
-- [ ] In `internal/controller/models/vm.go`, add a `ValidVMTransitions` map after the status constants (around line 16):
+- [x] In `internal/controller/models/vm.go`, add a `ValidVMTransitions` map after the status constants (around line 16):
   ```go
   var ValidVMTransitions = map[string][]string{
       VMStatusProvisioning: {VMStatusRunning, VMStatusError},
@@ -40,12 +40,12 @@
       VMStatusError:        {VMStatusStopped, VMStatusDeleted},
   }
   ```
-- [ ] Add a `ValidateVMTransition(from, to string) error` function that checks the map and returns `sharederrors.ErrConflict` if the transition is invalid
-- [ ] Add unit tests in `internal/controller/models/vm_test.go` — table-driven tests covering every valid transition and a set of invalid transitions (e.g., `deleted → running`, `error → running`, `provisioning → deleted`)
+- [x] Add a `ValidateVMTransition(from, to string) error` function that checks the map and returns `sharederrors.ErrConflict` if the transition is invalid
+- [x] Add unit tests in `internal/controller/models/vm_test.go` — table-driven tests covering every valid transition and a set of invalid transitions (e.g., `deleted → running`, `error → running`, `provisioning → deleted`)
 
 #### 1c. Repository — Atomic Transition Method
 
-- [ ] In `internal/controller/repository/vm_repo.go`, add a `TransitionStatus` method:
+- [x] In `internal/controller/repository/vm_repo.go`, add a `TransitionStatus` method:
   ```go
   func (r *VMRepository) TransitionStatus(ctx context.Context, vmID, fromStatus, toStatus string) error {
       if err := models.ValidateVMTransition(fromStatus, toStatus); err != nil {
@@ -64,12 +64,12 @@
       return nil
   }
   ```
-- [ ] Keep the existing `UpdateStatus` method for backward compatibility but add a deprecation comment pointing to `TransitionStatus`
-- [ ] Add unit tests for `TransitionStatus` in `internal/controller/repository/vm_repo_test.go` — test successful transition, test wrong-state rejection (0 rows affected), test invalid transition pair
+- [x] Keep the existing `UpdateStatus` method for backward compatibility but add a deprecation comment pointing to `TransitionStatus`
+- [x] Add unit tests for `TransitionStatus` in `internal/controller/repository/vm_repo_test.go` — test successful transition, test wrong-state rejection (0 rows affected), test invalid transition pair
 
 #### 1d. Migrate Call Sites to TransitionStatus
 
-- [ ] Audit all callers of `UpdateStatus` or `UpdateVMStatus` across the codebase. Key files:
+- [x] Audit all callers of `UpdateStatus` or `UpdateVMStatus` across the codebase. Key files:
   - `internal/controller/tasks/handlers_vm_create.go` — provisioning → running, provisioning → error
   - `internal/controller/tasks/handlers_vm_delete.go` — * → deleted
   - `internal/controller/tasks/vm_resize.go` — stopped → stopped (after resize)
@@ -77,9 +77,9 @@
   - `internal/controller/tasks/migration_execute.go` — migrating → running, migrating → error
   - `internal/controller/services/vm_service.go` — start/stop/restart/suspend/unsuspend transitions
   - `internal/controller/api/provisioning/vms.go` — suspend/unsuspend calls
-- [ ] Replace each `UpdateStatus(ctx, vmID, newStatus)` call with `TransitionStatus(ctx, vmID, currentStatus, newStatus)`, passing the expected current status
-- [ ] For each call site, handle the `ErrConflict` error appropriately (log + return error, do not silently ignore)
-- [ ] Run `make test-race` to verify no regressions
+- [x] Replace each `UpdateStatus(ctx, vmID, newStatus)` call with `TransitionStatus(ctx, vmID, currentStatus, newStatus)`, passing the expected current status
+- [x] For each call site, handle the `ErrConflict` error appropriately (log + return error, do not silently ignore)
+- [x] Run `make test-race` to verify no regressions
 
 ---
 
@@ -89,7 +89,7 @@
 
 #### 2a. Compensation Stack Helper
 
-- [ ] Create `internal/controller/tasks/cleanup.go` with a compensation stack type:
+- [x] Create `internal/controller/tasks/cleanup.go` with a compensation stack type:
   ```go
   type CompensationStack struct {
       steps  []CompensationStep
@@ -107,21 +107,21 @@
       // Execute in reverse order, log each error but continue
   }
   ```
-- [ ] Add unit tests in `internal/controller/tasks/cleanup_test.go` — test rollback order (LIFO), test that cleanup errors are logged but don't block subsequent cleanups, test empty stack rollback is a no-op
+- [x] Add unit tests in `internal/controller/tasks/cleanup_test.go` — test rollback order (LIFO), test that cleanup errors are logged but don't block subsequent cleanups, test empty stack rollback is a no-op
 
 #### 2b. Refactor VM Create Handler
 
-- [ ] In `internal/controller/tasks/handlers_vm_create.go`, refactor the handler to use the compensation stack:
+- [x] In `internal/controller/tasks/handlers_vm_create.go`, refactor the handler to use the compensation stack:
   - After successful disk clone: `stack.Push("delete-disk", func(ctx) { nodeClient.DeleteDisk(...) })`
   - After successful cloud-init: `stack.Push("delete-cloudinit", func(ctx) { ... })`
   - After successful IP allocation: `stack.Push("release-ips", func(ctx) { ipRepo.ReleaseIPsByVM(...) })`
   - After successful VM creation via gRPC: `stack.Push("delete-vm", func(ctx) { nodeClient.DeleteVM(...) })`
   - After successful VM start: `stack.Push("stop-vm", func(ctx) { nodeClient.ForceStopVM(...) })`
   - On any step failure: `stack.Rollback(ctx)` then set VM status to error via `TransitionStatus`
-- [ ] Ensure cleanup for **StartVM failure** now includes: force-stop VM, delete VM definition, delete disk, release IPs
-- [ ] Ensure cleanup for **MAC address update failure** includes rollback to consistent state
-- [ ] Ensure cleanup for **status update to running failure** logs the inconsistency clearly (VM is actually running but DB says provisioning)
-- [ ] Run `make test-race` to verify no regressions
+- [x] Ensure cleanup for **StartVM failure** now includes: force-stop VM, delete VM definition, delete disk, release IPs
+- [x] Ensure cleanup for **MAC address update failure** includes rollback to consistent state
+- [x] Ensure cleanup for **status update to running failure** logs the inconsistency clearly (VM is actually running but DB says provisioning)
+- [x] Run `make test-race` to verify no regressions
 
 ---
 
@@ -133,7 +133,7 @@
 
 #### 4a. Task Recovery Scanner
 
-- [ ] In `internal/controller/tasks/worker.go`, add a `StartStuckTaskScanner` method on the `Worker` struct:
+- [x] In `internal/controller/tasks/worker.go`, add a `StartStuckTaskScanner` method on the `Worker` struct:
   ```go
   func (w *Worker) StartStuckTaskScanner(ctx context.Context, interval time.Duration, stuckThreshold time.Duration) {
       ticker := time.NewTicker(interval)
@@ -148,26 +148,26 @@
       }
   }
   ```
-- [ ] Implement `recoverStuckTasks` — query for tasks where `status = 'running' AND started_at < NOW() - $1` (parameterized threshold), check retry count, either reset to `pending` (if retries < max) or mark `failed` with error message `"stuck task recovered after timeout"`
-- [ ] Add a `task_repo` method `FindStuckTasks(ctx, threshold time.Duration) ([]*models.Task, error)` and `ResetTask(ctx, taskID string) error` in `internal/controller/repository/task_repo.go`
-- [ ] Add a `retry_count` column if not present (check current schema) or use the existing `attempts` field
+- [x] Implement `recoverStuckTasks` — query for tasks where `status = 'running' AND started_at < NOW() - $1` (parameterized threshold), check retry count, either reset to `pending` (if retries < max) or mark `failed` with error message `"stuck task recovered after timeout"`
+- [x] Add a `task_repo` method `FindStuckTasks(ctx, threshold time.Duration) ([]*models.Task, error)` and `ResetTask(ctx, taskID string) error` in `internal/controller/repository/task_repo.go`
+- [x] Add a `retry_count` column if not present (check current schema) or use the existing `attempts` field
 
 #### 4b. Wire Scanner into Controller Startup
 
-- [ ] In `internal/controller/server.go` (in `StartSchedulers` method), start the stuck-task scanner as a background goroutine:
+- [x] In `internal/controller/server.go` (in `StartSchedulers` method), start the stuck-task scanner as a background goroutine:
   ```go
   go w.StartStuckTaskScanner(ctx, 5*time.Minute, 30*time.Minute)
   ```
-- [ ] Ensure the scanner respects the server's context for graceful shutdown
+- [x] Ensure the scanner respects the server's context for graceful shutdown
 
 #### 4c. Tests
 
-- [ ] Add unit tests in `internal/controller/tasks/worker_test.go` (or new `stuck_task_scanner_test.go`):
+- [x] Add unit tests in `internal/controller/tasks/worker_test.go` (or new `stuck_task_scanner_test.go`):
   - Test: task stuck for 30+ minutes is reset to pending
   - Test: task stuck but under threshold is left alone
   - Test: task at max retries is marked failed instead of reset
   - Test: scanner handles empty result set gracefully
-- [ ] Run `make test-race`
+- [x] Run `make test-race`
 
 ---
 
@@ -177,13 +177,13 @@
 
 > **Current state:** `middleware.PasswordResetRateLimit()` is already applied to both `/auth/forgot-password` and `/auth/reset-password` routes in `internal/controller/api/customer/routes.go`.
 
-- [ ] Verify the rate limits in `internal/controller/api/middleware/rate_limit.go` — confirm `PasswordResetRateLimit()` enforces per-email AND per-IP limits (audit recommends: 3 requests/hour per email, 10 requests/hour per IP)
-- [ ] If the current rate limiter only uses IP-based limiting, add email-based limiting:
+- [x] Verify the rate limits in `internal/controller/api/middleware/rate_limit.go` — confirm `PasswordResetRateLimit()` enforces per-email AND per-IP limits (audit recommends: 3 requests/hour per email, 10 requests/hour per IP)
+- [x] If the current rate limiter only uses IP-based limiting, add email-based limiting:
   - Extract the email from the request body in the forgot-password handler
   - Apply a separate rate limit key using `email:<normalized_email>` in addition to IP
-- [ ] If limits are already adequate, add a comment documenting the rationale and mark this gap as addressed
-- [ ] Add or verify unit tests for the rate limiter covering: rate exceeded returns 429, rate not exceeded proceeds, different emails have independent limits
-- [ ] Run `make test-race`
+- [x] If limits are already adequate, add a comment documenting the rationale and mark this gap as addressed
+- [x] Add or verify unit tests for the rate limiter covering: rate exceeded returns 429, rate not exceeded proceeds, different emails have independent limits
+- [x] Run `make test-race`
 
 ---
 
@@ -195,14 +195,14 @@
 
 #### 3a. Install swag
 
-- [ ] Add `github.com/swaggo/swag` and `github.com/swaggo/gin-swagger` to `go.mod`:
+- [x] Add `github.com/swaggo/swag` and `github.com/swaggo/gin-swagger` to `go.mod`:
   ```bash
   go get github.com/swaggo/swag/v2/cmd/swag@latest
   go get github.com/swaggo/gin-swagger
   go get github.com/swaggo/files
   ```
-- [ ] Add `swag init` command to `Makefile` (e.g., `make swagger`)
-- [ ] Add general API info annotation in `cmd/controller/main.go`:
+- [x] Add `swag init` command to `Makefile` (e.g., `make swagger`)
+- [x] Add general API info annotation in `cmd/controller/main.go`:
   ```go
   // @title VirtueStack API
   // @version 1.0
@@ -217,7 +217,7 @@
 
 #### 3b. Annotate Admin API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/admin/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/admin/`:
   - `auth.go` — Login, Verify2FA, Refresh, Logout
   - `nodes.go` — CRUD + Drain/Undrain/Failover
   - `vms.go` — CRUD + Migrate
@@ -236,7 +236,7 @@
 
 #### 3c. Annotate Customer API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/customer/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/customer/`:
   - `auth.go`, `auth_password_reset.go` — Auth flows
   - `vms.go` — List, Get, Power operations
   - `backups.go`, `snapshots.go` — CRUD
@@ -250,7 +250,7 @@
 
 #### 3d. Annotate Provisioning API Handlers
 
-- [ ] Add swag annotations to all handlers in `internal/controller/api/provisioning/`:
+- [x] Add swag annotations to all handlers in `internal/controller/api/provisioning/`:
   - `vms.go` — Create, Get, Delete, Suspend, Unsuspend, Resize, Password, Power, Status
   - `usage.go` — GetUsage
   - `tasks.go` — GetTask
@@ -258,14 +258,14 @@
 
 #### 3e. Generate and Serve
 
-- [ ] Run `swag init` to generate `docs/swagger.json` and `docs/swagger.yaml`
-- [ ] Add Swagger UI route in `internal/controller/server.go` (admin-only, behind auth):
+- [x] Run `swag init` to generate `docs/swagger.json` and `docs/swagger.yaml`
+- [x] Add Swagger UI route in `internal/controller/server.go` (admin-only, behind auth):
   ```go
   router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
   ```
-- [ ] Add generated swagger files to `.gitignore` or commit them (team decision — document choice)
-- [ ] Verify generated spec covers all 130+ endpoints by running `swag init` and inspecting output
-- [ ] Run `make build` to ensure annotations don't break compilation
+- [x] Add generated swagger files to `.gitignore` or commit them (team decision — document choice)
+- [x] Verify generated spec covers all 130+ endpoints by running `swag init` and inspecting output
+- [x] Run `make build` to ensure annotations don't break compilation
 
 ---
 
@@ -273,12 +273,12 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1 day | **Dependencies:** None (parallel with #3)
 
-- [ ] Create `internal/controller/dependencies.go` — move `InitializeServices()` and all repository/service construction logic from `server.go`
-- [ ] Create `internal/controller/schedulers.go` — move `StartSchedulers()`, `startMetricsCollector()`, `startBandwidthCollector()`, `startSessionCleanup()`, `collectControllerMetrics()`, `collectBandwidth()` from `server.go`
-- [ ] Create `internal/controller/response.go` — move `healthHandler()`, `readinessHandler()`, and `requestLogger()` from `server.go`
-- [ ] Keep in `server.go`: `Server` struct definition, `NewServer()`, `Start()`, `Stop()`, `setupRoutes()`, `RegisterAPIRoutes()`, and setter methods
-- [ ] Verify all files are in `package controller` and all methods still reference the `Server` struct correctly
-- [ ] Run `make build-controller && make test-race` to confirm no regressions
+- [x] Create `internal/controller/dependencies.go` — move `InitializeServices()` and all repository/service construction logic from `server.go`
+- [x] Create `internal/controller/schedulers.go` — move `StartSchedulers()`, `startMetricsCollector()`, `startBandwidthCollector()`, `startSessionCleanup()`, `collectControllerMetrics()`, `collectBandwidth()` from `server.go`
+- [x] Create `internal/controller/response.go` — move `healthHandler()`, `readinessHandler()`, and `requestLogger()` from `server.go`
+- [x] Keep in `server.go`: `Server` struct definition, `NewServer()`, `Start()`, `Stop()`, `setupRoutes()`, `RegisterAPIRoutes()`, and setter methods
+- [x] Verify all files are in `package controller` and all methods still reference the `Server` struct correctly
+- [x] Run `make build-controller && make test-race` to confirm no regressions
 
 ---
 
@@ -286,13 +286,13 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1 day | **Dependencies:** None (parallel with #6)
 
-- [ ] Create `internal/controller/services/node_agent_vm.go` — move VM power operations (`StartVM`, `StopVM`, `ForceStopVM`, `DeleteVM`), VM creation (`CreateVM`), VM metrics (`GetVMMetrics`, `GetVMStatus`), and cloud-init (`GenerateCloudInit`)
-- [ ] Create `internal/controller/services/node_agent_storage.go` — move disk operations (`DeleteDisk`, `DeleteDiskSnapshot`, `CloneFromBackup`, `CloneFromTemplate`), snapshot operations (`CreateSnapshot`, `DeleteSnapshot`, `RestoreSnapshot`)
-- [ ] Create `internal/controller/services/node_agent_network.go` — move bandwidth operations if any exist in this file, and network-related gRPC calls
-- [ ] Create `internal/controller/services/node_agent_migration.go` — move `MigrateVM`, `AbortMigration`, `PostMigrateSetup`, `EvacuateNode`
-- [ ] Keep in `node_agent_client.go`: struct definition, constructor, connection pool management, metrics cache, `GetNodeMetrics`, `PingNode`, `GetNodeResources`
-- [ ] Verify all files are in `package services` and share the `NodeAgentGRPCClient` receiver
-- [ ] Run `make build-controller && make test-race`
+- [x] Create `internal/controller/services/node_agent_vm.go` — move VM power operations (`StartVM`, `StopVM`, `ForceStopVM`, `DeleteVM`), VM creation (`CreateVM`), VM metrics (`GetVMMetrics`, `GetVMStatus`), and cloud-init (`GenerateCloudInit`)
+- [x] Create `internal/controller/services/node_agent_storage.go` — move disk operations (`DeleteDisk`, `DeleteDiskSnapshot`, `CloneFromBackup`, `CloneFromTemplate`), snapshot operations (`CreateSnapshot`, `DeleteSnapshot`, `RestoreSnapshot`)
+- [x] Create `internal/controller/services/node_agent_network.go` — move bandwidth operations if any exist in this file, and network-related gRPC calls
+- [x] Create `internal/controller/services/node_agent_migration.go` — move `MigrateVM`, `AbortMigration`, `PostMigrateSetup`, `EvacuateNode`
+- [x] Keep in `node_agent_client.go`: struct definition, constructor, connection pool management, metrics cache, `GetNodeMetrics`, `PingNode`, `GetNodeResources`
+- [x] Verify all files are in `package services` and share the `NodeAgentGRPCClient` receiver
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -302,17 +302,17 @@
 
 #### backup_service.go Split
 
-- [ ] Create `internal/controller/services/backup_create_service.go` — move `CreateBackup`, `CreateBackupWithLimitCheck`, `createQCOWBackup`, `createCephBackup`
-- [ ] Create `internal/controller/services/backup_restore_service.go` — move `RestoreBackup`
-- [ ] Create `internal/controller/services/backup_scheduler_service.go` — move `StartScheduler`, `runSchedulerTick`, `processVMsForBackup`, `shouldBackupVM`, `scheduleBackupForVM`, `CreateSchedule`, `ListSchedules`, `ListSchedulesPaginated`, `UpdateSchedule`, `DeleteSchedule`, `ApplyRetentionPolicy`, `ProcessExpiredBackups`
-- [ ] Keep in `backup_service.go`: struct definition, constructor, simple CRUD (`ListBackups`, `ListBackupsWithFilter`, `DeleteBackup`), snapshot methods (`CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `GetSnapshotCount`, `CheckSnapshotQuota`, async snapshot methods)
+- [x] Create `internal/controller/services/backup_create_service.go` — move `CreateBackup`, `CreateBackupWithLimitCheck`, `createQCOWBackup`, `createCephBackup`
+- [x] Create `internal/controller/services/backup_restore_service.go` — move `RestoreBackup`
+- [x] Create `internal/controller/services/backup_scheduler_service.go` — move `StartScheduler`, `runSchedulerTick`, `processVMsForBackup`, `shouldBackupVM`, `scheduleBackupForVM`, `CreateSchedule`, `ListSchedules`, `ListSchedulesPaginated`, `UpdateSchedule`, `DeleteSchedule`, `ApplyRetentionPolicy`, `ProcessExpiredBackups`
+- [x] Keep in `backup_service.go`: struct definition, constructor, simple CRUD (`ListBackups`, `ListBackupsWithFilter`, `DeleteBackup`), snapshot methods (`CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `GetSnapshotCount`, `CheckSnapshotQuota`, async snapshot methods)
 
 #### vm_service.go Split
 
-- [ ] Create `internal/controller/services/vm_power_service.go` — move `StartVM`, `StopVM`, `RestartVM`, `ForceStopVM`, and any suspend/unsuspend methods
-- [ ] Keep in `vm_service.go`: struct definition, constructor, `CreateVM`, `DeleteVM`, `ReinstallVM`, `ResizeVM`, `ResizeVMWithPlan`, `GetVM`, `ListVMs`, `GetVMMetrics`, `GetVMStatus`, `GetVMDetail`, `UpdateVMHostname`, `UpdateVMNetworkLimits`, `GetTaskStatus`, `ListTasks`, and internal helpers
+- [x] Create `internal/controller/services/vm_power_service.go` — move `StartVM`, `StopVM`, `RestartVM`, `ForceStopVM`, and any suspend/unsuspend methods
+- [x] Keep in `vm_service.go`: struct definition, constructor, `CreateVM`, `DeleteVM`, `ReinstallVM`, `ResizeVM`, `ResizeVMWithPlan`, `GetVM`, `ListVMs`, `GetVMMetrics`, `GetVMStatus`, `GetVMDetail`, `UpdateVMHostname`, `UpdateVMNetworkLimits`, `GetTaskStatus`, `ListTasks`, and internal helpers
 
-- [ ] Run `make build-controller && make test-race`
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -320,13 +320,13 @@
 
 **Priority:** 🟡 Medium | **Effort:** 0.5 day | **Dependencies:** None (CI-only)
 
-- [ ] Create `buf.yaml` in the repository root:
+- [x] Create `buf.yaml` in the repository root:
   ```yaml
   version: v2
   modules:
     - path: proto
   ```
-- [ ] Create `buf.gen.yaml`:
+- [x] Create `buf.gen.yaml`:
   ```yaml
   version: v2
   plugins:
@@ -337,7 +337,7 @@
       out: internal/shared/proto
       opt: paths=source_relative
   ```
-- [ ] Add `buf-breaking` step to `.github/workflows/ci.yml`:
+- [x] Add `buf-breaking` step to `.github/workflows/ci.yml`:
   ```yaml
   - name: Install buf
     uses: bufbuild/buf-setup-action@v1
@@ -346,8 +346,8 @@
     with:
       against: 'https://github.com/AbuGosok/VirtueStack.git#branch=main'
   ```
-- [ ] Test locally: `buf breaking --against .git#branch=main`
-- [ ] Document in `AGENTS.md` that `buf breaking` is now part of CI
+- [x] Test locally: `buf breaking --against .git#branch=main`
+- [x] Document in `AGENTS.md` that `buf breaking` is now part of CI
 
 ---
 
@@ -357,8 +357,8 @@
 
 > **Note:** `internal/nodeagent/vm/domain_xml_test.go` already exists. This gap adds golden-file (snapshot) tests.
 
-- [ ] Create `internal/nodeagent/vm/testdata/` directory for golden XML files
-- [ ] Create golden-file test helper in `internal/nodeagent/vm/domain_xml_test.go`:
+- [x] Create `internal/nodeagent/vm/testdata/` directory for golden XML files
+- [x] Create golden-file test helper in `internal/nodeagent/vm/domain_xml_test.go`:
   ```go
   func goldenTest(t *testing.T, name string, got string) {
       t.Helper()
@@ -372,7 +372,7 @@
       assert.Equal(t, string(expected), got)
   }
   ```
-- [ ] Add golden-file test cases covering:
+- [x] Add golden-file test cases covering:
   - Ceph RBD disk configuration
   - QCOW2 disk configuration
   - LVM disk configuration
@@ -380,9 +380,9 @@
   - VM without ISO
   - Multiple NIC configurations
   - Various CPU/memory configurations
-- [ ] Generate initial golden files: `UPDATE_GOLDEN=1 go test ./internal/nodeagent/vm/...`
-- [ ] Commit the `testdata/*.golden.xml` files
-- [ ] Run `make test-native` (or the node-agent tests) to verify tests pass
+- [x] Generate initial golden files: `UPDATE_GOLDEN=1 go test ./internal/nodeagent/vm/...`
+- [x] Commit the `testdata/*.golden.xml` files
+- [x] Run `make test-native` (or the node-agent tests) to verify tests pass
 
 ---
 
@@ -392,20 +392,20 @@
 
 #### 15a. Add Dependency
 
-- [ ] Add squirrel to `go.mod`:
+- [x] Add squirrel to `go.mod`:
   ```bash
   go get github.com/Masterminds/squirrel
   ```
 
 #### 15b. Migrate Repository Methods
 
-- [ ] Identify repository methods with manual SQL string building (conditional WHERE clauses):
+- [x] Identify repository methods with manual SQL string building (conditional WHERE clauses):
   - `internal/controller/repository/vm_repo.go` — `List` method with `VMListFilter`
   - `internal/controller/repository/backup_repo.go` — `List` methods with filters
   - `internal/controller/repository/task_repo.go` — `List` method with filters
   - `internal/controller/repository/audit_log_repo.go` — `List` method with filters
   - `internal/controller/repository/ip_address_repo.go` — filtered queries
-- [ ] For each method, replace manual SQL concatenation with squirrel:
+- [x] For each method, replace manual SQL concatenation with squirrel:
   ```go
   q := sq.Select(vmColumns...).From("vms").PlaceholderFormat(sq.Dollar)
   if filter.CustomerID != nil {
@@ -416,8 +416,8 @@
   }
   sql, args, err := q.ToSql()
   ```
-- [ ] Keep simple single-table queries (GetByID, Create, Update) as raw SQL — no need to convert those
-- [ ] Run `make build-controller && make test-race` after each repository migration
+- [x] Keep simple single-table queries (GetByID, Create, Update) as raw SQL — no need to convert those
+- [x] Run `make build-controller && make test-race` after each repository migration
 
 ---
 
@@ -429,7 +429,7 @@
 
 #### 11a. System Event Types
 
-- [ ] In `internal/controller/models/webhook.go` (or new file `system_events.go`), define system event types:
+- [x] In `internal/controller/models/webhook.go` (or new file `system_events.go`), define system event types:
   ```go
   const (
       SystemEventNodeOffline       = "system.node.offline"
@@ -444,7 +444,7 @@
 
 #### 11b. System Webhook Configuration
 
-- [ ] Create migration `migrations/000067_system_webhooks.up.sql`:
+- [x] Create migration `migrations/000067_system_webhooks.up.sql`:
   ```sql
   SET lock_timeout = '5s';
   CREATE TABLE system_webhooks (
@@ -459,31 +459,31 @@
   );
   CREATE INDEX idx_system_webhooks_active ON system_webhooks (is_active) WHERE is_active = true;
   ```
-- [ ] Create matching down migration
+- [x] Create matching down migration
 
 #### 11c. System Event Publisher
 
-- [ ] Create `internal/controller/services/system_event_service.go`:
+- [x] Create `internal/controller/services/system_event_service.go`:
   - `PublishSystemEvent(ctx, eventType string, payload map[string]any)` — publishes to NATS subject `virtuestack.events.system.*` and triggers system webhook delivery
   - Query active system webhooks matching the event type
   - Queue webhook delivery tasks via NATS
 
 #### 11d. Wire Events into Existing Services
 
-- [ ] In `internal/controller/services/heartbeat_checker.go` — publish `system.node.offline` when a node misses heartbeat threshold
-- [ ] In `internal/controller/services/failover_service.go` — publish `system.failover.triggered` and `system.failover.completed`
-- [ ] In storage health monitoring — publish `system.storage.warning` / `system.storage.critical` when thresholds exceeded
+- [x] In `internal/controller/services/heartbeat_checker.go` — publish `system.node.offline` when a node misses heartbeat threshold
+- [x] In `internal/controller/services/failover_service.go` — publish `system.failover.triggered` and `system.failover.completed`
+- [x] In storage health monitoring — publish `system.storage.warning` / `system.storage.critical` when thresholds exceeded
 
 #### 11e. Admin API for System Webhooks
 
-- [ ] Add CRUD endpoints in `internal/controller/api/admin/system_webhooks.go`:
+- [x] Add CRUD endpoints in `internal/controller/api/admin/system_webhooks.go`:
   - `GET /admin/system-webhooks`
   - `POST /admin/system-webhooks`
   - `PUT /admin/system-webhooks/:id`
   - `DELETE /admin/system-webhooks/:id`
-- [ ] Register routes in `internal/controller/api/admin/routes.go`
-- [ ] Add repository methods in `internal/controller/repository/system_webhook_repo.go`
-- [ ] Run `make build-controller && make test-race`
+- [x] Register routes in `internal/controller/api/admin/routes.go`
+- [x] Add repository methods in `internal/controller/repository/system_webhook_repo.go`
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -493,7 +493,7 @@
 
 #### 12a. NATS Event Publishing
 
-- [ ] Create `internal/controller/services/event_bus.go`:
+- [x] Create `internal/controller/services/event_bus.go`:
   ```go
   type EventBus struct {
       js     nats.JetStreamContext
@@ -504,7 +504,7 @@
       // Publish to NATS subject like "virtuestack.events.vm.created"
   }
   ```
-- [ ] Create NATS stream for events in worker initialization:
+- [x] Create NATS stream for events in worker initialization:
   ```go
   js.AddStream(&nats.StreamConfig{
       Name:     "EVENTS",
@@ -515,21 +515,21 @@
 
 #### 12b. Publish Events from Services
 
-- [ ] Add event publishing to key service methods:
+- [x] Add event publishing to key service methods:
   - `vm_service.go` — `virtuestack.events.vm.created`, `vm.started`, `vm.stopped`, `vm.deleted`, `vm.migrated`
   - `backup_service.go` — `virtuestack.events.backup.created`, `backup.restored`, `backup.deleted`
   - `services/auth_service.go` — `virtuestack.events.customer.login`
 
 #### 12c. Pre-Action Webhook
 
-- [ ] Add `pre_action_webhooks` table via migration (URL, events, timeout, fail_open flag)
-- [ ] Implement synchronous webhook call before VM creation:
+- [x] Add `pre_action_webhooks` table via migration (URL, events, timeout, fail_open flag)
+- [x] Implement synchronous webhook call before VM creation:
   - HTTP POST to webhook URL with action payload
   - 5-second timeout, fail-open by default (if webhook unreachable, proceed)
   - If webhook returns `{"approved": false}`, reject the request with 403
-- [ ] Wire into `vm_service.go` `CreateVM` before task publishing
-- [ ] Add admin API endpoints for managing pre-action webhooks
-- [ ] Run `make build-controller && make test-race`
+- [x] Wire into `vm_service.go` `CreateVM` before task publishing
+- [x] Add admin API endpoints for managing pre-action webhooks
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -537,7 +537,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
-- [ ] In `internal/controller/metrics/prometheus.go`, add pgx pool metric collectors:
+- [x] In `internal/controller/metrics/prometheus.go`, add pgx pool metric collectors:
   ```go
   var (
       DBPoolTotalConns = prometheus.NewGaugeFunc(...)
@@ -547,10 +547,10 @@
       DBPoolAcquireWaitTime = prometheus.NewGaugeFunc(...)
   )
   ```
-- [ ] Create a `RegisterDBPoolMetrics(pool *pgxpool.Pool)` function that registers the gauge funcs reading from `pool.Stat()`
-- [ ] Call `RegisterDBPoolMetrics` in `internal/controller/server.go` after pool creation
-- [ ] Add Grafana dashboard panel in `configs/grafana/` for DB pool metrics
-- [ ] Run `make build-controller && make test-race`
+- [x] Create a `RegisterDBPoolMetrics(pool *pgxpool.Pool)` function that registers the gauge funcs reading from `pool.Stat()`
+- [x] Call `RegisterDBPoolMetrics` in `internal/controller/server.go` after pool creation
+- [x] Add Grafana dashboard panel in `configs/grafana/` for DB pool metrics
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -560,9 +560,9 @@
 
 > **Current state:** Already implemented in `readinessHandler()` in `server.go` — checks `s.natsConn.Status() != nats.CONNECTED` and includes `"nats": "connected"/"disconnected"` in response.
 
-- [ ] Verify `readinessHandler()` returns HTTP 503 (not 200) when NATS is disconnected — if it currently returns 200 with `"nats": "disconnected"`, change to return 503 for proper load balancer integration
-- [ ] Add unit test for readiness endpoint with mocked NATS connection in both connected and disconnected states
-- [ ] Document the health check behavior in `docs/API.md`
+- [x] Verify `readinessHandler()` returns HTTP 503 (not 200) when NATS is disconnected — if it currently returns 200 with `"nats": "disconnected"`, change to return 503 for proper load balancer integration
+- [x] Add unit test for readiness endpoint with mocked NATS connection in both connected and disconnected states
+- [x] Document the health check behavior in `docs/API.md`
 
 ---
 
@@ -572,10 +572,10 @@
 
 #### 8a. Setup Workspace
 
-- [ ] Create `webui/packages/ui/` directory
-- [ ] Create `webui/packages/api-client/` directory
-- [ ] Create `webui/packages/config/` directory (shared Tailwind config, tsconfig)
-- [ ] Add `webui/package.json` with npm workspaces configuration:
+- [x] Create `webui/packages/ui/` directory
+- [x] Create `webui/packages/api-client/` directory
+- [x] Create `webui/packages/config/` directory (shared Tailwind config, tsconfig)
+- [x] Add `webui/package.json` with npm workspaces configuration:
   ```json
   {
     "private": true,
@@ -585,22 +585,22 @@
 
 #### 8b. Extract Shared UI Components
 
-- [ ] Move the 15 duplicated shadcn/ui components from both `webui/admin/components/ui/` and `webui/customer/components/ui/` to `webui/packages/ui/`:
+- [x] Move the 15 duplicated shadcn/ui components from both `webui/admin/components/ui/` and `webui/customer/components/ui/` to `webui/packages/ui/`:
   - `avatar.tsx`, `badge.tsx`, `button.tsx`, `card.tsx`, `dialog.tsx`, `dropdown-menu.tsx`, `input.tsx`, `label.tsx`, `scroll-area.tsx`, `select.tsx`, `sheet.tsx`, `switch.tsx`, `table.tsx`, `toast.tsx`, `toaster.tsx`
-- [ ] Update imports in both `admin/` and `customer/` to reference `@virtuestack/ui` package
-- [ ] Keep app-specific components (`admin/components/ui/checkbox.tsx`, `admin/components/ui/textarea.tsx`, `customer/components/ui/progress.tsx`, `customer/components/ui/tabs.tsx`) in their respective apps
+- [x] Update imports in both `admin/` and `customer/` to reference `@virtuestack/ui` package
+- [x] Keep app-specific components (`admin/components/ui/checkbox.tsx`, `admin/components/ui/textarea.tsx`, `customer/components/ui/progress.tsx`, `customer/components/ui/tabs.tsx`) in their respective apps
 
 #### 8c. Extract Shared API Client
 
-- [ ] Identify common API client base logic (fetch wrapper, auth token handling, error parsing)
-- [ ] Move to `webui/packages/api-client/`
-- [ ] Update imports in both apps
+- [x] Identify common API client base logic (fetch wrapper, auth token handling, error parsing)
+- [x] Move to `webui/packages/api-client/`
+- [x] Update imports in both apps
 
 #### 8d. Validate
 
-- [ ] Run `cd webui/admin && npm ci && npm run lint && npm run type-check && npm run build`
-- [ ] Run `cd webui/customer && npm ci && npm run lint && npm run type-check && npm run build`
-- [ ] Update CI workflow to use workspace install
+- [x] Run `cd webui/admin && npm ci && npm run lint && npm run type-check && npm run build`
+- [x] Run `cd webui/customer && npm ci && npm run lint && npm run type-check && npm run build`
+- [x] Update CI workflow to use workspace install
 
 ---
 
@@ -608,7 +608,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 1 day | **Dependencies:** None (parallel)
 
-- [ ] Create a `taskLogger` helper in `internal/controller/tasks/logger.go`:
+- [x] Create a `taskLogger` helper in `internal/controller/tasks/logger.go`:
   ```go
   func taskLogger(base *slog.Logger, task *models.Task) *slog.Logger {
       l := base.With(
@@ -625,7 +625,7 @@
       return l
   }
   ```
-- [ ] Update all task handlers in `internal/controller/tasks/` to use `taskLogger` at entry:
+- [x] Update all task handlers in `internal/controller/tasks/` to use `taskLogger` at entry:
   - `handlers_vm_create.go`
   - `handlers_vm_delete.go`
   - `vm_resize.go`
@@ -636,8 +636,8 @@
   - `webhook_deliver.go`
   - `template_build.go`
   - `template_distribute.go`
-- [ ] Replace ad-hoc `logger.With(...)` calls in each handler with the standardized `taskLogger`
-- [ ] Run `make build-controller && make test-race`
+- [x] Replace ad-hoc `logger.With(...)` calls in each handler with the standardized `taskLogger`
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -645,20 +645,20 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1–2 days | **Dependencies:** None (parallel)
 
-- [ ] Create `internal/controller/api/common/` package (or `internal/controller/api/shared/`)
-- [ ] Extract shared pagination parsing into `common/pagination.go`:
+- [x] Create `internal/controller/api/common/` package (or `internal/controller/api/shared/`)
+- [x] Extract shared pagination parsing into `common/pagination.go`:
   ```go
   func ParsePaginationParams(c *gin.Context) (page, perPage int, err error) { ... }
   func ParseCursorParams(c *gin.Context) (cursor string, limit int, err error) { ... }
   ```
-- [ ] Extract shared response formatting into `common/response.go`:
+- [x] Extract shared response formatting into `common/response.go`:
   ```go
   func RespondWithPaginatedList(c *gin.Context, data any, total int64, page, perPage int) { ... }
   func RespondWithCursorList(c *gin.Context, data any, nextCursor string, hasMore bool) { ... }
   ```
-- [ ] Extract shared VM response enrichment (adding IPs, plan, template info) into `common/vm_response.go` if applicable
-- [ ] Update admin, customer, and provisioning handlers to use common helpers
-- [ ] Run `make build-controller && make test-race`
+- [x] Extract shared VM response enrichment (adding IPs, plan, template info) into `common/vm_response.go` if applicable
+- [x] Update admin, customer, and provisioning handlers to use common helpers
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -666,19 +666,19 @@
 
 **Priority:** 🟡 Medium | **Effort:** 1–2 days | **Dependencies:** Gap #14 (uses common pagination helpers)
 
-- [ ] Audit all list endpoints and identify which use offset-based vs cursor-based pagination:
+- [x] Audit all list endpoints and identify which use offset-based vs cursor-based pagination:
   - Check admin: `/admin/vms`, `/admin/nodes`, `/admin/customers`, `/admin/plans`, `/admin/audit-logs`, `/admin/backups`, `/admin/backup-schedules`
   - Check customer: `/customer/vms`, `/customer/backups`, `/customer/snapshots`
   - Check provisioning: any list endpoints
-- [ ] For each offset-based endpoint, migrate to cursor-based:
+- [x] For each offset-based endpoint, migrate to cursor-based:
   - Update repository method to accept cursor parameter and use keyset pagination
   - Update handler to parse `cursor` query param instead of `page`
   - Use existing `internal/controller/repository/cursor/pagination.go` utilities
   - Return `next_cursor` and `has_more` in response meta
-- [ ] Maintain backward compatibility: accept both `page` and `cursor` params during transition, prefer cursor if both provided
-- [ ] Update frontend API clients in `webui/admin/` and `webui/customer/` to use cursor-based pagination
-- [ ] Run `make build-controller && make test-race`
-- [ ] Run `cd webui/admin && npm run type-check && cd ../customer && npm run type-check`
+- [x] Maintain backward compatibility: accept both `page` and `cursor` params during transition, prefer cursor if both provided
+- [x] Update frontend API clients in `webui/admin/` and `webui/customer/` to use cursor-based pagination
+- [x] Run `make build-controller && make test-race`
+- [x] Run `cd webui/admin && npm run type-check && cd ../customer && npm run type-check`
 
 ---
 
@@ -686,7 +686,7 @@
 
 **Priority:** 🟡 Required | **Effort:** 0.5 day | **Dependencies:** None (parallel)
 
-- [ ] Create `scripts/validate-env.sh`:
+- [x] Create `scripts/validate-env.sh`:
   ```bash
   #!/usr/bin/env bash
   set -euo pipefail
@@ -712,9 +712,9 @@
   fi
   echo "✅ All configuration validated"
   ```
-- [ ] Make script executable: `chmod +x scripts/validate-env.sh`
-- [ ] Add validation step to `docker-compose.yml` or document in `docs/INSTALL.md` as a pre-start check
-- [ ] Add unit test: run script with missing vars and verify exit code 1; run with all vars and verify exit code 0
+- [x] Make script executable: `chmod +x scripts/validate-env.sh`
+- [x] Add validation step to `docker-compose.yml` or document in `docs/INSTALL.md` as a pre-start check
+- [x] Add unit test: run script with missing vars and verify exit code 1; run with all vars and verify exit code 0
 
 ---
 
@@ -726,25 +726,25 @@
 
 #### 20a. Configuration
 
-- [ ] Add `ALLOW_SELF_REGISTRATION` environment variable (default: `false`) to `internal/shared/config/config.go`
-- [ ] Add `REGISTRATION_EMAIL_VERIFICATION` environment variable (default: `true`)
+- [x] Add `ALLOW_SELF_REGISTRATION` environment variable (default: `false`) to `internal/shared/config/config.go`
+- [x] Add `REGISTRATION_EMAIL_VERIFICATION` environment variable (default: `true`)
 
 #### 20b. Registration Endpoint
 
-- [ ] Create `internal/controller/api/customer/registration.go`:
+- [x] Create `internal/controller/api/customer/registration.go`:
   - `POST /auth/register` — accepts email, password, name, phone
   - Validate input (email format, password strength)
   - Check if email already exists → return appropriate error
   - Create customer with `status = "pending_verification"` if email verification enabled
   - Send verification email with token
   - Return 201 Created
-- [ ] Add email verification endpoint:
+- [x] Add email verification endpoint:
   - `POST /auth/verify-email` — accepts token, activates customer account
-- [ ] Add rate limiting: 3 registrations/hour per IP
+- [x] Add rate limiting: 3 registrations/hour per IP
 
 #### 20c. Migration
 
-- [ ] Create migration for `email_verification_tokens` table:
+- [x] Create migration for `email_verification_tokens` table:
   ```sql
   CREATE TABLE email_verification_tokens (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -757,15 +757,15 @@
 
 #### 20d. Conditional Route Registration
 
-- [ ] In `internal/controller/api/customer/routes.go`, conditionally register the route:
+- [x] In `internal/controller/api/customer/routes.go`, conditionally register the route:
   ```go
   if cfg.AllowSelfRegistration {
       auth.POST("/register", handler.Register)
       auth.POST("/verify-email", handler.VerifyEmail)
   }
   ```
-- [ ] Add tests for both enabled and disabled states
-- [ ] Run `make build-controller && make test-race`
+- [x] Add tests for both enabled and disabled states
+- [x] Run `make build-controller && make test-race`
 
 ---
 
@@ -777,7 +777,7 @@
 
 #### 22a. VM Service Tests
 
-- [ ] Create `internal/controller/services/vm_service_test.go` with table-driven tests:
+- [x] Create `internal/controller/services/vm_service_test.go` with table-driven tests:
   - Node selection with no available nodes → returns appropriate error
   - Node selection with all nodes at capacity → returns appropriate error
   - CreateVM with invalid plan ID → returns validation error
@@ -789,7 +789,7 @@
 
 #### 22b. Backup Service Tests
 
-- [ ] Create `internal/controller/services/backup_service_test.go`:
+- [x] Create `internal/controller/services/backup_service_test.go`:
   - CreateBackup with quota exceeded → returns limit error
   - CreateBackup with VM not found → returns not found error
   - RestoreBackup with backup not found → returns not found error
@@ -799,14 +799,14 @@
 
 #### 22c. Node Agent Client Tests
 
-- [ ] Create `internal/controller/services/node_agent_client_test.go`:
+- [x] Create `internal/controller/services/node_agent_client_test.go`:
   - gRPC connection failure → returns appropriate error
   - gRPC timeout → returns appropriate error with context deadline exceeded
   - Metrics cache hit → returns cached data without gRPC call
   - Metrics cache miss → makes gRPC call and caches result
   - Node not found → returns not found error
 
-- [ ] Run `make test-race` after each test file
+- [x] Run `make test-race` after each test file
 
 ---
 
@@ -816,13 +816,13 @@
 
 > **Current state:** `tests/load/k6-vm-operations.js` exists with basic VM operation tests.
 
-- [ ] Expand `tests/load/k6-vm-operations.js` or create additional k6 scripts for:
+- [x] Expand `tests/load/k6-vm-operations.js` or create additional k6 scripts for:
   1. `tests/load/k6-provisioning-create.js` — VM creation under concurrent load (10, 50, 100 simultaneous provisions)
   2. `tests/load/k6-customer-list.js` — Customer VM listing with many customers and VMs (pagination performance)
   3. `tests/load/k6-power-operations.js` — Power operations (start/stop/restart) under concurrent load
   4. `tests/load/k6-admin-listing.js` — Admin VM/customer listing with filters and pagination
   5. `tests/load/k6-task-throughput.js` — Task creation and processing throughput measurement
-- [ ] Add k6 thresholds for each test:
+- [x] Add k6 thresholds for each test:
   ```javascript
   export const options = {
       thresholds: {
@@ -831,8 +831,8 @@
       },
   };
   ```
-- [ ] Add `make load-test` target in `Makefile` to run all k6 scripts
-- [ ] Document load testing setup in `tests/load/README.md`
+- [x] Add `make load-test` target in `Makefile` to run all k6 scripts
+- [x] Document load testing setup in `tests/load/README.md`
 
 ---
 
@@ -840,22 +840,22 @@
 
 ### Documentation Updates
 
-- [ ] After completing Phase 1, update `AGENTS.md` §8 (VM Lifecycle) to document the state machine and valid transitions
-- [ ] After completing Gap #3 (OpenAPI), update `AGENTS.md` §5 to reference the generated spec
-- [ ] After completing Gap #11 (system webhooks), update `AGENTS.md` §5 to document system webhook endpoints
-- [ ] After each god-file split (#6, #7, #13), update `AGENTS.md` §2 (Repository Structure) with new file listings
-- [ ] Keep `docs/CODEMAPS/backend.md` in sync with new files and routes
+- [x] After completing Phase 1, update `AGENTS.md` §8 (VM Lifecycle) to document the state machine and valid transitions
+- [x] After completing Gap #3 (OpenAPI), update `AGENTS.md` §5 to reference the generated spec
+- [x] After completing Gap #11 (system webhooks), update `AGENTS.md` §5 to document system webhook endpoints
+- [x] After each god-file split (#6, #7, #13), update `AGENTS.md` §2 (Repository Structure) with new file listings
+- [x] Keep `docs/CODEMAPS/backend.md` in sync with new files and routes
 
 ### CI Pipeline Updates
 
-- [ ] After Gap #9: `buf breaking` check in CI
-- [ ] After Gap #3: `swag init` validation step in CI (ensure generated spec is up-to-date)
-- [ ] After Gap #8: Update frontend CI jobs to use workspace-level install
-- [ ] After Gap #15: No CI change needed (squirrel is a build dependency, tested via existing tests)
+- [x] After Gap #9: `buf breaking` check in CI
+- [x] After Gap #3: `swag init` validation step in CI (ensure generated spec is up-to-date)
+- [x] After Gap #8: Update frontend CI jobs to use workspace-level install
+- [x] After Gap #15: No CI change needed (squirrel is a build dependency, tested via existing tests)
 
 ### Regression Testing
 
-- [ ] After each phase, run the full test suite: `make test-race`
-- [ ] After frontend changes: `cd webui/admin && npm run lint && npm run type-check && npm run build`
-- [ ] After frontend changes: `cd webui/customer && npm run lint && npm run type-check && npm run build`
-- [ ] After migration changes: verify `make migrate-up && make migrate-down` cycle works
+- [x] After each phase, run the full test suite: `make test-race`
+- [x] After frontend changes: `cd webui/admin && npm run lint && npm run type-check && npm run build`
+- [x] After frontend changes: `cd webui/customer && npm run lint && npm run type-check && npm run build`
+- [x] After migration changes: verify `make migrate-up && make migrate-down` cycle works

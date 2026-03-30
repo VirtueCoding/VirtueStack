@@ -131,6 +131,8 @@ type ControllerConfig struct {
 	CephUser       string   `yaml:"ceph_user" env:"CEPH_USER"`
 	CephSecretUUID string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
 	CephMonitors   []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
+	AllowSelfRegistration      bool `yaml:"allow_self_registration" env:"ALLOW_SELF_REGISTRATION"`
+	RegistrationEmailVerification bool `yaml:"registration_email_verification" env:"REGISTRATION_EMAIL_VERIFICATION"`
 
 	// NATS configuration
 	NATS NATSConfig `yaml:"nats"`
@@ -216,6 +218,8 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 		ConsoleBaseURL: defaultConsoleBaseURL,
 		DNSNameservers: splitAndTrimCSV(defaultDNSNameservers),
 		CephUser:       defaultCephUser,
+		AllowSelfRegistration: false,
+		RegistrationEmailVerification: true,
 	}
 
 	// Load from YAML file if specified
@@ -351,6 +355,12 @@ func applyEnvOverridesCore(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("CEPH_MONITORS"); v != "" {
 		cfg.CephMonitors = splitAndTrimCSV(v)
+	}
+	if v := os.Getenv("ALLOW_SELF_REGISTRATION"); v != "" {
+		cfg.AllowSelfRegistration = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("REGISTRATION_EMAIL_VERIFICATION"); v != "" {
+		cfg.RegistrationEmailVerification = strings.EqualFold(v, "true") || v == "1"
 	}
 
 	// PowerDNS config

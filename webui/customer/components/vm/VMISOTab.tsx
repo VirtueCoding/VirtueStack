@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { HardDrive, Upload, Trash2, Link, Unlink, Loader2 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { useToast } from "@virtuestack/ui";
 import { isoApi, ISORecord, ApiClientError } from "@/lib/api-client";
 import { ISOUpload } from "@/components/file-upload/iso-upload";
 import { formatBytes } from "@/lib/vm-utils";
@@ -16,7 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@virtuestack/ui";
 
 interface VMISOTabProps {
   vmId: string;

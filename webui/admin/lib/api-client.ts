@@ -1,4 +1,18 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
+import {
+  ApiClientError,
+  apiRequest as sharedAPIRequest,
+  fetchCsrfToken as sharedFetchCsrfToken,
+} from "@virtuestack/api-client";
+
+import type {
+  AuthTokens,
+  LoginRequest,
+  Verify2FARequest,
+} from "@virtuestack/api-client";
+
+export { ApiClientError };
+export type { AuthTokens, LoginRequest, Verify2FARequest };
 
 // AdminUser represents the identity of the currently authenticated admin.
 // The fields are populated from the server via GET /admin/auth/me endpoint,
@@ -28,95 +42,8 @@ export interface Admin {
   updated_at: string;
 }
 
-export interface AuthTokens {
-  token_type: string;
-  expires_in: number;
-  requires_2fa?: boolean;
-  temp_token?: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface Verify2FARequest {
-  temp_token: string;
-  totp_code: string;
-}
-
-export class ApiClientError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly correlationId?: string;
-
-  constructor(message: string, code: string, status: number, correlationId?: string) {
-    super(message);
-    this.name = "ApiClientError";
-    this.code = code;
-    this.status = status;
-    this.correlationId = correlationId;
-  }
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/csrf_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 async function fetchCsrfToken(): Promise<void> {
-  // Use the /admin/auth/me endpoint to bootstrap the CSRF cookie.
-  // The server sets the CSRF cookie on any response; we use this lightweight
-  // endpoint instead of the non-existent /admin/auth/csrf route.
-  try {
-    await fetch(`${API_BASE_URL}/admin/auth/me`, {
-      method: 'GET',
-      credentials: 'include',
-    });
-    if (!getCsrfToken()) {
-      // Log for debugging CSRF issues - this indicates the server didn't set the expected cookie
-      console.warn('fetchCsrfToken: CSRF cookie was not set after bootstrap request.');
-    }
-  } catch (err) {
-    // Log for debugging - non-fatal, the request may fail if server is unreachable
-    console.warn('fetchCsrfToken: Failed to bootstrap CSRF cookie (non-fatal):', err);
-  }
-}
-
-function buildHeaders(includeCsrf = false): HeadersInit {
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-  };
-
-  if (includeCsrf) {
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
-  }
-
-  return headers;
-}
-
-async function parseError(response: Response): Promise<ApiClientError> {
-  let code = "UNKNOWN_ERROR";
-  let message = "An unexpected error occurred";
-  let correlationId: string | undefined;
-
-  try {
-    const data = await response.json();
-    if (data.error) {
-      code = data.error.code || code;
-      message = data.error.message || message;
-      correlationId = data.error.correlation_id;
-    }
-  } catch {
-    message = response.statusText || message;
-  }
-
-  return new ApiClientError(message, code, response.status, correlationId);
+  await sharedFetchCsrfToken(API_BASE_URL, "/admin/auth/me");
 }
 
 /**
@@ -160,53 +87,7 @@ export async function apiRequest<T>(
   endpoint: string,
   options: (JsonRequestOptions | VoidRequestOptions) = {},
 ): Promise<T | void> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
-    (options.method || "GET").toUpperCase()
-  );
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
-
-  const config: RequestInit = {
-    ...options,
-    signal: controller.signal,
-    credentials: "include",
-    headers: {
-      ...buildHeaders(isStateChanging),
-      ...options.headers,
-    },
-  };
-
-  try {
-    let response: Response;
-    try {
-      response = await fetch(url, config);
-    } catch (networkErr) {
-      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError";
-      throw new ApiClientError(
-        isAbort ? "Request timed out" : "Network error: unable to reach the server",
-        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
-        0,
-      );
-    }
-
-    if (!response.ok) {
-      const error = await parseError(response);
-      throw error;
-    }
-
-    if (response.status === 204) {
-      // HTTP 204 No Content - return void. This is type-safe when called with
-      // expectNoContent: true, as the overload resolves to Promise<void>.
-      return;
-    }
-
-    const data = await response.json();
-    return data.data as T;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  return sharedAPIRequest<T | void>(API_BASE_URL, endpoint, options);
 }
 
 export const apiClient = {
@@ -421,8 +302,12 @@ export interface UpdateNodeRequest {
 }
 
 export const adminNodesApi = {
-  async getNodes(): Promise<PaginatedResponse<Node>> {
-    return apiClient.get<PaginatedResponse<Node>>("/admin/nodes");
+  async getNodes(params: { per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<Node>> {
+    const searchParams = new URLSearchParams();
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<Node>>(`/admin/nodes${query ? `?${query}` : ""}`);
   },
 
   async getNode(id: string): Promise<NodeDetail> {
@@ -476,8 +361,14 @@ export interface UpdateCustomerRequest {
 }
 
 export const adminCustomersApi = {
-  async getCustomers(): Promise<PaginatedResponse<Customer>> {
-    return apiClient.get<PaginatedResponse<Customer>>("/admin/customers");
+  async getCustomers(params: { per_page?: number; cursor?: string; status?: string; search?: string } = {}): Promise<PaginatedResponse<Customer>> {
+    const searchParams = new URLSearchParams();
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    if (params.status) searchParams.set("status", params.status);
+    if (params.search) searchParams.set("search", params.search);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<Customer>>(`/admin/customers${query ? `?${query}` : ""}`);
   },
 
   async getCustomer(id: string): Promise<Customer> {
@@ -504,11 +395,10 @@ export const adminCustomersApi = {
     return apiClient.deleteVoid(`/admin/customers/${id}`);
   },
 
-  async getCustomerAuditLogs(id: string, page = 1, perPage = 20): Promise<PaginatedResponse<AuditLog>> {
-    const searchParams = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
+  async getCustomerAuditLogs(id: string, perPage = 20, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams();
+    searchParams.set("per_page", String(perPage));
+    if (cursor) searchParams.set("cursor", cursor);
     return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/customers/${id}/audit-logs?${searchParams.toString()}`);
   },
 };
@@ -612,11 +502,10 @@ export interface AuditLog {
 }
 
 export const adminAuditLogsApi = {
-  async getAuditLogs(page = 1, perPage = 20, search?: string): Promise<PaginatedResponse<AuditLog>> {
-    const searchParams = new URLSearchParams({
-      page: String(page),
-      per_page: String(perPage),
-    });
+  async getAuditLogs(perPage = 20, search?: string, cursor?: string): Promise<PaginatedResponse<AuditLog>> {
+    const searchParams = new URLSearchParams();
+    if (cursor) searchParams.set("cursor", cursor);
+    searchParams.set("per_page", String(perPage));
     if (search) searchParams.set("search", search);
     return apiClient.get<PaginatedResponse<AuditLog>>(`/admin/audit-logs?${searchParams.toString()}`);
   },
@@ -666,8 +555,12 @@ export interface CreateVMResponse {
 }
 
 export const adminVMsApi = {
-  async getVMs(): Promise<PaginatedResponse<VM>> {
-    return apiClient.get<PaginatedResponse<VM>>('/admin/vms');
+  async getVMs(params: { per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<VM>> {
+    const searchParams = new URLSearchParams();
+    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    const query = searchParams.toString();
+    return apiClient.get<PaginatedResponse<VM>>(`/admin/vms${query ? `?${query}` : ""}`);
   },
 
   async getVM(id: string): Promise<VM> {
@@ -871,8 +764,8 @@ export interface AdminBackup {
 }
 
 export interface AdminBackupListParams {
-  page?: number;
   per_page?: number;
+  cursor?: string;
   customer_id?: string;
   vm_id?: string;
   status?: string;
@@ -883,17 +776,17 @@ export interface AdminBackupListParams {
 export interface PaginatedResponse<T> {
   data: T[];
   meta: {
-    page: number;
     per_page: number;
-    total: number;
-    total_pages: number;
+    has_more?: boolean;
+    next_cursor?: string;
+    prev_cursor?: string;
   };
 }
 
 export const adminBackupsApi = {
   async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.customer_id) searchParams.set("customer_id", params.customer_id);
     if (params.vm_id) searchParams.set("vm_id", params.vm_id);
@@ -955,9 +848,9 @@ export interface UpdateAdminBackupScheduleRequest {
 }
 
 export const adminBackupSchedulesApi = {
-  async getSchedules(params: { page?: number; per_page?: number; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
+  async getSchedules(params: { per_page?: number; cursor?: string; active?: boolean } = {}): Promise<PaginatedResponse<AdminBackupSchedule>> {
     const searchParams = new URLSearchParams();
-    if (params.page) searchParams.set("page", String(params.page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.per_page) searchParams.set("per_page", String(params.per_page));
     if (params.active !== undefined) searchParams.set("active", String(params.active));
 
@@ -1081,9 +974,12 @@ export const adminIPSetsApi = {
     return apiClient.deleteVoid(`/admin/ip-sets/${id}`);
   },
 
-  async getAvailableIPs(id: string, page = 1, perPage = 50): Promise<PaginatedResponse<{ id: string; address: string }>> {
+  async getAvailableIPs(id: string, perPage = 50, cursor?: string): Promise<PaginatedResponse<{ id: string; address: string }>> {
+    const searchParams = new URLSearchParams();
+    searchParams.set("per_page", String(perPage));
+    if (cursor) searchParams.set("cursor", cursor);
     return apiClient.get<PaginatedResponse<{ id: string; address: string }>>(
-      `/admin/ip-sets/${id}/available?page=${page}&per_page=${perPage}`
+      `/admin/ip-sets/${id}/available?${searchParams.toString()}`
     );
   },
 };
@@ -1107,14 +1003,14 @@ export interface FailoverRequest {
 
 export const adminFailoverRequestsApi = {
   async getFailoverRequests(params: {
-    page?: number;
     per_page?: number;
+    cursor?: string;
     node_id?: string;
     status?: string;
   } = {}): Promise<PaginatedResponse<FailoverRequest>> {
     const searchParams = new URLSearchParams();
-    if (params.page !== undefined) searchParams.set("page", String(params.page));
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
+    if (params.cursor) searchParams.set("cursor", params.cursor);
     if (params.node_id) searchParams.set("node_id", params.node_id);
     if (params.status) searchParams.set("status", params.status);
 

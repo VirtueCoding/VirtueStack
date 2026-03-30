@@ -507,6 +507,46 @@
         "tooltip": { "mode": "multi", "sort": "desc" },
         "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
       }
+    },
+    {
+      "id": 15,
+      "title": "DB Pool Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "vs_db_pool_total_conns",
+          "legendFormat": "total",
+          "refId": "A"
+        },
+        {
+          "expr": "vs_db_pool_idle_conns",
+          "legendFormat": "idle",
+          "refId": "B"
+        },
+        {
+          "expr": "vs_db_pool_acquired_conns",
+          "legendFormat": "acquired",
+          "refId": "C"
+        },
+        {
+          "expr": "vs_db_pool_max_conns",
+          "legendFormat": "max",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      }
     }
   ],
   "refresh": "10s",

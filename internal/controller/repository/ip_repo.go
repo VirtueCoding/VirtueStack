@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -86,44 +86,44 @@ func (r *IPRepository) GetIPSetByName(ctx context.Context, name string) (*models
 }
 
 // ListIPSets returns a paginated list of IP sets with optional filters.
-func (r *IPRepository) ListIPSets(ctx context.Context, filter IPSetListFilter) ([]models.IPSet, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+func (r *IPRepository) ListIPSets(ctx context.Context, filter IPSetListFilter) ([]models.IPSet, bool, string, error) {
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("ip_sets")
 
 	if filter.LocationID != nil {
-		where = append(where, fmt.Sprintf("location_id = $%d", idx))
-		args = append(args, *filter.LocationID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"location_id": *filter.LocationID})
 	}
 	if filter.IPVersion != nil {
-		where = append(where, fmt.Sprintf("ip_version = $%d", idx))
-		args = append(args, *filter.IPVersion)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"ip_version": *filter.IPVersion})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM ip_sets WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	listBuilder := whereBuilder.Columns(ipSetSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
+	}
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting IP sets: %w", err)
+		return nil, false, "", fmt.Errorf("building IP set list query: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM ip_sets WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
-		ipSetSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
-
-	ipSets, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.IPSet, error) {
+	ipSets, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.IPSet, error) {
 		return scanIPSet(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing IP sets: %w", err)
+		return nil, false, "", fmt.Errorf("listing IP sets: %w", err)
 	}
-	return ipSets, total, nil
+
+	hasMore := len(ipSets) > filter.PerPage
+	if hasMore {
+		ipSets = ipSets[:filter.PerPage]
+	}
+	var lastID string
+	if len(ipSets) > 0 {
+		lastID = ipSets[len(ipSets)-1].ID
+	}
+	return ipSets, hasMore, lastID, nil
 }
 
 // UpdateIPSet updates all mutable fields of an IP set.
@@ -222,54 +222,50 @@ func (r *IPRepository) GetIPAddressByAddress(ctx context.Context, address string
 }
 
 // ListIPAddresses returns a paginated list of IP addresses with optional filters.
-func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressListFilter) ([]models.IPAddress, int, error) {
-	where := []string{"1=1"}
-	args := []any{}
-	idx := 1
+func (r *IPRepository) ListIPAddresses(ctx context.Context, filter IPAddressListFilter) ([]models.IPAddress, bool, string, error) {
+	baseBuilder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	whereBuilder := baseBuilder.Select("1").From("ip_addresses")
 
 	if filter.IPSetID != nil {
-		where = append(where, fmt.Sprintf("ip_set_id = $%d", idx))
-		args = append(args, *filter.IPSetID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"ip_set_id": *filter.IPSetID})
 	}
 	if filter.VMID != nil {
-		where = append(where, fmt.Sprintf("vm_id = $%d", idx))
-		args = append(args, *filter.VMID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"vm_id": *filter.VMID})
 	}
 	if filter.CustomerID != nil {
-		where = append(where, fmt.Sprintf("customer_id = $%d", idx))
-		args = append(args, *filter.CustomerID)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"customer_id": *filter.CustomerID})
 	}
 	if filter.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, *filter.Status)
-		idx++
+		whereBuilder = whereBuilder.Where(sq.Eq{"status": *filter.Status})
 	}
 
-	clause := strings.Join(where, " AND ")
-	countQ := "SELECT COUNT(*) FROM ip_addresses WHERE " + clause
-	total, err := CountRows(ctx, r.db, countQ, args...)
+	listBuilder := whereBuilder.Columns(ipAddressSelectCols)
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		listBuilder = listBuilder.Where(sq.Lt{"id": cp.LastID})
+	}
+	listBuilder = listBuilder.OrderBy("id DESC").Limit(uint64(filter.PerPage + 1))
+	listQ, listArgs, err := listBuilder.ToSql()
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting IP addresses: %w", err)
+		return nil, false, "", fmt.Errorf("building IP address list query: %w", err)
 	}
 
-	limit := filter.Limit()
-	offset := filter.Offset()
-	listQ := fmt.Sprintf(
-		"SELECT %s FROM ip_addresses WHERE %s ORDER BY address ASC LIMIT $%d OFFSET $%d",
-		ipAddressSelectCols, clause, idx, idx+1,
-	)
-	args = append(args, limit, offset)
-
-	ips, err := ScanRows(ctx, r.db, listQ, args, func(rows pgx.Rows) (models.IPAddress, error) {
+	ips, err := ScanRows(ctx, r.db, listQ, listArgs, func(rows pgx.Rows) (models.IPAddress, error) {
 		return scanIPAddress(rows)
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing IP addresses: %w", err)
+		return nil, false, "", fmt.Errorf("listing IP addresses: %w", err)
 	}
-	return ips, total, nil
+
+	hasMore := len(ips) > filter.PerPage
+	if hasMore {
+		ips = ips[:filter.PerPage]
+	}
+	var lastID string
+	if len(ips) > 0 {
+		lastID = ips[len(ips)-1].ID
+	}
+	return ips, hasMore, lastID, nil
 }
 
 // CountIPsByStatus returns a map of IP status to count for a given IP set.

@@ -98,12 +98,12 @@ func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	cb.RecordFailure("node-1", errors.New("down"))
 	assert.Equal(t, CircuitBreakerOpen, cb.GetState("node-1"))
 
-	// Wait for cooldown to elapse
-	time.Sleep(10 * time.Millisecond)
+	// Poll until cooldown elapses (1ms cooldown configured above)
+	require.Eventually(t, func() bool {
+		return cb.CanAttempt("node-1") == nil
+	}, 100*time.Millisecond, time.Millisecond)
 
-	// CanAttempt should transition to half-open
-	err := cb.CanAttempt("node-1")
-	assert.NoError(t, err)
+	// CanAttempt should have transitioned to half-open
 	assert.Equal(t, CircuitBreakerHalfOpen, cb.GetState("node-1"))
 }
 
@@ -119,8 +119,9 @@ func TestCircuitBreaker_HalfOpen_SuccessCloses(t *testing.T) {
 
 	// Open the circuit
 	cb.RecordFailure("node-1", errors.New("down"))
-	time.Sleep(10 * time.Millisecond)
-	_ = cb.CanAttempt("node-1") // transitions to half-open
+	require.Eventually(t, func() bool {
+		return cb.CanAttempt("node-1") == nil
+	}, 100*time.Millisecond, time.Millisecond)
 
 	assert.Equal(t, CircuitBreakerHalfOpen, cb.GetState("node-1"))
 
@@ -145,8 +146,9 @@ func TestCircuitBreaker_HalfOpen_FailureReopens(t *testing.T) {
 
 	// Open the circuit
 	cb.RecordFailure("node-1", errors.New("down"))
-	time.Sleep(10 * time.Millisecond)
-	_ = cb.CanAttempt("node-1") // transitions to half-open
+	require.Eventually(t, func() bool {
+		return cb.CanAttempt("node-1") == nil
+	}, 100*time.Millisecond, time.Millisecond)
 
 	assert.Equal(t, CircuitBreakerHalfOpen, cb.GetState("node-1"))
 

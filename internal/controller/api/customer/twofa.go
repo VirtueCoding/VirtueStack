@@ -174,6 +174,16 @@ func cleanup2FARateLimit(identifier string) {
 
 // Initiate2FA handles POST /2fa/initiate - generates a new TOTP secret and QR code.
 // Returns the secret, QR URL, and backup codes for the user to set up their authenticator app.
+// @Tags Customer
+// @Summary Initiate 2FA setup
+// @Description Manages customer two-factor authentication settings.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/initiate [post]
 func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -209,6 +219,18 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 // Enable2FA handles POST /2fa/enable - verifies the TOTP code and enables 2FA.
 // Subject to rate limiting to prevent brute force attacks.
+// @Tags Customer
+// @Summary Enable 2FA
+// @Description Manages customer two-factor authentication settings.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/enable [post]
 func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	var req Enable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -273,6 +295,18 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 }
 
 // Disable2FA handles POST /2fa/disable - disables 2FA after password verification.
+// @Tags Customer
+// @Summary Disable 2FA
+// @Description Manages customer two-factor authentication settings.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/disable [post]
 func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 	var req Disable2FARequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -311,6 +345,16 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 }
 
 // Get2FAStatus handles GET /2fa/status - returns the current 2FA status for the user.
+// @Tags Customer
+// @Summary Get 2FA status
+// @Description Manages customer two-factor authentication settings.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/status [get]
 func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -327,6 +371,16 @@ func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 }
 
 // GetBackupCodes handles GET /2fa/backup-codes - returns backup codes (only available once).
+// @Tags Customer
+// @Summary Get backup codes
+// @Description Manages customer two-factor authentication settings.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/backup-codes [get]
 func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -366,6 +420,16 @@ func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
 
 // RegenerateBackupCodes handles POST /2fa/backup-codes/regenerate - generates new backup codes.
 // Subject to rate limiting to prevent abuse.
+// @Tags Customer
+// @Summary Regenerate backup codes
+// @Description Manages customer two-factor authentication settings.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/customer/2fa/backup-codes/regenerate [post]
 func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 

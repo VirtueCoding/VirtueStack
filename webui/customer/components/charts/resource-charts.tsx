@@ -1,15 +1,15 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui"
+import { Button } from "@virtuestack/ui"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@virtuestack/ui"
 import { useEffect, useState, useCallback, useRef } from "react"
 import { vmApi } from "@/lib/api-client"
 import { AlertCircle, RefreshCw } from "lucide-react"

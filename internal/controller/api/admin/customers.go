@@ -16,7 +16,7 @@ import (
 // CustomerUpdateRequest represents the request body for updating a customer.
 type CustomerUpdateRequest struct {
 	Name   *string `json:"name,omitempty" validate:"omitempty,max=255"`
-	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
+	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active pending_verification suspended"`
 }
 
 // CustomerDetail represents a customer with additional statistics.
@@ -36,6 +36,19 @@ type CustomerCreateRequest struct {
 }
 
 // CreateCustomer handles POST /customers - creates a new customer.
+// @Tags Admin
+// @Summary Create customer
+// @Description Performs administrative customer account operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body object true "Request body"
+// @Success 201 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers [post]
 func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 	var req CustomerCreateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -107,6 +120,17 @@ func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 }
 
 // ListCustomers handles GET /customers - lists all customers.
+// @Tags Admin
+// @Summary List customers
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers [get]
 func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
@@ -116,7 +140,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 
 	// Optional status filter
 	validCustomerStatuses := map[string]bool{
-		"active": true, "suspended": true, "deleted": true,
+		"active": true, "pending_verification": true, "suspended": true, "deleted": true,
 	}
 	if status := c.Query("status"); status != "" {
 		if !validCustomerStatuses[status] {
@@ -135,7 +159,7 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 		filter.Search = &search
 	}
 
-	customers, total, err := h.customerService.List(c.Request.Context(), filter)
+	customers, hasMore, lastID, err := h.customerService.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to list customers",
 			"error", err,
@@ -146,11 +170,23 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: customers,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // GetCustomer handles GET /customers/:id - retrieves details for a specific customer.
+// @Tags Admin
+// @Summary Get customer
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [get]
 func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -178,32 +214,32 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 	vmFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
-			PerPage: 1, // We just need the count
+			PerPage: 1, // We just need to check existence
 		},
 	}
-	_, totalVMs, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
+	vms, _, _, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
 	if err != nil {
 		h.logger.Warn("failed to get VM count for customer",
 			"customer_id", customerID,
 			"error", err)
 	}
+	totalVMs := len(vms)
 
 	// Count active VMs
 	activeFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		Status:     util.StringPtr("running"),
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 1,
 		},
 	}
-	_, activeVMs, err := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
+	activeVMsList, _, _, err := h.vmService.ListVMs(c.Request.Context(), activeFilter, customerID, true)
 	if err != nil {
 		h.logger.Warn("failed to get active VM count for customer",
 			"customer_id", customerID,
 			"error", err)
 	}
+	activeVMs := len(activeVMsList)
 
 	detail := CustomerDetail{
 		Customer:    *customer,
@@ -216,6 +252,20 @@ func (h *AdminHandler) GetCustomer(c *gin.Context) {
 }
 
 // UpdateCustomer handles PUT /customers/:id - updates a customer's information.
+// @Tags Admin
+// @Summary Update customer
+// @Description Performs administrative customer account operation.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Param request body object true "Request body"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [put]
 func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -305,6 +355,18 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 }
 
 // DeleteCustomer handles DELETE /customers/:id - soft deletes a customer.
+// @Tags Admin
+// @Summary Delete customer
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id} [delete]
 func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -318,12 +380,11 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 	vmFilter := models.VMListFilter{
 		CustomerID: &customerID,
 		PaginationParams: models.PaginationParams{
-			Page:    1,
 			PerPage: 1,
 		},
 	}
-	_, vmCount, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
-	if err == nil && vmCount > 0 {
+	existingVMs, _, _, err := h.vmService.ListVMs(c.Request.Context(), vmFilter, customerID, true)
+	if err == nil && len(existingVMs) > 0 {
 		middleware.RespondWithError(c, http.StatusConflict, "CUSTOMER_HAS_VMS", "Cannot delete customer with existing VMs. Delete VMs first.")
 		return
 	}
@@ -353,6 +414,18 @@ func (h *AdminHandler) DeleteCustomer(c *gin.Context) {
 }
 
 // GetCustomerAuditLogs handles GET /customers/:id/audit-logs - retrieves audit trail for a customer.
+// @Tags Admin
+// @Summary Get customer audit logs
+// @Description Performs administrative customer account operation.
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Customer ID"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/admin/customers/{id}/audit-logs [get]
 func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 	customerID := c.Param("id")
 
@@ -375,7 +448,7 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 		filter.Action = &action
 	}
 
-	logs, total, err := h.auditRepo.List(c.Request.Context(), filter)
+	logs, hasMore, lastID, err := h.auditRepo.List(c.Request.Context(), filter)
 	if err != nil {
 		h.logger.Error("failed to get customer audit logs",
 			"customer_id", customerID,
@@ -387,6 +460,6 @@ func (h *AdminHandler) GetCustomerAuditLogs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: logs,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
 import { Network, Database, HardDrive, FileSpreadsheet, Loader2 } from "lucide-react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@virtuestack/ui";
 import { adminIPSetsApi, IPSetDetail } from "@/lib/api-client";
 import { IPSetCreateDialog } from "@/components/ip-sets/IPSetCreateDialog";
 import { IPSetEditDialog } from "@/components/ip-sets/IPSetEditDialog";

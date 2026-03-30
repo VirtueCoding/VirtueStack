@@ -1,13 +1,13 @@
 "use client"
 
 import { useTheme } from "next-themes"
-import { Button } from "@/components/ui/button"
+import { Button } from "@virtuestack/ui"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@virtuestack/ui"
 import { Moon, Sun, Monitor } from "lucide-react"
 
 export function ThemeToggle() {

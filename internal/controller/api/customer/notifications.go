@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -41,6 +42,15 @@ type UpdateNotificationPreferencesRequest struct {
 
 // GetNotificationPreferences handles GET /notifications/preferences.
 // Returns the customer's notification preferences.
+// @Tags Customer
+// @Summary Get notification preferences
+// @Description Returns current notification preferences for the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/notifications/preferences [get]
 func (h *NotificationsHandler) GetNotificationPreferences(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -55,6 +65,18 @@ func (h *NotificationsHandler) GetNotificationPreferences(c *gin.Context) {
 
 // UpdateNotificationPreferences handles PUT /notifications/preferences.
 // Updates the customer's notification preferences.
+// @Tags Customer
+// @Summary Update notification preferences
+// @Description Updates notification preferences for the authenticated customer.
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param request body object true "Notification preference update request"
+// @Success 200 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/notifications/preferences [put]
 func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
@@ -108,10 +130,24 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 
 // ListNotificationEvents handles GET /notifications/events.
 // Returns a list of notification events for the customer.
+// @Tags Customer
+// @Summary List notification events
+// @Description Lists notification delivery events for the authenticated customer.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Param page query int false "Page"
+// @Param per_page query int false "Items per page"
+// @Param event_type query string false "Event type"
+// @Param status query string false "Delivery status"
+// @Success 200 {object} models.ListResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/notifications/events [get]
 func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 
-	pagination := models.ParsePagination(c)
+	pagination := common.ParsePaginationParams(c)
 
 	filter := repository.NotificationEventFilter{
 		PaginationParams: pagination,
@@ -136,7 +172,7 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 		filter.Status = &status
 	}
 
-	events, total, err := h.eventRepo.ListByCustomer(c.Request.Context(), customerID, filter)
+	events, hasMore, lastID, err := h.eventRepo.ListByCustomer(c.Request.Context(), customerID, filter)
 	if err != nil {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list notification events")
 		return
@@ -150,12 +186,21 @@ func (h *NotificationsHandler) ListNotificationEvents(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.ListResponse{
 		Data: responses,
-		Meta: models.NewPaginationMeta(pagination.Page, pagination.PerPage, total),
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
 }
 
 // GetAvailableEvents handles GET /notifications/events/types.
 // Returns a list of available notification event types.
+// @Tags Customer
+// @Summary List available notification event types
+// @Description Returns supported notification event type identifiers.
+// @Produce json
+// @Security BearerAuth
+// @Security APIKeyAuth
+// @Success 200 {object} models.Response
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/v1/customer/notifications/events/types [get]
 func (h *NotificationsHandler) GetAvailableEvents(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{

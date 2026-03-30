@@ -1,13 +1,13 @@
 "use client";
 
-import { Label } from "@/components/ui/label";
+import { Label } from "@virtuestack/ui";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+} from "@virtuestack/ui";
 import { Cpu, MemoryStick, HardDrive, Network } from "lucide-react";
 import type { VM } from "@/lib/api-client";
 import { formatMemory } from "@/lib/vm-utils";
