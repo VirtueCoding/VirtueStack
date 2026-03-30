@@ -391,7 +391,7 @@ OAUTH_GITHUB_CLIENT_SECRET=
 
 | Flag | Default | Effect when disabled | Effect when enabled |
 |------|---------|---------------------|---------------------|
-| `BILLING_WHMCS_ENABLED` | `true` | Disables WHMCS ownership inside the controller-side billing registry for newly evaluated ownership decisions. Existing provisioning API behavior is left unchanged unless the WHMCS integration is intentionally removed in a later release. | WHMCS ownership is available for customers whose `billing_provider='whmcs'`. |
+| `BILLING_WHMCS_ENABLED` | `true` | Prevents WHMCS from being selected as an active billing owner for new or re-evaluated customers inside the controller-side billing registry. It does **not** remove the existing provisioning API surface in the same release. | WHMCS ownership is available for customers whose `billing_provider='whmcs'`. |
 | `BILLING_NATIVE_ENABLED` | `false` | Native billing routes, ledger, and payment processing stay off. | Native billing routes registered at `/api/v1/customer/billing/*`. Credit ledger active. Hourly deduction cron active. Payment webhooks active. |
 | `BILLING_BLESTA_ENABLED` | `false` | Blesta support unavailable. | Blesta ownership available once an adapter exists. |
 | `*_PRIMARY` | all `false` by default | Provider cannot be selected as default for newly created native users. | Exactly one enabled provider must be marked primary. Config validation at startup rejects zero or multiple primary providers. |
@@ -440,12 +440,14 @@ CREATE TABLE billing_transactions (
     description     TEXT NOT NULL,                     -- human-readable ("Hourly charge: plan-basic × 1hr")
     reference_type  VARCHAR(30),                       -- 'payment', 'vm_usage', 'admin_adjustment'
     reference_id    UUID,                              -- FK to payment, VM, etc.
+    idempotency_key VARCHAR(255),                      -- unique key for webhook retries / reconciliation
     metadata        JSONB,                             -- extra context (payment gateway response, etc.)
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_billing_tx_account   ON billing_transactions(account_id);
 CREATE INDEX idx_billing_tx_created   ON billing_transactions(created_at);
 CREATE INDEX idx_billing_tx_reference ON billing_transactions(reference_type, reference_id);
+CREATE UNIQUE INDEX idx_billing_tx_idempotency ON billing_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- billing_payments: tracks payment gateway interactions
 CREATE TABLE billing_payments (
@@ -453,6 +455,7 @@ CREATE TABLE billing_payments (
     account_id          UUID NOT NULL REFERENCES billing_accounts(id),
     gateway             VARCHAR(20) NOT NULL,           -- 'stripe', 'paypal', 'crypto'
     gateway_payment_id  VARCHAR(255),                   -- Stripe PaymentIntent ID, PayPal order ID, etc.
+    reuse_key           VARCHAR(255),                   -- deduplicates concurrent pending session creation
     amount_cents        BIGINT NOT NULL,
     currency            VARCHAR(3) NOT NULL DEFAULT 'USD',
     status              VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending', 'completed', 'failed', 'refunded'
@@ -461,10 +464,24 @@ CREATE TABLE billing_payments (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_billing_payments_account ON billing_payments(account_id);
-CREATE INDEX idx_billing_payments_gateway ON billing_payments(gateway, gateway_payment_id);
+CREATE UNIQUE INDEX idx_billing_payments_gateway ON billing_payments(gateway, gateway_payment_id) WHERE gateway_payment_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_billing_payments_reuse_key ON billing_payments(reuse_key) WHERE status = 'pending' AND reuse_key IS NOT NULL;
 ```
 
 RLS policies would be added for `billing_accounts`, `billing_transactions`, and `billing_payments` using `current_setting('app.current_customer_id')::UUID`, matching the existing pattern.
+
+**Concurrency / double-spend controls:**
+- Balance mutation must lock the account row first (`SELECT ... FOR UPDATE`) before updating `balance_cents` and inserting the ledger row.
+- Every inbound payment webhook must map to a deterministic `idempotency_key` (for example `stripe:evt_x`, `paypal:transmission_id`, `btcpay:delivery_id`, `nowpayments:payment_id`) so retries cannot credit twice.
+- Idempotency keys are namespaced by source to avoid collisions:
+  - Stripe webhook: `stripe:event:{event_id}`
+  - PayPal webhook: `paypal:transmission:{transmission_id}`
+  - BTCPay webhook: `btcpay:delivery:{delivery_id}`
+  - NOWPayments callback: `nowpayments:payment:{payment_id}`
+  - Admin/manual adjustment: `admin-adjustment:{request_uuid}`
+- `balance_after` is derived inside the same database transaction that inserts the ledger row; it must never be computed in application memory before locking.
+- Admin adjustments and refunds use the same ledger mutation path as automated charges and deposits.
+- Pending-payment reuse uses a deterministic `reuse_key`, for example `{account_id}:{gateway}:{amount_cents}:{currency}:{15-minute-window-bucket}`. The repository must create/reuse pending payments inside a transaction so concurrent requests converge on the same row.
 
 ### 6.2 Hourly Usage Tracking & Deduction
 
@@ -485,6 +502,12 @@ A background scheduler (registered in `internal/controller/schedulers.go`) runs 
 
 **Monthly cap:** Hourly charges for a VM in a calendar month never exceed `plans.price_monthly`. The deduction cron tracks monthly accumulation per VM and stops charging once the cap is reached.
 
+**Downtime / reconciliation requirements:**
+- The scheduler cannot simply “skip” missed periods during controller downtime. Each run must reconcile from the last successfully billed hour to the current hour and create one ledger entry per missing hour bucket (or per contiguous reconciliation batch with explicit bucket metadata).
+- The implementation must persist a durable per-VM billing checkpoint (for example a `billing_vm_checkpoints` table or an equivalent unique `(vm_id, charge_hour)` record) so the controller can deterministically resume after restart.
+- In HA mode, only one controller instance may execute the billing scheduler for a given hour bucket. Use a durable leader/lease mechanism or a unique `(vm_id, charge_hour)` constraint to make duplicate execution harmless.
+- If the system cannot determine whether a past hour was already billed, it must fail closed (no charge) and emit an operator alert rather than risk double-billing.
+
 ### 6.3 Low-Balance Warnings & Auto-Suspension
 
 | Trigger | Action |
@@ -500,11 +523,11 @@ A background scheduler (registered in `internal/controller/schedulers.go`) runs 
 2. Frontend presents amount selector (preset amounts: $5, $10, $25, $50, $100, or custom).
 3. Customer selects payment method (Stripe / PayPal / Crypto).
 4. Backend creates payment session:
-   - Stripe: `POST /v1/checkout/sessions` with `mode: "payment"`, `metadata: { account_id, amount_cents }`.
-   - PayPal: `POST /v2/checkout/orders` with `intent: "CAPTURE"`.
-   - Crypto: Create invoice via BTCPay Greenfield API or NOWPayments API.
+   - Stripe: `POST /v1/checkout/sessions` with `mode: "payment"`, `metadata: { account_id, payment_id }`.
+   - PayPal: `POST /v2/checkout/orders` with `intent: "CAPTURE"` and a server-generated internal payment record.
+   - Crypto: Create invoice via BTCPay Greenfield API or NOWPayments API and persist the provider invoice/payment ID before redirecting the user.
 5. Customer completes payment on gateway.
-6. Webhook received → verify signature → update `billing_payments.status` → credit `billing_accounts.balance_cents` → insert `billing_transactions` row.
+6. Webhook received → verify signature → look up the internal payment record → apply idempotent status transition → credit `billing_accounts.balance_cents` → insert `billing_transactions` row with an `idempotency_key`.
 
 ---
 
@@ -526,6 +549,14 @@ type PaymentProvider interface {
 }
 ```
 
+The payment layer also owns a small registry/dispatcher:
+
+```go
+type PaymentRegistry interface {
+    ForProvider(name string) (PaymentProvider, error)
+}
+```
+
 ### 7a. Stripe
 
 **Integration approach:** Stripe Checkout (hosted payment page) for credit top-ups.
@@ -534,13 +565,13 @@ type PaymentProvider interface {
 1. Backend calls `stripe.CheckoutSessions.New()` with:
    - `mode: "payment"` (one-time, not subscription).
    - `line_items`: single item with description "Credit Top-Up" and the requested amount.
-   - `customer`: Stripe Customer ID (created lazily and stored in `billing_payments.gateway_customer_id`).
+   - `customer`: Stripe Customer ID (created lazily and stored in `billing_accounts.stripe_customer_id`).
    - `success_url`: Redirect back to VirtueStack billing page.
    - `cancel_url`: Redirect back to VirtueStack billing page.
    - `metadata`: `{ "account_id": "...", "payment_id": "..." }` for webhook reconciliation.
 2. Frontend redirects to Stripe Checkout URL.
 3. On completion, Stripe fires `checkout.session.completed` webhook.
-4. Webhook handler (registered at `/api/v1/webhooks/stripe`):
+4. Webhook handler (registered at `/api/v1/payments/webhooks/stripe`):
    - Verify signature using `stripe.ConstructEvent()` with endpoint secret.
    - Extract `metadata.payment_id`, look up `billing_payments`.
    - Update payment status → credit account → log transaction.
@@ -565,7 +596,7 @@ type PaymentProvider interface {
 4. PayPal redirects back to VirtueStack with `token` query parameter.
 5. Backend calls `POST /v2/checkout/orders/{id}/capture` to finalize.
 6. On success, credit account and log transaction.
-7. **Alternatively**, use PayPal webhooks (`PAYMENT.CAPTURE.COMPLETED`) for async confirmation.
+7. **Additionally**, use PayPal webhooks (`PAYMENT.CAPTURE.COMPLETED`) as the source of truth for idempotent async confirmation; browser return alone is not sufficient for credit posting.
 
 **PayPal Sandbox:** Use sandbox credentials for testing. PayPal provides sandbox buyer accounts.
 
@@ -621,10 +652,13 @@ billing:
 **Confirmation tracking:**
 - Both providers handle confirmation tracking and notify VirtueStack via webhooks/callbacks when payment is confirmed.
 - VirtueStack stores the crypto payment as `billing_payments` with `gateway='crypto'` and the provider-specific payment ID.
+- Final credit posting must wait for the provider's “confirmed/final” state rather than the first seen invoice payment event.
 
 **Exchange rate handling:**
 - Both providers lock the exchange rate at invoice creation time (typically 15-20 minute window).
 - The amount credited to the VirtueStack balance is the USD-equivalent at the locked rate, not the fluctuating market rate.
+- Underpayments do not create partial credit automatically. They move the payment into a provider-specific `underpaid` / `manual_review` state until the operator resolves it.
+- Chain reorg handling is delegated to the provider, but VirtueStack must treat any later reorg/reversal callback as a compensating ledger event rather than silently ignoring it.
 
 ---
 
@@ -635,8 +669,8 @@ billing:
 When `ALLOW_SELF_REGISTRATION=true`, the following endpoint is active (already exists):
 
 - `POST /api/v1/customer/auth/register` — accepts `email`, `password`, `name`.
-- Password requirements: minimum 8 characters, validated via existing `go-playground/validator` tags.
-- Response: `201 Created` with `{ status: "pending_verification" }`.
+- Password requirements: minimum 12 characters, validated via existing `go-playground/validator` tags.
+- Response: `201 Created` with `{ id, email, name, requires_verification }`.
 - Email verification token sent immediately.
 - Account status: `pending_verification` until email is verified.
 
@@ -644,9 +678,9 @@ When `ALLOW_SELF_REGISTRATION=true`, the following endpoint is active (already e
 
 Already implemented (migration 000069 `email_verification_tokens`):
 
-- `POST /api/v1/customer/auth/verify-email` — accepts `token`.
+- `POST /api/v1/customer/auth/verify-email` — accepts `token` in the request body.
 - Token: 32 bytes, cryptographically random, base64url-encoded. 24-hour expiry.
-- Rate limiting: max 5 verification emails per email per hour (configurable).
+- Existing route protection currently uses the registration rate-limit middleware; any stronger verify-email-specific throttling is future hardening work, not current behavior.
 - On verification: customer status → `active`, token consumed atomically.
 
 ### 8.3 OAuth Sign-In (Google + GitHub)
@@ -704,16 +738,24 @@ CREATE INDEX idx_oauth_links_customer ON customer_oauth_links(customer_id);
 2. Look up `customer_oauth_links` by `(provider, provider_id)`:
    - **Found** → sign in as that customer (existing session flow).
    - **Not found** → look up `customers` by `email`:
-     - **Email exists, status = active** → auto-link: insert `customer_oauth_links` row. Sign in.
-     - **Email exists, status = pending_verification** → reject. "Please verify your email first."
-     - **Email exists, status = suspended/deleted** → reject. "Account suspended."
-     - **Email not found, `ALLOW_SELF_REGISTRATION=true`** → create new customer (status = `active`, no password set) + `customer_oauth_links` row. Sign in.
-     - **Email not found, `ALLOW_SELF_REGISTRATION=false`** → reject. "Self-registration is disabled. Contact your provider."
+      - **Email exists, status = active, `whmcs_client_id IS NULL`** → auto-link: insert `customer_oauth_links` row. Sign in.
+      - **Email exists, status = active, `whmcs_client_id IS NOT NULL`** → DO NOT auto-link. Require the customer to authenticate into the existing portal account first (password or SSO) and perform an explicit “Link OAuth Provider” action from account settings via a JWT-protected link flow.
+      - **Email exists, status = pending_verification** → reject. "Please verify your email first."
+      - **Email exists, status = suspended/deleted** → reject. "Account suspended."
+      - **Email not found, `ALLOW_SELF_REGISTRATION=true`** → create new customer (status = `active`, no password set) + `customer_oauth_links` row. Sign in.
+      - **Email not found, `ALLOW_SELF_REGISTRATION=false`** → reject. "Self-registration is disabled. Contact your provider."
 
 **Edge cases:**
 - A customer can have multiple OAuth links (Google AND GitHub) pointing to the same account.
-- A customer created via WHMCS (has `whmcs_client_id`) can still link OAuth if they use the same email.
+- A customer created via WHMCS (has `whmcs_client_id`) can only link OAuth from an already-authenticated session; email match alone is not enough.
 - OAuth-only customers (no password) can set a password later via the "Set Password" flow in account settings.
+
+**Explicit JWT-protected link flow (required for WHMCS-linked accounts):**
+1. Authenticated customer visits account settings and clicks “Link Google” or “Link GitHub.”
+2. Backend issues a short-lived signed link-state tied to the current authenticated customer ID and provider, then redirects to the OAuth provider.
+3. Callback validates both the OAuth provider state and the signed link-state, and also verifies the user still has a valid authenticated session.
+4. If the OAuth provider email does not match the authenticated customer email, linking is rejected unless the operator has explicitly enabled a manual exception workflow.
+5. On success, create `customer_oauth_links` and return the customer to settings with a success message; do not disturb the existing session.
 
 ### 8.6 WHMCS User Coexistence
 
@@ -1062,7 +1104,7 @@ internal/controller/payments/
 
 **Migration path (zero-downtime):**
 
-1. **Phase 0a:** Add `billing_provider` column to `customers` table with default `'whmcs'`. All existing users get `'whmcs'`. No behavioral change.
+1. **Phase 0a:** Add `billing_provider` column to `customers` table via migration 000072, backfilled from current state (`whmcs_client_id != NULL -> 'whmcs'`, otherwise `'unmanaged'`). No native billing behavior is enabled yet.
 2. **Phase 0b:** Create `internal/controller/billing/` package with interface + registry + WHMCS adapter (all no-ops since WHMCS drives via API). Wire registry into `server.go`.
 3. **Phase 0c:** Add lifecycle hooks in `VMService` — after `CreateVM()` completes, call `registry.ForCustomer(customer.BillingProvider).OnVMCreated()`. Same for delete/resize. WHMCS adapter returns nil (no-op), so existing behavior is unchanged.
 4. **Phase 0d:** Run existing integration tests. All WHMCS functionality MUST pass identically.
@@ -1261,7 +1303,7 @@ DROP TABLE IF EXISTS customer_oauth_links;
 
 ### 10.3 Rollback Plan
 
-Each migration has a corresponding `.down.sql` that drops the table or column in reverse order. Rollback order: 000076 → 000075 → 000074 → 000073 → 000072. The `billing_provider` column (000072) rollback removes the column; existing customers revert to implicit WHMCS-only mode.
+Each migration has a corresponding `.down.sql` that drops the table or column in reverse order. Rollback order: 000076 → 000075 → 000074 → 000073 → 000072. The `billing_provider` column (000072) rollback removes the column; the system then reverts to pre-billing-plan behavior where WHMCS-linked customers are identified only by `whmcs_client_id` and native billing features must remain disabled.
 
 ---
 
@@ -1270,7 +1312,7 @@ Each migration has a corresponding `.down.sql` that drops the table or column in
 ### 11.1 Billing Endpoints (Native — Gated by `BILLING_NATIVE_ENABLED=true`)
 
 Base path: `/api/v1/customer/billing/`
-Auth: JWT only (no customer API key support) in the initial implementation. Rationale: the current codebase does not define `billing:*` customer API key scopes, and money-moving endpoints should stay aligned with the existing JWT-only account-management route group until a separate scope expansion is designed. Adding billing scopes later would require coordinated changes to customer API key validation, route authorization, and API key management UX.
+Auth: JWT only (no customer API key support) in the initial implementation. Rationale: the current codebase does not define `billing:*` customer API key scopes, and money-moving endpoints should stay aligned with the existing JWT-only account-management route group until a separate scope expansion is designed. Adding billing scopes later would require a dedicated follow-up phase covering customer API key validation, route authorization, middleware, and API key management UX.
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
@@ -1286,14 +1328,14 @@ Admin billing endpoints (base path: `/api/v1/admin/billing/`):
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | `GET` | `/accounts` | List all billing accounts (paginated) | Admin JWT + new billing-read permission (or temporary mapping to settings/backups permissions until RBAC is extended) |
-| `GET` | `/accounts/:customer_id` | Get specific customer's billing account | Admin JWT + billing-read permission (to be added as part of the billing RBAC expansion) |
-| `POST` | `/accounts/:customer_id/adjust` | Manual credit adjustment (add/deduct) | Admin JWT + billing-write permission (to be added as part of the billing RBAC expansion) |
+| `GET` | `/accounts/:customer_id` | Get specific customer's billing account (`:customer_id` is the customer UUID) | Admin JWT + billing-read permission (to be added as part of the billing RBAC expansion) |
+| `POST` | `/accounts/:customer_id/adjust` | Manual credit adjustment (add/deduct) (`:customer_id` is the customer UUID) | Admin JWT + billing-write permission (to be added as part of the billing RBAC expansion) |
 | `GET` | `/payments` | List all payments across customers | Admin JWT + billing-read permission (to be added as part of the billing RBAC expansion) |
 | `POST` | `/payments/:id/refund` | Issue refund for a payment | Admin JWT + billing-write permission (to be added as part of the billing RBAC expansion) |
 
 ### 11.2 Payment Webhook Endpoints
 
-Base path: `/api/v1/webhooks/`
+Base path: `/api/v1/payments/webhooks/`
 Auth: Per-gateway signature verification (no JWT — webhooks come from external services).
 
 | Method | Path | Description | Signature Verification |
@@ -1303,7 +1345,7 @@ Auth: Per-gateway signature verification (no JWT — webhooks come from external
 | `POST` | `/crypto/btcpay` | BTCPay Server webhook | `BTCPay-Sig` header, HMAC-SHA256 with webhook secret |
 | `POST` | `/crypto/nowpayments` | NOWPayments IPN callback | `x-nowpayments-sig` header, HMAC-SHA512 with IPN secret |
 
-**Provider-agnostic routing:** The webhook router at `/api/v1/webhooks/{provider}` is a thin dispatcher. Each handler:
+**Provider-agnostic routing:** The webhook router at `/api/v1/payments/webhooks/{provider}` is a thin dispatcher. Each handler:
 1. Reads raw body (preserves for signature verification).
 2. Verifies signature using provider-specific logic.
 3. Calls `paymentRegistry.ForProvider(provider).HandleWebhook()`.
@@ -1321,13 +1363,17 @@ These are already defined in section 8.3. Registration and verify-email already 
 | `GET` | `/api/v1/customer/auth/oauth/google/callback` | Google OAuth callback | `OAUTH_GOOGLE_ENABLED=true` |
 | `GET` | `/api/v1/customer/auth/oauth/github` | Redirect to GitHub authorization | `OAUTH_GITHUB_ENABLED=true` |
 | `GET` | `/api/v1/customer/auth/oauth/github/callback` | GitHub OAuth callback | `OAUTH_GITHUB_ENABLED=true` |
+| `GET` | `/api/v1/customer/auth/oauth/google/link` | Start JWT-authenticated Google account-link flow from settings | `OAUTH_GOOGLE_ENABLED=true` + JWT |
+| `GET` | `/api/v1/customer/auth/oauth/google/link/callback` | Complete Google account-link flow for an already-authenticated customer | `OAUTH_GOOGLE_ENABLED=true` + signed link state |
+| `GET` | `/api/v1/customer/auth/oauth/github/link` | Start JWT-authenticated GitHub account-link flow from settings | `OAUTH_GITHUB_ENABLED=true` + JWT |
+| `GET` | `/api/v1/customer/auth/oauth/github/link/callback` | Complete GitHub account-link flow for an already-authenticated customer | `OAUTH_GITHUB_ENABLED=true` + signed link state |
 
 ### 11.4 Auth Middleware Requirements
 
 | Endpoint Group | Middleware Stack |
 |---------------|-----------------|
 | `/customer/billing/*` | `JWTAuth` → `RequireUserType("customer")` → `CSRF(DefaultCSRFConfig())` → `CustomerRateLimits` → `Audit` (JWT-only route group; no `SkipCSRFForAPIKey(...)`) |
-| `/webhooks/*` | Raw body preservation → Provider-specific signature verification → `WebhookRateLimit` |
+| `/payments/webhooks/*` | Raw body preservation → Provider-specific signature verification → `WebhookRateLimit` |
 | `/customer/auth/register` | `RegistrationRateLimit` (IP-based, strict: 5 per hour per IP) |
 | `/customer/auth/verify-email` | `VerificationRateLimit` (token-based, 10 per minute) |
 | `/customer/auth/oauth/*` | `OAuthRateLimit` (IP-based, 20 per minute) → CSRF state validation |
@@ -1347,6 +1393,7 @@ VirtueStack MUST NOT handle, store, or transmit raw card numbers or CVVs.
 
 **Sensitive data storage:**
 - `billing_payments.metadata` may contain gateway response data. Encrypt at rest using `internal/shared/crypto/` AES-256-GCM (same as `root_password_encrypted` on VMs). Mark with `json:"-"` to prevent accidental API serialization.
+- `billing_transactions.metadata` must contain only non-sensitive reconciliation data by default (payment IDs, hour buckets, admin adjustment references). If a transaction needs provider payload fragments or error details that contain sensitive payment context, encrypt that metadata at rest as well.
 - `billing_accounts.stripe_customer_id` is a Stripe-side reference, not sensitive — but still should not appear in logs (use `config.Secret` type pattern).
 
 ### 12.2 Crypto Payment Verification
@@ -1394,11 +1441,16 @@ All HMAC comparisons MUST use `crypto/hmac` with `hmac.Equal()` (timing-safe) or
 | `POST /customer/auth/verify-email` | 10 | per minute | IP address |
 | `GET /customer/auth/oauth/*` | 20 | per minute | IP address |
 | `POST /customer/billing/top-up` | 10 | per hour | Customer ID |
-| `POST /webhooks/stripe` | 100 | per minute | IP address (Stripe IP range) |
-| `POST /webhooks/paypal` | 100 | per minute | IP address |
-| `POST /webhooks/crypto/*` | 50 | per minute | IP address |
+| `POST /customer/billing/top-up` | 30 | per hour | Source IP |
+| `POST /payments/webhooks/stripe` | 100 | per minute | IP address (Stripe IP range) |
+| `POST /payments/webhooks/paypal` | 100 | per minute | IP address |
+| `POST /payments/webhooks/crypto/*` | 50 | per minute | IP address |
 
 Uses VirtueStack's existing rate limiter middleware (`internal/controller/api/middleware/ratelimit.go`).
+
+**Denial-of-wallet controls:**
+- A customer may have only a bounded number of `pending` top-up sessions / open crypto invoices at once (for example 3).
+- New payment sessions are reused only when all of the following are true: same customer, same gateway, exact same `amount_cents` and `currency`, existing payment status is `pending`, and the prior payment session/invoice is less than 15 minutes old and has not expired. Otherwise a new pending payment record is created.
 
 ### 12.5 CSRF Protection
 
@@ -1409,8 +1461,22 @@ Payment initiation (`POST /customer/billing/top-up`) requires:
 
 OAuth flows use the `state` parameter as CSRF protection (cryptographically random, short-lived, server-validated).
 
-### 12.6 Provider Isolation
+### 12.6 OAuth Token & Link Security
 
+- OAuth access tokens and refresh tokens are never stored unless a provider explicitly requires refresh-token-based re-consent workflows; if persisted, they must be encrypted at rest using the existing `internal/shared/crypto/` package and excluded from JSON serialization.
+- OAuth callback state must be single-use, short-lived, and stored server-side. Reuse of the same state value is rejected and logged.
+- Linked OAuth providers can be revoked from the customer settings page, which deletes the associated `customer_oauth_links` row and invalidates any stored provider tokens.
+- WHMCS-linked customers cannot be auto-linked by email alone; explicit in-session linking is required to prevent unintended account takeover via email collision.
+
+### 12.7 WHMCS API Key Handling
+
+- The WHMCS → VirtueStack provisioning key remains stored the same way it is today: hashed server-side in the `provisioning_keys` table and only shown in plaintext at creation time.
+- Any future controller config for a WHMCS provider must use `config.Secret` fields and must never be exposed from debug/config endpoints in plaintext.
+- The billing plan does **not** introduce a controller-side outbound WHMCS API key by default; adding one would be a separate design change.
+
+### 12.8 Provider Isolation
+
+- `billing_provider` is server-managed only. It is never writable from customer-facing APIs, never accepted from self-registration/profile update flows, and may only change through admin actions or controlled migration logic.
 - Each `BillingProvider` implementation runs independently. An error in the native billing cron MUST NOT affect WHMCS customer operations.
 - Provider operations are wrapped in per-provider error boundaries. Panics in one provider are recovered and logged without crashing the controller.
 - Circuit breaker pattern: if a payment gateway consistently fails (e.g., Stripe is down), the circuit opens and returns a user-friendly error instead of queuing retries indefinitely.
@@ -1427,7 +1493,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 **What ships:**
 - `internal/controller/billing/` package: `BillingProvider` interface, `Registry`, types.
 - `internal/controller/billing/whmcs/adapter.go` — implements `BillingProvider` with no-ops (WHMCS drives via Provisioning API).
-- Migration 000072: Add `billing_provider` column to `customers` (default `'whmcs'`).
+- Migration 000072: Add `billing_provider` column to `customers` with safe backfill to `whmcs` / `unmanaged`.
 - `server.go` wiring: create `Registry`, pass to services.
 - Lifecycle hooks in `VMService`: call `OnVMCreated/OnVMDeleted/OnVMResized` after operations.
 - Provider config wiring in `config.go` (`BILLING_*_ENABLED`, `BILLING_*_PRIMARY`).
@@ -1435,6 +1501,8 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 **Dependencies:** None (builds on existing code).
 
 **Verification:** ALL existing WHMCS functionality MUST pass identical integration tests before and after refactor. Run `make test` + WHMCS PHP module `TestConnection`.
+
+**Rollback:** revert the controller to the previous release, disable any new billing-provider flags, leave the additive column in place but unused, and verify `CreateAccount`, `SuspendAccount`, `SingleSignOn`, cron polling, webhook delivery, and WHMCS module `TestConnection` against the pre-refactor behavior before reattempting rollout. Do **not** immediately run the down migration for 000072 during an emergency application rollback unless you have confirmed no later code or operator workflow depends on the column.
 
 **Can ship independently:** Yes — this is a pure refactoring. No user-facing changes.
 
@@ -1446,6 +1514,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 - Config struct additions for `billing.providers.*`, `auth.oauth.*` in `config.go`.
 - Env var overrides for all new flags.
 - Conditional route registration for billing, OAuth, and registration endpoints.
+- Operator tooling to assign `billing_provider` for `unmanaged` legacy customers (admin endpoint, admin UI action, or a documented one-time migration script shipped with the release).
 - Documentation update for `.env.example`.
 
 **Dependencies:** Phase 0 (registry must exist to load provider config).
@@ -1476,7 +1545,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 **What ships:**
 - `internal/controller/payments/stripe/client.go` — Stripe Checkout session creation.
 - `POST /customer/billing/top-up` endpoint.
-- `POST /webhooks/stripe` webhook handler with signature verification.
+- `POST /payments/webhooks/stripe` webhook handler with signature verification.
 - Stripe Customer mapping (lazy creation, stored in `billing_accounts`).
 - Config: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUBLISHABLE_KEY`.
 - Customer WebUI: billing page with balance display + "Add Credit" button.
@@ -1491,7 +1560,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 
 **What ships:**
 - `internal/controller/payments/paypal/client.go` — PayPal Orders API v2 integration.
-- `POST /webhooks/paypal` webhook handler.
+- `POST /payments/webhooks/paypal` webhook handler.
 - PayPal sandbox testing support.
 - Customer WebUI: PayPal as a payment option on top-up page.
 
@@ -1506,7 +1575,7 @@ OAuth flows use the `state` parameter as CSRF protection (cryptographically rand
 **What ships:**
 - `internal/controller/payments/crypto/btcpay.go` — BTCPay Server Greenfield API client.
 - `internal/controller/payments/crypto/nowpayments.go` — NOWPayments API client.
-- `POST /webhooks/crypto/btcpay` and `/webhooks/crypto/nowpayments` handlers.
+- `POST /payments/webhooks/crypto/btcpay` and `/payments/webhooks/crypto/nowpayments` handlers.
 - Supported chains: BTC, ETH + ERC-20 stablecoins, BNB + BEP-20 stablecoins, Base USDC.
 - Config: `CRYPTO_PROVIDER` (`btcpay` | `nowpayments`), provider-specific keys.
 - Customer WebUI: crypto as a payment option.
@@ -1525,6 +1594,7 @@ Suggested order: BTC (simplest via BTCPay), then EVM chains (ETH, BNB, Base).
 - Migration 000076: `customer_oauth_links` table.
 - OAuth handlers: Google and GitHub sign-in using `golang.org/x/oauth2`.
 - Account linking logic (section 8.5).
+- JWT-protected explicit OAuth link flows for already-authenticated customers, required for WHMCS-linked accounts.
 - PKCE support for all OAuth flows.
 - `ALLOW_SELF_REGISTRATION`, `OAUTH_GOOGLE_ENABLED`, `OAUTH_GITHUB_ENABLED` flags.
 - Customer WebUI: "Sign in with Google" / "Sign in with GitHub" buttons.
@@ -1571,3 +1641,62 @@ Phase 0 (Abstraction) ─┬─► Phase 1 (Config) ─┬─► Phase 2 (Credit
 | 7 | S | 1 | 16-20 |
 
 Phases 3, 4, 5, and 6 can be parallelized if multiple developers are available. The critical path is: Phase 0 → Phase 1 → Phase 2 → Phase 3 (minimum viable native billing in ~8-10 weeks).
+
+---
+
+## 14. Testing, Monitoring, and Dependency Requirements
+
+### 14.1 Testing Strategy
+
+- **Phase 0 (WHMCS refactor):**
+  - existing Go unit tests (`make test`)
+  - WHMCS module `TestConnection`
+  - manual/automated smoke tests for `CreateAccount`, `SuspendAccount`, `UnsuspendAccount`, `TerminateAccount`, `UsageUpdate`, and `SingleSignOn`
+- **Phase 2 (native ledger):**
+  - unit tests for ledger mutation, locking, insufficient-balance handling, and reconciliation logic
+  - repository tests for unique/idempotency constraints
+  - integration tests for scheduler catch-up after simulated downtime
+- **Phase 3-5 (payments):**
+  - provider sandbox/integration tests (Stripe test mode, PayPal sandbox, BTCPay test instance, NOWPayments sandbox if available)
+  - webhook replay tests to prove duplicate delivery does not double-credit
+  - refund and reversal tests that emit compensating ledger entries
+- **Phase 6 (OAuth):**
+  - unit tests for collision policy, especially `whmcs_client_id != NULL`
+  - callback/state replay tests
+  - explicit-linking tests for WHMCS-owned accounts
+
+### 14.2 Monitoring & Alerting
+
+- Export billing-specific Prometheus metrics:
+  - successful / failed payment session creation
+  - webhook verification failures
+  - duplicate webhook suppression counts
+  - scheduler lag / missed-hour reconciliation counts
+  - auto-suspension counts
+- Add alerting for:
+  - repeated gateway failures
+  - scheduler reconciliation backlog
+  - unusually high manual-review / underpayment volume
+  - inability to post ledger entries
+- Notify operators through the existing notification channels when billing enters a degraded state.
+
+### 14.3 Dependency Notes
+
+Planned Go dependencies implied by this design:
+
+| Dependency | Purpose | Notes |
+|------------|---------|-------|
+| `github.com/stripe/stripe-go/v82` | Stripe Checkout + webhook verification | Official SDK; pin exact major/minor version and review advisories before adding |
+| `golang.org/x/oauth2` | OAuth 2.0 client flows | Actively maintained Go subrepo; used for Google/GitHub OAuth |
+| `golang.org/x/oauth2/google` | Google endpoint helpers | Part of `x/oauth2`; low integration risk |
+| `github.com/google/uuid` | already present | Reuse existing dependency; no new addition needed |
+
+Dependency policy for the remaining providers:
+- **PayPal:** prefer direct REST integration over unofficial/stale Go SDKs unless a well-maintained official SDK becomes available.
+- **BTCPay / NOWPayments:** prefer direct HTTPS clients over thin third-party wrappers unless the wrapper is actively maintained and passes security review.
+- Run dependency/advisory review before implementation; do not add libraries with unresolved critical CVEs or unclear maintenance status.
+
+### 14.4 Migration Compatibility Notes
+
+- Proposed migrations 000072-000076 do not conflict numerically with the current migration chain (latest existing migration is 000071).
+- The billing plan must continue following the repository's migration rules: additive changes first, `SET lock_timeout = '5s';`, and no `CREATE INDEX CONCURRENTLY`.
