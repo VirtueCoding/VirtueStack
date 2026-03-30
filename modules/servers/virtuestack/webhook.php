@@ -115,13 +115,12 @@ function handleWebhook(): void
     }
 
     // Validate UUID format for task_id and vm_id when present
-    $uuidPattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
-    if (!preg_match($uuidPattern, $taskId)) {
+    if (!preg_match(UUID_PATTERN, $taskId)) {
         logWebhook('error', 'Invalid task_id format in webhook payload');
         sendResponse(400, ['error' => 'Invalid task_id format']);
         return;
     }
-    if (!empty($vmId) && !preg_match($uuidPattern, $vmId)) {
+    if (!empty($vmId) && !preg_match(UUID_PATTERN, $vmId)) {
         logWebhook('error', 'Invalid vm_id format in webhook payload');
         sendResponse(400, ['error' => 'Invalid vm_id format']);
         return;
@@ -487,7 +486,7 @@ function encryptPassword(string $password): string
 
     $encrypted = encrypt($password);
 
-    if ($encrypted === false || $encrypted === '') {
+    if (empty($encrypted)) {
         throw new \RuntimeException('WHMCS encrypt() returned an empty result');
     }
 

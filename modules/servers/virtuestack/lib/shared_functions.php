@@ -16,6 +16,9 @@ declare(strict_types=1);
 
 use WHMCS\Database\Capsule;
 
+/** Regex pattern for validating UUID v4 format (case-insensitive). */
+const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
 /**
  * Get custom field ID by name.
  *
@@ -53,8 +56,6 @@ function validateFieldValue(string $fieldName, string $value): ?string
         return '';
     }
 
-    $uuidPattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
-
     $validStatuses = [
         'running', 'stopped', 'suspended', 'provisioning',
         'migrating', 'reinstalling', 'error', 'deleted',
@@ -67,7 +68,7 @@ function validateFieldValue(string $fieldName, string $value): ?string
         case 'vm_id':
         case 'node_id':
         case 'virtuestack_customer_id':
-            if (!preg_match($uuidPattern, $value)) {
+            if (!preg_match(UUID_PATTERN, $value)) {
                 return null;
             }
             return $value;
@@ -92,13 +93,14 @@ function validateFieldValue(string $fieldName, string $value): ?string
 
         case 'task_id':
             // Task IDs are UUIDs or empty (when clearing)
-            if (!preg_match($uuidPattern, $value)) {
+            if (!preg_match(UUID_PATTERN, $value)) {
                 return null;
             }
             return $value;
 
         default:
-            // Unknown fields: cap length and strip control characters
+            // Unknown fields: cap at 500 chars (WHMCS tblcustomfieldsvalues.value is TEXT,
+            // but we bound it to a sane limit to prevent abuse) and strip control chars.
             $value = substr($value, 0, 500);
             $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value);
             return $value;
@@ -246,9 +248,11 @@ function verifyWebhookSignature(string $body, string $signature): bool
 
     // Always compute the HMAC so the function takes constant time
     // regardless of whether the secret or signature is present.
+    // When the secret is missing we still need to burn equivalent CPU
+    // time, so we derive a throwaway key from the body itself.
     $expectedSignature = !empty($webhookSecret)
         ? hash_hmac('sha256', $body, $webhookSecret)
-        : hash_hmac('sha256', $body, 'invalid-placeholder-key');
+        : hash_hmac('sha256', $body, hash('sha256', $body));
 
     if (empty($signature) || empty($webhookSecret)) {
         return false;
