@@ -4,7 +4,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-blue)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-19-blue)](https://reactjs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://www.postgresql.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-blue)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 VirtueStack provides a complete infrastructure-as-a-service platform for managing virtual machines across distributed compute nodes.

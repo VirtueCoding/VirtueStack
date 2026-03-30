@@ -92,7 +92,7 @@ Includes everything above, plus:
 | Component | Technology | Version |
 |-----------|------------|---------|
 | Container Runtime | Docker | 26+ |
-| Reverse Proxy | Nginx | 1.25+ |
+| Reverse Proxy | Nginx | 1.28+ |
 | mTLS | Controller ↔ Node Agent | Required |
 
 ## Build Tools
@@ -100,7 +100,7 @@ Includes everything above, plus:
 | Tool | Purpose |
 |------|---------|
 | `make` | Build automation |
-| `golangci-lint` (v2.0.2) | Go linting (25 linters) |
+| `golangci-lint` (v2.11.4) | Go linting (25 linters) |
 | `govulncheck` | Security scanning |
 | `npm` | Frontend deps (WebUIs) |
 | `pnpm` | E2E test deps |
