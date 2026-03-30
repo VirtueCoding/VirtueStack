@@ -73,7 +73,7 @@ Includes everything above, plus:
 ### Required
 | Service | Purpose | Config |
 |---------|---------|--------|
-| PostgreSQL 16+ | Primary database | `DATABASE_URL` |
+| PostgreSQL 18+ | Primary database | `DATABASE_URL` |
 | NATS JetStream | Task queue | `NATS_URL` |
 | KVM/QEMU | Hypervisor | Node Agent binary |
 | Ceph RBD, QCOW2, or LVM | Storage | `STORAGE_BACKEND` |

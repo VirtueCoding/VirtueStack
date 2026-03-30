@@ -12,7 +12,7 @@ Machine-readable reference for LLM agents working on the VirtueStack codebase.
 
 VirtueStack is a KVM/QEMU Virtual Machine management platform for VPS hosting providers.
 
-**Components:** Go backend (Controller + Node Agent), TypeScript/React frontends (Next.js admin and customer portals), PostgreSQL 16 database with Row-Level Security, NATS JetStream message queue, Redis for distributed rate limiting.
+**Components:** Go backend (Controller + Node Agent), TypeScript/React frontends (Next.js admin and customer portals), PostgreSQL 18 database with Row-Level Security, NATS JetStream message queue, Redis for distributed rate limiting.
 
 **Communication:** Controller ↔ Node Agent via gRPC with mTLS. Controller ↔ WHMCS via Provisioning REST API.
 
@@ -146,7 +146,7 @@ docs/
 |-----------|------------|---------|
 | Language | Go | 1.26 |
 | HTTP Framework | Gin | v1.10.1 |
-| Database | PostgreSQL | 16+ |
+| Database | PostgreSQL | 18+ |
 | Message Queue | NATS JetStream | v1.38.0 |
 | Cache/Rate Limit | Redis (go-redis/v9) | — |
 | gRPC | google.golang.org/grpc | v1.79.1 |
@@ -185,7 +185,7 @@ docs/
 | Storage | Ceph RBD, QCOW2, or LVM thin provisioning |
 | DNS | PowerDNS (optional) |
 | Containers | Docker + Compose |
-| Proxy | Nginx 1.25+ |
+| Proxy | Nginx 1.28+ |
 
 ---
 
@@ -891,7 +891,7 @@ make docker-down    # Stop stack
 
 1. **Node Agent requires native libs:** `sudo apt install -y pkg-config libvirt-dev librados-dev librbd-dev`. Without them, `make build-node-agent`, `make vet`, and `make test-native` fail.
 2. **Package manager split:** `webui/` uses npm (`package-lock.json`); `tests/e2e/` uses pnpm (`pnpm-lock.yaml`).
-3. **golangci-lint not pre-installed:** CI installs via GitHub Action. Local: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.0.2`
+3. **golangci-lint not pre-installed:** CI installs via GitHub Action. Local: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.11.4`
 4. **Migration 000031 is a no-op:** Original `CREATE INDEX CONCURRENTLY` incompatible with golang-migrate transactions.
 
 ---
@@ -902,12 +902,12 @@ make docker-down    # Stop stack
 
 | Service | Image | Notes |
 |---------|-------|-------|
-| postgres | postgres:16-alpine | Internal network |
-| nats | nats:2.10-alpine | JetStream enabled, `--auth` token |
+| postgres | postgres:18-alpine | Internal network |
+| nats | nats:2.12-alpine | JetStream enabled, `--auth` token |
 | controller | virtuestack/controller | Depends on postgres, nats |
 | admin-webui | virtuestack/admin-webui | Depends on controller |
 | customer-webui | virtuestack/customer-webui | Depends on controller |
-| nginx | nginx:1.25-alpine | Ports 80, 443 |
+| nginx | nginx:1.28-alpine | Ports 80, 443 |
 
 Network: `virtuestack-internal` (172.20.0.0/24). Node Agent runs on host, not in Docker.
 
@@ -921,7 +921,7 @@ Required `.env` variables: `POSTGRES_PASSWORD`, `NATS_AUTH_TOKEN`, `JWT_SECRET`,
 
 ### ci.yml (push/PR to main)
 
-1. Go lint + test (with PostgreSQL 16 + NATS service containers)
+1. Go lint + test (with PostgreSQL 18 + NATS service containers)
    - Includes buf proto breaking-change check against `main`
 2. PHP syntax validation
 3. Admin frontend: `npm ci` + lint + type-check + build
