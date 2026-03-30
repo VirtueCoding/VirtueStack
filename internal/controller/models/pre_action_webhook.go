@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // PreActionWebhook represents an admin-managed webhook called synchronously
 // before specific actions (e.g., VM creation) for approval/rejection.
@@ -28,6 +31,19 @@ type PreActionWebhookCreateRequest struct {
 	IsActive  *bool    `json:"is_active,omitempty"`
 }
 
+// MarshalJSON redacts the Secret field to prevent accidental exposure in logs or error responses.
+func (r PreActionWebhookCreateRequest) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Name      string   `json:"name"`
+		URL       string   `json:"url"`
+		Secret    string   `json:"secret"`
+		Events    []string `json:"events"`
+		TimeoutMs *int     `json:"timeout_ms,omitempty"`
+		FailOpen  *bool    `json:"fail_open,omitempty"`
+		IsActive  *bool    `json:"is_active,omitempty"`
+	}{Name: r.Name, URL: r.URL, Secret: "[REDACTED]", Events: r.Events, TimeoutMs: r.TimeoutMs, FailOpen: r.FailOpen, IsActive: r.IsActive})
+}
+
 // PreActionWebhookUpdateRequest is the request body for updating a pre-action webhook.
 type PreActionWebhookUpdateRequest struct {
 	Name      *string  `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
@@ -37,6 +53,19 @@ type PreActionWebhookUpdateRequest struct {
 	TimeoutMs *int     `json:"timeout_ms,omitempty" validate:"omitempty,min=500,max=30000"`
 	FailOpen  *bool    `json:"fail_open,omitempty"`
 	IsActive  *bool    `json:"is_active,omitempty"`
+}
+
+// MarshalJSON redacts the Secret field to prevent accidental exposure in logs or error responses.
+func (r PreActionWebhookUpdateRequest) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Name      *string  `json:"name,omitempty"`
+		URL       *string  `json:"url,omitempty"`
+		Secret    string   `json:"secret,omitempty"`
+		Events    []string `json:"events,omitempty"`
+		TimeoutMs *int     `json:"timeout_ms,omitempty"`
+		FailOpen  *bool    `json:"fail_open,omitempty"`
+		IsActive  *bool    `json:"is_active,omitempty"`
+	}{Name: r.Name, URL: r.URL, Secret: "[REDACTED]", Events: r.Events, TimeoutMs: r.TimeoutMs, FailOpen: r.FailOpen, IsActive: r.IsActive})
 }
 
 // Pre-action webhook event constants.

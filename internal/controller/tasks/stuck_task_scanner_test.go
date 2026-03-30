@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,10 +142,10 @@ func TestRecoverStuckTasks(t *testing.T) {
 }
 
 func TestStartStuckTaskScanner(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	repo := &mockWorkerTaskRepo{
 		findStuckTasksFunc: func(ctx context.Context, threshold time.Duration) ([]*models.Task, error) {
-			callCount++
+			callCount.Add(1)
 			return []*models.Task{}, nil
 		},
 	}
@@ -161,7 +162,10 @@ func TestStartStuckTaskScanner(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(30 * time.Millisecond)
+	// Poll until the scanner has run at least once instead of using time.Sleep
+	require.Eventually(t, func() bool {
+		return callCount.Load() >= 1
+	}, time.Second, 5*time.Millisecond)
 	cancel()
 
 	select {
@@ -170,5 +174,5 @@ func TestStartStuckTaskScanner(t *testing.T) {
 		t.Fatal("scanner did not stop after context cancellation")
 	}
 
-	assert.GreaterOrEqual(t, callCount, 1)
+	assert.GreaterOrEqual(t, int(callCount.Load()), 1)
 }

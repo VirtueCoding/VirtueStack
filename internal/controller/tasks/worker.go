@@ -85,6 +85,7 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 		Storage:   nats.FileStorage,
 		Retention: nats.LimitsPolicy,
 		MaxAge:    7 * 24 * time.Hour,
+		MaxMsgs:   1_000_000,
 		Replicas:  1,
 	}
 
@@ -101,6 +102,7 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 		Storage:   nats.FileStorage,
 		Retention: nats.LimitsPolicy,
 		MaxAge:    7 * 24 * time.Hour,
+		MaxMsgs:   1_000_000,
 		Replicas:  1,
 	})
 	if err != nil {
