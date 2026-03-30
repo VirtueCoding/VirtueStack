@@ -61,6 +61,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module with SSO token exchange |
 | ISO Management | ✅ Upload, attach, detach ISOs with plan-based limits and SHA256 validation |
 | Webhooks | ✅ Customer webhook delivery with retry and logging |
+| System Webhooks | ✅ Admin-managed webhooks for system events (node/failover/storage) |
+| Pre-Action Webhooks | ✅ Synchronous approval webhooks before VM operations (fail-open/fail-closed) |
 | Notification Preferences | ✅ Email and Telegram notifications per event type |
 
 ### Security & Authentication
@@ -79,6 +81,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
 | Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
 | Row Level Security | ✅ PostgreSQL RLS for customer data isolation |
+| Email Verification | ✅ Token-based email verification for customer registration |
+| Circuit Breaker | ✅ Resilience pattern preventing cascading failures to node agents |
 
 ### Monitoring & Observability
 
@@ -330,7 +334,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 |-----------|--------|
 | Controller APIs | 100% |
 | Node Agent | 100% |
-| Database Schema (65 migrations) | 100% |
+| Database Schema (71 migrations) | 100% |
 | Authentication (JWT, 2FA, API Keys, SSO) | 100% |
 | VM Lifecycle | 100% |
 | Storage (Ceph RBD + QCOW + LVM) | 100% |
@@ -349,3 +353,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 | Admin Permissions | 100% |
 | Monitoring | 100% |
 | E2E Tests | 100% |
+| System Webhooks | 100% |
+| Pre-Action Webhooks | 100% |
+| Email Verification | 100% |
+| VM State Machine | 100% |
+| Circuit Breaker | 100% |

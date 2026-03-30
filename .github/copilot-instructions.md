@@ -25,7 +25,7 @@ internal/controller/     — Controller: API handlers, services, repos, models, 
 internal/nodeagent/      — Node Agent: VM lifecycle, storage, network, metrics
 internal/shared/         — Shared packages: config, crypto, errors, logging, proto
 proto/                   — gRPC .proto definitions
-migrations/              — Sequential SQL migrations (000001–000044)
+migrations/              — Sequential SQL migrations (000001–000071)
 webui/admin/             — Next.js admin portal
 webui/customer/          — Next.js customer portal
 modules/servers/virtuestack/ — WHMCS billing integration (PHP)

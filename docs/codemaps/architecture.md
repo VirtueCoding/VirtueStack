@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-28 | Files scanned: 220+ | Token estimate: ~900 -->
+<!-- Generated: 2026-03-30 | Files scanned: 230+ | Token estimate: ~900 -->
 
 # VirtueStack Architecture
 
@@ -77,7 +77,7 @@ API Request → Middleware (Correlation, Metrics, RateLimit, Recovery, Auth, CSR
 | Admin UI | `webui/admin/app/layout.tsx` | `webui/admin/next.config.js` |
 | Customer UI | `webui/customer/app/layout.tsx` | `webui/customer/next.config.js` |
 | gRPC Proto | `proto/virtuestack/node_agent.proto` (972 lines) | - |
-| Migrations | `migrations/` (65 migrations: 000001–000065) | - |
+| Migrations | `migrations/` (71 migrations: 000001–000071) | - |
 | Storage Factory | `internal/nodeagent/storage/factory.go` | 3 backends: Ceph, QCOW, LVM |
 
 ## Notable Components
@@ -92,3 +92,7 @@ API Request → Middleware (Correlation, Metrics, RateLimit, Recovery, Auth, CSR
 | Template Distribution | `internal/controller/tasks/template_distribute.go` | Template caching on QCOW/LVM nodes |
 | Redis Client | `internal/controller/redis/client.go` | Distributed rate limiting |
 | SSRF Protection | `internal/shared/util/ssrf.go` | URL validation for template ISO downloads |
+| Circuit Breaker | `internal/controller/services/circuit_breaker.go` | Resilience pattern for cascading failure prevention |
+| Pre-Action Webhooks | `internal/controller/services/pre_action_webhook_service.go` | Synchronous approval webhooks before VM operations |
+| System Webhooks | `internal/controller/services/system_webhook_service.go` | System event webhook delivery (node, failover, storage) |
+| Stuck Task Scanner | `internal/controller/tasks/worker.go` | Periodic recovery of tasks stuck in running state |

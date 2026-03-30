@@ -51,7 +51,7 @@ make migrate-up                       # Apply all pending migrations
 make migrate-down                     # Rollback last migration
 make migrate-create NAME=feature_name # Create new migration pair
 ```
-65 sequential migrations (000001–000065) in `migrations/`. Each migration has `.up.sql` and `.down.sql` files.
+71 sequential migrations (000001–000071) in `migrations/`. Each migration has `.up.sql` and `.down.sql` files.
 
 ### Docker
 ```bash

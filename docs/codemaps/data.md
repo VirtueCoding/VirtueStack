@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-28 | Files scanned: 65 migrations | Token estimate: ~1000 -->
+<!-- Generated: 2026-03-30 | Files scanned: 71 migrations | Token estimate: ~1100 -->
 
 # Data Architecture
 
@@ -49,6 +49,12 @@ system_settings (key-value)
 failover_requests (HA tracking)
 
 admin_backup_schedules (mass backup campaigns)
+
+system_webhooks (system-level webhook configs)
+
+email_verification_tokens (customer email verification)
+
+pre_action_webhooks (pre-action approval webhooks)
 ```
 
 ## Table Schemas
@@ -99,7 +105,7 @@ admin_backup_schedules (mass backup campaigns)
 
 | Table | Key Columns | Purpose |
 |-------|-------------|---------|
-| `tasks` | id, type, status, payload, result, progress, progress_message | Job queue |
+| `tasks` | id, type, status, payload, result, progress, progress_message, retry_count | Job queue |
 | `audit_logs` | id, timestamp, actor_id, action, resource_type, changes | Immutable trail |
 | `failover_requests` | id, source_node_id, target_node_id, status | HA tracking |
 
@@ -111,6 +117,9 @@ admin_backup_schedules (mass backup campaigns)
 | `webhook_deliveries` | id, webhook_id, event_type, status, idempotency_key | Delivery log |
 | `notification_preferences` | id, customer_id, channels | Notification settings |
 | `system_settings` | key, value (jsonb) | Config |
+| `system_webhooks` | id, name, url, secret, events[], is_active | System-level webhooks |
+| `email_verification_tokens` | id, customer_id, token_hash, expires_at | Email verification |
+| `pre_action_webhooks` | id, name, url, secret, events[], timeout_ms, fail_open, is_active | Pre-action approval webhooks |
 
 ## Row Level Security
 
@@ -122,7 +131,8 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 
 -- Also protected: customer_api_keys, ip_addresses, backups, snapshots,
 -- backup_schedules, sessions, notification_preferences, notification_events,
--- console_tokens, customers, password_resets
+-- console_tokens, customers, password_resets, email_verification_tokens,
+-- system_webhooks, pre_action_webhooks
 ```
 
 ## Index Strategy
@@ -153,6 +163,7 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000054-000057 | Rename ceph to storage stats, storage backend registry, LVM thresholds |
 | 000058-000060 | IPv6 subnet uniqueness, bandwidth snapshots, task progress messages |
 | 000061-000065 | ISO uploads, SSO tokens, provisioning key expiry, template cache, unify backup/snapshot |
+| 000066-000071 | VM state machine constraint, task retry count, system webhooks, email verification, pre-action webhooks, review fixes (RLS + GIN indexes) |
 
 ## Database Roles
 

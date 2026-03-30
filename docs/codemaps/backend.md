@@ -1,4 +1,4 @@
-<!-- Generated: 2026-03-28 | Files scanned: 165 Go files | Token estimate: ~1200 -->
+<!-- Generated: 2026-03-30 | Files scanned: 175 Go files | Token estimate: ~1200 -->
 
 # Backend Architecture
 
@@ -96,6 +96,11 @@ GET    /system-webhooks
 POST   /system-webhooks
 PUT    /system-webhooks/:id
 DELETE /system-webhooks/:id         # Requires re-auth
+
+GET    /pre-action-webhooks
+POST   /pre-action-webhooks
+PUT    /pre-action-webhooks/:id
+DELETE /pre-action-webhooks/:id     # Requires re-auth
 ```
 
 ## Customer API Routes
@@ -107,6 +112,7 @@ GET    /csrf                          # CSRF token
 POST   /auth/login, /verify-2fa, /refresh, /logout
 GET    /auth/sso-exchange             # SSO token exchange (WHMCS)
 POST   /auth/forgot-password, /auth/reset-password
+POST   /auth/verify-email             # Email verification
 
 PUT    /password
 GET    /profile, PUT /profile
@@ -189,7 +195,7 @@ GET    /plans/:id              # Get plan
 
 ## Service Layer
 
-**Directory:** `internal/controller/services/` (52 files)
+**Directory:** `internal/controller/services/` (54 files)
 
 | Service | File | Purpose |
 |---------|------|---------|
@@ -216,6 +222,8 @@ GET    /plans/:id              # Get plan
 | CircuitBreaker | `circuit_breaker.go` | Resilience pattern |
 | IPMIClient | `ipmi_client.go` | IPMI power management |
 | NodeAgentClient | `node_agent_client.go` | gRPC client wrapper |
+| SystemWebhookService | `system_webhook_service.go` | System webhook CRUD |
+| PreActionWebhookService | `pre_action_webhook_service.go` | Pre-action approval webhooks |
 
 ## Repository Layer
 
@@ -246,6 +254,8 @@ GET    /plans/:id              # Get plan
 | NodeStorageRepo | `node_storage_repo.go` | node_storage (junction) |
 | NotificationRepo | `notification_repo.go` | notification_preferences |
 | BandwidthRepo | `bandwidth_repo.go` | bandwidth views |
+| SystemWebhookRepo | `system_webhook_repo.go` | system_webhooks |
+| PreActionWebhookRepo | `pre_action_webhook_repo.go` | pre_action_webhooks |
 | Pagination | `cursor/pagination.go` | Cursor-based pagination helper |
 
 ## Middleware Chain
@@ -306,9 +316,9 @@ service NodeAgentService {
 
 ## Async Task System
 
-**Directory:** `internal/controller/tasks/` (25 files)
+**Directory:** `internal/controller/tasks/` (29 files)
 
-**Worker:** 4 concurrent workers, NATS JetStream durable consumer, 5min ack timeout, 3 max retries
+**Worker:** 4 concurrent workers, NATS JetStream durable consumer, 5min ack timeout, 3 max retries, stuck task scanner
 
 | Task Type | Handler | Purpose |
 |-----------|---------|---------|

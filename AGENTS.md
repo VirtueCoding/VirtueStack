@@ -33,12 +33,12 @@ internal/
       middleware/                           # Auth, rate limit, audit, CSRF, permissions, metrics (19 files)
     audit/masking.go                        # Audit log field masking
     metrics/prometheus.go                   # Controller Prometheus metrics
-    models/                                 # Data models (38 files)
+    models/                                 # Data models (41 files)
     notifications/                          # Email + Telegram notifications (+ templates/)
     redis/client.go                         # Redis client for distributed rate limiting
     repository/                             # Database access layer (30 files)
-    services/                               # Business logic (52 files, includes split node_agent_* and VM/backup services)
-    tasks/                                  # Async task handlers (25 files)
+    services/                               # Business logic (54 files, includes split node_agent_* and VM/backup services)
+    tasks/                                  # Async task handlers (29 files)
     config.go                               # Re-exports shared config
     dependencies.go                         # Dependency wiring and service initialization
     grpc_client.go                          # gRPC client to Node Agents
@@ -95,7 +95,7 @@ internal/
       pointers.go                           # Generic pointer helpers
       ssrf.go                               # SSRF prevention
 proto/virtuestack/node_agent.proto          # gRPC service definition (972 lines, 38 RPCs)
-migrations/                                 # 65 sequential migrations (000001–000065)
+migrations/                                 # 71 sequential migrations (000001–000071)
 webui/
   admin/                                    # Next.js admin portal (15 pages)
   customer/                                 # Next.js customer portal (6 pages)
@@ -193,7 +193,7 @@ docs/
 
 ### 4.1 Overview
 
-- 65 sequential migrations (`migrations/000001–000065`)
+- 71 sequential migrations (`migrations/000001–000071`)
 - 30+ tables
 - Row-Level Security on all customer-facing tables
 - Connection pool: 25 max connections, 5 min idle
@@ -214,7 +214,7 @@ docs/
 | `vm_ipv6_subnets` | VM IPv6 /64 subnets |
 | `templates` | OS templates |
 | `template_node_cache` | Per-node template cache status |
-| `tasks` | Async task queue (type, status, payload, result, progress) |
+| `tasks` | Async task queue (type, status, payload, result, progress, retry_count) |
 | `backups` | Backup records |
 | `snapshots` | VM snapshots |
 | `provisioning_keys` | WHMCS API keys |
@@ -230,10 +230,13 @@ docs/
 | `node_storage` | Junction: nodes ↔ storage backends |
 | `iso_uploads` | ISO file upload tracking |
 | `sso_tokens` | One-time SSO tokens for WHMCS integration |
+| `system_webhooks` | System-level webhook configurations (node/failover/storage events) |
+| `email_verification_tokens` | Email verification tokens for customer registration |
+| `pre_action_webhooks` | Pre-action webhook configurations for approval workflows |
 
 ### 4.3 Row-Level Security
 
-RLS is enabled on: `vms`, `notification_preferences`, `notification_events`, `password_resets`, `customer_api_keys`, `ip_addresses`, `backups`, `snapshots`, `backup_schedules`, `sessions`, `customers`.
+RLS is enabled on: `vms`, `notification_preferences`, `notification_events`, `password_resets`, `customer_api_keys`, `ip_addresses`, `backups`, `snapshots`, `backup_schedules`, `sessions`, `customers`, `email_verification_tokens`, `system_webhooks`, `pre_action_webhooks`.
 
 All policies use `current_setting('app.current_customer_id')::UUID` for customer isolation.
 
@@ -365,6 +368,11 @@ GET    /system-webhooks
 POST   /system-webhooks
 PUT    /system-webhooks/:id
 DELETE /system-webhooks/:id
+
+GET    /pre-action-webhooks
+POST   /pre-action-webhooks
+PUT    /pre-action-webhooks/:id
+DELETE /pre-action-webhooks/:id
 ```
 
 ### 5.3 Customer API Endpoints
@@ -383,6 +391,7 @@ POST   /auth/logout
 GET    /auth/sso-exchange
 POST   /auth/forgot-password
 POST   /auth/reset-password
+POST   /auth/verify-email
 
 PUT    /password
 GET    /profile
@@ -690,9 +699,13 @@ Node Agent (gRPC) + PostgreSQL updates
 
 ```
 pending → running → completed
-                  → failed (with error_message)
+                  → failed (with error_message, retry_count incremented)
 pending → cancelled
 ```
+
+### 9.4 Stuck Task Recovery
+
+A background scanner (`StartStuckTaskScanner`) periodically detects tasks stuck in `running` state beyond a configurable threshold and marks them as `failed`. Uses `TaskRepository.FindStuckTasks()`.
 
 ---
 
@@ -1028,11 +1041,11 @@ Follow expand-contract pattern. Never use `CREATE INDEX CONCURRENTLY` inside mig
 | Node Agent metrics | `internal/nodeagent/metrics/prometheus.go` |
 | Redis client | `internal/controller/redis/client.go` |
 | Audit masking | `internal/controller/audit/masking.go` |
-| Models (all) | `internal/controller/models/*.go` (38 files) |
+| Models (all) | `internal/controller/models/*.go` (41 files) |
 | Repositories (all) | `internal/controller/repository/*.go` (30 files) |
-| Services (all) | `internal/controller/services/*.go` (41 files) |
-| Tasks (all) | `internal/controller/tasks/*.go` (25 files) |
-| Migrations | `migrations/000001–000065` |
+| Services (all) | `internal/controller/services/*.go` (54 files) |
+| Tasks (all) | `internal/controller/tasks/*.go` (29 files) |
+| Migrations | `migrations/000001–000071` |
 | Architecture summaries | `docs/codemaps/*.md` |
 | Coding standard | `docs/coding-standard.md` |
 | E2E test guide | `tests/e2e/README.md` |
