@@ -16,6 +16,9 @@ declare(strict_types=1);
 
 use WHMCS\Database\Capsule;
 
+/** Regex pattern for validating UUID v4 format (case-insensitive). */
+const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
 /**
  * Get custom field ID by name.
  *
@@ -36,7 +39,78 @@ function getCustomFieldId(string $fieldName): int
 }
 
 /**
+ * Validate a custom field value against the expected format for its field name.
+ *
+ * Known fields are checked strictly (UUIDs, IPs, statuses). Unknown fields
+ * are capped at 500 characters and stripped of control characters.
+ *
+ * @param string $fieldName Field name
+ * @param string $value     Value to validate
+ *
+ * @return string|null Sanitised value, or null if validation fails
+ */
+function validateFieldValue(string $fieldName, string $value): ?string
+{
+    // Empty values are always accepted (used to clear fields)
+    if ($value === '') {
+        return '';
+    }
+
+    $validStatuses = [
+        'running', 'stopped', 'suspended', 'provisioning',
+        'migrating', 'reinstalling', 'error', 'deleted',
+    ];
+    $validProvisioningStatuses = [
+        'pending', 'active', 'error', 'terminated', 'suspended',
+    ];
+
+    switch ($fieldName) {
+        case 'vm_id':
+        case 'node_id':
+        case 'virtuestack_customer_id':
+            if (!preg_match(UUID_PATTERN, $value)) {
+                return null;
+            }
+            return $value;
+
+        case 'vm_ip':
+            if (!filter_var($value, FILTER_VALIDATE_IP)) {
+                return null;
+            }
+            return $value;
+
+        case 'vm_status':
+            if (!in_array($value, $validStatuses, true)) {
+                return null;
+            }
+            return $value;
+
+        case 'provisioning_status':
+            if (!in_array($value, $validProvisioningStatuses, true)) {
+                return null;
+            }
+            return $value;
+
+        case 'task_id':
+            // Task IDs are UUIDs or empty (when clearing)
+            if (!preg_match(UUID_PATTERN, $value)) {
+                return null;
+            }
+            return $value;
+
+        default:
+            // Unknown fields: cap at 500 chars (WHMCS tblcustomfieldsvalues.value is TEXT,
+            // but we bound it to a sane limit to prevent abuse) and strip control chars.
+            $value = substr($value, 0, 500);
+            $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value);
+            return $value;
+    }
+}
+
+/**
  * Update service custom field value.
+ *
+ * Values are validated against expected formats before storage.
  *
  * @param int    $serviceId Service ID
  * @param string $fieldName Field name
@@ -45,6 +119,13 @@ function getCustomFieldId(string $fieldName): int
 function updateServiceField(int $serviceId, string $fieldName, string $value): void
 {
     try {
+        $validated = validateFieldValue($fieldName, $value);
+        if ($validated === null) {
+            logActivity("VirtueStack: Rejected invalid value for field {$fieldName} on service {$serviceId}");
+            return;
+        }
+        $value = $validated;
+
         $fieldId = getCustomFieldId($fieldName);
 
         if ($fieldId <= 0) {
@@ -153,6 +234,9 @@ function findServiceByVmId(string $vmId): int
 /**
  * Verify webhook signature.
  *
+ * Computes HMAC-SHA256 regardless of input validity to prevent timing
+ * side-channels that could reveal whether a secret is configured.
+ *
  * @param string $body      Request body
  * @param string $signature Signature from X-VirtueStack-Signature header
  *
@@ -160,16 +244,20 @@ function findServiceByVmId(string $vmId): int
  */
 function verifyWebhookSignature(string $body, string $signature): bool
 {
-    if (empty($signature)) {
-        return false;
-    }
-
     $webhookSecret = getWebhookSecret();
-    if (empty($webhookSecret)) {
+
+    // Always compute the HMAC so the function takes constant time
+    // regardless of whether the secret or signature is present.
+    // When the secret is missing we still need to burn equivalent CPU
+    // time, so we derive a throwaway key from the body itself.
+    $expectedSignature = !empty($webhookSecret)
+        ? hash_hmac('sha256', $body, $webhookSecret)
+        : hash_hmac('sha256', $body, hash('sha256', $body));
+
+    if (empty($signature) || empty($webhookSecret)) {
         return false;
     }
 
-    $expectedSignature = hash_hmac('sha256', $body, $webhookSecret);
     return hash_equals($expectedSignature, $signature);
 }
 

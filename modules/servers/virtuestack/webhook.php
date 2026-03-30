@@ -28,6 +28,24 @@ const WEBHOOK_SECRET_SETTING = 'VirtueStackWebhookSecret';
 const SIGNATURE_HEADER = 'HTTP_X_VIRTUESTACK_SIGNATURE';
 const MAX_REQUEST_SIZE = 65536; // 64KB
 
+// Allowed webhook event types — reject anything not in this list.
+const ALLOWED_EVENTS = [
+    'vm.created',
+    'vm.creation_failed',
+    'vm.deleted',
+    'vm.suspended',
+    'vm.unsuspended',
+    'vm.resized',
+    'vm.started',
+    'vm.stopped',
+    'vm.reinstalled',
+    'vm.migrated',
+    'backup.completed',
+    'backup.failed',
+    'task.completed',
+    'task.failed',
+];
+
 /**
  * Main webhook handler.
  */
@@ -75,17 +93,36 @@ function handleWebhook(): void
     }
 
     // Process the event with input validation
-    $eventType = isset($data['event']) && is_string($data['event']) ? htmlspecialchars(trim($data['event']), ENT_QUOTES, 'UTF-8') : '';
-    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? htmlspecialchars(trim($data['task_id']), ENT_QUOTES, 'UTF-8') : '';
-    $vmId = isset($data['vm_id']) && is_string($data['vm_id']) ? htmlspecialchars(trim($data['vm_id']), ENT_QUOTES, 'UTF-8') : '';
+    $eventType = isset($data['event']) && is_string($data['event']) ? trim($data['event']) : '';
+    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? trim($data['task_id']) : '';
+    $vmId = isset($data['vm_id']) && is_string($data['vm_id']) ? trim($data['vm_id']) : '';
     $whmcsServiceId = isset($data['whmcs_service_id']) && is_int($data['whmcs_service_id']) ? $data['whmcs_service_id'] : 0;
     $result = isset($data['result']) && is_array($data['result']) ? $data['result'] : [];
-    $timestamp = isset($data['timestamp']) && is_string($data['timestamp']) ? htmlspecialchars(trim($data['timestamp']), ENT_QUOTES, 'UTF-8') : date('c');
+    $timestamp = isset($data['timestamp']) && is_string($data['timestamp']) ? trim($data['timestamp']) : date('c');
 
     // Validate required fields
     if (empty($eventType) || empty($taskId)) {
         logWebhook('error', 'Missing required fields in webhook payload');
         sendResponse(400, ['error' => 'Missing required fields: event, task_id']);
+        return;
+    }
+
+    // Whitelist event types to reject unknown/injected values
+    if (!in_array($eventType, ALLOWED_EVENTS, true)) {
+        logWebhook('warning', 'Rejected unknown webhook event type: ' . substr($eventType, 0, 100));
+        sendResponse(400, ['error' => 'Unknown event type']);
+        return;
+    }
+
+    // Validate UUID format for task_id and vm_id when present
+    if (!preg_match(UUID_PATTERN, $taskId)) {
+        logWebhook('error', 'Invalid task_id format in webhook payload');
+        sendResponse(400, ['error' => 'Invalid task_id format']);
+        return;
+    }
+    if (!empty($vmId) && !preg_match(UUID_PATTERN, $vmId)) {
+        logWebhook('error', 'Invalid vm_id format in webhook payload');
+        sendResponse(400, ['error' => 'Invalid vm_id format']);
         return;
     }
 
@@ -244,8 +281,12 @@ function handleVMCreated(string $taskId, string $vmId, int $serviceId, array $re
     // Store password if provided
     $password = $result['password'] ?? '';
     if (!empty($password)) {
-        $encryptedPassword = encryptPassword($password);
-        updateServiceField($serviceId, 'vm_password', $encryptedPassword);
+        try {
+            $encryptedPassword = encryptPassword($password);
+            updateServiceField($serviceId, 'vm_password', $encryptedPassword);
+        } catch (\RuntimeException $e) {
+            logWebhook('error', "Failed to encrypt password for service {$serviceId}: " . $e->getMessage());
+        }
     }
 
     // Store customer ID
@@ -430,15 +471,26 @@ function handleTaskFailed(string $taskId, array $data): void
  * @param string $password Plain text password
  *
  * @return string Encrypted password
+ *
+ * @throws \RuntimeException If encryption is not available
  */
 function encryptPassword(string $password): string
 {
-    if (function_exists('encrypt')) {
-        return encrypt($password);
+    if (empty($password)) {
+        return '';
     }
 
-    error_log('VirtueStack CRITICAL: WHMCS encrypt() function not available. Cannot store password securely.');
-    return '';
+    if (!function_exists('encrypt')) {
+        throw new \RuntimeException('WHMCS encrypt() function not available — cannot store password securely');
+    }
+
+    $encrypted = encrypt($password);
+
+    if (empty($encrypted)) {
+        throw new \RuntimeException('WHMCS encrypt() returned an empty result');
+    }
+
+    return $encrypted;
 }
 
 /**
