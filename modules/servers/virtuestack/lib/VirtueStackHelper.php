@@ -131,8 +131,31 @@ final class VirtueStackHelper
             $password .= $all[random_int(0, strlen($all) - 1)];
         }
 
-        // Shuffle to randomize position of required characters
-        return str_shuffle($password);
+        // Shuffle with crypto-safe Fisher-Yates to randomize required chars
+        return self::cryptoShuffle($password);
+    }
+
+    /**
+     * Fisher-Yates shuffle using cryptographically secure randomness.
+     *
+     * PHP's built-in str_shuffle() uses the internal PRNG, which is not
+     * suitable for security-sensitive operations like password generation.
+     *
+     * @param string $str String to shuffle
+     *
+     * @return string Shuffled string
+     */
+    private static function cryptoShuffle(string $str): string
+    {
+        $chars = str_split($str);
+        $len = count($chars);
+
+        for ($i = $len - 1; $i > 0; $i--) {
+            $j = random_int(0, $i);
+            [$chars[$i], $chars[$j]] = [$chars[$j], $chars[$i]];
+        }
+
+        return implode('', $chars);
     }
 
     /**

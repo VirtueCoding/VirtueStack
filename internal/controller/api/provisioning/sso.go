@@ -121,8 +121,10 @@ func (h *ProvisioningHandler) logSSOTokenIssued(c *gin.Context, token *models.SS
 	}
 	changes, _ := json.Marshal(gin.H{
 		"vm_id":         token.VMID,
+		"customer_id":   token.CustomerID,
 		"redirect_path": token.RedirectPath,
 		"expires_at":    token.ExpiresAt,
+		"api_key_id":    apiKeyID,
 	})
 	correlationID := middleware.GetCorrelationID(c)
 	audit := &models.AuditLog{

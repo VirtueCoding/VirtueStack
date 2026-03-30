@@ -479,8 +479,9 @@
         
         // Listen for messages from iframe
         window.addEventListener('message', function(event) {
-            // Validate origin
-            if (event.origin !== 'https://{$webui_url|parse_url:$smarty.const.PHP_URL_HOST|default:""}') {
+            // Validate origin - only accept messages from the same origin
+            // to prevent cross-origin postMessage attacks
+            if (event.origin !== document.location.origin) {
                 return;
             }
             
