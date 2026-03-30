@@ -22,7 +22,7 @@ type NotificationPreferences struct {
 type NotificationPreferencesRequest struct {
 	EmailEnabled    *bool    `json:"email_enabled,omitempty"`
 	TelegramEnabled *bool    `json:"telegram_enabled,omitempty"`
-	Events          []string `json:"events,omitempty"`
+	Events          []string `json:"events,omitempty" validate:"omitempty,max=50,dive,required,max=100"`
 }
 
 // NotificationPreferencesResponse represents the response for preferences.

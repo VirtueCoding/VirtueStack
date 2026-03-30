@@ -106,6 +106,22 @@ func (r *NodeRepository) GetAllNodeIDs(ctx context.Context, ids []string) ([]str
 	return foundIDs, nil
 }
 
+// GetByIDs returns full node objects for all given IDs in a single query.
+// Missing IDs are silently skipped; callers should compare len(result) vs len(ids).
+func (r *NodeRepository) GetByIDs(ctx context.Context, ids []string) ([]models.Node, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE id = ANY($1)`
+	nodes, err := ScanRows(ctx, r.db, q, []any{ids}, func(rows pgx.Rows) (models.Node, error) {
+		return scanNode(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting nodes by IDs: %w", err)
+	}
+	return nodes, nil
+}
+
 // GetByHostname returns a node by its hostname. Returns ErrNotFound if no node matches.
 func (r *NodeRepository) GetByHostname(ctx context.Context, hostname string) (*models.Node, error) {
 	const q = `SELECT ` + nodeSelectCols + ` FROM nodes WHERE hostname = $1`

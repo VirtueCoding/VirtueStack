@@ -46,7 +46,7 @@ func (r *SystemWebhookRepository) Create(ctx context.Context, webhook *models.Sy
 }
 
 func (r *SystemWebhookRepository) List(ctx context.Context) ([]models.SystemWebhook, error) {
-	const q = `SELECT ` + systemWebhookSelectCols + ` FROM system_webhooks ORDER BY created_at DESC`
+	const q = `SELECT ` + systemWebhookSelectCols + ` FROM system_webhooks ORDER BY created_at DESC LIMIT 1000`
 	webhooks, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.SystemWebhook, error) {
 		return scanSystemWebhook(rows)
 	})

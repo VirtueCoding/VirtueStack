@@ -283,14 +283,21 @@ func (s *StorageBackendService) AssignToNodes(ctx context.Context, id string, no
 		return fmt.Errorf("getting storage backend: %w", err)
 	}
 
-	// Verify all nodes exist
-	for _, nodeID := range nodeIDs {
-		_, err := s.nodeRepo.GetByID(ctx, nodeID)
-		if err != nil {
-			if sharederrors.Is(err, sharederrors.ErrNotFound) {
-				return fmt.Errorf("node not found: %s", nodeID)
+	// Verify all nodes exist (single bulk query instead of N+1)
+	nodes, err := s.nodeRepo.GetByIDs(ctx, nodeIDs)
+	if err != nil {
+		return fmt.Errorf("getting nodes: %w", err)
+	}
+	if len(nodes) != len(nodeIDs) {
+		// Find which node(s) are missing
+		found := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			found[n.ID] = true
+		}
+		for _, id := range nodeIDs {
+			if !found[id] {
+				return fmt.Errorf("node not found: %s", id)
 			}
-			return fmt.Errorf("getting node %s: %w", nodeID, err)
 		}
 	}
 

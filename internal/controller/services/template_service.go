@@ -491,11 +491,23 @@ func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID stri
 		return "", fmt.Errorf("%w: %v", sharederrors.ErrValidation, err)
 	}
 
-	for _, nodeID := range nodeIDs {
-		node, nodeErr := s.nodeRepo.GetByID(ctx, nodeID)
-		if nodeErr != nil {
-			return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, nodeID)
+	// Validate all nodes exist and are online (single bulk query instead of N+1)
+	nodes, err := s.nodeRepo.GetByIDs(ctx, nodeIDs)
+	if err != nil {
+		return "", fmt.Errorf("getting nodes: %w", err)
+	}
+	if len(nodes) != len(nodeIDs) {
+		found := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			found[n.ID] = true
 		}
+		for _, id := range nodeIDs {
+			if !found[id] {
+				return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, id)
+			}
+		}
+	}
+	for _, node := range nodes {
 		if node.Status != "online" {
 			return "", fmt.Errorf("%w: node %s is not online (status: %s)",
 				sharederrors.ErrValidation, node.Hostname, node.Status)

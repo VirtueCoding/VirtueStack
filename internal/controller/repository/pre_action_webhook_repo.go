@@ -53,7 +53,7 @@ func (r *PreActionWebhookRepository) Create(ctx context.Context, webhook *models
 
 // List returns all pre-action webhooks ordered by creation date.
 func (r *PreActionWebhookRepository) List(ctx context.Context) ([]models.PreActionWebhook, error) {
-	const q = `SELECT ` + preActionWebhookSelectCols + ` FROM pre_action_webhooks ORDER BY created_at DESC`
+	const q = `SELECT ` + preActionWebhookSelectCols + ` FROM pre_action_webhooks ORDER BY created_at DESC LIMIT 1000`
 	webhooks, err := ScanRows(ctx, r.db, q, nil, func(rows pgx.Rows) (models.PreActionWebhook, error) {
 		return scanPreActionWebhook(rows)
 	})

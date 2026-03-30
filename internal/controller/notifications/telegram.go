@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // TelegramConfig holds configuration for the Telegram provider.
@@ -76,6 +79,9 @@ func NewTelegramProvider(config TelegramConfig, logger *slog.Logger) (*TelegramP
 		config: config,
 		client: &http.Client{
 			Timeout: config.Timeout,
+			Transport: &http.Transport{
+				DialContext: ssrfSafeDialContext(),
+			},
 		},
 		logger: logger.With("component", "telegram-provider"),
 	}
@@ -289,5 +295,30 @@ func LoadTelegramConfigFromEnv() TelegramConfig {
 		BotToken:     botToken,
 		AdminChatIDs: chatIDs,
 		Timeout:      10 * time.Second,
+	}
+}
+
+// ssrfSafeDialContext returns a dial function that blocks connections to private IP addresses.
+func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	baseDialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %q: %w", host, err)
+		}
+		for _, ip := range ips {
+			if util.IsPrivateIP(ip.IP) {
+				return nil, fmt.Errorf("blocked connection to private IP %s for host %q", ip.IP, host)
+			}
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no addresses resolved for host %q", host)
+		}
+		resolved := net.JoinHostPort(ips[0].IP.String(), port)
+		return baseDialer.DialContext(ctx, network, resolved)
 	}
 }

@@ -602,7 +602,7 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 	}
 
 	// Select the best node for this VM
-	targetNode := s.selectBestNode(vm, survivingNodes)
+	targetNode := s.selectBestNode(ctx, vm, survivingNodes)
 	if targetNode == nil {
 		return nil, &FailedMigration{
 			VMID:     vm.ID,
@@ -679,7 +679,7 @@ func (s *FailoverService) migrateVM(ctx context.Context, vm *models.VM, survivin
 // selectBestNode selects the best surviving node for a VM based on available capacity
 // and storage backend compatibility. Returns nil if no suitable node is found.
 // For QCOW/LVM VMs, returns nil because they cannot be failed over (disk is local to failed node).
-func (s *FailoverService) selectBestNode(vm *models.VM, nodes []models.Node) *models.Node {
+func (s *FailoverService) selectBestNode(ctx context.Context, vm *models.VM, nodes []models.Node) *models.Node {
 	// Check if VM has a storage backend assigned
 	if vm.StorageBackendID == nil {
 		s.logger.Warn("VM has no storage backend assigned, cannot determine failover eligibility",
@@ -688,7 +688,7 @@ func (s *FailoverService) selectBestNode(vm *models.VM, nodes []models.Node) *mo
 	}
 
 	// Get the VM's storage backend to check type
-	sb, err := s.storageBackendRepo.GetByID(context.Background(), *vm.StorageBackendID)
+	sb, err := s.storageBackendRepo.GetByID(ctx, *vm.StorageBackendID)
 	if err != nil {
 		s.logger.Warn("failed to get storage backend for VM, cannot failover",
 			"vm_id", vm.ID,
@@ -714,7 +714,7 @@ func (s *FailoverService) selectBestNode(vm *models.VM, nodes []models.Node) *mo
 
 		// Check if node has the same storage backend assigned
 		if s.nodeStorageRepo != nil {
-			hasBackend, err := s.nodeStorageRepo.GetAssignment(context.Background(), node.ID, *vm.StorageBackendID)
+			hasBackend, err := s.nodeStorageRepo.GetAssignment(ctx, node.ID, *vm.StorageBackendID)
 			if err != nil || hasBackend == nil || !hasBackend.Enabled {
 				continue // Node doesn't have this storage backend
 			}

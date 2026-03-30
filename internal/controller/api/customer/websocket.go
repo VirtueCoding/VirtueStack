@@ -258,11 +258,11 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 
 		switch {
 		case sharederrors.Is(err, sharederrors.ErrNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "VM not found"})
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "VM not found")
 		case sharederrors.Is(err, sharederrors.ErrConflict):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			middleware.RespondWithError(c, http.StatusConflict, "CONFLICT", err.Error())
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate access"})
+			middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate access")
 		}
 		return
 	}
