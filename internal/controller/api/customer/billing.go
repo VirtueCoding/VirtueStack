@@ -89,24 +89,11 @@ func (h *CustomerHandler) InitiateTopUp(c *gin.Context) {
 	}
 
 	customerID := middleware.GetUserID(c)
+	if err := h.validateTopUp(c, req.Amount); err != nil {
+		return
+	}
+
 	email := h.getCustomerEmail(c, customerID)
-
-	config, err := h.paymentService.GetTopUpConfig(c.Request.Context())
-	if err != nil {
-		h.logger.Error("failed to get top-up config",
-			"error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		middleware.RespondWithError(c, http.StatusInternalServerError,
-			"TOPUP_CONFIG_FAILED", "Failed to retrieve top-up configuration")
-		return
-	}
-
-	if err := validateTopUpAmount(req.Amount, config); err != nil {
-		middleware.RespondWithError(c, http.StatusBadRequest,
-			"INVALID_AMOUNT", err.Error())
-		return
-	}
-
 	sess, paymentID, topUpErr := h.paymentService.InitiateTopUp(
 		c.Request.Context(),
 		customerID, email, req.Amount, req.Currency,
@@ -126,6 +113,24 @@ func (h *CustomerHandler) InitiateTopUp(c *gin.Context) {
 		PaymentID:  paymentID,
 		PaymentURL: sess.PaymentURL,
 	}})
+}
+
+func (h *CustomerHandler) validateTopUp(c *gin.Context, amount int64) error {
+	config, err := h.paymentService.GetTopUpConfig(c.Request.Context())
+	if err != nil {
+		h.logger.Error("failed to get top-up config",
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"TOPUP_CONFIG_FAILED", "Failed to retrieve top-up configuration")
+		return err
+	}
+	if err := validateTopUpAmount(amount, config); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest,
+			"INVALID_AMOUNT", err.Error())
+		return err
+	}
+	return nil
 }
 
 func validateTopUpAmount(amount int64, config *services.TopUpConfig) error {

@@ -10,6 +10,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 )
 
+const maxWebhookBodySize int64 = 65536 // 64KB; Stripe events are typically <10KB
+
 // StripeWebhookHandler handles Stripe webhook callbacks.
 type StripeWebhookHandler struct {
 	paymentService *services.PaymentService
@@ -31,6 +33,7 @@ func NewStripeWebhookHandler(
 // This endpoint is unauthenticated — Stripe signature verification
 // happens inside the payment provider.
 func (h *StripeWebhookHandler) Handle(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWebhookBodySize)
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		h.logger.Error("failed to read webhook body", "error", err)

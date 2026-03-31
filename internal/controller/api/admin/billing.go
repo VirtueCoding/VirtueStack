@@ -187,33 +187,17 @@ func (h *AdminHandler) UpdateExchangeRate(c *gin.Context) {
 func (h *AdminHandler) ListPayments(c *gin.Context) {
 	pagination := models.ParsePagination(c)
 
-	filter := services.PaymentListFilter{
-		PaginationParams: pagination,
+	filter, err := h.parsePaymentFilter(c, pagination)
+	if err != nil {
+		return
 	}
 
-	if customerID := c.Query("customer_id"); customerID != "" {
-		if _, err := uuid.Parse(customerID); err != nil {
-			middleware.RespondWithError(c, http.StatusBadRequest,
-				"INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
-			return
-		}
-		filter.CustomerID = &customerID
-	}
-
-	if gateway := c.Query("gateway"); gateway != "" {
-		filter.Gateway = &gateway
-	}
-
-	if status := c.Query("status"); status != "" {
-		filter.Status = &status
-	}
-
-	pymnts, hasMore, lastID, err := h.paymentService.ListAllPayments(
+	pymnts, hasMore, lastID, listErr := h.paymentService.ListAllPayments(
 		c.Request.Context(), filter,
 	)
-	if err != nil {
+	if listErr != nil {
 		h.logger.Error("failed to list payments",
-			"error", err,
+			"error", listErr,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError,
 			"PAYMENT_LIST_FAILED", "Failed to list payments")
@@ -224,6 +208,28 @@ func (h *AdminHandler) ListPayments(c *gin.Context) {
 		Data: pymnts,
 		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
 	})
+}
+
+func (h *AdminHandler) parsePaymentFilter(
+	c *gin.Context, pagination models.PaginationParams,
+) (services.PaymentListFilter, error) {
+	filter := services.PaymentListFilter{PaginationParams: pagination}
+
+	if customerID := c.Query("customer_id"); customerID != "" {
+		if _, err := uuid.Parse(customerID); err != nil {
+			middleware.RespondWithError(c, http.StatusBadRequest,
+				"INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+			return filter, err
+		}
+		filter.CustomerID = &customerID
+	}
+	if gateway := c.Query("gateway"); gateway != "" {
+		filter.Gateway = &gateway
+	}
+	if status := c.Query("status"); status != "" {
+		filter.Status = &status
+	}
+	return filter, nil
 }
 
 // RefundPayment handles POST /admin/billing/refund/:paymentId.
