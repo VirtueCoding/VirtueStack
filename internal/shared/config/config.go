@@ -162,6 +162,19 @@ type CryptoConfig struct {
 	NOWPaymentsIPNSecret Secret `yaml:"nowpayments_ipn_secret"`
 }
 
+// OAuthProviderConfig holds settings for a single OAuth provider.
+type OAuthProviderConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret Secret `yaml:"client_secret"`
+}
+
+// OAuthConfig holds OAuth provider settings.
+type OAuthConfig struct {
+	Google OAuthProviderConfig `yaml:"google"`
+	GitHub OAuthProviderConfig `yaml:"github"`
+}
+
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
 	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
@@ -197,6 +210,9 @@ type ControllerConfig struct {
 	Stripe StripeConfig `yaml:"stripe"`
 	PayPal PayPalConfig `yaml:"paypal"`
 	Crypto CryptoConfig `yaml:"crypto"`
+
+	// OAuth configuration
+	OAuth OAuthConfig `yaml:"oauth"`
 }
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
@@ -379,6 +395,7 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	applyEnvOverridesStorage(cfg)
 	applyEnvOverridesBilling(cfg)
 	applyEnvOverridesPayments(cfg)
+	applyEnvOverridesOAuth(cfg)
 }
 
 // applyEnvOverridesCore applies DB, JWT, encryption, listen addr, log level, and
@@ -519,6 +536,28 @@ func applyEnvOverridesStorage(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
 		cfg.FileStorage.ISOStoragePath = v
+	}
+}
+
+// applyEnvOverridesOAuth applies OAuth-related environment variables.
+func applyEnvOverridesOAuth(cfg *ControllerConfig) {
+	if v := os.Getenv("OAUTH_GOOGLE_ENABLED"); v != "" {
+		cfg.OAuth.Google.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("OAUTH_GOOGLE_CLIENT_ID"); v != "" {
+		cfg.OAuth.Google.ClientID = v
+	}
+	if v := os.Getenv("OAUTH_GOOGLE_CLIENT_SECRET"); v != "" {
+		cfg.OAuth.Google.ClientSecret = Secret(v)
+	}
+	if v := os.Getenv("OAUTH_GITHUB_ENABLED"); v != "" {
+		cfg.OAuth.GitHub.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("OAUTH_GITHUB_CLIENT_ID"); v != "" {
+		cfg.OAuth.GitHub.ClientID = v
+	}
+	if v := os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"); v != "" {
+		cfg.OAuth.GitHub.ClientSecret = Secret(v)
 	}
 }
 
