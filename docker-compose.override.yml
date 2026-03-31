@@ -1,0 +1,157 @@
+# =============================================================================
+# VirtueStack Docker Compose - Development Overrides
+# =============================================================================
+# Usage: docker compose up -d (automatically applies this file)
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # PostgreSQL - Development Settings
+  # ===========================================================================
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-virtuestack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
+
+  # ===========================================================================
+  # NATS JetStream - Development Settings
+  # ===========================================================================
+  nats:
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_HTTP_PORT:-8222}:8222"
+    command: ["nats-server", "-js", "-sd", "/data", "-m", "8222"]
+
+  # ===========================================================================
+  # Controller - Development Settings
+  # ===========================================================================
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+      args:
+        GO_VERSION: "1.26"
+      target: development
+    volumes:
+      - .:/app:cached
+      - go_mod_cache:/go/pkg/mod
+    ports:
+      - "${CONTROLLER_PORT:-8080}:8080"
+      - "${DELVE_PORT:-40000}:40000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
+      LISTEN_ADDR: :8080
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      CGO_ENABLED: "0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  # ===========================================================================
+  # Admin WebUI - Development Settings
+  # ===========================================================================
+  admin-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin-webui
+      args:
+        NODE_VERSION: ${NODE_VERSION:-24}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      target: development
+    volumes:
+      - ./webui/admin:/app:cached
+      - admin_node_modules:/app/node_modules
+      - admin_next_cache:/app/.next
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      WATCHPACK_POLLING: "true"
+    command: npm run dev
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q --timeout=55 http://127.0.0.1:3000 || exit 1"]
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    depends_on:
+      controller:
+        condition: service_healthy
+
+  # ===========================================================================
+  # Customer WebUI - Development Settings
+  # ===========================================================================
+  customer-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.customer-webui
+      args:
+        NODE_VERSION: ${NODE_VERSION:-24}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      target: development
+    volumes:
+      - ./webui/customer:/app:cached
+      - customer_node_modules:/app/node_modules
+      - customer_next_cache:/app/.next
+    ports:
+      - "${CUSTOMER_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      WATCHPACK_POLLING: "true"
+    command: npm run dev
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q --timeout=55 http://127.0.0.1:3001 || exit 1"]
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    depends_on:
+      controller:
+        condition: service_healthy
+
+  # ===========================================================================
+  # Nginx - Development Settings
+  # ===========================================================================
+  nginx:
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl/cert.pem:/etc/nginx/ssl/cert.pem:ro
+      - ./ssl/key.pem:/etc/nginx/ssl/key.pem:ro
+    environment:
+      - TZ=UTC
+
+# =============================================================================
+# Additional Development Volumes
+# =============================================================================
+volumes:
+  go_mod_cache:
+    name: virtuestack-go-mod-cache
+  admin_node_modules:
+    name: virtuestack-admin-node-modules
+  admin_next_cache:
+    name: virtuestack-admin-next-cache
+  customer_node_modules:
+    name: virtuestack-customer-node-modules
+  customer_next_cache:
+    name: virtuestack-customer-next-cache

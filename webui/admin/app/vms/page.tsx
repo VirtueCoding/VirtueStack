@@ -1,0 +1,429 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
+import { Button } from "@virtuestack/ui";
+import { Badge } from "@virtuestack/ui";
+import { Input } from "@virtuestack/ui";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@virtuestack/ui";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@virtuestack/ui";
+import {
+  Server,
+  Search,
+  Trash2,
+  Loader2,
+  Eye,
+  Plus,
+  Pencil,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import {
+  adminVMsApi,
+  type VM,
+} from "@/lib/api-client";
+import { useToast } from "@virtuestack/ui";
+import { getStatusBadgeVariant } from "@/lib/status-badge";
+import { VMCreateDialog, type CreateVMFormData } from "@/components/vms/VMCreateDialog";
+import { VMEditDialog, type EditVMFormData } from "@/components/vms/VMEditDialog";
+
+export default function VMsPage() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [vms, setVMs] = useState<VM[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedVM, setSelectedVM] = useState<VM | null>(null);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewVM, setViewVM] = useState<VM | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editVM, setEditVM] = useState<VM | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
+
+  const PAGE_SIZE = 20;
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentCursor, setCurrentCursor] = useState<string | undefined>(undefined);
+
+  const fetchVMs = useCallback(async () => {
+    try {
+      const response = await adminVMsApi.getVMs({ per_page: PAGE_SIZE, cursor: currentCursor });
+      setVMs(response.data || []);
+      setNextCursor(response.meta?.next_cursor ?? undefined);
+      setHasMore(response.meta?.has_more ?? false);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to load VMs.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast, currentCursor]);
+
+  useEffect(() => {
+    fetchVMs();
+  }, [fetchVMs]);
+
+  const filteredVMs = vms.filter(
+    (vm) =>
+      vm.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      vm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      vm.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      vm.customer_id.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleDelete = async () => {
+    if (!selectedVM) return;
+    setIsDeleting(true);
+    try {
+      await adminVMsApi.deleteVM(selectedVM.id);
+      setVMs((prev) => prev.filter((vm) => vm.id !== selectedVM.id));
+      toast({
+        title: "VM Deleted",
+        description: `VM "${selectedVM.name}" has been deleted.`,
+      });
+      setDeleteDialogOpen(false);
+      setSelectedVM(null);
+    } catch (error) {
+      toast({
+        title: "Delete Failed",
+        description: error instanceof Error ? error.message : "Failed to delete VM",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCreate = async (data: CreateVMFormData) => {
+    setIsCreating(true);
+    try {
+      const result = await adminVMsApi.createVM(data);
+      toast({
+        title: "VM Creation Started",
+        description: `VM is being provisioned. Task ID: ${result.task_id}`,
+      });
+      // Refresh the list to show the new VM
+      await fetchVMs();
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleEdit = async (data: EditVMFormData) => {
+    if (!editVM) return;
+    setIsSaving(true);
+    try {
+      await adminVMsApi.updateVM(editVM.id, data);
+      toast({
+        title: "VM Updated",
+        description: `VM "${editVM.name}" has been updated.`,
+      });
+      // Refresh the list
+      await fetchVMs();
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openEditDialog = (vm: VM) => {
+    setEditVM(vm);
+    setEditDialogOpen(true);
+  };
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      setCursorStack((prev) => [...prev, currentCursor ?? ""]);
+      setCurrentCursor(nextCursor);
+    }
+  };
+
+  const handlePrevPage = () => {
+    setCursorStack((prev) => {
+      const stack = [...prev];
+      const prevCursor = stack.pop();
+      setCurrentCursor(prevCursor === "" ? undefined : prevCursor);
+      return stack;
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-background p-6 md:p-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Virtual Machines</h1>
+            <p className="text-muted-foreground">
+              Manage all virtual machines across the cluster
+            </p>
+          </div>
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create VM
+          </Button>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Server className="h-5 w-5" />
+              All VMs
+            </CardTitle>
+            <CardDescription>
+              {filteredVMs.length} of {vms.length} VMs displayed
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-6 flex items-center gap-4">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search VMs by ID, name, status..."
+                  className="pl-8"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Customer ID</TableHead>
+                    <TableHead>Node ID</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center">
+                        <div className="flex justify-center">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredVMs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center">
+                        No VMs found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredVMs.map((vm) => (
+                      <TableRow key={vm.id}>
+                        <TableCell>
+                          <div className="font-medium">{vm.name}</div>
+                          <div className="text-xs text-muted-foreground font-mono">
+                            {vm.id.substring(0, 8)}...
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusBadgeVariant(vm.status)} className="capitalize">
+                            {vm.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {vm.customer_id.substring(0, 8)}...
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {vm.node_id.substring(0, 8)}...
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {new Date(vm.created_at).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="View Details"
+                              onClick={() => {
+                                setViewVM(vm);
+                                setViewDialogOpen(true);
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Edit VM"
+                              onClick={() => openEditDialog(vm)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Delete VM"
+                              onClick={() => {
+                                setSelectedVM(vm);
+                                setDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            {(cursorStack.length > 0 || hasMore) && (
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredVMs.length} items
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={cursorStack.length === 0 || loading}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Virtual Machine</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to permanently delete <strong>{selectedVM?.name}</strong>?
+                This action cannot be undone and will destroy all associated data.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete VM"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Virtual Machine Details</DialogTitle>
+              <DialogDescription>
+                Detailed information for <strong>{viewVM?.name}</strong>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <span className="text-muted-foreground">ID:</span>
+                <span className="font-mono">{viewVM?.id}</span>
+                <span className="text-muted-foreground">Status:</span>
+                <Badge variant={getStatusBadgeVariant(viewVM?.status || "unknown")} className="capitalize">{viewVM?.status}</Badge>
+                <span className="text-muted-foreground">Customer ID:</span>
+                <span className="font-mono">{viewVM?.customer_id}</span>
+                <span className="text-muted-foreground">Node ID:</span>
+                <span className="font-mono">{viewVM?.node_id}</span>
+                <span className="text-muted-foreground">Created:</span>
+                <span>{viewVM?.created_at ? new Date(viewVM.created_at).toLocaleString() : "—"}</span>
+                {viewVM?.vcpu && (
+                  <>
+                    <span className="text-muted-foreground">vCPU:</span>
+                    <span>{viewVM.vcpu}</span>
+                  </>
+                )}
+                {viewVM?.memory_mb && (
+                  <>
+                    <span className="text-muted-foreground">Memory:</span>
+                    <span>{Math.round(viewVM.memory_mb / 1024)} GB</span>
+                  </>
+                )}
+                {viewVM?.disk_gb && (
+                  <>
+                    <span className="text-muted-foreground">Disk:</span>
+                    <span>{viewVM.disk_gb} GB</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <VMCreateDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreate={handleCreate}
+          isCreating={isCreating}
+        />
+
+        <VMEditDialog
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          vm={editVM}
+          onSave={handleEdit}
+          isSaving={isSaving}
+        />
+      </div>
+    </div>
+  );
+}
