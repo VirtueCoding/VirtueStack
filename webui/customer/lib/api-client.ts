@@ -871,3 +871,54 @@ export const templateApi = {
     return apiClient.get<Template[]>(`/customer/templates${params}`);
   },
 };
+
+// --- In-App Notifications ---
+
+export interface InAppNotification {
+  id: string;
+  customer_id?: string;
+  admin_id?: string;
+  type: string;
+  title: string;
+  message: string;
+  data: Record<string, unknown>;
+  read: boolean;
+  created_at: string;
+}
+
+export interface InAppNotificationListResponse {
+  data: InAppNotification[];
+  meta: {
+    per_page: number;
+    has_more: boolean;
+    cursor: string;
+  };
+}
+
+export interface UnreadCountResponse {
+  count: number;
+}
+
+export const inAppNotificationApi = {
+  async list(params?: { unread?: boolean; cursor?: string; per_page?: number }): Promise<InAppNotificationListResponse> {
+    const query = new URLSearchParams();
+    if (params?.unread) query.set("unread", "true");
+    if (params?.cursor) query.set("cursor", params.cursor);
+    if (params?.per_page) query.set("per_page", String(params.per_page));
+    const qs = query.toString();
+    return apiClient.get<InAppNotificationListResponse>(`/customer/notifications${qs ? `?${qs}` : ""}`);
+  },
+
+  async markAsRead(id: string): Promise<void> {
+    await apiRequest("/customer/notifications/" + id + "/read", { method: "POST", body: "{}" });
+  },
+
+  async markAllAsRead(): Promise<void> {
+    await apiRequest("/customer/notifications/read-all", { method: "POST", body: "{}" });
+  },
+
+  async getUnreadCount(): Promise<UnreadCountResponse> {
+    const resp = await apiClient.get<{ data: UnreadCountResponse }>("/customer/notifications/unread-count");
+    return (resp as unknown as { data: UnreadCountResponse }).data;
+  },
+};
