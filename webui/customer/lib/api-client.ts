@@ -1021,6 +1021,16 @@ export const billingApi = {
     );
     return (resp as unknown as { data: TopUpResponse }).data;
   },
+
+  async capturePayPalOrder(
+    orderID: string
+  ): Promise<{ capture_id: string; status: string; amount_cents: number; currency: string }> {
+    await fetchCsrfToken();
+    const resp = await apiClient.post<{
+      data: { capture_id: string; status: string; amount_cents: number; currency: string };
+    }>("/customer/billing/payments/paypal/capture", { order_id: orderID });
+    return (resp as unknown as { data: { capture_id: string; status: string; amount_cents: number; currency: string } }).data;
+  },
 };
 
 // Invoice types

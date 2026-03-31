@@ -58,6 +58,7 @@ function BalanceCard() {
 function TopUpSection() {
   const queryClient = useQueryClient();
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  const [selectedGateway, setSelectedGateway] = useState<string | null>(null);
 
   const { data: config } = useQuery({
     queryKey: ["billing", "topup-config"],
@@ -65,14 +66,20 @@ function TopUpSection() {
   });
 
   const topUpMutation = useMutation({
-    mutationFn: (amount: number) =>
-      billingApi.initiateTopUp({
-        gateway: config?.gateways[0] || "stripe",
+    mutationFn: (amount: number) => {
+      const gateway = selectedGateway || config?.gateways[0] || "stripe";
+      const returnURL =
+        gateway === "paypal"
+          ? `${window.location.origin}/billing/paypal-return`
+          : window.location.href;
+      return billingApi.initiateTopUp({
+        gateway,
         amount,
         currency: config?.currency || "USD",
-        return_url: window.location.href,
+        return_url: returnURL,
         cancel_url: window.location.href,
-      }),
+      });
+    },
     onSuccess: (data) => {
       if (data.payment_url) {
         window.location.href = data.payment_url;
@@ -83,12 +90,32 @@ function TopUpSection() {
 
   if (!config) return null;
 
+  const gateways = config.gateways || [];
+  const activeGateway = selectedGateway || gateways[0] || "stripe";
+
   return (
     <div className="rounded-lg border bg-card p-6">
       <div className="flex items-center gap-2 mb-4">
         <ArrowUpCircle className="h-5 w-5 text-green-500" />
         <h3 className="text-lg font-semibold">Add Funds</h3>
       </div>
+      {gateways.length > 1 && (
+        <div className="flex gap-2 mb-4">
+          {gateways.map((gw) => (
+            <button
+              key={gw}
+              onClick={() => setSelectedGateway(gw)}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                activeGateway === gw
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border hover:bg-accent"
+              }`}
+            >
+              {gw === "paypal" ? "PayPal" : gw === "stripe" ? "Credit Card" : gw}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
         {config.presets.map((amount) => (
           <button
@@ -109,13 +136,10 @@ function TopUpSection() {
         disabled={!selectedAmount || topUpMutation.isPending}
         className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
       >
-        {topUpMutation.isPending ? "Processing..." : "Add Funds"}
+        {topUpMutation.isPending
+          ? "Processing..."
+          : `Add Funds via ${activeGateway === "paypal" ? "PayPal" : "Card"}`}
       </button>
-      {config.gateways.length > 0 && (
-        <p className="text-xs text-muted-foreground mt-2 text-center">
-          via {config.gateways.join(", ")}
-        </p>
-      )}
     </div>
   );
 }
