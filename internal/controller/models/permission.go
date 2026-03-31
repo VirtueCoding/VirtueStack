@@ -75,6 +75,12 @@ const (
 	PermissionStorageBackendsDelete Permission = "storage_backends:delete"
 )
 
+// Permission constants for billing resource.
+const (
+	PermissionBillingRead  Permission = "billing:read"
+	PermissionBillingWrite Permission = "billing:write"
+)
+
 // Role constants for default permission sets.
 const (
 	RoleSuperAdmin = "super_admin"
@@ -95,6 +101,7 @@ var allPermissions = []Permission{
 	PermissionRDNSRead, PermissionRDNSWrite,
 	PermissionAuditLogsRead,
 	PermissionStorageBackendsRead, PermissionStorageBackendsWrite, PermissionStorageBackendsDelete,
+	PermissionBillingRead, PermissionBillingWrite,
 }
 
 // defaultPermissions maps roles to their default permission sets.
@@ -112,6 +119,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionRDNSRead, PermissionRDNSWrite,
 		PermissionAuditLogsRead,
 		PermissionStorageBackendsRead, PermissionStorageBackendsWrite,
+		PermissionBillingRead, PermissionBillingWrite,
 	},
 	RoleViewer: {
 		PermissionPlansRead,
@@ -125,6 +133,7 @@ var defaultPermissions = map[string][]Permission{
 		PermissionRDNSRead,
 		PermissionAuditLogsRead,
 		PermissionStorageBackendsRead,
+		PermissionBillingRead,
 	},
 }
 
