@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -58,23 +59,7 @@ func (h *AdminHandler) AdminCreditAdjustment(c *gin.Context) {
 		return
 	}
 
-	idempotencyKey := fmt.Sprintf("admin-adjustment:%s", uuid.New().String())
-
-	var tx *models.BillingTransaction
-	var txErr error
-	if req.Amount > 0 {
-		tx, txErr = h.billingLedgerService.CreditAccount(
-			c.Request.Context(), customerID, req.Amount,
-			req.Description, &idempotencyKey,
-		)
-	} else {
-		absAmount := -req.Amount
-		refType := models.BillingRefTypeAdminAdjust
-		tx, txErr = h.billingLedgerService.DebitAccount(
-			c.Request.Context(), customerID, absAmount,
-			req.Description, &refType, nil, &idempotencyKey,
-		)
-	}
+	tx, txErr := h.processAdjustment(c.Request.Context(), customerID, req)
 	if txErr != nil {
 		h.logger.Error("failed to process credit adjustment",
 			"customer_id", customerID,
@@ -94,6 +79,26 @@ func (h *AdminHandler) AdminCreditAdjustment(c *gin.Context) {
 		}, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: tx})
+}
+
+func (h *AdminHandler) processAdjustment(
+	ctx context.Context, customerID string, req models.AdminCreditAdjustmentRequest,
+) (*models.BillingTransaction, error) {
+	idempotencyKey := fmt.Sprintf("admin-adjustment:%s", uuid.New().String())
+
+	if req.Amount > 0 {
+		return h.billingLedgerService.CreditAccount(
+			ctx, customerID, req.Amount,
+			req.Description, &idempotencyKey,
+		)
+	}
+
+	absAmount := -req.Amount
+	refType := models.BillingRefTypeAdminAdjust
+	return h.billingLedgerService.DebitAccount(
+		ctx, customerID, absAmount,
+		req.Description, &refType, nil, &idempotencyKey,
+	)
 }
 
 // GetCustomerBalance handles GET /admin/billing/balance.

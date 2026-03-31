@@ -247,7 +247,7 @@ func TestBillingScheduler_chargeVM(t *testing.T) {
 				tt.setupPlan(),
 				&mockSchedulerDB{},
 			)
-			err := scheduler.chargeVM(context.Background(), tt.vm, chargeHour)
+			_, err := scheduler.chargeVM(context.Background(), tt.vm, chargeHour)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

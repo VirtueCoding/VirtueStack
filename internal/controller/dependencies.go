@@ -98,8 +98,11 @@ func (s *Server) InitializeServices() error {
 
 	// Billing repositories
 	billingTxRepo := repository.NewBillingTransactionRepository(s.dbPool)
+	billingPaymentRepo := repository.NewBillingPaymentRepository(s.dbPool)
 	billingCheckpointRepo := repository.NewBillingCheckpointRepository(s.dbPool)
 	exchangeRateRepo := repository.NewExchangeRateRepository(s.dbPool)
+
+	_ = billingPaymentRepo // wired for Phase 4+ (Stripe/PayPal)
 
 	// Billing services
 	billingLedgerService := services.NewBillingLedgerService(services.BillingLedgerServiceConfig{

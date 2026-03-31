@@ -114,13 +114,18 @@ func (s *BillingScheduler) RunBillingCycle(ctx context.Context) {
 
 	var charged, skipped, failed int
 	for i := range vms {
-		if err := s.chargeVM(ctx, vms[i], chargeHour); err != nil {
+		didCharge, chargeErr := s.chargeVM(ctx, vms[i], chargeHour)
+		if chargeErr != nil {
 			s.logger.Error("failed to charge VM",
-				"vm_id", vms[i].ID, "error", err)
+				"vm_id", vms[i].ID, "error", chargeErr)
 			failed++
 			continue
 		}
-		charged++
+		if didCharge {
+			charged++
+		} else {
+			skipped++
+		}
 	}
 
 	s.checkLowBalances(ctx, vms)
@@ -136,27 +141,27 @@ func (s *BillingScheduler) RunBillingCycle(ctx context.Context) {
 
 func (s *BillingScheduler) chargeVM(
 	ctx context.Context, vm models.VM, chargeHour time.Time,
-) error {
+) (bool, error) {
 	exists, err := s.checkpointRepo.ExistsForHour(ctx, vm.ID, chargeHour)
 	if err != nil {
-		return fmt.Errorf("check checkpoint: %w", err)
+		return false, fmt.Errorf("check checkpoint: %w", err)
 	}
 	if exists {
-		return nil
+		return false, nil
 	}
 
 	if vm.Status != models.VMStatusRunning && vm.Status != models.VMStatusStopped {
-		return nil
+		return false, nil
 	}
 
 	plan, err := s.planRepo.GetByID(ctx, vm.PlanID)
 	if err != nil {
-		return fmt.Errorf("get plan %s: %w", vm.PlanID, err)
+		return false, fmt.Errorf("get plan %s: %w", vm.PlanID, err)
 	}
 
 	amount := plan.EffectiveHourlyRate(vm.Status)
 	if amount == 0 {
-		return nil
+		return false, nil
 	}
 
 	refType := models.BillingRefTypeVMUsage
@@ -169,16 +174,16 @@ func (s *BillingScheduler) chargeVM(
 		&refType, &vm.ID, &idempotencyKey,
 	)
 	if err != nil {
-		return fmt.Errorf("debit account: %w", err)
+		return false, fmt.Errorf("debit account: %w", err)
 	}
 
 	if err := s.checkpointRepo.RecordCheckpoint(
 		ctx, vm.ID, chargeHour, amount, &bt.ID,
 	); err != nil {
-		return fmt.Errorf("record checkpoint: %w", err)
+		return false, fmt.Errorf("record checkpoint: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // checkLowBalances emits structured log warnings for customers with low balance.
