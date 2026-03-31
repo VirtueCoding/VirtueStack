@@ -130,6 +130,7 @@ type CustomerHandler struct {
 	ssoTokenRepo         *repository.SSOTokenRepository
 	taskRepo             *repository.TaskRepository
 	rdnsService          *services.RDNSService
+	invoiceService       *services.BillingInvoiceService
 	nodeAgent            nodeAgentConnPool
 	authConfig           middleware.AuthConfig
 	encryptionKey        string
@@ -176,6 +177,7 @@ type CustomerHandlerConfig struct {
 	SSOTokenRepo         *repository.SSOTokenRepository
 	TaskRepo             *repository.TaskRepository
 	RDNSService          *services.RDNSService
+	InvoiceService       *services.BillingInvoiceService
 	NodeAgent            nodeAgentConnPool
 	JWTSecret            string
 	Issuer               string
@@ -212,6 +214,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		ssoTokenRepo:         cfg.SSOTokenRepo,
 		taskRepo:             cfg.TaskRepo,
 		rdnsService:          cfg.RDNSService,
+		invoiceService:       cfg.InvoiceService,
 		nodeAgent:            cfg.NodeAgent,
 		authConfig:           middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		encryptionKey:        cfg.EncryptionKey,

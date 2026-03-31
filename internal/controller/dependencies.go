@@ -104,6 +104,7 @@ func (s *Server) InitializeServices() error {
 	billingPaymentRepo := repository.NewBillingPaymentRepository(s.dbPool)
 	billingCheckpointRepo := repository.NewBillingCheckpointRepository(s.dbPool)
 	exchangeRateRepo := repository.NewExchangeRateRepository(s.dbPool)
+	billingInvoiceRepo := repository.NewBillingInvoiceRepository(s.dbPool)
 
 	// Billing services
 	billingLedgerService := services.NewBillingLedgerService(services.BillingLedgerServiceConfig{
@@ -175,6 +176,23 @@ func (s *Server) InitializeServices() error {
 			paymentService, s.logger,
 		)
 	}
+
+	// Invoice PDF generator and service
+	pdfGenerator := services.NewInvoicePDFGenerator(services.InvoicePDFGeneratorConfig{
+		InvoiceRepo:  billingInvoiceRepo,
+		SettingsRepo: settingsRepo,
+		StoragePath:  s.config.Billing.InvoiceStoragePath,
+	})
+	billingInvoiceService := services.NewBillingInvoiceService(services.BillingInvoiceServiceConfig{
+		InvoiceRepo:     billingInvoiceRepo,
+		TransactionRepo: billingTxRepo,
+		CustomerRepo:    customerRepo,
+		VMRepo:          vmRepo,
+		PlanRepo:        planRepo,
+		PDFGenerator:    pdfGenerator,
+		Logger:          s.logger,
+	})
+	s.invoiceService = billingInvoiceService
 
 	s.vmService = services.NewVMService(services.VMServiceConfig{
 		VMRepo:              vmRepo,
@@ -328,6 +346,7 @@ func (s *Server) InitializeServices() error {
 		SSOTokenRepo:    ssoTokenRepo,
 		TaskRepo:        taskRepo,
 		RDNSService:     s.rdnsService,
+		InvoiceService:  billingInvoiceService,
 		NodeAgent:       s.nodeClient,
 		JWTSecret:       s.config.JWTSecret.Value(),
 		Issuer:          "virtuestack",
@@ -366,6 +385,7 @@ func (s *Server) InitializeServices() error {
 		PreActionWebhookRepo:    preActionWebhookRepo,
 		CustomerRepo:            customerRepo,
 		RDNSService:             s.rdnsService,
+		InvoiceService:          billingInvoiceService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",
 		Logger:                  s.logger,

@@ -331,4 +331,11 @@ func registerBillingRoutes(group *gin.RouterGroup, handler *CustomerHandler) {
 		billingGroup.GET("/payments", handler.GetPaymentHistory)
 		billingGroup.GET("/top-up/config", handler.GetTopUpConfig)
 	}
+
+	invoices := group.Group("/invoices")
+	{
+		invoices.GET("", handler.ListMyInvoices)
+		invoices.GET("/:id", handler.GetMyInvoice)
+		invoices.GET("/:id/pdf", handler.DownloadMyInvoicePDF)
+	}
 }

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -163,6 +164,34 @@ func (r *BillingTransactionRepository) ListByCustomer(
 		lastID = txs[len(txs)-1].ID
 	}
 	return txs, hasMore, lastID, nil
+}
+
+// ListByCustomerForPeriod returns all transactions for a customer within
+// the given time range, optionally filtered by type (e.g., "debit").
+func (r *BillingTransactionRepository) ListByCustomerForPeriod(
+	ctx context.Context, customerID string, periodStart, periodEnd time.Time, txType string,
+) ([]models.BillingTransaction, error) {
+	args := []any{customerID, periodStart, periodEnd}
+	clause := "customer_id = $1 AND created_at >= $2 AND created_at < $3"
+	idx := 4
+
+	if txType != "" {
+		clause += fmt.Sprintf(" AND type = $%d", idx)
+		args = append(args, txType)
+	}
+
+	q := fmt.Sprintf(`SELECT %s FROM billing_transactions
+		WHERE %s ORDER BY created_at ASC`,
+		billingTxSelectCols, clause)
+
+	txs, err := ScanRows(ctx, r.db, q, args,
+		func(rows pgx.Rows) (models.BillingTransaction, error) {
+			return scanBillingTx(rows)
+		})
+	if err != nil {
+		return nil, fmt.Errorf("list transactions for period: %w", err)
+	}
+	return txs, nil
 }
 
 // lockAndUpdateBalance locks the customer row and updates the balance.

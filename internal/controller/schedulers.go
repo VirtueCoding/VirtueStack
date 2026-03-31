@@ -56,6 +56,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 		s.logger.Info("starting billing scheduler")
 		go s.billingScheduler.Start(ctx)
 	}
+
+	if s.invoiceService != nil {
+		s.logger.Info("starting monthly invoice scheduler")
+		go s.startMonthlyInvoiceScheduler(ctx)
+	}
 }
 
 func (s *Server) startMetricsCollector(ctx context.Context) {
@@ -213,6 +218,38 @@ func (s *Server) collectBandwidth(ctx context.Context) {
 		if bwResp.RxBytes > 0 || bwResp.TxBytes > 0 {
 			controllermetrics.BandwidthBytesTotal.WithLabelValues(vm.ID, "rx").Set(float64(bwResp.RxBytes))
 			controllermetrics.BandwidthBytesTotal.WithLabelValues(vm.ID, "tx").Set(float64(bwResp.TxBytes))
+		}
+	}
+}
+
+// startMonthlyInvoiceScheduler runs on the 1st of each month at 00:05 UTC,
+// generating invoices for the previous month.
+func (s *Server) startMonthlyInvoiceScheduler(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("invoice scheduler panic recovered", "panic", r)
+		}
+	}()
+
+	for {
+		now := time.Now().UTC()
+		nextRun := time.Date(now.Year(), now.Month()+1, 1, 0, 5, 0, 0, time.UTC)
+		timer := time.NewTimer(time.Until(nextRun))
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			prev := time.Now().UTC().AddDate(0, -1, 0)
+			count, err := s.invoiceService.GenerateAllMonthlyInvoices(
+				ctx, prev.Year(), prev.Month())
+			if err != nil {
+				s.logger.Error("monthly invoice generation failed", "error", err)
+			} else {
+				s.logger.Info("monthly invoice generation complete",
+					"invoices_generated", count)
+			}
 		}
 	}
 }

@@ -8,6 +8,7 @@ require (
 	github.com/ceph/go-ceph v0.30.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-playground/validator/v10 v10.26.0
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
@@ -42,7 +43,7 @@ require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
+	github.com/boombuler/barcode v1.0.1 // indirect
 	github.com/bytedance/sonic v1.13.3 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect

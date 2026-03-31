@@ -89,6 +89,7 @@ type Server struct {
 	bandwidthRepo              *repository.BandwidthRepository
 	adminBackupScheduleService *services.AdminBackupScheduleService
 	billingScheduler           *services.BillingScheduler
+	invoiceService             *services.BillingInvoiceService
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers

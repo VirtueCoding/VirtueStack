@@ -1022,3 +1022,59 @@ export const billingApi = {
     return (resp as unknown as { data: TopUpResponse }).data;
   },
 };
+
+// Invoice types
+export interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+  vm_name?: string;
+  vm_id?: string;
+  plan_name?: string;
+  hours?: number;
+}
+
+export interface Invoice {
+  id: string;
+  customer_id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  subtotal: number;
+  tax_amount: number;
+  total: number;
+  currency: string;
+  status: "draft" | "issued" | "paid" | "void";
+  line_items: InvoiceLineItem[];
+  issued_at?: string;
+  paid_at?: string;
+  has_pdf: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const invoiceApi = {
+  async list(
+    params: { cursor?: string; perPage?: number } = {}
+  ): Promise<CursorPaginatedResponse<Invoice>> {
+    const queryParams = new URLSearchParams();
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<CursorPaginatedResponse<Invoice>>(
+      `/customer/invoices${query}`
+    );
+  },
+
+  async get(id: string): Promise<Invoice> {
+    const resp = await apiClient.get<{ data: Invoice }>(
+      `/customer/invoices/${id}`
+    );
+    return (resp as unknown as { data: Invoice }).data;
+  },
+
+  getPDFUrl(id: string): string {
+    return `${API_BASE_URL}/customer/invoices/${id}/pdf`;
+  },
+};

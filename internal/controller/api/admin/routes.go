@@ -366,6 +366,23 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 				middleware.RequireAdminPermission(models.PermissionBillingWrite),
 				handler.UpdateExchangeRate)
 		}
+
+		// Invoices (billing)
+		invoices := protected.Group("/invoices")
+		{
+			invoices.GET("",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.ListInvoices)
+			invoices.GET("/:id",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.GetInvoice)
+			invoices.GET("/:id/pdf",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.DownloadInvoicePDF)
+			invoices.POST("/:id/void",
+				middleware.RequireAdminPermission(models.PermissionBillingWrite),
+				handler.VoidInvoice)
+		}
 	}
 
 	if inAppNotifHandler != nil {

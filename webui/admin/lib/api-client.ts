@@ -1414,3 +1414,83 @@ export const adminBillingApi = {
     return (resp as unknown as { data: BillingConfig }).data;
   },
 };
+
+// Invoice types
+export interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+  vm_name?: string;
+  vm_id?: string;
+  plan_name?: string;
+  hours?: number;
+}
+
+export interface Invoice {
+  id: string;
+  customer_id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  subtotal: number;
+  tax_amount: number;
+  total: number;
+  currency: string;
+  status: "draft" | "issued" | "paid" | "void";
+  line_items: InvoiceLineItem[];
+  issued_at?: string;
+  paid_at?: string;
+  has_pdf: boolean;
+  created_at: string;
+  updated_at: string;
+  customer_name?: string;
+  customer_email?: string;
+}
+
+export interface InvoiceListParams {
+  customer_id?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  cursor?: string;
+  per_page?: number;
+}
+
+export const adminInvoicesApi = {
+  async list(
+    params: InvoiceListParams = {}
+  ): Promise<PaginatedResponse<Invoice>> {
+    const searchParams = new URLSearchParams();
+    if (params.customer_id) searchParams.set("customer_id", params.customer_id);
+    if (params.status) searchParams.set("status", params.status);
+    if (params.start_date) searchParams.set("start_date", params.start_date);
+    if (params.end_date) searchParams.set("end_date", params.end_date);
+    if (params.cursor) searchParams.set("cursor", params.cursor);
+    if (params.per_page) searchParams.set("per_page", String(params.per_page));
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : "";
+    return apiClient.get<PaginatedResponse<Invoice>>(
+      `/admin/invoices${query}`
+    );
+  },
+
+  async get(id: string): Promise<Invoice> {
+    const resp = await apiClient.get<{ data: Invoice }>(
+      `/admin/invoices/${id}`
+    );
+    return (resp as unknown as { data: Invoice }).data;
+  },
+
+  async voidInvoice(id: string): Promise<{ status: string }> {
+    await fetchCsrfToken();
+    const resp = await apiClient.post<{ data: { status: string } }>(
+      `/admin/invoices/${id}/void`,
+      {}
+    );
+    return (resp as unknown as { data: { status: string } }).data;
+  },
+
+  getPDFUrl(id: string): string {
+    return `${API_BASE_URL}/admin/invoices/${id}/pdf`;
+  },
+};

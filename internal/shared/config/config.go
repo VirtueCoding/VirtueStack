@@ -136,6 +136,9 @@ type BillingConfig struct {
 	GracePeriodHours     int                    `yaml:"grace_period_hours"`
 	WarningIntervalHours int                    `yaml:"warning_interval_hours"`
 	AutoDeleteDays       int                    `yaml:"auto_delete_days"`
+	// Invoice configuration
+	InvoiceStoragePath string `yaml:"invoice_storage_path"`
+	InvoicePrefix      string `yaml:"invoice_prefix"`
 }
 
 // StripeConfig holds Stripe payment gateway settings.
@@ -332,6 +335,8 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 			},
 			GracePeriodHours:     12,
 			WarningIntervalHours: 24,
+			InvoiceStoragePath:   "/var/lib/virtuestack/invoices",
+			InvoicePrefix:        "INV",
 		},
 		PayPal: PayPalConfig{Mode: "sandbox"},
 		Crypto: CryptoConfig{Provider: "disabled"},
@@ -680,6 +685,12 @@ func applyEnvOverridesBilling(cfg *ControllerConfig) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Billing.AutoDeleteDays = n
 		}
+	}
+	if v := os.Getenv("BILLING_INVOICE_STORAGE_PATH"); v != "" {
+		cfg.Billing.InvoiceStoragePath = v
+	}
+	if v := os.Getenv("BILLING_INVOICE_PREFIX"); v != "" {
+		cfg.Billing.InvoicePrefix = v
 	}
 }
 

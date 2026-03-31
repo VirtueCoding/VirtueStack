@@ -12,6 +12,7 @@ import {
   GitBranch,
   KeyRound,
   CreditCard,
+  Receipt,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -32,6 +33,7 @@ export const adminNavItems: NavItem[] = [
   { href: "/ip-sets", label: "IP Sets", icon: Network },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/billing", label: "Billing", icon: CreditCard },
+  { href: "/invoices", label: "Invoices", icon: Receipt },
   { href: "/backups", label: "Backups", icon: Database },
   { href: "/backup-schedules", label: "Schedules", icon: Calendar },
   { href: "/provisioning-keys", label: "Provisioning Keys", icon: KeyRound },

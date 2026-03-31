@@ -930,6 +930,29 @@ func (r *CustomerRepository) UpdateBackupCodesWithShown(ctx context.Context, id 
 	return nil
 }
 
+// ListNativeBillingCustomerIDs returns IDs of all active customers using native billing.
+func (r *CustomerRepository) ListNativeBillingCustomerIDs(ctx context.Context) ([]string, error) {
+	const q = `SELECT id FROM customers
+		WHERE billing_provider = 'native' AND status = 'active'
+		ORDER BY id`
+
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list native billing customer IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan customer ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // UpdatePermissions updates the permissions for an admin.
 // Pass nil or empty slice to reset to role-based default permissions.
 // UpdatePermissions updates the permissions for an admin.
