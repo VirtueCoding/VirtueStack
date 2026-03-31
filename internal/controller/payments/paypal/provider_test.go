@@ -128,13 +128,13 @@ func TestCaptureOrder_Success(t *testing.T) {
 	})
 
 	p := newTestProvider(t, handler)
-	result, err := p.CaptureOrder(context.Background(), "ORDER-456")
+	capID, status, currency, cents, err := p.CaptureOrder(context.Background(), "ORDER-456")
 
 	require.NoError(t, err)
-	assert.Equal(t, "CAP-789", result.CaptureID)
-	assert.Equal(t, "COMPLETED", result.Status)
-	assert.Equal(t, int64(2500), result.AmountCents)
-	assert.Equal(t, "USD", result.Currency)
+	assert.Equal(t, "CAP-789", capID)
+	assert.Equal(t, "COMPLETED", status)
+	assert.Equal(t, int64(2500), cents)
+	assert.Equal(t, "USD", currency)
 }
 
 func TestCaptureOrder_EmptyCaptures(t *testing.T) {
@@ -148,7 +148,7 @@ func TestCaptureOrder_EmptyCaptures(t *testing.T) {
 	})
 
 	p := newTestProvider(t, handler)
-	_, err := p.CaptureOrder(context.Background(), "ORDER-EMPTY")
+	_, _, _, _, err := p.CaptureOrder(context.Background(), "ORDER-EMPTY")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing capture detail")

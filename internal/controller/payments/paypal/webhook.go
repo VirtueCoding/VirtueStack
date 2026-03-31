@@ -9,6 +9,15 @@ import (
 	"strings"
 )
 
+// PayPal webhook signature header names.
+const (
+	HeaderAuthAlgo         = "Paypal-Auth-Algo"
+	HeaderCertURL          = "Paypal-Cert-Url"
+	HeaderTransmissionID   = "Paypal-Transmission-Id"
+	HeaderTransmissionSig  = "Paypal-Transmission-Sig"
+	HeaderTransmissionTime = "Paypal-Transmission-Time"
+)
+
 // verifyWebhookRequest holds the PayPal signature verification request.
 type verifyWebhookRequest struct {
 	AuthAlgo         string          `json:"auth_algo"`

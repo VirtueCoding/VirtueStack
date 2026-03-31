@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -365,4 +366,98 @@ func (s *PaymentService) validateRefund(
 	}
 
 	return nil
+}
+
+// PayPalWebhookVerifier can verify PayPal webhook signatures.
+type PayPalWebhookVerifier interface {
+	VerifyWebhookSignature(
+		ctx context.Context, headers http.Header, body []byte,
+	) error
+}
+
+// HandlePayPalWebhook verifies signature via PayPal API, then
+// processes the webhook event through the standard flow.
+func (s *PaymentService) HandlePayPalWebhook(
+	ctx context.Context, headers http.Header, payload []byte,
+) error {
+	provider, err := s.registry.Get("paypal")
+	if err != nil {
+		return fmt.Errorf("get paypal provider: %w", err)
+	}
+
+	verifier, ok := provider.(PayPalWebhookVerifier)
+	if !ok {
+		return fmt.Errorf("paypal provider missing webhook verifier")
+	}
+
+	if err := verifier.VerifyWebhookSignature(ctx, headers, payload); err != nil {
+		return fmt.Errorf("verify paypal webhook: %w", err)
+	}
+
+	return s.HandleWebhook(ctx, "paypal", payload, "")
+}
+
+// PayPalOrderCapturer can capture an approved PayPal order.
+type PayPalOrderCapturer interface {
+	CaptureOrder(ctx context.Context, orderID string) (captureID, status, currency string, amountCents int64, err error)
+}
+
+// PayPalCaptureResult holds the result of a PayPal order capture.
+type PayPalCaptureResult struct {
+	CaptureID   string `json:"capture_id"`
+	Status      string `json:"status"`
+	AmountCents int64  `json:"amount_cents"`
+	Currency    string `json:"currency"`
+}
+
+// CapturePayPalOrder captures an approved PayPal order, updates the
+// payment record, and credits the customer's account.
+func (s *PaymentService) CapturePayPalOrder(
+	ctx context.Context, customerID, orderID string,
+) (*PayPalCaptureResult, error) {
+	provider, err := s.registry.Get("paypal")
+	if err != nil {
+		return nil, fmt.Errorf("get paypal provider: %w", err)
+	}
+
+	capturer, ok := provider.(PayPalOrderCapturer)
+	if !ok {
+		return nil, fmt.Errorf("paypal provider missing capture support")
+	}
+
+	capID, status, currency, cents, err := capturer.CaptureOrder(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("capture paypal order: %w", err)
+	}
+
+	result := &PayPalCaptureResult{
+		CaptureID:   capID,
+		Status:      status,
+		AmountCents: cents,
+		Currency:    currency,
+	}
+	return s.creditFromCapture(ctx, customerID, orderID, result)
+}
+
+func (s *PaymentService) creditFromCapture(
+	ctx context.Context, customerID, orderID string,
+	result *PayPalCaptureResult,
+) (*PayPalCaptureResult, error) {
+	idempotencyKey := "paypal:capture:" + result.CaptureID
+	_, err := s.ledger.CreditAccount(
+		ctx, customerID, result.AmountCents,
+		"Top-up via paypal",
+		&idempotencyKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("credit account: %w", err)
+	}
+
+	s.logger.Info("paypal capture credited",
+		"customer_id", customerID,
+		"order_id", orderID,
+		"capture_id", result.CaptureID,
+		"amount_cents", result.AmountCents,
+	)
+	return result, nil
 }

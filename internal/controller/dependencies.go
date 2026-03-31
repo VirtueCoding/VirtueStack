@@ -13,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
 	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
+	paypalPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/paypal"
 	stripePayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/stripe"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -161,6 +162,27 @@ func (s *Server) InitializeServices() error {
 		s.logger.Info("stripe payment provider registered")
 	}
 
+	// Register PayPal provider if configured
+	if s.config.PayPal.ClientID.Value() != "" {
+		paypalProvider := paypalPayments.NewProvider(paypalPayments.ProviderConfig{
+			ClientID:     s.config.PayPal.ClientID.Value(),
+			ClientSecret: s.config.PayPal.ClientSecret.Value(),
+			Mode:         s.config.PayPal.Mode,
+			WebhookID:    s.config.PayPal.WebhookID,
+			ReturnURL:    s.config.PayPal.ReturnURL,
+			CancelURL:    s.config.PayPal.CancelURL,
+			HTTPClient:   tasks.DefaultHTTPClient(),
+			Logger:       s.logger,
+		})
+		if err := paypalProvider.ValidateConfig(); err != nil {
+			return fmt.Errorf("paypal config validation: %w", err)
+		}
+		paymentRegistry.Register("paypal", paypalProvider)
+		s.paypalProvider = paypalProvider
+		s.logger.Info("paypal payment provider registered",
+			"mode", s.config.PayPal.Mode)
+	}
+
 	// Payment service
 	paymentService := services.NewPaymentService(services.PaymentServiceConfig{
 		PaymentRegistry: paymentRegistry,
@@ -173,6 +195,13 @@ func (s *Server) InitializeServices() error {
 	// Stripe webhook handler
 	if s.config.Stripe.SecretKey.Value() != "" {
 		s.stripeWebhookHandler = webhooks.NewStripeWebhookHandler(
+			paymentService, s.logger,
+		)
+	}
+
+	// PayPal webhook handler
+	if s.paypalProvider != nil {
+		s.paypalWebhookHandler = webhooks.NewPayPalWebhookHandler(
 			paymentService, s.logger,
 		)
 	}

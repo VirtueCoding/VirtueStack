@@ -18,6 +18,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/webhooks"
 	"github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	paypalPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/paypal"
 	controllerredis "github.com/AbuGosok/VirtueStack/internal/controller/redis"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -102,6 +103,8 @@ type Server struct {
 	sseHub                     *services.SSEHub
 	inAppNotifService          *services.InAppNotificationService
 	stripeWebhookHandler       *webhooks.StripeWebhookHandler
+	paypalProvider             *paypalPayments.Provider
+	paypalWebhookHandler       *webhooks.PayPalWebhookHandler
 	readinessDBPing            func(context.Context) error
 	readinessNATSStatus        func() nats.Status
 }
@@ -235,6 +238,11 @@ func (s *Server) RegisterAPIRoutes() {
 	// Stripe webhook endpoint (unauthenticated — signature verified by handler)
 	if s.stripeWebhookHandler != nil {
 		v1.POST("/webhooks/stripe", s.stripeWebhookHandler.Handle)
+	}
+
+	// PayPal webhook endpoint (unauthenticated — signature verified via PayPal API)
+	if s.paypalWebhookHandler != nil {
+		v1.POST("/webhooks/paypal", s.paypalWebhookHandler.Handle)
 	}
 
 	// Swagger UI is restricted to authenticated admins only.

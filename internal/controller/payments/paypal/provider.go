@@ -345,12 +345,13 @@ func (p *Provider) ValidateConfig() error {
 }
 
 // CaptureOrder finalizes payment for an approved PayPal order.
+// Returns capture ID, status, currency, and amount in cents.
 func (p *Provider) CaptureOrder(
 	ctx context.Context, orderID string,
-) (*CaptureResult, error) {
+) (captureID, status, currency string, amountCents int64, err error) {
 	token, err := p.tokenClient.GetAccessToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get paypal token: %w", err)
+		return "", "", "", 0, fmt.Errorf("get paypal token: %w", err)
 	}
 
 	endpoint := fmt.Sprintf(
@@ -359,11 +360,15 @@ func (p *Provider) CaptureOrder(
 	)
 	resp, err := p.doAuthedRequest(ctx, http.MethodPost, endpoint, token, nil)
 	if err != nil {
-		return nil, fmt.Errorf("paypal capture order: %w", err)
+		return "", "", "", 0, fmt.Errorf("paypal capture order: %w", err)
 	}
 	defer resp.Body.Close()
 
-	return p.parseCaptureResponse(resp, orderID)
+	result, parseErr := p.parseCaptureResponse(resp, orderID)
+	if parseErr != nil {
+		return "", "", "", 0, parseErr
+	}
+	return result.CaptureID, result.Status, result.Currency, result.AmountCents, nil
 }
 
 func (p *Provider) parseCaptureResponse(

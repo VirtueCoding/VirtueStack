@@ -330,6 +330,7 @@ func registerBillingRoutes(group *gin.RouterGroup, handler *CustomerHandler) {
 		billingGroup.POST("/top-up", handler.InitiateTopUp)
 		billingGroup.GET("/payments", handler.GetPaymentHistory)
 		billingGroup.GET("/top-up/config", handler.GetTopUpConfig)
+		billingGroup.POST("/payments/paypal/capture", handler.CapturePayPalPayment)
 	}
 
 	invoices := group.Group("/invoices")

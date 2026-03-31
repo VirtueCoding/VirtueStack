@@ -152,7 +152,10 @@ type StripeConfig struct {
 type PayPalConfig struct {
 	ClientID     Secret `yaml:"client_id"`
 	ClientSecret Secret `yaml:"client_secret"`
-	Mode         string `yaml:"mode"` // "sandbox" or "production"
+	Mode         string `yaml:"mode"`       // "sandbox" or "production"
+	WebhookID    string `yaml:"webhook_id"` // PayPal webhook ID for signature verification
+	ReturnURL    string `yaml:"return_url"` // redirect URL after payment approval
+	CancelURL    string `yaml:"cancel_url"` // redirect URL on payment cancellation
 }
 
 // CryptoConfig holds cryptocurrency payment settings.
@@ -629,6 +632,15 @@ func applyEnvOverridesPayments(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("PAYPAL_MODE"); v != "" {
 		cfg.PayPal.Mode = v
+	}
+	if v := os.Getenv("PAYPAL_WEBHOOK_ID"); v != "" {
+		cfg.PayPal.WebhookID = v
+	}
+	if v := os.Getenv("PAYPAL_RETURN_URL"); v != "" {
+		cfg.PayPal.ReturnURL = v
+	}
+	if v := os.Getenv("PAYPAL_CANCEL_URL"); v != "" {
+		cfg.PayPal.CancelURL = v
 	}
 	// Crypto
 	if v := os.Getenv("CRYPTO_PROVIDER"); v != "" {
