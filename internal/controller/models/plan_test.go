@@ -78,6 +78,52 @@ func TestPlanCreateRequest_Fields(t *testing.T) {
 	assert.Equal(t, "lvm", req.StorageBackend)
 }
 
+func TestPlan_EffectiveHourlyRate(t *testing.T) {
+	tests := []struct {
+		name               string
+		priceHourly        *int64
+		priceHourlyStopped *int64
+		vmStatus           string
+		want               int64
+	}{
+		{
+			name:        "running VM with PriceHourly returns PriceHourly",
+			priceHourly: int64Ptr(100),
+			vmStatus:    VMStatusRunning,
+			want:        100,
+		},
+		{
+			name:               "stopped VM with PriceHourlyStopped returns PriceHourlyStopped",
+			priceHourly:        int64Ptr(100),
+			priceHourlyStopped: int64Ptr(25),
+			vmStatus:           VMStatusStopped,
+			want:               25,
+		},
+		{
+			name:        "stopped VM without PriceHourlyStopped falls back to PriceHourly",
+			priceHourly: int64Ptr(100),
+			vmStatus:    VMStatusStopped,
+			want:        100,
+		},
+		{
+			name:     "nil PriceHourly returns 0",
+			vmStatus: VMStatusRunning,
+			want:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := Plan{
+				PriceHourly:        tt.priceHourly,
+				PriceHourlyStopped: tt.priceHourlyStopped,
+			}
+			got := plan.EffectiveHourlyRate(tt.vmStatus)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestPlanUpdateRequest_PartialUpdate(t *testing.T) {
 	name := "Updated Plan"
 	vcpu := 8
