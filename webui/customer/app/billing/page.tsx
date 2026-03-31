@@ -111,7 +111,7 @@ function TopUpSection() {
                   : "border-border hover:bg-accent"
               }`}
             >
-              {gw === "paypal" ? "PayPal" : gw === "stripe" ? "Credit Card" : gw}
+              {gw === "paypal" ? "PayPal" : gw === "stripe" ? "Credit Card" : gw === "crypto" ? "Bitcoin / Crypto" : gw}
             </button>
           ))}
         </div>
@@ -138,7 +138,7 @@ function TopUpSection() {
       >
         {topUpMutation.isPending
           ? "Processing..."
-          : `Add Funds via ${activeGateway === "paypal" ? "PayPal" : "Card"}`}
+          : `Add Funds via ${activeGateway === "paypal" ? "PayPal" : activeGateway === "crypto" ? "Crypto" : "Card"}`}
       </button>
     </div>
   );
