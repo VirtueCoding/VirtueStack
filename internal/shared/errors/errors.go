@@ -62,6 +62,9 @@ var (
 
 	// ErrLimitExceeded indicates that a resource limit has been reached.
 	ErrLimitExceeded = stderrors.New("resource limit exceeded")
+
+	// ErrNotSupported indicates that an operation is not supported by the provider.
+	ErrNotSupported = stderrors.New("operation not supported")
 )
 
 // ValidationDetail represents a single validation error detail.
