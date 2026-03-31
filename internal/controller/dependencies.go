@@ -13,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
 	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
+	cryptoPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/crypto"
 	paypalPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/paypal"
 	stripePayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/stripe"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -183,6 +184,33 @@ func (s *Server) InitializeServices() error {
 			"mode", s.config.PayPal.Mode)
 	}
 
+	// Register crypto payment provider if configured
+	var cryptoProvider cryptoPayments.CryptoProvider
+	if s.config.Crypto.Provider != "" && s.config.Crypto.Provider != "disabled" {
+		var err error
+		cryptoProvider, err = cryptoPayments.NewProvider(cryptoPayments.FactoryConfig{
+			Provider:               s.config.Crypto.Provider,
+			BTCPayServerURL:        s.config.Crypto.BTCPayServerURL,
+			BTCPayAPIKey:           s.config.Crypto.BTCPayAPIKey.Value(),
+			BTCPayStoreID:          s.config.Crypto.BTCPayStoreID,
+			BTCPayWebhookSecret:    s.config.Crypto.BTCPayWebhookSecret.Value(),
+			NOWPaymentsAPIKey:      s.config.Crypto.NOWPaymentsAPIKey.Value(),
+			NOWPaymentsIPNSecret:   s.config.Crypto.NOWPaymentsIPNSecret.Value(),
+			NOWPaymentsCallbackURL: s.config.Crypto.NOWPaymentsCallbackURL,
+			RedirectURL:            s.config.Crypto.RedirectURL,
+			HTTPClient:             tasks.DefaultHTTPClient(),
+			Logger:                 s.logger,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize crypto provider: %w", err)
+		}
+		if cryptoProvider != nil {
+			paymentRegistry.Register("crypto", cryptoPayments.NewAdapter(cryptoProvider))
+			s.logger.Info("crypto payment provider registered",
+				"provider", cryptoProvider.ProviderName())
+		}
+	}
+
 	// Payment service
 	paymentService := services.NewPaymentService(services.PaymentServiceConfig{
 		PaymentRegistry: paymentRegistry,
@@ -203,6 +231,13 @@ func (s *Server) InitializeServices() error {
 	if s.paypalProvider != nil {
 		s.paypalWebhookHandler = webhooks.NewPayPalWebhookHandler(
 			paymentService, s.logger,
+		)
+	}
+
+	// Crypto webhook handler
+	if cryptoProvider != nil {
+		s.cryptoWebhookHandler = webhooks.NewCryptoWebhookHandler(
+			cryptoProvider, paymentService, s.logger,
 		)
 	}
 

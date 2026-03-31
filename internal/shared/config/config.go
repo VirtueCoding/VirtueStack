@@ -160,12 +160,15 @@ type PayPalConfig struct {
 
 // CryptoConfig holds cryptocurrency payment settings.
 type CryptoConfig struct {
-	Provider          string `yaml:"provider"` // "btcpay", "nowpayments", or "disabled"
-	BTCPayServerURL   string `yaml:"btcpay_server_url"`
-	BTCPayAPIKey      Secret `yaml:"btcpay_api_key"`
-	BTCPayStoreID     string `yaml:"btcpay_store_id"`
-	NOWPaymentsAPIKey Secret `yaml:"nowpayments_api_key"`
-	NOWPaymentsIPNSecret Secret `yaml:"nowpayments_ipn_secret"`
+	Provider               string `yaml:"provider"` // "btcpay", "nowpayments", or "disabled"
+	BTCPayServerURL        string `yaml:"btcpay_server_url"`
+	BTCPayAPIKey           Secret `yaml:"btcpay_api_key"`
+	BTCPayStoreID          string `yaml:"btcpay_store_id"`
+	BTCPayWebhookSecret    Secret `yaml:"btcpay_webhook_secret"`
+	NOWPaymentsAPIKey      Secret `yaml:"nowpayments_api_key"`
+	NOWPaymentsIPNSecret   Secret `yaml:"nowpayments_ipn_secret"`
+	NOWPaymentsCallbackURL string `yaml:"nowpayments_callback_url"`
+	RedirectURL            string `yaml:"redirect_url"`
 }
 
 // OAuthProviderConfig holds settings for a single OAuth provider.
@@ -660,6 +663,15 @@ func applyEnvOverridesPayments(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("NOWPAYMENTS_IPN_SECRET"); v != "" {
 		cfg.Crypto.NOWPaymentsIPNSecret = Secret(v)
+	}
+	if v := os.Getenv("BTCPAY_WEBHOOK_SECRET"); v != "" {
+		cfg.Crypto.BTCPayWebhookSecret = Secret(v)
+	}
+	if v := os.Getenv("NOWPAYMENTS_CALLBACK_URL"); v != "" {
+		cfg.Crypto.NOWPaymentsCallbackURL = v
+	}
+	if v := os.Getenv("CRYPTO_REDIRECT_URL"); v != "" {
+		cfg.Crypto.RedirectURL = v
 	}
 }
 

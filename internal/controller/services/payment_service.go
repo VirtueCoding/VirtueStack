@@ -242,6 +242,35 @@ func (s *PaymentService) handleRefundCompleted(
 	return err
 }
 
+// CreditFromPayment credits a customer's billing account from a crypto payment.
+// This is called by the crypto webhook handler after signature verification.
+func (s *PaymentService) CreditFromPayment(
+	ctx context.Context,
+	accountID string,
+	amountCents int64,
+	currency string,
+	gateway string,
+	gatewayPaymentID string,
+	idempotencyKey string,
+) error {
+	_, err := s.ledger.CreditAccount(
+		ctx, accountID, amountCents,
+		fmt.Sprintf("Top-up via %s", gateway),
+		&idempotencyKey,
+	)
+	if err != nil {
+		return fmt.Errorf("credit account: %w", err)
+	}
+
+	s.logger.Info("crypto payment credited to ledger",
+		"customer_id", accountID,
+		"amount_cents", amountCents,
+		"gateway", gateway,
+		"gateway_payment_id", gatewayPaymentID,
+	)
+	return nil
+}
+
 // GetPaymentHistory returns paginated payment history for a customer.
 func (s *PaymentService) GetPaymentHistory(
 	ctx context.Context, customerID string, filter models.PaginationParams,

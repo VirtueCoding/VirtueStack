@@ -105,6 +105,7 @@ type Server struct {
 	stripeWebhookHandler       *webhooks.StripeWebhookHandler
 	paypalProvider             *paypalPayments.Provider
 	paypalWebhookHandler       *webhooks.PayPalWebhookHandler
+	cryptoWebhookHandler       *webhooks.CryptoWebhookHandler
 	readinessDBPing            func(context.Context) error
 	readinessNATSStatus        func() nats.Status
 }
@@ -243,6 +244,11 @@ func (s *Server) RegisterAPIRoutes() {
 	// PayPal webhook endpoint (unauthenticated — signature verified via PayPal API)
 	if s.paypalWebhookHandler != nil {
 		v1.POST("/webhooks/paypal", s.paypalWebhookHandler.Handle)
+	}
+
+	// Crypto webhook endpoint (unauthenticated — HMAC signature verified by provider)
+	if s.cryptoWebhookHandler != nil {
+		v1.POST("/webhooks/crypto", s.cryptoWebhookHandler.HandleWebhook)
 	}
 
 	// Swagger UI is restricted to authenticated admins only.
