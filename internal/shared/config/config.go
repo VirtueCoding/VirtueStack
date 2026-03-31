@@ -138,6 +138,30 @@ type BillingConfig struct {
 	AutoDeleteDays       int                    `yaml:"auto_delete_days"`
 }
 
+// StripeConfig holds Stripe payment gateway settings.
+type StripeConfig struct {
+	SecretKey      Secret `yaml:"secret_key"`
+	WebhookSecret  Secret `yaml:"webhook_secret"`
+	PublishableKey string `yaml:"publishable_key"`
+}
+
+// PayPalConfig holds PayPal payment gateway settings.
+type PayPalConfig struct {
+	ClientID     Secret `yaml:"client_id"`
+	ClientSecret Secret `yaml:"client_secret"`
+	Mode         string `yaml:"mode"` // "sandbox" or "production"
+}
+
+// CryptoConfig holds cryptocurrency payment settings.
+type CryptoConfig struct {
+	Provider          string `yaml:"provider"` // "btcpay", "nowpayments", or "disabled"
+	BTCPayServerURL   string `yaml:"btcpay_server_url"`
+	BTCPayAPIKey      Secret `yaml:"btcpay_api_key"`
+	BTCPayStoreID     string `yaml:"btcpay_store_id"`
+	NOWPaymentsAPIKey Secret `yaml:"nowpayments_api_key"`
+	NOWPaymentsIPNSecret Secret `yaml:"nowpayments_ipn_secret"`
+}
+
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
 	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
@@ -168,6 +192,11 @@ type ControllerConfig struct {
 
 	// Billing configuration
 	Billing BillingConfig `yaml:"billing"`
+
+	// Payment gateway configuration
+	Stripe StripeConfig `yaml:"stripe"`
+	PayPal PayPalConfig `yaml:"paypal"`
+	Crypto CryptoConfig `yaml:"crypto"`
 }
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
@@ -251,6 +280,8 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 			GracePeriodHours:     12,
 			WarningIntervalHours: 24,
 		},
+		PayPal: PayPalConfig{Mode: "sandbox"},
+		Crypto: CryptoConfig{Provider: "disabled"},
 	}
 
 	// Load from YAML file if specified
@@ -347,6 +378,7 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	applyEnvOverridesTelegram(cfg)
 	applyEnvOverridesStorage(cfg)
 	applyEnvOverridesBilling(cfg)
+	applyEnvOverridesPayments(cfg)
 }
 
 // applyEnvOverridesCore applies DB, JWT, encryption, listen addr, log level, and
@@ -487,6 +519,49 @@ func applyEnvOverridesStorage(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
 		cfg.FileStorage.ISOStoragePath = v
+	}
+}
+
+// applyEnvOverridesPayments applies payment gateway environment variables.
+func applyEnvOverridesPayments(cfg *ControllerConfig) {
+	// Stripe
+	if v := os.Getenv("STRIPE_SECRET_KEY"); v != "" {
+		cfg.Stripe.SecretKey = Secret(v)
+	}
+	if v := os.Getenv("STRIPE_WEBHOOK_SECRET"); v != "" {
+		cfg.Stripe.WebhookSecret = Secret(v)
+	}
+	if v := os.Getenv("STRIPE_PUBLISHABLE_KEY"); v != "" {
+		cfg.Stripe.PublishableKey = v
+	}
+	// PayPal
+	if v := os.Getenv("PAYPAL_CLIENT_ID"); v != "" {
+		cfg.PayPal.ClientID = Secret(v)
+	}
+	if v := os.Getenv("PAYPAL_CLIENT_SECRET"); v != "" {
+		cfg.PayPal.ClientSecret = Secret(v)
+	}
+	if v := os.Getenv("PAYPAL_MODE"); v != "" {
+		cfg.PayPal.Mode = v
+	}
+	// Crypto
+	if v := os.Getenv("CRYPTO_PROVIDER"); v != "" {
+		cfg.Crypto.Provider = v
+	}
+	if v := os.Getenv("BTCPAY_SERVER_URL"); v != "" {
+		cfg.Crypto.BTCPayServerURL = v
+	}
+	if v := os.Getenv("BTCPAY_API_KEY"); v != "" {
+		cfg.Crypto.BTCPayAPIKey = Secret(v)
+	}
+	if v := os.Getenv("BTCPAY_STORE_ID"); v != "" {
+		cfg.Crypto.BTCPayStoreID = v
+	}
+	if v := os.Getenv("NOWPAYMENTS_API_KEY"); v != "" {
+		cfg.Crypto.NOWPaymentsAPIKey = Secret(v)
+	}
+	if v := os.Getenv("NOWPAYMENTS_IPN_SECRET"); v != "" {
+		cfg.Crypto.NOWPaymentsIPNSecret = Secret(v)
 	}
 }
 
