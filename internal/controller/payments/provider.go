@@ -29,9 +29,9 @@ type PaymentProvider interface {
 	) (*PaymentStatus, error)
 
 	// RefundPayment issues a full or partial refund for a completed payment.
-	// Amount is in cents (minor currency units).
+	// Amount is in cents (minor currency units). Currency is the original payment currency.
 	RefundPayment(
-		ctx context.Context, gatewayPaymentID string, amountCents int64,
+		ctx context.Context, gatewayPaymentID string, amountCents int64, currency string,
 	) (*RefundResult, error)
 
 	// ValidateConfig checks that all required configuration is present.

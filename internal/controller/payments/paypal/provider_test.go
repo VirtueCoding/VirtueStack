@@ -200,7 +200,7 @@ func TestRefundPayment_Success(t *testing.T) {
 	})
 
 	p := newTestProvider(t, handler)
-	result, err := p.RefundPayment(context.Background(), "CAP-001", 500)
+	result, err := p.RefundPayment(context.Background(), "CAP-001", 500, "USD")
 
 	require.NoError(t, err)
 	assert.Equal(t, "REF-001", result.GatewayRefundID)

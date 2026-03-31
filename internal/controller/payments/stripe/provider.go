@@ -201,7 +201,7 @@ func (p *Provider) GetPaymentStatus(
 
 // RefundPayment issues a refund via the Stripe Refunds API.
 func (p *Provider) RefundPayment(
-	_ context.Context, gatewayPaymentID string, amountCents int64,
+	_ context.Context, gatewayPaymentID string, amountCents int64, _ string,
 ) (*payments.RefundResult, error) {
 	params := &stripe.RefundParams{
 		PaymentIntent: stripe.String(gatewayPaymentID),

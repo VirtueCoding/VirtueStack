@@ -109,6 +109,17 @@ func (s *PaymentService) InitiateTopUp(
 		return nil, "", fmt.Errorf("create payment session: %w", err)
 	}
 
+	// Store gateway session ID (e.g. PayPal order ID) for ownership validation on capture
+	if sess.GatewaySessionID != "" {
+		gwID := sess.GatewaySessionID
+		if err := s.paymentRepo.UpdateStatus(
+			ctx, payment.ID, models.PaymentStatusPending, &gwID,
+		); err != nil {
+			s.logger.Error("failed to store gateway session ID",
+				"payment_id", payment.ID, "error", err)
+		}
+	}
+
 	s.logger.Info("top-up payment initiated",
 		"payment_id", payment.ID,
 		"customer_id", customerID,
@@ -332,7 +343,7 @@ func (s *PaymentService) RefundPayment(
 	}
 
 	result, err := provider.RefundPayment(
-		ctx, *payment.GatewayPaymentID, amountCents,
+		ctx, *payment.GatewayPaymentID, amountCents, payment.Currency,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("process refund via %s: %w", payment.Gateway, err)
@@ -415,6 +426,15 @@ type PayPalCaptureResult struct {
 func (s *PaymentService) CapturePayPalOrder(
 	ctx context.Context, customerID, orderID string,
 ) (*PayPalCaptureResult, error) {
+	// Validate ownership: look up the payment record by PayPal order ID
+	payment, err := s.paymentRepo.GetByGatewayPaymentID(ctx, "paypal", orderID)
+	if err != nil {
+		return nil, fmt.Errorf("payment for order %s: %w", orderID, sharederrors.ErrNotFound)
+	}
+	if payment.CustomerID != customerID {
+		return nil, fmt.Errorf("payment ownership mismatch: %w", sharederrors.ErrForbidden)
+	}
+
 	provider, err := s.registry.Get("paypal")
 	if err != nil {
 		return nil, fmt.Errorf("get paypal provider: %w", err)
@@ -436,13 +456,22 @@ func (s *PaymentService) CapturePayPalOrder(
 		AmountCents: cents,
 		Currency:    currency,
 	}
-	return s.creditFromCapture(ctx, customerID, orderID, result)
+	return s.creditFromCapture(ctx, payment.ID, customerID, orderID, result)
 }
 
 func (s *PaymentService) creditFromCapture(
-	ctx context.Context, customerID, orderID string,
+	ctx context.Context, paymentRecordID, customerID, orderID string,
 	result *PayPalCaptureResult,
 ) (*PayPalCaptureResult, error) {
+	// Update payment record to completed with the capture ID
+	captureRef := result.CaptureID
+	if err := s.paymentRepo.UpdateStatus(
+		ctx, paymentRecordID, models.PaymentStatusCompleted, &captureRef,
+	); err != nil {
+		s.logger.Error("failed to update payment status after capture",
+			"payment_id", paymentRecordID, "error", err)
+	}
+
 	idempotencyKey := "paypal:capture:" + result.CaptureID
 	_, err := s.ledger.CreditAccount(
 		ctx, customerID, result.AmountCents,

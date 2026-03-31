@@ -38,7 +38,7 @@ func (m *mockProvider) GetPaymentStatus(
 }
 
 func (m *mockProvider) RefundPayment(
-	_ context.Context, _ string, _ int64,
+	_ context.Context, _ string, _ int64, _ string,
 ) (*payments.RefundResult, error) {
 	return nil, nil
 }

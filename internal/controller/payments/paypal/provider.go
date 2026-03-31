@@ -261,18 +261,18 @@ func (p *Provider) GetPaymentStatus(
 
 // RefundPayment issues a refund for a captured PayPal payment.
 func (p *Provider) RefundPayment(
-	ctx context.Context, captureID string, amountCents int64,
+	ctx context.Context, captureID string, amountCents int64, currency string,
 ) (*payments.RefundResult, error) {
 	token, err := p.tokenClient.GetAccessToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get paypal token: %w", err)
 	}
 
-	return p.executeRefund(ctx, token, captureID, amountCents)
+	return p.executeRefund(ctx, token, captureID, amountCents, currency)
 }
 
 func (p *Provider) executeRefund(
-	ctx context.Context, token, captureID string, amountCents int64,
+	ctx context.Context, token, captureID string, amountCents int64, currency string,
 ) (*payments.RefundResult, error) {
 	endpoint := fmt.Sprintf(
 		"%s/v2/payments/captures/%s/refund",
@@ -281,7 +281,7 @@ func (p *Provider) executeRefund(
 
 	refundReq := refundRequest{
 		Amount: &amount{
-			CurrencyCode: "USD",
+			CurrencyCode: strings.ToUpper(currency),
 			Value:        centsToDecimal(amountCents),
 		},
 	}
@@ -296,11 +296,11 @@ func (p *Provider) executeRefund(
 	}
 	defer resp.Body.Close()
 
-	return p.parseRefundResponse(resp, captureID, amountCents)
+	return p.parseRefundResponse(resp, captureID, amountCents, currency)
 }
 
 func (p *Provider) parseRefundResponse(
-	resp *http.Response, captureID string, amountCents int64,
+	resp *http.Response, captureID string, amountCents int64, currency string,
 ) (*payments.RefundResult, error) {
 	respBody, err := readLimitedBody(resp.Body)
 	if err != nil {
@@ -328,7 +328,7 @@ func (p *Provider) parseRefundResponse(
 		GatewayRefundID:  refResp.ID,
 		GatewayPaymentID: captureID,
 		AmountCents:      amountCents,
-		Currency:         "USD",
+		Currency:         strings.ToUpper(currency),
 		Status:           strings.ToLower(refResp.Status),
 	}, nil
 }

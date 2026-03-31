@@ -19,7 +19,7 @@ type mockPaymentProvider struct {
 	name              string
 	createSessionFunc func(ctx context.Context, req payments.PaymentRequest) (*payments.PaymentSession, error)
 	handleWebhookFunc func(ctx context.Context, payload []byte, sig string) (*payments.WebhookEvent, error)
-	refundFunc        func(ctx context.Context, id string, amount int64) (*payments.RefundResult, error)
+	refundFunc        func(ctx context.Context, id string, amount int64, currency string) (*payments.RefundResult, error)
 }
 
 func (m *mockPaymentProvider) Name() string { return m.name }
@@ -51,10 +51,10 @@ func (m *mockPaymentProvider) GetPaymentStatus(
 }
 
 func (m *mockPaymentProvider) RefundPayment(
-	ctx context.Context, id string, amount int64,
+	ctx context.Context, id string, amount int64, currency string,
 ) (*payments.RefundResult, error) {
 	if m.refundFunc != nil {
-		return m.refundFunc(ctx, id, amount)
+		return m.refundFunc(ctx, id, amount, currency)
 	}
 	return &payments.RefundResult{
 		GatewayRefundID: "re_1", GatewayPaymentID: id,

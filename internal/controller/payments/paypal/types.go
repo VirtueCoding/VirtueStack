@@ -113,6 +113,9 @@ func decimalToCents(s string) (int64, error) {
 	if len(parts) == 2 {
 		frac = parseFractionalCents(parts[1])
 	}
+	if whole < 0 || strings.HasPrefix(strings.TrimSpace(s), "-") {
+		return whole*100 - frac, nil
+	}
 	return whole*100 + frac, nil
 }
 
