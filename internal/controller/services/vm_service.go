@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
@@ -48,6 +49,8 @@ type VMService struct {
 	ipamService          IPAllocator
 	storageBackendSvc    StorageBackendGetter
 	preActionWebhookSvc  PreActionChecker
+	billingHooks         BillingHookResolver
+	customerRepo         *repository.CustomerRepository
 	encryptionKey        string // For encrypting root passwords
 	logger               *slog.Logger
 }
@@ -60,6 +63,11 @@ type StorageBackendGetter interface {
 // PreActionChecker evaluates pre-action webhooks before protected operations.
 type PreActionChecker interface {
 	CheckPreAction(ctx context.Context, event string, customerID string, data map[string]any) error
+}
+
+// BillingHookResolver resolves the billing lifecycle hook for a customer's provider.
+type BillingHookResolver interface {
+	ForCustomer(providerName string) (billing.VMLifecycleHook, error)
 }
 
 // VMServiceConfig holds all dependencies for VMService construction.
@@ -77,6 +85,8 @@ type VMServiceConfig struct {
 	IPAMService         IPAllocator
 	StorageBackendSvc   StorageBackendGetter
 	PreActionWebhookSvc PreActionChecker
+	BillingHooks        BillingHookResolver
+	CustomerRepo        *repository.CustomerRepository
 	EncryptionKey       string
 	Logger              *slog.Logger
 }
@@ -95,6 +105,8 @@ func NewVMService(cfg VMServiceConfig) *VMService {
 		ipamService:         cfg.IPAMService,
 		storageBackendSvc:   cfg.StorageBackendSvc,
 		preActionWebhookSvc: cfg.PreActionWebhookSvc,
+		billingHooks:        cfg.BillingHooks,
+		customerRepo:        cfg.CustomerRepo,
 		encryptionKey:       cfg.EncryptionKey,
 		logger:              cfg.Logger.With("component", "vm-service"),
 	}
@@ -106,6 +118,32 @@ type vmCreateDeps struct {
 	template       *models.Template
 	node           *models.Node
 	storageBackend *models.StorageBackend
+}
+
+// notifyBillingHook resolves the billing provider for a customer and calls fn.
+// Errors are logged but never returned to avoid blocking VM operations.
+func (s *VMService) notifyBillingHook(ctx context.Context, customerID string, fn func(billing.VMLifecycleHook) error) {
+	if s.billingHooks == nil || s.customerRepo == nil {
+		return
+	}
+	cust, err := s.customerRepo.GetByID(ctx, customerID)
+	if err != nil {
+		s.logger.Warn("billing hook: failed to get customer",
+			"customer_id", customerID, "error", err)
+		return
+	}
+	hook, err := s.billingHooks.ForCustomer(cust.BillingProvider)
+	if err != nil {
+		s.logger.Warn("billing hook: provider not found",
+			"customer_id", customerID,
+			"provider", cust.BillingProvider, "error", err)
+		return
+	}
+	if err := fn(hook); err != nil {
+		s.logger.Warn("billing hook: callback failed",
+			"customer_id", customerID,
+			"provider", cust.BillingProvider, "error", err)
+	}
 }
 
 // validateCreateVMRequest checks that the requested plan is active, the template
@@ -420,6 +458,14 @@ func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, c
 	s.logger.Info("VM creation initiated",
 		"vm_id", vm.ID, "task_id", taskID,
 		"customer_id", customerID, "node_id", node.ID, "hostname", vm.Hostname)
+
+	s.notifyBillingHook(ctx, customerID, func(hook billing.VMLifecycleHook) error {
+		return hook.OnVMCreated(ctx, billing.VMRef{
+			ID: vm.ID, CustomerID: customerID,
+			PlanID: vm.PlanID, Hostname: vm.Hostname,
+		})
+	})
+
 	return vm, taskID, nil
 }
 
@@ -480,6 +526,13 @@ func (s *VMService) DeleteVM(ctx context.Context, vmID, customerID string, isAdm
 		"vm_id", vm.ID,
 		"task_id", taskID,
 		"customer_id", customerID)
+
+	s.notifyBillingHook(ctx, customerID, func(hook billing.VMLifecycleHook) error {
+		return hook.OnVMDeleted(ctx, billing.VMRef{
+			ID: vm.ID, CustomerID: customerID,
+			PlanID: vm.PlanID, Hostname: vm.Hostname,
+		})
+	})
 
 	return taskID, nil
 }
@@ -657,6 +710,13 @@ func (s *VMService) ResizeVMWithPlan(ctx context.Context, vmID, customerID strin
 			"memory_mb", newMemoryMB,
 			"disk_gb", newDiskGB)
 
+		s.notifyBillingHook(ctx, customerID, func(hook billing.VMLifecycleHook) error {
+			return hook.OnVMResized(ctx, billing.VMRef{
+				ID: vm.ID, CustomerID: customerID,
+				PlanID: vm.PlanID, Hostname: vm.Hostname,
+			}, vm.PlanID, newPlanID)
+		})
+
 		return taskID, nil
 	}
 
@@ -675,6 +735,13 @@ func (s *VMService) ResizeVMWithPlan(ctx context.Context, vmID, customerID strin
 		"vcpu", newVcpu,
 		"memory_mb", newMemoryMB,
 		"customer_id", customerID)
+
+	s.notifyBillingHook(ctx, customerID, func(hook billing.VMLifecycleHook) error {
+		return hook.OnVMResized(ctx, billing.VMRef{
+			ID: vm.ID, CustomerID: customerID,
+			PlanID: vm.PlanID, Hostname: vm.Hostname,
+		}, vm.PlanID, newPlanID)
+	})
 
 	return "", nil
 }
