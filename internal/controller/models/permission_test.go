@@ -215,6 +215,34 @@ func TestPermissionsToStrings_Empty(t *testing.T) {
 	assert.Empty(t, strs)
 }
 
+func TestBillingPermissions_InRoleDefaults(t *testing.T) {
+	tests := []struct {
+		name      string
+		role      string
+		hasRead   bool
+		hasWrite  bool
+	}{
+		{"super_admin has both", RoleSuperAdmin, true, true},
+		{"admin has both", RoleAdmin, true, true},
+		{"viewer has read only", RoleViewer, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			perms := GetDefaultPermissions(tt.role)
+			assert.Equal(t, tt.hasRead, HasPermission(perms, PermissionBillingRead),
+				"billing:read for %s", tt.role)
+			assert.Equal(t, tt.hasWrite, HasPermission(perms, PermissionBillingWrite),
+				"billing:write for %s", tt.role)
+		})
+	}
+}
+
+func TestGetAllPermissions_IncludesBilling(t *testing.T) {
+	perms := GetAllPermissions()
+	assert.True(t, HasPermission(perms, PermissionBillingRead), "allPermissions should include billing:read")
+	assert.True(t, HasPermission(perms, PermissionBillingWrite), "allPermissions should include billing:write")
+}
+
 func TestAdminGetEffectivePermissions(t *testing.T) {
 	t.Run("explicit permissions override defaults", func(t *testing.T) {
 		admin := &Admin{
