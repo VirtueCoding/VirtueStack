@@ -11,6 +11,14 @@ const (
 	CustomerStatusDeleted             = "deleted"
 )
 
+// Billing provider constants define which billing system manages a customer.
+const (
+	BillingProviderWHMCS     = "whmcs"
+	BillingProviderNative    = "native"
+	BillingProviderBlesta    = "blesta"
+	BillingProviderUnmanaged = "unmanaged"
+)
+
 // Customer represents a customer account as stored in the database.
 type Customer struct {
 	ID                   string   `json:"id" db:"id"`
@@ -19,6 +27,7 @@ type Customer struct {
 	Name                 string   `json:"name" db:"name"`
 	Phone                *string  `json:"phone,omitempty" db:"phone"`
 	WHMCSClientID        *int     `json:"whmcs_client_id,omitempty" db:"whmcs_client_id"`
+	BillingProvider string `json:"billing_provider" db:"billing_provider"`
 	TOTPSecretEncrypted  *string  `json:"-" db:"totp_secret_encrypted"`
 	TOTPEnabled          bool     `json:"totp_enabled" db:"totp_enabled"`
 	TOTPBackupCodesHash  []string `json:"-" db:"totp_backup_codes_hash"`
