@@ -229,7 +229,39 @@ func (s *Server) RegisterAPIRoutes() {
 		middleware.RequireRole("admin", "super_admin"),
 		ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	s.logBillingConfig()
 	s.logger.Info("API routes registered")
+}
+
+// logBillingConfig logs a summary of the billing, payment, and OAuth configuration.
+func (s *Server) logBillingConfig() {
+	cfg := s.config
+	primary := cfg.PrimaryBillingProvider()
+	if primary == "" {
+		primary = "none"
+	}
+
+	s.logger.Info("billing config",
+		"whmcs_enabled", cfg.Billing.Providers.WHMCS.Enabled,
+		"native_enabled", cfg.Billing.Providers.Native.Enabled,
+		"blesta_enabled", cfg.Billing.Providers.Blesta.Enabled,
+		"primary", primary,
+	)
+
+	gateway := "none"
+	if cfg.Stripe.SecretKey != "" {
+		gateway = "stripe"
+	} else if cfg.PayPal.ClientID != "" {
+		gateway = "paypal"
+	} else if cfg.Crypto.Provider != "" && cfg.Crypto.Provider != "disabled" {
+		gateway = "crypto/" + cfg.Crypto.Provider
+	}
+	s.logger.Info("payment gateway", "gateway", gateway)
+
+	s.logger.Info("oauth config",
+		"google_enabled", cfg.OAuth.Google.Enabled,
+		"github_enabled", cfg.OAuth.GitHub.Enabled,
+	)
 }
 
 // Start starts the HTTP server.
