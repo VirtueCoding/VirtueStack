@@ -1,0 +1,20 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/audit-logs/page": "app/audit-logs/page.js",
+  "/backup-schedules/page": "app/backup-schedules/page.js",
+  "/customers/page": "app/customers/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/failover-requests/page": "app/failover-requests/page.js",
+  "/ip-sets/page": "app/ip-sets/page.js",
+  "/login/page": "app/login/page.js",
+  "/nodes/page": "app/nodes/page.js",
+  "/page": "app/page.js",
+  "/plans/page": "app/plans/page.js",
+  "/provisioning-keys/page": "app/provisioning-keys/page.js",
+  "/settings/page": "app/settings/page.js",
+  "/settings/permissions/page": "app/settings/permissions/page.js",
+  "/storage-backends/page": "app/storage-backends/page.js",
+  "/templates/page": "app/templates/page.js",
+  "/vms/page": "app/vms/page.js"
+}

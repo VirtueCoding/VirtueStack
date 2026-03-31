@@ -2,6 +2,7 @@ package customer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -69,8 +71,12 @@ func (h *InAppNotificationsHandler) MarkAsRead(c *gin.Context) {
 	customerID := middleware.GetUserID(c)
 	notifID := c.Param("id")
 	if err := h.service.MarkAsRead(c.Request.Context(), notifID, customerID, ""); err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Notification not found")
+			return
+		}
 		h.logger.Error("failed to mark notification as read", "error", err, "id", notifID)
-		middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Notification not found")
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark notification as read")
 		return
 	}
 	c.Status(http.StatusNoContent)
