@@ -117,6 +117,27 @@ type RedisConfig struct {
 	URL string `yaml:"url" env:"REDIS_URL"`
 }
 
+// BillingProviderConfig holds toggle/priority settings for a single billing provider.
+type BillingProviderConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Primary bool `yaml:"primary"`
+}
+
+// BillingProvidersConfig holds per-provider billing settings.
+type BillingProvidersConfig struct {
+	WHMCS  BillingProviderConfig `yaml:"whmcs"`
+	Native BillingProviderConfig `yaml:"native"`
+	Blesta BillingProviderConfig `yaml:"blesta"`
+}
+
+// BillingConfig holds billing system configuration.
+type BillingConfig struct {
+	Providers            BillingProvidersConfig `yaml:"providers"`
+	GracePeriodHours     int                    `yaml:"grace_period_hours"`
+	WarningIntervalHours int                    `yaml:"warning_interval_hours"`
+	AutoDeleteDays       int                    `yaml:"auto_delete_days"`
+}
+
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
 	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
@@ -144,6 +165,9 @@ type ControllerConfig struct {
 	PowerDNS    PowerDNSConfig    `yaml:"powerdns"`
 	Redis       RedisConfig       `yaml:"redis"`
 	FileStorage FileStorageConfig `yaml:"file_storage"`
+
+	// Billing configuration
+	Billing BillingConfig `yaml:"billing"`
 }
 
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
@@ -220,6 +244,13 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 		CephUser:       defaultCephUser,
 		AllowSelfRegistration: false,
 		RegistrationEmailVerification: true,
+		Billing: BillingConfig{
+			Providers: BillingProvidersConfig{
+				WHMCS: BillingProviderConfig{Enabled: true},
+			},
+			GracePeriodHours:     12,
+			WarningIntervalHours: 24,
+		},
 	}
 
 	// Load from YAML file if specified
@@ -315,6 +346,7 @@ func applyEnvOverrides(cfg *ControllerConfig) {
 	applyEnvOverridesSMTP(cfg)
 	applyEnvOverridesTelegram(cfg)
 	applyEnvOverridesStorage(cfg)
+	applyEnvOverridesBilling(cfg)
 }
 
 // applyEnvOverridesCore applies DB, JWT, encryption, listen addr, log level, and
@@ -455,6 +487,43 @@ func applyEnvOverridesStorage(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
 		cfg.FileStorage.ISOStoragePath = v
+	}
+}
+
+// applyEnvOverridesBilling applies billing-related environment variables.
+func applyEnvOverridesBilling(cfg *ControllerConfig) {
+	if v := os.Getenv("BILLING_WHMCS_ENABLED"); v != "" {
+		cfg.Billing.Providers.WHMCS.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_WHMCS_PRIMARY"); v != "" {
+		cfg.Billing.Providers.WHMCS.Primary = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_NATIVE_ENABLED"); v != "" {
+		cfg.Billing.Providers.Native.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_NATIVE_PRIMARY"); v != "" {
+		cfg.Billing.Providers.Native.Primary = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_BLESTA_ENABLED"); v != "" {
+		cfg.Billing.Providers.Blesta.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_BLESTA_PRIMARY"); v != "" {
+		cfg.Billing.Providers.Blesta.Primary = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("BILLING_GRACE_PERIOD_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Billing.GracePeriodHours = n
+		}
+	}
+	if v := os.Getenv("BILLING_WARNING_INTERVAL_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Billing.WarningIntervalHours = n
+		}
+	}
+	if v := os.Getenv("BILLING_NATIVE_AUTO_DELETE_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Billing.AutoDeleteDays = n
+		}
 	}
 }
 

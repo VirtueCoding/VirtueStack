@@ -278,8 +278,6 @@ See [docs/installation.md](docs/installation.md) for detailed setup instructions
 
 | Document | Description |
 |----------|-------------|
-| [AGENTS.md](AGENTS.md) | Technical reference for AI agents and LLM-assisted development |
-| [docs/codemaps/](docs/codemaps/) | Token-lean architecture summaries (architecture, backend, frontend, data) |
 | [docs/installation.md](docs/installation.md) | Installation guide |
 | [docs/api-reference.md](docs/api-reference.md) | API reference |
 | [docs/architecture.md](docs/architecture.md) | Detailed architecture specification |
@@ -319,10 +317,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 📧 Email: support@virtuestack.com
 - 🐛 Issues: [GitHub Issues](https://github.com/AbuGosok/VirtueStack/issues)
-
----
-
-**For complete technical details, API specifications, and development patterns, see [AGENTS.md](AGENTS.md).**
 
 ---
 
