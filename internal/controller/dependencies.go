@@ -2,10 +2,13 @@ package controller
 
 import (
 	"database/sql"
+	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/admin"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
@@ -91,6 +94,11 @@ func (s *Server) InitializeServices() error {
 
 	preActionWebhookService := services.NewPreActionWebhookService(preActionWebhookRepo, s.logger)
 
+	billingRegistry := billing.NewRegistry("", s.logger)
+	if err := billingRegistry.Register(whmcs.NewAdapter()); err != nil {
+		return fmt.Errorf("registering WHMCS billing adapter: %w", err)
+	}
+
 	s.vmService = services.NewVMService(services.VMServiceConfig{
 		VMRepo:              vmRepo,
 		NodeRepo:            nodeRepo,
@@ -103,6 +111,8 @@ func (s *Server) InitializeServices() error {
 		IPAMService:         s.ipamService,
 		StorageBackendSvc:   storageBackendService,
 		PreActionWebhookSvc: preActionWebhookService,
+		BillingHooks:        billing.NewRegistryHookAdapter(billingRegistry),
+		CustomerRepo:        customerRepo,
 		EncryptionKey:       s.config.EncryptionKey.Value(),
 		Logger:              s.logger,
 	})
