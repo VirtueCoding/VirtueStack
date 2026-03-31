@@ -215,6 +215,43 @@ type ControllerConfig struct {
 	OAuth OAuthConfig `yaml:"oauth"`
 }
 
+// AnyBillingProviderEnabled returns true if at least one billing provider is enabled.
+func (c *ControllerConfig) AnyBillingProviderEnabled() bool {
+	return c.Billing.Providers.WHMCS.Enabled ||
+		c.Billing.Providers.Native.Enabled ||
+		c.Billing.Providers.Blesta.Enabled
+}
+
+// PrimaryBillingProvider returns the name of the primary billing provider,
+// or an empty string if none is marked primary.
+func (c *ControllerConfig) PrimaryBillingProvider() string {
+	if c.Billing.Providers.WHMCS.Primary {
+		return "whmcs"
+	}
+	if c.Billing.Providers.Native.Primary {
+		return "native"
+	}
+	if c.Billing.Providers.Blesta.Primary {
+		return "blesta"
+	}
+	return ""
+}
+
+// HasPaymentGateway returns true if any payment gateway (Stripe, PayPal, or crypto)
+// is configured.
+func (c *ControllerConfig) HasPaymentGateway() bool {
+	if c.Stripe.SecretKey != "" {
+		return true
+	}
+	if c.PayPal.ClientID != "" {
+		return true
+	}
+	if c.Crypto.Provider != "" && c.Crypto.Provider != "disabled" {
+		return true
+	}
+	return false
+}
+
 // NodeAgentConfig holds all configuration for the VirtueStack Node Agent.
 type NodeAgentConfig struct {
 	ControllerGRPCAddr string `yaml:"controller_grpc_addr" env:"CONTROLLER_GRPC_ADDR"`

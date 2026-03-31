@@ -421,3 +421,96 @@ func TestSecret_StructMarshalJSON(t *testing.T) {
 	}
 }
 
+func TestAnyBillingProviderEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(cfg *ControllerConfig)
+		want   bool
+	}{
+		{"none enabled", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers = BillingProvidersConfig{}
+		}, false},
+		{"whmcs enabled", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers = BillingProvidersConfig{WHMCS: BillingProviderConfig{Enabled: true}}
+		}, true},
+		{"native enabled", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers = BillingProvidersConfig{Native: BillingProviderConfig{Enabled: true}}
+		}, true},
+		{"blesta enabled", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers = BillingProvidersConfig{Blesta: BillingProviderConfig{Enabled: true}}
+		}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBillingConfig()
+			tt.modify(cfg)
+			if got := cfg.AnyBillingProviderEnabled(); got != tt.want {
+				t.Errorf("AnyBillingProviderEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrimaryBillingProvider(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(cfg *ControllerConfig)
+		want   string
+	}{
+		{"whmcs primary", func(cfg *ControllerConfig) {}, "whmcs"},
+		{"native primary", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers.WHMCS.Primary = false
+			cfg.Billing.Providers.Native = BillingProviderConfig{Enabled: true, Primary: true}
+		}, "native"},
+		{"blesta primary", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers.WHMCS.Primary = false
+			cfg.Billing.Providers.Blesta = BillingProviderConfig{Enabled: true, Primary: true}
+		}, "blesta"},
+		{"none primary", func(cfg *ControllerConfig) {
+			cfg.Billing.Providers.WHMCS.Primary = false
+		}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBillingConfig()
+			tt.modify(cfg)
+			if got := cfg.PrimaryBillingProvider(); got != tt.want {
+				t.Errorf("PrimaryBillingProvider() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasPaymentGateway(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(cfg *ControllerConfig)
+		want   bool
+	}{
+		{"no gateway", func(_ *ControllerConfig) {}, false},
+		{"stripe configured", func(cfg *ControllerConfig) {
+			cfg.Stripe.SecretKey = Secret("sk_test")
+		}, true},
+		{"paypal configured", func(cfg *ControllerConfig) {
+			cfg.PayPal.ClientID = Secret("client")
+		}, true},
+		{"crypto btcpay", func(cfg *ControllerConfig) {
+			cfg.Crypto.Provider = "btcpay"
+		}, true},
+		{"crypto disabled", func(cfg *ControllerConfig) {
+			cfg.Crypto.Provider = "disabled"
+		}, false},
+		{"crypto empty", func(cfg *ControllerConfig) {
+			cfg.Crypto.Provider = ""
+		}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBillingConfig()
+			tt.modify(cfg)
+			if got := cfg.HasPaymentGateway(); got != tt.want {
+				t.Errorf("HasPaymentGateway() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
