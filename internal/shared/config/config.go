@@ -171,6 +171,12 @@ type CryptoConfig struct {
 	RedirectURL            string `yaml:"redirect_url"`
 }
 
+// BlestaConfig holds Blesta billing provider configuration.
+type BlestaConfig struct {
+	APIURL string `yaml:"api_url"`
+	APIKey Secret `yaml:"api_key"`
+}
+
 // OAuthProviderConfig holds settings for a single OAuth provider.
 type OAuthProviderConfig struct {
 	Enabled      bool   `yaml:"enabled"`
@@ -214,6 +220,7 @@ type ControllerConfig struct {
 
 	// Billing configuration
 	Billing BillingConfig `yaml:"billing"`
+	Blesta  BlestaConfig  `yaml:"blesta"`
 
 	// Payment gateway configuration
 	Stripe StripeConfig `yaml:"stripe"`
@@ -716,6 +723,12 @@ func applyEnvOverridesBilling(cfg *ControllerConfig) {
 	if v := os.Getenv("BILLING_INVOICE_PREFIX"); v != "" {
 		cfg.Billing.InvoicePrefix = v
 	}
+	if v := os.Getenv("BLESTA_API_URL"); v != "" {
+		cfg.Blesta.APIURL = v
+	}
+	if v := os.Getenv("BLESTA_API_KEY"); v != "" {
+		cfg.Blesta.APIKey = Secret(v)
+	}
 }
 
 // applyEnvOverridesNodeAgent applies environment variable values to NodeAgentConfig.
@@ -916,6 +929,15 @@ func validateBillingConfig(cfg *ControllerConfig) error {
 		(cfg.Crypto.Provider != "" && cfg.Crypto.Provider != "disabled")
 	if nativeEnabled && !hasGateway {
 		slog.Warn("native billing enabled without any payment gateway configured")
+	}
+
+	if cfg.Billing.Providers.Blesta.Enabled {
+		if cfg.Blesta.APIURL == "" {
+			return fmt.Errorf("BILLING_BLESTA_ENABLED=true requires BLESTA_API_URL")
+		}
+		if cfg.Blesta.APIKey.Value() == "" {
+			return fmt.Errorf("BILLING_BLESTA_ENABLED=true requires BLESTA_API_KEY")
+		}
 	}
 
 	if err := validateStripeConfig(&cfg.Stripe); err != nil {

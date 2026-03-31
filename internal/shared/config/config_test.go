@@ -279,6 +279,8 @@ func TestValidateBillingConfig(t *testing.T) {
 			modify: func(cfg *ControllerConfig) {
 				cfg.Billing.Providers.Native = BillingProviderConfig{Enabled: true}
 				cfg.Billing.Providers.Blesta = BillingProviderConfig{Enabled: true}
+				cfg.Blesta.APIURL = "https://blesta.example.com/api"
+				cfg.Blesta.APIKey = Secret("test-key")
 			},
 		},
 	}
@@ -510,6 +512,76 @@ func TestHasPaymentGateway(t *testing.T) {
 			tt.modify(cfg)
 			if got := cfg.HasPaymentGateway(); got != tt.want {
 				t.Errorf("HasPaymentGateway() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateBillingConfig_Blesta(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(cfg *ControllerConfig)
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "blesta enabled with valid config",
+			modify: func(cfg *ControllerConfig) {
+				cfg.Billing.Providers.Blesta.Enabled = true
+				cfg.Billing.Providers.Blesta.Primary = true
+				cfg.Billing.Providers.WHMCS.Primary = false
+				cfg.Blesta.APIURL = "https://blesta.example.com/api"
+				cfg.Blesta.APIKey = Secret("test-api-key")
+			},
+			wantErr: false,
+		},
+		{
+			name: "blesta enabled missing API URL",
+			modify: func(cfg *ControllerConfig) {
+				cfg.Billing.Providers.Blesta.Enabled = true
+				cfg.Billing.Providers.Blesta.Primary = true
+				cfg.Billing.Providers.WHMCS.Primary = false
+				cfg.Blesta.APIKey = Secret("test-api-key")
+			},
+			wantErr: true,
+			errMsg:  "BLESTA_API_URL",
+		},
+		{
+			name: "blesta enabled missing API key",
+			modify: func(cfg *ControllerConfig) {
+				cfg.Billing.Providers.Blesta.Enabled = true
+				cfg.Billing.Providers.Blesta.Primary = true
+				cfg.Billing.Providers.WHMCS.Primary = false
+				cfg.Blesta.APIURL = "https://blesta.example.com/api"
+			},
+			wantErr: true,
+			errMsg:  "BLESTA_API_KEY",
+		},
+		{
+			name: "blesta disabled — no validation needed",
+			modify: func(cfg *ControllerConfig) {
+				cfg.Billing.Providers.Blesta.Enabled = false
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBillingConfig()
+			tt.modify(cfg)
+			err := validateBillingConfig(cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errMsg)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
 			}
 		})
 	}

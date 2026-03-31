@@ -10,6 +10,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/webhooks"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing/blesta"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -144,6 +145,19 @@ func (s *Server) InitializeServices() error {
 			DB:             advisoryLockDB,
 			Logger:         s.logger,
 		})
+	}
+
+	// Register Blesta billing adapter when enabled
+	if s.config.Billing.Providers.Blesta.Enabled {
+		blestaAdapter := blesta.NewAdapter(blesta.BlestaConfig{
+			APIURL: s.config.Blesta.APIURL,
+			APIKey: string(s.config.Blesta.APIKey.Value()),
+			Logger: s.logger,
+		})
+		if err := billingRegistry.Register(blestaAdapter); err != nil {
+			return fmt.Errorf("register blesta billing provider: %w", err)
+		}
+		s.logger.Info("blesta billing provider registered (stub)")
 	}
 
 	// Payment gateway registry
