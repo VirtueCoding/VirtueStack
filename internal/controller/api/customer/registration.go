@@ -74,10 +74,11 @@ func (h *CustomerHandler) Register(c *gin.Context) {
 		status = models.CustomerStatusPendingVerification
 	}
 	customer := &models.Customer{
-		Email:        email,
-		PasswordHash: passwordHash,
-		Name:         name,
-		Status:       status,
+		Email:           email,
+		PasswordHash:    passwordHash,
+		Name:            name,
+		Status:          status,
+		BillingProvider: models.BillingProviderUnmanaged,
 	}
 	if phone := strings.TrimSpace(req.Phone); phone != "" {
 		customer.Phone = &phone

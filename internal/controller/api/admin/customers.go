@@ -88,11 +88,12 @@ func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 
 	// Create the customer
 	customer := &models.Customer{
-		Name:         req.Name,
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		Phone:        req.Phone,
-		Status:       models.CustomerStatusActive,
+		Name:            req.Name,
+		Email:           req.Email,
+		PasswordHash:    passwordHash,
+		Phone:           req.Phone,
+		Status:          models.CustomerStatusActive,
+		BillingProvider: models.BillingProviderUnmanaged,
 	}
 
 	actorID := middleware.GetUserID(c)

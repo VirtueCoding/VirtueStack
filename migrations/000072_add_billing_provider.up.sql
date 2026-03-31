@@ -1,7 +1,7 @@
 SET lock_timeout = '5s';
 
 ALTER TABLE customers
-    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20)
+    ADD COLUMN IF NOT EXISTS billing_provider VARCHAR(20) DEFAULT 'unmanaged'
     CHECK (billing_provider IN ('whmcs', 'native', 'blesta', 'unmanaged'));
 
 UPDATE customers
