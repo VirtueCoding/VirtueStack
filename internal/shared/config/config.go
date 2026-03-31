@@ -869,11 +869,11 @@ func validateBillingConfig(cfg *ControllerConfig) error {
 			anyEnabled = true
 		}
 	}
+	if anyEnabled && primaryCount == 0 && cfg.AllowSelfRegistration {
+		return fmt.Errorf("self-registration requires a primary billing provider")
+	}
 	if anyEnabled && primaryCount != 1 {
 		return fmt.Errorf("exactly one enabled billing provider must be primary, found %d", primaryCount)
-	}
-	if cfg.AllowSelfRegistration && anyEnabled && primaryCount == 0 {
-		return fmt.Errorf("self-registration requires a primary billing provider")
 	}
 
 	nativeEnabled := cfg.Billing.Providers.Native.Enabled

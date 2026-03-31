@@ -248,15 +248,20 @@ func (s *Server) logBillingConfig() {
 		"primary", primary,
 	)
 
-	gateway := "none"
+	var gateways []string
 	if cfg.Stripe.SecretKey != "" {
-		gateway = "stripe"
-	} else if cfg.PayPal.ClientID != "" {
-		gateway = "paypal"
-	} else if cfg.Crypto.Provider != "" && cfg.Crypto.Provider != "disabled" {
-		gateway = "crypto/" + cfg.Crypto.Provider
+		gateways = append(gateways, "stripe")
 	}
-	s.logger.Info("payment gateway", "gateway", gateway)
+	if cfg.PayPal.ClientID != "" {
+		gateways = append(gateways, "paypal")
+	}
+	if cfg.Crypto.Provider != "" && cfg.Crypto.Provider != "disabled" {
+		gateways = append(gateways, "crypto/"+cfg.Crypto.Provider)
+	}
+	if len(gateways) == 0 {
+		gateways = []string{"none"}
+	}
+	s.logger.Info("payment gateways", "configured", gateways)
 
 	s.logger.Info("oauth config",
 		"google_enabled", cfg.OAuth.Google.Enabled,
