@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -114,7 +115,7 @@ func (p *NOWPaymentsProvider) CreatePaymentSession(
 	invoiceReq := nowInvoiceRequest{
 		PriceAmount:   priceAmount,
 		PriceCurrency: strings.ToLower(req.Currency),
-		OrderID:       req.PaymentID,
+		OrderID:       req.AccountID + ":" + req.PaymentID,
 		IPNURL:        p.callbackURL,
 		SuccessURL:    p.redirectURL,
 		CancelURL:     p.redirectURL,
@@ -206,7 +207,7 @@ func (p *NOWPaymentsProvider) GetPaymentStatus(
 		return nil, fmt.Errorf("decode nowpayments response: %w", err)
 	}
 
-	amountCents := int64(payment.PriceAmount * 100)
+	amountCents := int64(math.Round(payment.PriceAmount * 100))
 
 	return &PaymentStatus{
 		Status:      payment.PaymentStatus,
@@ -244,13 +245,19 @@ func (p *NOWPaymentsProvider) HandleWebhook(
 		return nil, nil
 	}
 
-	amountCents := int64(payload.PriceAmount * 100)
+	amountCents := int64(math.Round(payload.PriceAmount * 100))
 	paymentIDStr := payload.PaymentID.String()
+
+	// Parse account_id and payment_id from composite OrderID (account_id:payment_id)
+	accountID := payload.OrderID
+	if parts := strings.SplitN(payload.OrderID, ":", 2); len(parts) == 2 {
+		accountID = parts[0]
+	}
 
 	return &WebhookResult{
 		EventType:      "payment.finished",
 		InvoiceID:      paymentIDStr,
-		AccountID:      payload.OrderID,
+		AccountID:      accountID,
 		AmountCents:    amountCents,
 		Currency:       strings.ToUpper(payload.PriceCurrency),
 		Status:         payload.PaymentStatus,

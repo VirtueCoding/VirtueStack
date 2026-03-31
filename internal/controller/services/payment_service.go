@@ -253,6 +253,17 @@ func (s *PaymentService) CreditFromPayment(
 	gatewayPaymentID string,
 	idempotencyKey string,
 ) error {
+	// Update payment record status to completed
+	existing, lookupErr := s.paymentRepo.GetByGatewayPaymentID(ctx, gateway, gatewayPaymentID)
+	if lookupErr == nil && existing != nil {
+		if err := s.paymentRepo.UpdateStatus(
+			ctx, existing.ID, models.PaymentStatusCompleted, &gatewayPaymentID,
+		); err != nil {
+			s.logger.Error("failed to update crypto payment status",
+				"payment_id", existing.ID, "error", err)
+		}
+	}
+
 	_, err := s.ledger.CreditAccount(
 		ctx, accountID, amountCents,
 		fmt.Sprintf("Top-up via %s", gateway),

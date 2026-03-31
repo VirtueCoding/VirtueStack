@@ -145,7 +145,7 @@ func TestNOWPayments_HandleWebhook_Finished(t *testing.T) {
 		"price_currency": "usd",
 		"pay_amount": 0.001,
 		"pay_currency": "btc",
-		"order_id": "pay-abc-123"
+		"order_id": "cust-abc-123:pay-abc-123"
 	}`
 
 	sig := computeNOWPaymentsSignature("test-ipn-secret", []byte(payload))
@@ -158,7 +158,7 @@ func TestNOWPayments_HandleWebhook_Finished(t *testing.T) {
 
 	assert.Equal(t, "payment.finished", result.EventType)
 	assert.Equal(t, "12345", result.InvoiceID)
-	assert.Equal(t, "pay-abc-123", result.AccountID)
+	assert.Equal(t, "cust-abc-123", result.AccountID)
 	assert.Equal(t, int64(2500), result.AmountCents)
 	assert.Equal(t, "USD", result.Currency)
 	assert.Equal(t, "nowpayments:payment:12345", result.IdempotencyKey)
