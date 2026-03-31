@@ -46,6 +46,7 @@ func RegisterCustomerRoutes(
 	router *gin.RouterGroup,
 	handler *CustomerHandler,
 	notifyHandler *NotificationsHandler,
+	inAppNotifHandler *InAppNotificationsHandler,
 	apiKeyRepo *repository.CustomerAPIKeyRepository,
 	allowSelfRegistration bool,
 	billingCfg BillingRoutesConfig,
@@ -92,6 +93,10 @@ func RegisterCustomerRoutes(
 
 	if notifyHandler != nil {
 		RegisterNotificationRoutes(protected, notifyHandler)
+	}
+
+	if inAppNotifHandler != nil {
+		registerInAppNotificationRoutes(customer, protected, inAppNotifHandler, handler.authConfig)
 	}
 
 	// Conditional billing routes (stubs for future phases)
@@ -288,5 +293,30 @@ func register2FARoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 		twofa.GET("/status", handler.Get2FAStatus)
 		twofa.GET("/backup-codes", handler.GetBackupCodes)
 		twofa.POST("/backup-codes/regenerate", handler.RegenerateBackupCodes)
+	}
+}
+
+// registerInAppNotificationRoutes registers in-app notification routes.
+// SSE stream requires JWT only (no API key). REST endpoints use the protected group.
+func registerInAppNotificationRoutes(
+	customer *gin.RouterGroup,
+	protected *gin.RouterGroup,
+	handler *InAppNotificationsHandler,
+	authCfg middleware.AuthConfig,
+) {
+	notifs := protected.Group("/notifications")
+	{
+		notifs.GET("", handler.ListNotifications)
+		notifs.POST("/:id/read", handler.MarkAsRead)
+		notifs.POST("/read-all", handler.MarkAllAsRead)
+		notifs.GET("/unread-count", handler.GetUnreadCount)
+	}
+
+	// SSE stream is JWT-only — separate from the protected group which may use API keys
+	sseGroup := customer.Group("/notifications")
+	sseGroup.Use(middleware.JWTAuth(authCfg))
+	sseGroup.Use(middleware.RequireUserType("customer"))
+	{
+		sseGroup.GET("/stream", handler.StreamNotifications)
 	}
 }

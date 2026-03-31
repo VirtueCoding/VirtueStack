@@ -90,12 +90,16 @@ type Server struct {
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
-	provisioningHandler *provisioning.ProvisioningHandler
-	customerHandler     *customer.CustomerHandler
-	adminHandler        *admin.AdminHandler
-	notifyHandler       *customer.NotificationsHandler
-	readinessDBPing     func(context.Context) error
-	readinessNATSStatus func() nats.Status
+	provisioningHandler        *provisioning.ProvisioningHandler
+	customerHandler            *customer.CustomerHandler
+	adminHandler               *admin.AdminHandler
+	notifyHandler              *customer.NotificationsHandler
+	customerInAppNotifHandler  *customer.InAppNotificationsHandler
+	adminInAppNotifHandler     *admin.AdminInAppNotificationsHandler
+	sseHub                     *services.SSEHub
+	inAppNotifService          *services.InAppNotificationService
+	readinessDBPing            func(context.Context) error
+	readinessNATSStatus        func() nats.Status
 }
 
 // NewServer creates a new Controller server.
@@ -212,6 +216,7 @@ func (s *Server) RegisterAPIRoutes() {
 		v1,
 		s.customerHandler,
 		s.notifyHandler,
+		s.customerInAppNotifHandler,
 		s.customerAPIKeyRepo,
 		s.config.AllowSelfRegistration,
 		customer.BillingRoutesConfig{
@@ -221,7 +226,7 @@ func (s *Server) RegisterAPIRoutes() {
 		},
 	)
 
-	admin.RegisterAdminRoutes(v1, s.adminHandler)
+	admin.RegisterAdminRoutes(v1, s.adminHandler, s.adminInAppNotifHandler)
 
 	// Swagger UI is restricted to authenticated admins only.
 	s.router.GET("/swagger/*any",

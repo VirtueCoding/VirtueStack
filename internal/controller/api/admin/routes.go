@@ -97,7 +97,7 @@ import (
 //	Permission Management:
 //	  GET    /auth/permissions           - List all available permissions
 //	  PUT    /auth/permissions/:admin_id - Update admin permissions (super_admin only)
-func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
+func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNotifHandler *AdminInAppNotificationsHandler) {
 	admin := router.Group("/admin")
 
 	auth := admin.Group("/auth")
@@ -333,6 +333,10 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler) {
 			preActionWebhooks.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.DeletePreActionWebhook)
 		}
 	}
+
+	if inAppNotifHandler != nil {
+		registerAdminInAppNotificationRoutes(admin, protected, inAppNotifHandler, handler.authConfig)
+	}
 }
 
 // RequireReAuth returns a Gin middleware that enforces re-authentication for destructive operations.
@@ -369,5 +373,28 @@ func RequireReAuth(authConfig middleware.AuthConfig) gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+// registerAdminInAppNotificationRoutes registers in-app notification routes for admins.
+func registerAdminInAppNotificationRoutes(
+	adminGroup *gin.RouterGroup,
+	protected *gin.RouterGroup,
+	handler *AdminInAppNotificationsHandler,
+	authCfg middleware.AuthConfig,
+) {
+	notifs := protected.Group("/notifications")
+	{
+		notifs.GET("", handler.ListNotifications)
+		notifs.POST("/:id/read", handler.MarkAsRead)
+		notifs.POST("/read-all", handler.MarkAllAsRead)
+		notifs.GET("/unread-count", handler.GetUnreadCount)
+	}
+
+	sseGroup := adminGroup.Group("/notifications")
+	sseGroup.Use(middleware.JWTAuth(authCfg))
+	sseGroup.Use(middleware.RequireRole("admin", "super_admin"))
+	{
+		sseGroup.GET("/stream", handler.StreamNotifications)
 	}
 }

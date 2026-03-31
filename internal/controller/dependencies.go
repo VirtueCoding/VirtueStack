@@ -6,6 +6,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/admin"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
@@ -308,6 +309,22 @@ func (s *Server) InitializeServices() error {
 		notificationPreferenceRepo,
 		notificationEventRepo,
 		notifyService,
+	)
+
+	// Initialize in-app notification system (SSE hub, repo, service, handlers)
+	inAppNotifRepo := repository.NewInAppNotificationRepository(s.dbPool)
+	s.sseHub = services.NewSSEHub(s.logger)
+	s.inAppNotifService = services.NewInAppNotificationService(services.InAppNotificationServiceConfig{
+		Repo:   inAppNotifRepo,
+		Hub:    s.sseHub,
+		Logger: s.logger,
+	})
+	authCfg := middleware.AuthConfig{JWTSecret: s.config.JWTSecret.Value(), Issuer: "virtuestack"}
+	s.customerInAppNotifHandler = customer.NewInAppNotificationsHandler(
+		s.inAppNotifService, s.sseHub, authCfg, s.logger,
+	)
+	s.adminInAppNotifHandler = admin.NewAdminInAppNotificationsHandler(
+		s.inAppNotifService, s.sseHub, authCfg, s.logger,
 	)
 
 	// Initialize admin backup schedule service for mass backup campaigns
