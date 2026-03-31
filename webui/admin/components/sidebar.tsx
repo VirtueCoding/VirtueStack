@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@virtuestack/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "@virtuestack/ui";
+import { NotificationBell } from "@/components/notification-bell";
 
 interface SidebarProps {
   collapsed?: boolean;
@@ -50,17 +51,19 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         {!collapsed && (
           <span className="text-lg font-semibold">VirtueStack</span>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggle}
-          className={cn("ml-auto", collapsed && "mx-auto")}
-        >
-          <ChevronLeft
-            className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")}
-          />
-          <span className="sr-only">Toggle sidebar</span>
-        </Button>
+        <div className={cn("ml-auto flex items-center gap-1", collapsed && "mx-auto")}>
+          {!collapsed && <NotificationBell />}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggle}
+          >
+            <ChevronLeft
+              className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")}
+            />
+            <span className="sr-only">Toggle sidebar</span>
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 py-4">
