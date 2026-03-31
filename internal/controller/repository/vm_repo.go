@@ -547,3 +547,25 @@ func (r *VMRepository) CountByStorageBackend(ctx context.Context, storageBackend
 	}
 	return count, nil
 }
+
+// ListBillableVMs returns VMs eligible for hourly billing:
+// running or stopped, with a native-billing customer (billing_provider = 'native').
+func (r *VMRepository) ListBillableVMs(ctx context.Context) ([]models.VM, error) {
+	q := `SELECT ` + vmSelectCols + `
+		FROM vms v
+		JOIN customers c ON v.customer_id = c.id
+		WHERE v.status IN ($1, $2)
+		AND v.deleted_at IS NULL
+		AND c.billing_provider = $3
+		ORDER BY v.id`
+
+	vms, err := ScanRows(ctx, r.db, q,
+		[]any{models.VMStatusRunning, models.VMStatusStopped, "native"},
+		func(rows pgx.Rows) (models.VM, error) {
+			return scanVM(rows)
+		})
+	if err != nil {
+		return nil, fmt.Errorf("listing billable VMs: %w", err)
+	}
+	return vms, nil
+}
