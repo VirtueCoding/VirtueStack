@@ -1297,3 +1297,120 @@ export const inAppNotificationApi = {
     return (resp as unknown as { data: UnreadCountResponse }).data;
   },
 };
+
+// Billing types (admin)
+export interface BillingPayment {
+  id: string;
+  customer_id: string;
+  gateway: string;
+  gateway_payment_id?: string;
+  amount: number;
+  currency: string;
+  status: "pending" | "completed" | "failed" | "refunded";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BillingTransaction {
+  id: string;
+  customer_id: string;
+  type: "credit" | "debit" | "adjustment" | "refund";
+  amount: number;
+  balance_after: number;
+  description: string;
+  reference_type?: string;
+  reference_id?: string;
+  created_at: string;
+}
+
+export interface BillingConfig {
+  top_up: {
+    min_amount_cents: number;
+    max_amount_cents: number;
+    presets: number[];
+    gateways: string[];
+    currency: string;
+  };
+  gateways: string[];
+}
+
+export interface RefundRequest {
+  amount: number;
+  reason: string;
+}
+
+export interface RefundResult {
+  gateway_refund_id: string;
+  gateway_payment_id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+}
+
+export const adminBillingApi = {
+  async getTransactions(
+    params: { perPage?: number; cursor?: string; customerID?: string } = {}
+  ): Promise<PaginatedResponse<BillingTransaction>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    if (params.customerID) queryParams.set("customer_id", params.customerID);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<PaginatedResponse<BillingTransaction>>(
+      `/admin/billing/transactions${query}`
+    );
+  },
+
+  async creditAdjustment(
+    customerID: string,
+    amount: number,
+    description: string
+  ): Promise<BillingTransaction> {
+    await fetchCsrfToken();
+    const resp = await apiClient.post<{ data: BillingTransaction }>(
+      `/admin/billing/credit?customer_id=${customerID}`,
+      { amount, description }
+    );
+    return (resp as unknown as { data: BillingTransaction }).data;
+  },
+
+  async getPayments(
+    params: {
+      perPage?: number;
+      cursor?: string;
+      customerID?: string;
+      gateway?: string;
+      status?: string;
+    } = {}
+  ): Promise<PaginatedResponse<BillingPayment>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    if (params.customerID) queryParams.set("customer_id", params.customerID);
+    if (params.gateway) queryParams.set("gateway", params.gateway);
+    if (params.status) queryParams.set("status", params.status);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<PaginatedResponse<BillingPayment>>(
+      `/admin/billing/payments${query}`
+    );
+  },
+
+  async refundPayment(
+    paymentID: string,
+    req: RefundRequest
+  ): Promise<RefundResult> {
+    await fetchCsrfToken();
+    const resp = await apiClient.post<{ data: RefundResult }>(
+      `/admin/billing/refund/${paymentID}`,
+      req
+    );
+    return (resp as unknown as { data: RefundResult }).data;
+  },
+
+  async getConfig(): Promise<BillingConfig> {
+    const resp = await apiClient.get<{ data: BillingConfig }>(
+      "/admin/billing/config"
+    );
+    return (resp as unknown as { data: BillingConfig }).data;
+  },
+};

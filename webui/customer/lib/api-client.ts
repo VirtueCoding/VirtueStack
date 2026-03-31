@@ -922,3 +922,103 @@ export const inAppNotificationApi = {
     return (resp as unknown as { data: UnreadCountResponse }).data;
   },
 };
+
+// Billing types
+export interface BillingBalance {
+  balance: number;
+  currency: string;
+}
+
+export interface BillingTransaction {
+  id: string;
+  customer_id: string;
+  type: "credit" | "debit" | "adjustment" | "refund";
+  amount: number;
+  balance_after: number;
+  description: string;
+  reference_type?: string;
+  reference_id?: string;
+  created_at: string;
+}
+
+export interface BillingPayment {
+  id: string;
+  customer_id: string;
+  gateway: string;
+  gateway_payment_id?: string;
+  amount: number;
+  currency: string;
+  status: "pending" | "completed" | "failed" | "refunded";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TopUpConfig {
+  min_amount_cents: number;
+  max_amount_cents: number;
+  presets: number[];
+  gateways: string[];
+  currency: string;
+}
+
+export interface TopUpRequest {
+  gateway: string;
+  amount: number;
+  currency: string;
+  return_url: string;
+  cancel_url: string;
+}
+
+export interface TopUpResponse {
+  payment_id: string;
+  payment_url: string;
+}
+
+export const billingApi = {
+  async getBalance(): Promise<BillingBalance> {
+    const resp = await apiClient.get<{ data: BillingBalance }>(
+      "/customer/billing/balance"
+    );
+    return (resp as unknown as { data: BillingBalance }).data;
+  },
+
+  async getTransactions(
+    params: { perPage?: number; cursor?: string } = {}
+  ): Promise<CursorPaginatedResponse<BillingTransaction>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<CursorPaginatedResponse<BillingTransaction>>(
+      `/customer/billing/transactions${query}`
+    );
+  },
+
+  async getPayments(
+    params: { perPage?: number; cursor?: string } = {}
+  ): Promise<CursorPaginatedResponse<BillingPayment>> {
+    const queryParams = new URLSearchParams();
+    if (params.perPage) queryParams.set("per_page", String(params.perPage));
+    if (params.cursor) queryParams.set("cursor", params.cursor);
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    return apiClient.get<CursorPaginatedResponse<BillingPayment>>(
+      `/customer/billing/payments${query}`
+    );
+  },
+
+  async getTopUpConfig(): Promise<TopUpConfig> {
+    const resp = await apiClient.get<{ data: TopUpConfig }>(
+      "/customer/billing/top-up/config"
+    );
+    return (resp as unknown as { data: TopUpConfig }).data;
+  },
+
+  async initiateTopUp(req: TopUpRequest): Promise<TopUpResponse> {
+    await fetchCsrfToken();
+    const resp = await apiClient.post<{ data: TopUpResponse }>(
+      "/customer/billing/top-up",
+      req
+    );
+    return (resp as unknown as { data: TopUpResponse }).data;
+  },
+};
