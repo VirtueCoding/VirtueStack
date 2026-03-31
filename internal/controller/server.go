@@ -214,6 +214,11 @@ func (s *Server) RegisterAPIRoutes() {
 		s.notifyHandler,
 		s.customerAPIKeyRepo,
 		s.config.AllowSelfRegistration,
+		customer.BillingRoutesConfig{
+			NativeBillingEnabled: s.config.Billing.Providers.Native.Enabled,
+			OAuthGoogleEnabled:   s.config.OAuth.Google.Enabled,
+			OAuthGitHubEnabled:   s.config.OAuth.GitHub.Enabled,
+		},
 	)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler)

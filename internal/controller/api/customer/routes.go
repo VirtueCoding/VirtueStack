@@ -17,6 +17,13 @@ const (
 	PermissionSnapshotWrite = "snapshot:write"
 )
 
+// BillingRoutesConfig controls conditional registration of billing and OAuth routes.
+type BillingRoutesConfig struct {
+	NativeBillingEnabled bool
+	OAuthGoogleEnabled   bool
+	OAuthGitHubEnabled   bool
+}
+
 // RegisterCustomerRoutes registers all customer API routes.
 // These routes are for customer self-service operations.
 //
@@ -41,6 +48,7 @@ func RegisterCustomerRoutes(
 	notifyHandler *NotificationsHandler,
 	apiKeyRepo *repository.CustomerAPIKeyRepository,
 	allowSelfRegistration bool,
+	billingCfg BillingRoutesConfig,
 ) {
 	customer := router.Group("/customer")
 
@@ -84,6 +92,20 @@ func RegisterCustomerRoutes(
 
 	if notifyHandler != nil {
 		RegisterNotificationRoutes(protected, notifyHandler)
+	}
+
+	// Conditional billing routes (stubs for future phases)
+	if billingCfg.NativeBillingEnabled {
+		// Native billing routes will be added in Phase 3+
+		_ = accountGroup
+	}
+
+	// Conditional OAuth routes (stubs for Phase 8)
+	if billingCfg.OAuthGoogleEnabled {
+		// Google OAuth routes will be added in Phase 8
+	}
+	if billingCfg.OAuthGitHubEnabled {
+		// GitHub OAuth routes will be added in Phase 8
 	}
 }
 
