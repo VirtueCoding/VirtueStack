@@ -118,7 +118,7 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 		if whmcsID, ok := dest[5].(**int); ok {
 			*whmcsID = c.WHMCSClientID
 		}
-		if bp, ok := dest[6].(*string); ok {
+		if bp, ok := dest[6].(**string); ok {
 			*bp = c.BillingProvider
 		}
 		if totpSecret, ok := dest[7].(**string); ok {

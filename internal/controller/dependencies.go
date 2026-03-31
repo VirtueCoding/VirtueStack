@@ -282,6 +282,7 @@ func (s *Server) InitializeServices() error {
 		ProvisioningKeyRepo:     repository.NewProvisioningKeyRepository(s.dbPool),
 		SystemWebhookRepo:       systemWebhookRepo,
 		PreActionWebhookRepo:    preActionWebhookRepo,
+		CustomerRepo:            customerRepo,
 		RDNSService:             s.rdnsService,
 		JWTSecret:               s.config.JWTSecret.Value(),
 		Issuer:                  "virtuestack",

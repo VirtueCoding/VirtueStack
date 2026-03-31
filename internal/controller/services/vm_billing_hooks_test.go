@@ -10,6 +10,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
@@ -97,7 +98,7 @@ func (r *billingTestCustomerRow) Scan(dest ...any) error {
 		if v, ok := dest[5].(**int); ok {
 			*v = c.WHMCSClientID
 		}
-		if v, ok := dest[6].(*string); ok {
+		if v, ok := dest[6].(**string); ok {
 			*v = c.BillingProvider
 		}
 		if v, ok := dest[7].(**string); ok {
@@ -133,7 +134,7 @@ func TestNotifyBillingHook_NilResolver(t *testing.T) {
 	svc := &VMService{
 		billingHooks: nil,
 		customerRepo: repository.NewCustomerRepository(&billingTestCustomerDB{
-			customer: &models.Customer{ID: "c1", BillingProvider: "whmcs"},
+			customer: &models.Customer{ID: "c1", BillingProvider: util.StringPtr("whmcs")},
 		}),
 		logger: billingTestLogger().With("component", "vm-service"),
 	}
@@ -170,7 +171,7 @@ func TestNotifyBillingHook_ProviderNotFound(t *testing.T) {
 			hookErr: errors.New("provider not found"),
 		},
 		customerRepo: repository.NewCustomerRepository(&billingTestCustomerDB{
-			customer: &models.Customer{ID: "c1", BillingProvider: "unknown"},
+			customer: &models.Customer{ID: "c1", BillingProvider: util.StringPtr("unknown")},
 		}),
 		logger: billingTestLogger().With("component", "vm-service"),
 	}
@@ -187,7 +188,7 @@ func TestNotifyBillingHook_HookError(t *testing.T) {
 	svc := &VMService{
 		billingHooks: &mockBillingHookResolver{hook: hook},
 		customerRepo: repository.NewCustomerRepository(&billingTestCustomerDB{
-			customer: &models.Customer{ID: "c1", BillingProvider: "whmcs"},
+			customer: &models.Customer{ID: "c1", BillingProvider: util.StringPtr("whmcs")},
 		}),
 		logger: billingTestLogger().With("component", "vm-service"),
 	}

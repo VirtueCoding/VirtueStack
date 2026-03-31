@@ -12,6 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/notifications"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -78,7 +79,7 @@ func (h *CustomerHandler) Register(c *gin.Context) {
 		PasswordHash:    passwordHash,
 		Name:            name,
 		Status:          status,
-		BillingProvider: models.BillingProviderUnmanaged,
+		BillingProvider: util.StringPtr(models.BillingProviderUnmanaged),
 	}
 	if phone := strings.TrimSpace(req.Phone); phone != "" {
 		customer.Phone = &phone

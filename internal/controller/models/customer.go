@@ -27,7 +27,7 @@ type Customer struct {
 	Name                 string   `json:"name" db:"name"`
 	Phone                *string  `json:"phone,omitempty" db:"phone"`
 	WHMCSClientID        *int     `json:"whmcs_client_id,omitempty" db:"whmcs_client_id"`
-	BillingProvider string `json:"billing_provider" db:"billing_provider"`
+	BillingProvider *string `json:"billing_provider" db:"billing_provider"`
 	TOTPSecretEncrypted  *string  `json:"-" db:"totp_secret_encrypted"`
 	TOTPEnabled          bool     `json:"totp_enabled" db:"totp_enabled"`
 	TOTPBackupCodesHash  []string `json:"-" db:"totp_backup_codes_hash"`

@@ -15,8 +15,9 @@ import (
 
 // CustomerUpdateRequest represents the request body for updating a customer.
 type CustomerUpdateRequest struct {
-	Name   *string `json:"name,omitempty" validate:"omitempty,max=255"`
-	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active pending_verification suspended"`
+	Name            *string `json:"name,omitempty" validate:"omitempty,max=255"`
+	Status          *string `json:"status,omitempty" validate:"omitempty,oneof=active pending_verification suspended"`
+	BillingProvider *string `json:"billing_provider,omitempty" validate:"omitempty,oneof=whmcs native blesta unmanaged"`
 }
 
 // CustomerDetail represents a customer with additional statistics.
@@ -93,7 +94,7 @@ func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 		PasswordHash:    passwordHash,
 		Phone:           req.Phone,
 		Status:          models.CustomerStatusActive,
-		BillingProvider: models.BillingProviderUnmanaged,
+		BillingProvider: util.StringPtr(models.BillingProviderUnmanaged),
 	}
 
 	actorID := middleware.GetUserID(c)
@@ -328,6 +329,20 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 		if err := h.customerService.Update(c.Request.Context(), actorID, actorIP, customer); err != nil {
 			h.logger.Error("failed to update customer profile",
 				"customer_id", customerID,
+				"error", err,
+				"correlation_id", middleware.GetCorrelationID(c))
+			middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")
+			return
+		}
+	}
+
+	// Apply billing_provider update if specified
+	if req.BillingProvider != nil {
+		customer.BillingProvider = req.BillingProvider
+		if err := h.customerRepo.UpdateBillingProvider(c.Request.Context(), customerID, *req.BillingProvider); err != nil {
+			h.logger.Error("failed to update customer billing provider",
+				"customer_id", customerID,
+				"billing_provider", *req.BillingProvider,
 				"error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 			middleware.RespondWithError(c, http.StatusInternalServerError, "CUSTOMER_UPDATE_FAILED", "Internal server error")

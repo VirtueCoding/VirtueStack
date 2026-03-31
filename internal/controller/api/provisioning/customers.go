@@ -8,6 +8,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -107,7 +108,7 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 		Name:            req.Name,
 		PasswordHash:    passwordHash,
 		WHMCSClientID:   req.WHMCSClientID,
-		BillingProvider: models.BillingProviderWHMCS,
+		BillingProvider: util.StringPtr(models.BillingProviderWHMCS),
 		Status:          models.CustomerStatusActive,
 	}
 

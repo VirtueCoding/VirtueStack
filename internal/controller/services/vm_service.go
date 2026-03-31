@@ -132,17 +132,21 @@ func (s *VMService) notifyBillingHook(ctx context.Context, customerID string, fn
 			"customer_id", customerID, "error", err)
 		return
 	}
-	hook, err := s.billingHooks.ForCustomer(cust.BillingProvider)
+	provider := ""
+	if cust.BillingProvider != nil {
+		provider = *cust.BillingProvider
+	}
+	hook, err := s.billingHooks.ForCustomer(provider)
 	if err != nil {
 		s.logger.Warn("billing hook: provider not found",
 			"customer_id", customerID,
-			"provider", cust.BillingProvider, "error", err)
+			"provider", provider, "error", err)
 		return
 	}
 	if err := fn(hook); err != nil {
 		s.logger.Warn("billing hook: callback failed",
 			"customer_id", customerID,
-			"provider", cust.BillingProvider, "error", err)
+			"provider", provider, "error", err)
 	}
 }
 
