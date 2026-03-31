@@ -101,8 +101,7 @@ func RegisterCustomerRoutes(
 
 	// Conditional billing routes (stubs for future phases)
 	if billingCfg.NativeBillingEnabled {
-		// Native billing routes will be added in Phase 3+
-		_ = accountGroup
+		registerBillingRoutes(accountGroup, handler)
 	}
 
 	// Conditional OAuth routes (stubs for Phase 8)
@@ -318,5 +317,15 @@ func registerInAppNotificationRoutes(
 	sseGroup.Use(middleware.RequireUserType("customer"))
 	{
 		sseGroup.GET("/stream", handler.StreamNotifications)
+	}
+}
+
+// registerBillingRoutes registers customer billing endpoints (JWT-only).
+func registerBillingRoutes(group *gin.RouterGroup, handler *CustomerHandler) {
+	billingGroup := group.Group("/billing")
+	{
+		billingGroup.GET("/balance", handler.GetBillingBalance)
+		billingGroup.GET("/transactions", handler.ListBillingTransactions)
+		billingGroup.GET("/usage", handler.GetBillingUsage)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -95,9 +96,46 @@ func (s *Server) InitializeServices() error {
 
 	preActionWebhookService := services.NewPreActionWebhookService(preActionWebhookRepo, s.logger)
 
+	// Billing repositories
+	billingTxRepo := repository.NewBillingTransactionRepository(s.dbPool)
+	billingCheckpointRepo := repository.NewBillingCheckpointRepository(s.dbPool)
+	exchangeRateRepo := repository.NewExchangeRateRepository(s.dbPool)
+
+	// Billing services
+	billingLedgerService := services.NewBillingLedgerService(services.BillingLedgerServiceConfig{
+		TransactionRepo: billingTxRepo,
+		Logger:          s.logger,
+	})
+
+	exchangeRateService := services.NewExchangeRateService(services.ExchangeRateServiceConfig{
+		RateRepo: exchangeRateRepo,
+		Logger:   s.logger,
+	})
+
 	billingRegistry := billing.NewRegistry("", s.logger)
 	if err := billingRegistry.Register(whmcs.NewAdapter()); err != nil {
 		return fmt.Errorf("registering WHMCS billing adapter: %w", err)
+	}
+
+	// Register native billing adapter when enabled
+	if s.config.Billing.Providers.Native.Enabled {
+		nativeAdapter := native.NewAdapter(native.AdapterConfig{
+			LedgerService: billingLedgerService,
+			Logger:        s.logger,
+		})
+		if err := billingRegistry.Register(nativeAdapter); err != nil {
+			return fmt.Errorf("registering native billing adapter: %w", err)
+		}
+
+		advisoryLockDB := repository.NewAdvisoryLockDB(s.dbPool)
+		s.billingScheduler = services.NewBillingScheduler(services.BillingSchedulerConfig{
+			LedgerService:  billingLedgerService,
+			CheckpointRepo: billingCheckpointRepo,
+			VMRepo:         vmRepo,
+			PlanRepo:       planRepo,
+			DB:             advisoryLockDB,
+			Logger:         s.logger,
+		})
 	}
 
 	s.vmService = services.NewVMService(services.VMServiceConfig{
@@ -236,6 +274,7 @@ func (s *Server) InitializeServices() error {
 		TemplateService: s.templateService,
 		WebhookService:  webhookService,
 		CustomerService: s.customerService,
+		BillingLedgerService: billingLedgerService,
 		VMRepo:          vmRepo,
 		NodeRepo:        nodeRepo,
 		BackupRepo:      backupRepo,
@@ -270,6 +309,8 @@ func (s *Server) InitializeServices() error {
 		CustomerService:         s.customerService,
 		BackupService:           s.backupService,
 		AuthService:             s.authService,
+		BillingLedgerService:    billingLedgerService,
+		ExchangeRateService:     exchangeRateService,
 		AuditRepo:               auditRepo,
 		IPRepo:                  ipRepo,
 		SettingsRepo:            settingsRepo,

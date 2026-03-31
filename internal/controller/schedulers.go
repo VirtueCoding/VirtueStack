@@ -51,6 +51,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 		s.logger.Info("starting notification cleanup scheduler")
 		go s.inAppNotifService.StartCleanupScheduler(ctx, 6*time.Hour, 90*24*time.Hour)
 	}
+
+	if s.billingScheduler != nil {
+		s.logger.Info("starting billing scheduler")
+		go s.billingScheduler.Start(ctx)
+	}
 }
 
 func (s *Server) startMetricsCollector(ctx context.Context) {

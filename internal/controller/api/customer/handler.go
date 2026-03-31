@@ -114,6 +114,7 @@ type CustomerHandler struct {
 	templateService      *services.TemplateService
 	webhookService       *services.WebhookService
 	customerService      *services.CustomerService
+	billingLedgerService *services.BillingLedgerService
 	vmRepo               *repository.VMRepository
 	nodeRepo             *repository.NodeRepository
 	backupRepo           *repository.BackupRepository
@@ -158,6 +159,7 @@ type CustomerHandlerConfig struct {
 	TemplateService      *services.TemplateService
 	WebhookService       *services.WebhookService
 	CustomerService      *services.CustomerService
+	BillingLedgerService *services.BillingLedgerService
 	VMRepo               *repository.VMRepository
 	NodeRepo             *repository.NodeRepository
 	BackupRepo           *repository.BackupRepository
@@ -192,6 +194,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		templateService:      cfg.TemplateService,
 		webhookService:       cfg.WebhookService,
 		customerService:      cfg.CustomerService,
+		billingLedgerService: cfg.BillingLedgerService,
 		vmRepo:               cfg.VMRepo,
 		nodeRepo:             cfg.NodeRepo,
 		backupRepo:           cfg.BackupRepo,

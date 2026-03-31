@@ -87,6 +87,7 @@ type Server struct {
 	rdnsService                *services.RDNSService
 	bandwidthRepo              *repository.BandwidthRepository
 	adminBackupScheduleService *services.AdminBackupScheduleService
+	billingScheduler           *services.BillingScheduler
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers

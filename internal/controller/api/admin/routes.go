@@ -332,6 +332,31 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 			preActionWebhooks.PUT("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), handler.UpdatePreActionWebhook)
 			preActionWebhooks.DELETE("/:id", middleware.RequireAdminPermission(models.PermissionSettingsWrite), RequireReAuth(handler.authConfig), handler.DeletePreActionWebhook)
 		}
+
+		// Billing management
+		billingGroup := protected.Group("/billing")
+		{
+			billingGroup.GET("/transactions",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.ListBillingTransactions)
+			billingGroup.GET("/balance",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.GetCustomerBalance)
+			billingGroup.POST("/credit",
+				middleware.RequireAdminPermission(models.PermissionBillingWrite),
+				handler.AdminCreditAdjustment)
+		}
+
+		// Exchange rate management
+		exchangeRates := protected.Group("/exchange-rates")
+		{
+			exchangeRates.GET("",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.ListExchangeRates)
+			exchangeRates.PUT("/:currency",
+				middleware.RequireAdminPermission(models.PermissionBillingWrite),
+				handler.UpdateExchangeRate)
+		}
 	}
 
 	if inAppNotifHandler != nil {
