@@ -321,6 +321,11 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 		return nil, fmt.Errorf("password validation failed: %w", err)
 	}
 
+	// Validate billing config
+	if err := validateBillingConfig(cfg); err != nil {
+		return nil, fmt.Errorf("billing config validation: %w", err)
+	}
+
 	// Check for weak default passwords (fatal in production)
 	if err := validateDefaultPasswords(); err != nil {
 		return nil, err
@@ -799,6 +804,119 @@ func validateProductionConfig(cfg *ControllerConfig) error {
 		return fmt.Errorf("NATS_AUTH_TOKEN must be at least 32 characters in production; current length: %d", len(cfg.NATS.AuthToken))
 	}
 
+	return nil
+}
+
+// validateBillingConfig validates billing, payment, and OAuth configuration.
+func validateBillingConfig(cfg *ControllerConfig) error {
+	providers := []struct {
+		name    string
+		enabled bool
+		primary bool
+	}{
+		{"whmcs", cfg.Billing.Providers.WHMCS.Enabled, cfg.Billing.Providers.WHMCS.Primary},
+		{"native", cfg.Billing.Providers.Native.Enabled, cfg.Billing.Providers.Native.Primary},
+		{"blesta", cfg.Billing.Providers.Blesta.Enabled, cfg.Billing.Providers.Blesta.Primary},
+	}
+
+	primaryCount := 0
+	anyEnabled := false
+	for _, p := range providers {
+		if p.primary && !p.enabled {
+			return fmt.Errorf("billing provider %q is marked primary but not enabled", p.name)
+		}
+		if p.primary {
+			primaryCount++
+		}
+		if p.enabled {
+			anyEnabled = true
+		}
+	}
+	if anyEnabled && primaryCount != 1 {
+		return fmt.Errorf("exactly one enabled billing provider must be primary, found %d", primaryCount)
+	}
+	if cfg.AllowSelfRegistration && anyEnabled && primaryCount == 0 {
+		return fmt.Errorf("self-registration requires a primary billing provider")
+	}
+
+	nativeEnabled := cfg.Billing.Providers.Native.Enabled
+	hasGateway := cfg.Stripe.SecretKey != "" || cfg.PayPal.ClientID != "" ||
+		(cfg.Crypto.Provider != "" && cfg.Crypto.Provider != "disabled")
+	if nativeEnabled && !hasGateway {
+		slog.Warn("native billing enabled without any payment gateway configured")
+	}
+
+	if err := validateStripeConfig(&cfg.Stripe); err != nil {
+		return err
+	}
+	if err := validatePayPalConfig(&cfg.PayPal); err != nil {
+		return err
+	}
+	if err := validateCryptoConfig(&cfg.Crypto); err != nil {
+		return err
+	}
+	if err := validateOAuthConfig(&cfg.OAuth); err != nil {
+		return err
+	}
+
+	if cfg.Billing.GracePeriodHours < 0 {
+		return fmt.Errorf("billing grace_period_hours must be non-negative")
+	}
+	if cfg.Billing.WarningIntervalHours < 0 {
+		return fmt.Errorf("billing warning_interval_hours must be non-negative")
+	}
+	if cfg.Billing.AutoDeleteDays < 0 {
+		return fmt.Errorf("billing auto_delete_days must be non-negative")
+	}
+	return nil
+}
+
+func validateStripeConfig(s *StripeConfig) error {
+	hasKey := s.SecretKey != ""
+	hasWebhook := s.WebhookSecret != ""
+	if hasKey != hasWebhook {
+		return fmt.Errorf("stripe: secret_key and webhook_secret must both be set or both empty")
+	}
+	return nil
+}
+
+func validatePayPalConfig(p *PayPalConfig) error {
+	hasID := p.ClientID != ""
+	hasSecret := p.ClientSecret != ""
+	if hasID != hasSecret {
+		return fmt.Errorf("paypal: client_id and client_secret must both be set or both empty")
+	}
+	if p.Mode != "sandbox" && p.Mode != "production" {
+		return fmt.Errorf("paypal: mode must be \"sandbox\" or \"production\", got %q", p.Mode)
+	}
+	return nil
+}
+
+func validateCryptoConfig(c *CryptoConfig) error {
+	switch c.Provider {
+	case "disabled", "":
+		return nil
+	case "btcpay":
+		if c.BTCPayServerURL == "" || c.BTCPayAPIKey == "" || c.BTCPayStoreID == "" {
+			return fmt.Errorf("crypto: btcpay requires server_url, api_key, and store_id")
+		}
+	case "nowpayments":
+		if c.NOWPaymentsAPIKey == "" || c.NOWPaymentsIPNSecret == "" {
+			return fmt.Errorf("crypto: nowpayments requires api_key and ipn_secret")
+		}
+	default:
+		return fmt.Errorf("crypto: provider must be \"btcpay\", \"nowpayments\", or \"disabled\", got %q", c.Provider)
+	}
+	return nil
+}
+
+func validateOAuthConfig(o *OAuthConfig) error {
+	if o.Google.Enabled && (o.Google.ClientID == "" || o.Google.ClientSecret == "") {
+		return fmt.Errorf("oauth: google enabled but client_id or client_secret missing")
+	}
+	if o.GitHub.Enabled && (o.GitHub.ClientID == "" || o.GitHub.ClientSecret == "") {
+		return fmt.Errorf("oauth: github enabled but client_id or client_secret missing")
+	}
 	return nil
 }
 
