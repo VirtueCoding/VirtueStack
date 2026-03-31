@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -133,4 +134,93 @@ func (r *BillingPaymentRepository) ListByCustomer(
 		lastID = payments[len(payments)-1].ID
 	}
 	return payments, hasMore, lastID, nil
+}
+
+// UpdateStatus updates a billing payment's status and optionally the gateway payment ID.
+func (r *BillingPaymentRepository) UpdateStatus(
+	ctx context.Context, id, status string, gatewayPaymentID *string,
+) error {
+	q := `UPDATE billing_payments
+		SET status = $1, gateway_payment_id = COALESCE($2, gateway_payment_id), updated_at = NOW()
+		WHERE id = $3`
+
+	tag, err := r.db.Exec(ctx, q, status, gatewayPaymentID, id)
+	if err != nil {
+		return fmt.Errorf("updating payment status %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("payment %s not found", id)
+	}
+	return nil
+}
+
+// BillingPaymentListFilter holds optional filters for listing payments.
+type BillingPaymentListFilter struct {
+	CustomerID *string
+	Gateway    *string
+	Status     *string
+	models.PaginationParams
+}
+
+// ListAll returns paginated payments with optional filters (admin use).
+func (r *BillingPaymentRepository) ListAll(
+	ctx context.Context, filter BillingPaymentListFilter,
+) ([]models.BillingPayment, bool, string, error) {
+	var args []any
+	argPos := 1
+	conditions := []string{}
+
+	if filter.CustomerID != nil {
+		conditions = append(conditions, fmt.Sprintf("customer_id = $%d", argPos))
+		args = append(args, *filter.CustomerID)
+		argPos++
+	}
+	if filter.Gateway != nil {
+		conditions = append(conditions, fmt.Sprintf("gateway = $%d", argPos))
+		args = append(args, *filter.Gateway)
+		argPos++
+	}
+	if filter.Status != nil {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argPos))
+		args = append(args, *filter.Status)
+		argPos++
+	}
+
+	cp := filter.DecodeCursor()
+	if cp.LastID != "" {
+		conditions = append(conditions, fmt.Sprintf("id < $%d", argPos))
+		args = append(args, cp.LastID)
+		argPos++
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	q := fmt.Sprintf(
+		"SELECT %s FROM billing_payments %s ORDER BY created_at DESC, id DESC LIMIT $%d",
+		billingPaymentSelectCols, where, argPos,
+	)
+	args = append(args, filter.PerPage+1)
+
+	pymnts, err := ScanRows(ctx, r.db, q, args,
+		func(rows pgx.Rows) (models.BillingPayment, error) {
+			return scanBillingPayment(rows)
+		})
+	if err != nil {
+		return nil, false, "", fmt.Errorf("list all payments: %w", err)
+	}
+
+	hasMore := len(pymnts) > filter.PerPage
+	if hasMore {
+		pymnts = pymnts[:filter.PerPage]
+	}
+
+	var lastID string
+	if len(pymnts) > 0 {
+		lastID = pymnts[len(pymnts)-1].ID
+	}
+
+	return pymnts, hasMore, lastID, nil
 }
