@@ -36,3 +36,24 @@ type BillingPayment struct {
 	CreatedAt        time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at" db:"updated_at"`
 }
+
+// TopUpRequest holds fields for initiating a credit top-up.
+type TopUpRequest struct {
+	Gateway   string `json:"gateway" validate:"required,oneof=stripe paypal btcpay nowpayments"`
+	Amount    int64  `json:"amount" validate:"required,gt=0"`
+	Currency  string `json:"currency" validate:"required,len=3"`
+	ReturnURL string `json:"return_url" validate:"required,url"`
+	CancelURL string `json:"cancel_url" validate:"required,url"`
+}
+
+// TopUpResponse is returned after initiating a top-up.
+type TopUpResponse struct {
+	PaymentID  string `json:"payment_id"`
+	PaymentURL string `json:"payment_url"`
+}
+
+// RefundRequest holds fields for an admin-initiated refund.
+type RefundRequest struct {
+	Amount int64  `json:"amount" validate:"required,gt=0"`
+	Reason string `json:"reason" validate:"required,max=500"`
+}

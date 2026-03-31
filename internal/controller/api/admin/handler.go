@@ -24,6 +24,7 @@ type AdminHandlerConfig struct {
 	AuthService             *services.AuthService
 	BillingLedgerService    *services.BillingLedgerService
 	ExchangeRateService     *services.ExchangeRateService
+	PaymentService          *services.PaymentService
 	AuditRepo               *repository.AuditRepository
 	IPRepo                  *repository.IPRepository
 	SettingsRepo            *repository.SettingsRepository
@@ -60,6 +61,7 @@ type AdminHandler struct {
 	authService             *services.AuthService
 	billingLedgerService    *services.BillingLedgerService
 	exchangeRateService     *services.ExchangeRateService
+	paymentService          *services.PaymentService
 	auditRepo               *repository.AuditRepository
 	ipRepo                  *repository.IPRepository
 	settingsRepo            *repository.SettingsRepository
@@ -98,6 +100,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		authService:             cfg.AuthService,
 		billingLedgerService:    cfg.BillingLedgerService,
 		exchangeRateService:     cfg.ExchangeRateService,
+		paymentService:          cfg.PaymentService,
 		auditRepo:               cfg.AuditRepo,
 		ipRepo:                  cfg.IPRepo,
 		settingsRepo:            cfg.SettingsRepo,

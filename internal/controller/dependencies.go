@@ -8,9 +8,12 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/webhooks"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
+	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
+	stripePayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/stripe"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
@@ -102,8 +105,6 @@ func (s *Server) InitializeServices() error {
 	billingCheckpointRepo := repository.NewBillingCheckpointRepository(s.dbPool)
 	exchangeRateRepo := repository.NewExchangeRateRepository(s.dbPool)
 
-	_ = billingPaymentRepo // wired for Phase 4+ (Stripe/PayPal)
-
 	// Billing services
 	billingLedgerService := services.NewBillingLedgerService(services.BillingLedgerServiceConfig{
 		TransactionRepo: billingTxRepo,
@@ -139,6 +140,40 @@ func (s *Server) InitializeServices() error {
 			DB:             advisoryLockDB,
 			Logger:         s.logger,
 		})
+	}
+
+	// Payment gateway registry
+	paymentRegistry := payments.NewPaymentRegistry()
+
+	// Register Stripe provider if configured
+	if s.config.Stripe.SecretKey.Value() != "" {
+		stripeProvider := stripePayments.NewProvider(stripePayments.ProviderConfig{
+			SecretKey:      s.config.Stripe.SecretKey.Value(),
+			WebhookSecret:  s.config.Stripe.WebhookSecret.Value(),
+			PublishableKey: s.config.Stripe.PublishableKey,
+			Logger:         s.logger,
+		})
+		if err := stripeProvider.ValidateConfig(); err != nil {
+			return fmt.Errorf("stripe config validation: %w", err)
+		}
+		paymentRegistry.Register("stripe", stripeProvider)
+		s.logger.Info("stripe payment provider registered")
+	}
+
+	// Payment service
+	paymentService := services.NewPaymentService(services.PaymentServiceConfig{
+		PaymentRegistry: paymentRegistry,
+		LedgerService:   billingLedgerService,
+		PaymentRepo:     billingPaymentRepo,
+		SettingsRepo:    settingsRepo,
+		Logger:          s.logger,
+	})
+
+	// Stripe webhook handler
+	if s.config.Stripe.SecretKey.Value() != "" {
+		s.stripeWebhookHandler = webhooks.NewStripeWebhookHandler(
+			paymentService, s.logger,
+		)
 	}
 
 	s.vmService = services.NewVMService(services.VMServiceConfig{
@@ -278,6 +313,7 @@ func (s *Server) InitializeServices() error {
 		WebhookService:  webhookService,
 		CustomerService: s.customerService,
 		BillingLedgerService: billingLedgerService,
+		PaymentService:       paymentService,
 		VMRepo:          vmRepo,
 		NodeRepo:        nodeRepo,
 		BackupRepo:      backupRepo,
@@ -314,6 +350,7 @@ func (s *Server) InitializeServices() error {
 		AuthService:             s.authService,
 		BillingLedgerService:    billingLedgerService,
 		ExchangeRateService:     exchangeRateService,
+		PaymentService:          paymentService,
 		AuditRepo:               auditRepo,
 		IPRepo:                  ipRepo,
 		SettingsRepo:            settingsRepo,

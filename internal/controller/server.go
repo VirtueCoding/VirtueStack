@@ -15,6 +15,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/customer"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/provisioning"
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/webhooks"
 	"github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	controllerredis "github.com/AbuGosok/VirtueStack/internal/controller/redis"
@@ -99,6 +100,7 @@ type Server struct {
 	adminInAppNotifHandler     *admin.AdminInAppNotificationsHandler
 	sseHub                     *services.SSEHub
 	inAppNotifService          *services.InAppNotificationService
+	stripeWebhookHandler       *webhooks.StripeWebhookHandler
 	readinessDBPing            func(context.Context) error
 	readinessNATSStatus        func() nats.Status
 }
@@ -228,6 +230,11 @@ func (s *Server) RegisterAPIRoutes() {
 	)
 
 	admin.RegisterAdminRoutes(v1, s.adminHandler, s.adminInAppNotifHandler)
+
+	// Stripe webhook endpoint (unauthenticated — signature verified by handler)
+	if s.stripeWebhookHandler != nil {
+		v1.POST("/webhooks/stripe", s.stripeWebhookHandler.Handle)
+	}
 
 	// Swagger UI is restricted to authenticated admins only.
 	s.router.GET("/swagger/*any",

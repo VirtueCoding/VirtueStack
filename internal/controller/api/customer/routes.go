@@ -327,5 +327,8 @@ func registerBillingRoutes(group *gin.RouterGroup, handler *CustomerHandler) {
 		billingGroup.GET("/balance", handler.GetBillingBalance)
 		billingGroup.GET("/transactions", handler.ListBillingTransactions)
 		billingGroup.GET("/usage", handler.GetBillingUsage)
+		billingGroup.POST("/top-up", handler.InitiateTopUp)
+		billingGroup.GET("/payments", handler.GetPaymentHistory)
+		billingGroup.GET("/top-up/config", handler.GetTopUpConfig)
 	}
 }

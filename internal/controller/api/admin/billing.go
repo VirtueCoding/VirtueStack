@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // ListBillingTransactions handles GET /admin/billing/transactions.
@@ -177,5 +180,123 @@ func (h *AdminHandler) UpdateExchangeRate(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: map[string]any{
 		"currency":    currency,
 		"rate_to_usd": req.RateToUSD,
+	}})
+}
+
+// ListPayments handles GET /admin/billing/payments.
+func (h *AdminHandler) ListPayments(c *gin.Context) {
+	pagination := models.ParsePagination(c)
+
+	filter := services.PaymentListFilter{
+		PaginationParams: pagination,
+	}
+
+	if customerID := c.Query("customer_id"); customerID != "" {
+		if _, err := uuid.Parse(customerID); err != nil {
+			middleware.RespondWithError(c, http.StatusBadRequest,
+				"INVALID_CUSTOMER_ID", "customer_id must be a valid UUID")
+			return
+		}
+		filter.CustomerID = &customerID
+	}
+
+	if gateway := c.Query("gateway"); gateway != "" {
+		filter.Gateway = &gateway
+	}
+
+	if status := c.Query("status"); status != "" {
+		filter.Status = &status
+	}
+
+	pymnts, hasMore, lastID, err := h.paymentService.ListAllPayments(
+		c.Request.Context(), filter,
+	)
+	if err != nil {
+		h.logger.Error("failed to list payments",
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"PAYMENT_LIST_FAILED", "Failed to list payments")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.ListResponse{
+		Data: pymnts,
+		Meta: models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID),
+	})
+}
+
+// RefundPayment handles POST /admin/billing/refund/:paymentId.
+func (h *AdminHandler) RefundPayment(c *gin.Context) {
+	paymentID := c.Param("paymentId")
+	if _, err := uuid.Parse(paymentID); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest,
+			"INVALID_PAYMENT_ID", "paymentId must be a valid UUID")
+		return
+	}
+
+	var req models.RefundRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		return
+	}
+
+	result, err := h.paymentService.RefundPayment(
+		c.Request.Context(), paymentID, req.Amount,
+	)
+	if err != nil {
+		h.handleRefundError(c, paymentID, err)
+		return
+	}
+
+	actorID := middleware.GetUserID(c)
+	h.logAuditEvent(c, "billing.refund", "payment", paymentID,
+		map[string]any{
+			"amount":    req.Amount,
+			"reason":    req.Reason,
+			"refund_id": result.GatewayRefundID,
+			"actor_id":  actorID,
+		}, true)
+
+	c.JSON(http.StatusOK, models.Response{Data: result})
+}
+
+func (h *AdminHandler) handleRefundError(c *gin.Context, paymentID string, err error) {
+	h.logger.Error("failed to process refund",
+		"payment_id", paymentID,
+		"error", err,
+		"correlation_id", middleware.GetCorrelationID(c))
+
+	if errors.Is(err, sharederrors.ErrNotFound) {
+		middleware.RespondWithError(c, http.StatusNotFound,
+			"PAYMENT_NOT_FOUND", "Payment not found")
+		return
+	}
+
+	var valErr *sharederrors.ValidationError
+	if errors.As(err, &valErr) {
+		middleware.RespondWithError(c, http.StatusBadRequest,
+			"VALIDATION_ERROR", valErr.Error())
+		return
+	}
+
+	middleware.RespondWithError(c, http.StatusInternalServerError,
+		"REFUND_FAILED", "Failed to process refund")
+}
+
+// GetBillingConfig handles GET /admin/billing/config.
+func (h *AdminHandler) GetBillingConfig(c *gin.Context) {
+	topUpConfig, err := h.paymentService.GetTopUpConfig(c.Request.Context())
+	if err != nil {
+		h.logger.Error("failed to get billing config",
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"BILLING_CONFIG_FAILED", "Failed to retrieve billing configuration")
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{Data: map[string]any{
+		"top_up":   topUpConfig,
+		"gateways": topUpConfig.Gateways,
 	}})
 }

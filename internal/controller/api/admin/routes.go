@@ -345,6 +345,15 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 			billingGroup.POST("/credit",
 				middleware.RequireAdminPermission(models.PermissionBillingWrite),
 				handler.AdminCreditAdjustment)
+			billingGroup.GET("/payments",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.ListPayments)
+			billingGroup.POST("/refund/:paymentId",
+				middleware.RequireAdminPermission(models.PermissionBillingWrite),
+				handler.RefundPayment)
+			billingGroup.GET("/config",
+				middleware.RequireAdminPermission(models.PermissionBillingRead),
+				handler.GetBillingConfig)
 		}
 
 		// Exchange rate management
