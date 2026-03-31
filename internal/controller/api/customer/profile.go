@@ -22,11 +22,13 @@ type UpdateProfileRequest struct {
 
 // ProfileResponse represents the response data for profile endpoints.
 type ProfileResponse struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Email     string  `json:"email"`
-	Phone     *string `json:"phone,omitempty"`
-	UpdatedAt string  `json:"updated_at"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Email        string  `json:"email"`
+	Phone        *string `json:"phone,omitempty"`
+	AuthProvider string  `json:"auth_provider"`
+	HasPassword  bool    `json:"has_password"`
+	UpdatedAt    string  `json:"updated_at"`
 }
 
 // UpdateProfile handles PUT /profile - updates the authenticated customer's profile.
@@ -96,11 +98,13 @@ func (h *CustomerHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	resp := ProfileResponse{
-		ID:        customer.ID,
-		Name:      customer.Name,
-		Email:     customer.Email,
-		Phone:     customer.Phone,
-		UpdatedAt: customer.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:           customer.ID,
+		Name:         customer.Name,
+		Email:        customer.Email,
+		Phone:        customer.Phone,
+		AuthProvider: customer.AuthProvider,
+		HasPassword:  customer.PasswordHash != nil && *customer.PasswordHash != "",
+		UpdatedAt:    customer.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
 	h.logger.Info("profile updated",
@@ -137,11 +141,13 @@ func (h *CustomerHandler) GetProfile(c *gin.Context) {
 	}
 
 	resp := ProfileResponse{
-		ID:        customer.ID,
-		Name:      customer.Name,
-		Email:     customer.Email,
-		Phone:     customer.Phone,
-		UpdatedAt: customer.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:           customer.ID,
+		Name:         customer.Name,
+		Email:        customer.Email,
+		Phone:        customer.Phone,
+		AuthProvider: customer.AuthProvider,
+		HasPassword:  customer.PasswordHash != nil && *customer.PasswordHash != "",
+		UpdatedAt:    customer.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})

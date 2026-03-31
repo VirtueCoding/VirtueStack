@@ -91,7 +91,8 @@ func (h *AdminHandler) CreateCustomer(c *gin.Context) {
 	customer := &models.Customer{
 		Name:            req.Name,
 		Email:           req.Email,
-		PasswordHash:    passwordHash,
+		PasswordHash:    &passwordHash,
+		AuthProvider:    models.AuthProviderLocal,
 		Phone:           req.Phone,
 		Status:          models.CustomerStatusActive,
 		BillingProvider: util.StringPtr(models.BillingProviderUnmanaged),

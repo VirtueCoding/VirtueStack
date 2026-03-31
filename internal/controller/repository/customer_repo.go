@@ -65,7 +65,7 @@ func scanCustomer(row pgx.Row) (models.Customer, error) {
 	var c models.Customer
 	err := row.Scan(
 		&c.ID, &c.Email, &c.PasswordHash, &c.Name, &c.Phone,
-		&c.WHMCSClientID, &c.BillingProvider, &c.TOTPSecretEncrypted, &c.TOTPEnabled,
+		&c.WHMCSClientID, &c.BillingProvider, &c.AuthProvider, &c.TOTPSecretEncrypted, &c.TOTPEnabled,
 		&c.TOTPBackupCodesHash, &c.TOTPBackupCodesShown, &c.Status,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
@@ -74,7 +74,7 @@ func scanCustomer(row pgx.Row) (models.Customer, error) {
 
 const customerSelectCols = `
 	id, email, password_hash, name, phone,
-	whmcs_client_id, billing_provider, totp_secret_encrypted, totp_enabled,
+	whmcs_client_id, billing_provider, auth_provider, totp_secret_encrypted, totp_enabled,
 	totp_backup_codes_hash, totp_backup_codes_shown, status,
 	created_at, updated_at`
 
@@ -84,13 +84,13 @@ func (r *CustomerRepository) Create(ctx context.Context, customer *models.Custom
 	const q = `
 		INSERT INTO customers (
 			email, password_hash, name, whmcs_client_id, billing_provider,
-			totp_secret_encrypted, totp_enabled, totp_backup_codes_hash, status
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			auth_provider, totp_secret_encrypted, totp_enabled, totp_backup_codes_hash, status
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING ` + customerSelectCols
 
 	row := r.db.QueryRow(ctx, q,
 		customer.Email, customer.PasswordHash, customer.Name, customer.WHMCSClientID, customer.BillingProvider,
-		customer.TOTPSecretEncrypted, customer.TOTPEnabled, customer.TOTPBackupCodesHash, customer.Status,
+		customer.AuthProvider, customer.TOTPSecretEncrypted, customer.TOTPEnabled, customer.TOTPBackupCodesHash, customer.Status,
 	)
 	created, err := scanCustomer(row)
 	if err != nil {

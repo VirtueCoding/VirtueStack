@@ -76,8 +76,9 @@ func (h *CustomerHandler) Register(c *gin.Context) {
 	}
 	customer := &models.Customer{
 		Email:           email,
-		PasswordHash:    passwordHash,
+		PasswordHash:    &passwordHash,
 		Name:            name,
+		AuthProvider:    models.AuthProviderLocal,
 		Status:          status,
 		BillingProvider: util.StringPtr(models.BillingProviderUnmanaged),
 	}

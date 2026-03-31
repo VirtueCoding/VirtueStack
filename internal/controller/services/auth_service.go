@@ -230,3 +230,22 @@ func (s *AuthService) CreateCustomerSSOSession(ctx context.Context, customerID, 
 	s.enforceCustomerSessionLimit(ctx, customerID)
 	return s.createLoginSession(ctx, customerID, "customer", "", ipAddress, userAgent, CustomerRefreshTokenDuration)
 }
+
+// CreateLoginSession creates a new authenticated session for a customer.
+// Exported for use by OAuthService.
+func (s *AuthService) CreateLoginSession(
+	ctx context.Context,
+	userID, userType, role, ipAddress, userAgent string,
+	refreshDuration time.Duration,
+) (*models.AuthTokens, string, error) {
+	return s.createLoginSession(ctx, userID, userType, role,
+		ipAddress, userAgent, refreshDuration)
+}
+
+// EnforceCustomerSessionLimit removes oldest sessions exceeding the limit.
+// Exported for use by OAuthService.
+func (s *AuthService) EnforceCustomerSessionLimit(
+	ctx context.Context, customerID string,
+) {
+	s.enforceCustomerSessionLimit(ctx, customerID)
+}

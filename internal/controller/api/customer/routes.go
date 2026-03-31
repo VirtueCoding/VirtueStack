@@ -53,7 +53,8 @@ func RegisterCustomerRoutes(
 ) {
 	customer := router.Group("/customer")
 
-	registerAuthRoutes(customer, handler, allowSelfRegistration)
+	oauthEnabled := billingCfg.OAuthGoogleEnabled || billingCfg.OAuthGitHubEnabled
+	registerAuthRoutes(customer, handler, allowSelfRegistration, oauthEnabled)
 
 	// Account management routes - JWT only, no API key access
 	// These handle sensitive account-level operations that should require browser session.
@@ -65,6 +66,10 @@ func RegisterCustomerRoutes(
 	registerAPIKeyRoutes(accountGroup, handler)
 	registerWebhookRoutes(accountGroup, handler)
 	register2FARoutes(accountGroup, handler)
+
+	if oauthEnabled {
+		registerOAuthAccountRoutes(accountGroup, handler)
+	}
 
 	// VM/backup/snapshot routes - support both JWT and API key authentication
 	protected := customer.Group("")
@@ -99,24 +104,16 @@ func RegisterCustomerRoutes(
 		registerInAppNotificationRoutes(customer, protected, inAppNotifHandler, handler.authConfig)
 	}
 
-	// Conditional billing routes (stubs for future phases)
+	// Conditional billing routes
 	if billingCfg.NativeBillingEnabled {
 		registerBillingRoutes(accountGroup, handler)
-	}
-
-	// Conditional OAuth routes (stubs for Phase 8)
-	if billingCfg.OAuthGoogleEnabled {
-		// Google OAuth routes will be added in Phase 8
-	}
-	if billingCfg.OAuthGitHubEnabled {
-		// GitHub OAuth routes will be added in Phase 8
 	}
 }
 
 // registerAuthRoutes registers authentication endpoints (no auth required).
 // F-007: LoginRateLimit is applied to /login and /verify-2fa to protect against
 // brute-force attacks. A separate refresh rate limit applies to /refresh.
-func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler, allowSelfRegistration bool) {
+func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler, allowSelfRegistration bool, oauthEnabled bool) {
 	auth := customer.Group("/auth")
 	{
 		// GET /auth/csrf sets the CSRF cookie and returns the token in the X-CSRF-Token header.
@@ -135,6 +132,15 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler, all
 			auth.POST("/register", middleware.RegistrationRateLimit(), handler.Register)
 			auth.POST("/verify-email", middleware.RegistrationRateLimit(), handler.VerifyEmail)
 		}
+
+		if oauthEnabled {
+			oauth := auth.Group("/oauth/:provider")
+			oauth.Use(middleware.LoginRateLimit())
+			{
+				oauth.GET("/authorize", handler.OAuthAuthorize)
+				oauth.POST("/callback", handler.OAuthCallback)
+			}
+		}
 	}
 }
 
@@ -144,6 +150,16 @@ func registerAccountRoutes(protected *gin.RouterGroup, handler *CustomerHandler)
 	protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
 	protected.GET("/profile", handler.GetProfile)
 	protected.PUT("/profile", handler.UpdateProfile)
+}
+
+// registerOAuthAccountRoutes registers OAuth account management endpoints (JWT-only).
+func registerOAuthAccountRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
+	oauth := protected.Group("/account/oauth")
+	{
+		oauth.GET("", handler.ListOAuthLinks)
+		oauth.POST("/:provider/link", handler.LinkOAuthAccount)
+		oauth.DELETE("/:provider", handler.UnlinkOAuthAccount)
+	}
 }
 
 // registerVMRoutes registers VM-related endpoints with permission enforcement.

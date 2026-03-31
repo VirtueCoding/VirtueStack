@@ -52,10 +52,11 @@ func TestAdmin_GetEffectivePermissions_EmptySlice(t *testing.T) {
 
 func TestCustomerPasswordHashNotSerialized(t *testing.T) {
 	// Verify password_hash has json:"-" tag via struct existence
+	hash := "argon2id-hash"
 	c := Customer{
-		PasswordHash: "argon2id-hash",
+		PasswordHash: &hash,
 	}
-	assert.Equal(t, "argon2id-hash", c.PasswordHash)
+	assert.Equal(t, "argon2id-hash", *c.PasswordHash)
 }
 
 func TestAdminTOTPSecretNotSerialized(t *testing.T) {

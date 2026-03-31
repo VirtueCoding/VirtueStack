@@ -1088,3 +1088,58 @@ export const invoiceApi = {
     return `${API_BASE_URL}/customer/invoices/${id}/pdf`;
   },
 };
+
+// --- OAuth API ---
+
+export interface OAuthLink {
+  id: string;
+  provider: string;
+  email: string;
+  display_name: string;
+  avatar_url: string;
+  created_at: string;
+}
+
+export interface OAuthCallbackRequest {
+  code: string;
+  code_verifier: string;
+  redirect_uri: string;
+  state: string;
+}
+
+export const oauthApi = {
+  /** Exchange an OAuth authorization code for session tokens. */
+  async callback(
+    provider: string,
+    request: OAuthCallbackRequest
+  ): Promise<AuthTokens> {
+    await fetchCsrfToken();
+    return apiClient.post<AuthTokens>(
+      `/customer/auth/oauth/${provider}/callback`,
+      request
+    );
+  },
+
+  /** List OAuth providers linked to the authenticated customer. */
+  async listLinks(): Promise<OAuthLink[]> {
+    return apiClient.get<OAuthLink[]>("/customer/account/oauth");
+  },
+
+  /** Link a new OAuth provider to the authenticated customer's account. */
+  async link(
+    provider: string,
+    request: OAuthCallbackRequest
+  ): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>(
+      `/customer/account/oauth/${provider}/link`,
+      request
+    );
+  },
+
+  /** Unlink an OAuth provider from the authenticated customer's account. */
+  async unlink(provider: string): Promise<{ message: string }> {
+    return apiClient.delete<{ message: string }>(
+      `/customer/account/oauth/${provider}`
+    );
+  },
+};

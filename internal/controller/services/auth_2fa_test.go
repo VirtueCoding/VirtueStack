@@ -336,7 +336,7 @@ func TestDisable2FA(t *testing.T) {
 		secret := "encrypted-secret"
 		customer := &models.Customer{
 			ID:                  "test-customer-id",
-			PasswordHash:        passwordHash,
+			PasswordHash:        &passwordHash,
 			TOTPEnabled:         true,
 			TOTPSecretEncrypted: &secret,
 			TOTPBackupCodesHash: []string{"hash1", "hash2"},
@@ -380,7 +380,7 @@ func TestDisable2FA(t *testing.T) {
 		secret := "encrypted-secret"
 		customer := &models.Customer{
 			ID:                  "test-customer-id",
-			PasswordHash:        passwordHash,
+			PasswordHash:        &passwordHash,
 			TOTPEnabled:         true,
 			TOTPSecretEncrypted: &secret,
 		}

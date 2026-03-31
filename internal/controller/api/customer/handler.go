@@ -116,6 +116,7 @@ type CustomerHandler struct {
 	customerService      *services.CustomerService
 	billingLedgerService *services.BillingLedgerService
 	paymentService       *services.PaymentService
+	oauthService         *services.OAuthService
 	vmRepo               *repository.VMRepository
 	nodeRepo             *repository.NodeRepository
 	backupRepo           *repository.BackupRepository
@@ -163,6 +164,7 @@ type CustomerHandlerConfig struct {
 	CustomerService      *services.CustomerService
 	BillingLedgerService *services.BillingLedgerService
 	PaymentService       *services.PaymentService
+	OAuthService         *services.OAuthService
 	VMRepo               *repository.VMRepository
 	NodeRepo             *repository.NodeRepository
 	BackupRepo           *repository.BackupRepository
@@ -200,6 +202,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		customerService:      cfg.CustomerService,
 		billingLedgerService: cfg.BillingLedgerService,
 		paymentService:       cfg.PaymentService,
+		oauthService:         cfg.OAuthService,
 		vmRepo:               cfg.VMRepo,
 		nodeRepo:             cfg.NodeRepo,
 		backupRepo:           cfg.BackupRepo,

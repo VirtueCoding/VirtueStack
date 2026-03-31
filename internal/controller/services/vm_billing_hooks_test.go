@@ -79,14 +79,14 @@ func (r *billingTestCustomerRow) Scan(dest ...any) error {
 		return pgx.ErrNoRows
 	}
 	c := r.customer
-	if len(dest) >= 14 {
+	if len(dest) >= 15 {
 		if v, ok := dest[0].(*string); ok {
 			*v = c.ID
 		}
 		if v, ok := dest[1].(*string); ok {
 			*v = c.Email
 		}
-		if v, ok := dest[2].(*string); ok {
+		if v, ok := dest[2].(**string); ok {
 			*v = c.PasswordHash
 		}
 		if v, ok := dest[3].(*string); ok {
@@ -101,25 +101,28 @@ func (r *billingTestCustomerRow) Scan(dest ...any) error {
 		if v, ok := dest[6].(**string); ok {
 			*v = c.BillingProvider
 		}
-		if v, ok := dest[7].(**string); ok {
+		if v, ok := dest[7].(*string); ok {
+			*v = c.AuthProvider
+		}
+		if v, ok := dest[8].(**string); ok {
 			*v = c.TOTPSecretEncrypted
 		}
-		if v, ok := dest[8].(*bool); ok {
+		if v, ok := dest[9].(*bool); ok {
 			*v = c.TOTPEnabled
 		}
-		if v, ok := dest[9].(*[]string); ok {
+		if v, ok := dest[10].(*[]string); ok {
 			*v = c.TOTPBackupCodesHash
 		}
-		if v, ok := dest[10].(*bool); ok {
+		if v, ok := dest[11].(*bool); ok {
 			*v = c.TOTPBackupCodesShown
 		}
-		if v, ok := dest[11].(*string); ok {
+		if v, ok := dest[12].(*string); ok {
 			*v = c.Status
 		}
-		if v, ok := dest[12].(*interface{}); ok {
+		if v, ok := dest[13].(*interface{}); ok {
 			_ = v
 		}
-		if v, ok := dest[13].(*interface{}); ok {
+		if v, ok := dest[14].(*interface{}); ok {
 			_ = v
 		}
 	}

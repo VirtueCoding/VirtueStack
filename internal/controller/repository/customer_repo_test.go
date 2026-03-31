@@ -94,18 +94,18 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 	}
 	// The actual scanCustomer function scans into 14 fields:
 	// id, email, password_hash, name, phone, whmcs_client_id, billing_provider,
-	// totp_secret_encrypted, totp_enabled, totp_backup_codes_hash, totp_backup_codes_shown,
-	// status, created_at, updated_at
+	// auth_provider, totp_secret_encrypted, totp_enabled, totp_backup_codes_hash,
+	// totp_backup_codes_shown, status, created_at, updated_at
 	// Note: phone, whmcs_client_id, totp_secret_encrypted are pointers to pointers (**string, **int)
 	c := m.customer
-	if len(dest) >= 14 {
+	if len(dest) >= 15 {
 		if id, ok := dest[0].(*string); ok {
 			*id = c.ID
 		}
 		if email, ok := dest[1].(*string); ok {
 			*email = c.Email
 		}
-		if pw, ok := dest[2].(*string); ok {
+		if pw, ok := dest[2].(**string); ok {
 			*pw = c.PasswordHash
 		}
 		if name, ok := dest[3].(*string); ok {
@@ -121,25 +121,28 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 		if bp, ok := dest[6].(**string); ok {
 			*bp = c.BillingProvider
 		}
-		if totpSecret, ok := dest[7].(**string); ok {
+		if ap, ok := dest[7].(*string); ok {
+			*ap = c.AuthProvider
+		}
+		if totpSecret, ok := dest[8].(**string); ok {
 			*totpSecret = c.TOTPSecretEncrypted
 		}
-		if totpEnabled, ok := dest[8].(*bool); ok {
+		if totpEnabled, ok := dest[9].(*bool); ok {
 			*totpEnabled = c.TOTPEnabled
 		}
-		if totpCodes, ok := dest[9].(*[]string); ok {
+		if totpCodes, ok := dest[10].(*[]string); ok {
 			*totpCodes = c.TOTPBackupCodesHash
 		}
-		if totpShown, ok := dest[10].(*bool); ok {
+		if totpShown, ok := dest[11].(*bool); ok {
 			*totpShown = c.TOTPBackupCodesShown
 		}
-		if status, ok := dest[11].(*string); ok {
+		if status, ok := dest[12].(*string); ok {
 			*status = c.Status
 		}
-		if createdAt, ok := dest[12].(*time.Time); ok {
+		if createdAt, ok := dest[13].(*time.Time); ok {
 			*createdAt = c.CreatedAt
 		}
-		if updatedAt, ok := dest[13].(*time.Time); ok {
+		if updatedAt, ok := dest[14].(*time.Time); ok {
 			*updatedAt = c.UpdatedAt
 		}
 	}

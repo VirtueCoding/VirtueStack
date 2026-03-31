@@ -12,6 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/native"
 	"github.com/AbuGosok/VirtueStack/internal/controller/billing/whmcs"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
 	cryptoPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/crypto"
 	paypalPayments "github.com/AbuGosok/VirtueStack/internal/controller/payments/paypal"
@@ -300,6 +301,34 @@ func (s *Server) InitializeServices() error {
 
 	s.customerService = services.NewCustomerService(customerRepo, auditRepo, s.logger)
 
+	// OAuth setup
+	oauthLinkRepo := repository.NewOAuthLinkRepository(s.dbPool)
+	var oauthService *services.OAuthService
+	oauthProviders := make(map[string]services.OAuthProvider)
+	if s.config.OAuth.Google.Enabled {
+		oauthProviders[models.OAuthProviderGoogle] = services.NewGoogleOAuthProvider(
+			s.config.OAuth.Google.ClientID,
+			s.config.OAuth.Google.ClientSecret.Value(),
+		)
+	}
+	if s.config.OAuth.GitHub.Enabled {
+		oauthProviders[models.OAuthProviderGitHub] = services.NewGitHubOAuthProvider(
+			s.config.OAuth.GitHub.ClientID,
+			s.config.OAuth.GitHub.ClientSecret.Value(),
+		)
+	}
+	if len(oauthProviders) > 0 {
+		oauthService = services.NewOAuthService(services.OAuthServiceConfig{
+			OAuthLinkRepo:     oauthLinkRepo,
+			CustomerRepo:      customerRepo,
+			AuthService:       s.authService,
+			Providers:         oauthProviders,
+			EncryptionKey:     s.config.EncryptionKey.Value(),
+			AllowRegistration: s.config.AllowSelfRegistration,
+			Logger:            s.logger,
+		})
+	}
+
 	s.backupService = services.NewBackupService(services.BackupServiceConfig{
 		BackupRepo:    backupRepo,
 		SnapshotRepo:  backupRepo, // Same repo handles snapshots
@@ -396,6 +425,7 @@ func (s *Server) InitializeServices() error {
 		CustomerService: s.customerService,
 		BillingLedgerService: billingLedgerService,
 		PaymentService:       paymentService,
+		OAuthService:    oauthService,
 		VMRepo:          vmRepo,
 		NodeRepo:        nodeRepo,
 		BackupRepo:      backupRepo,

@@ -150,7 +150,11 @@ func (s *AuthService) Disable2FA(ctx context.Context, customerID, password strin
 		return fmt.Errorf("2FA is not enabled")
 	}
 
-	match, err := s.verifyPassword(password, customer.PasswordHash)
+	if customer.PasswordHash == nil {
+		return sharederrors.NewValidationError("password", "no password set — cannot disable 2FA without a password")
+	}
+
+	match, err := s.verifyPassword(password, *customer.PasswordHash)
 	if err != nil {
 		return fmt.Errorf("verifying password: %w", err)
 	}

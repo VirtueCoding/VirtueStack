@@ -467,7 +467,7 @@ func TestRegisterAuthRoutes_SelfRegistrationToggle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
 			customerGroup := r.Group("/customer")
-			registerAuthRoutes(customerGroup, &CustomerHandler{}, tt.allowRegistration)
+			registerAuthRoutes(customerGroup, &CustomerHandler{}, tt.allowRegistration, false)
 
 			routes := r.Routes()
 			hasRegister := slices.ContainsFunc(routes, func(route gin.RouteInfo) bool {

@@ -37,7 +37,15 @@ func (s *AuthService) verifyLoginCredentials(ctx context.Context, email, passwor
 		return nil, fmt.Errorf("getting customer by email: %w", err)
 	}
 
-	match, err := s.verifyPassword(password, customer.PasswordHash)
+	// If customer.PasswordHash is nil, the customer is OAuth-only and
+	// cannot log in with a password.
+	if customer.PasswordHash == nil {
+		s.logger.Warn("password login attempt on OAuth-only account", "customer_id", customer.ID, "email", util.MaskEmail(email))
+		_ = s.customerRepo.RecordFailedLogin(ctx, email)
+		return nil, sharederrors.ErrUnauthorized
+	}
+
+	match, err := s.verifyPassword(password, *customer.PasswordHash)
 	if err != nil {
 		return nil, fmt.Errorf("verifying password: %w", err)
 	}

@@ -24,7 +24,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, oldPassword, n
 		if err != nil {
 			return fmt.Errorf("getting customer: %w", err)
 		}
-		currentHash = customer.PasswordHash
+		if customer.PasswordHash == nil {
+			return sharederrors.NewValidationError("password", "no password set — use account settings to create one")
+		}
+		currentHash = *customer.PasswordHash
 	case "admin":
 		admin, err := s.adminRepo.GetByID(ctx, userID)
 		if err != nil {

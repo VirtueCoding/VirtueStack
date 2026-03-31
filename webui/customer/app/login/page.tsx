@@ -18,6 +18,12 @@ import {
 import { Input } from "@virtuestack/ui";
 import { Label } from "@virtuestack/ui";
 import { useAuth } from "@/lib/auth-context";
+import { OAuthButtons } from "@/components/oauth-buttons";
+
+const OAUTH_GOOGLE_ENABLED =
+  process.env.NEXT_PUBLIC_OAUTH_GOOGLE_ENABLED === "true";
+const OAUTH_GITHUB_ENABLED =
+  process.env.NEXT_PUBLIC_OAUTH_GITHUB_ENABLED === "true";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -166,6 +172,11 @@ export default function LoginPage() {
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isLoading ? "Signing in..." : "Sign In"}
               </Button>
+              <OAuthButtons
+                googleEnabled={OAUTH_GOOGLE_ENABLED}
+                githubEnabled={OAUTH_GITHUB_ENABLED}
+                disabled={isLoading}
+              />
               <Link
                 href="/forgot-password"
                 className="text-sm text-muted-foreground hover:text-primary transition-colors"

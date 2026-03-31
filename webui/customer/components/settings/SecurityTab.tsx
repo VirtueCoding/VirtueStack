@@ -33,6 +33,7 @@ import {
   RefreshCw,
   QrCode,
 } from "lucide-react";
+import { OAuthLinksSection } from "@/components/settings/OAuthLinksSection";
 
 const passwordSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
@@ -522,6 +523,8 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
           </form>
         </DialogContent>
       </Dialog>
+
+      <OAuthLinksSection />
     </>
   );
 }

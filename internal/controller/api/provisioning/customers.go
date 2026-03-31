@@ -106,7 +106,8 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 	customer := &models.Customer{
 		Email:           req.Email,
 		Name:            req.Name,
-		PasswordHash:    passwordHash,
+		PasswordHash:    &passwordHash,
+		AuthProvider:    models.AuthProviderLocal,
 		WHMCSClientID:   req.WHMCSClientID,
 		BillingProvider: util.StringPtr(models.BillingProviderWHMCS),
 		Status:          models.CustomerStatusActive,
