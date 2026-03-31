@@ -93,8 +93,8 @@ func (m mockPlanRow) Scan(dest ...any) error {
 	if m.err != nil {
 		return m.err
 	}
-	// Handle scanPlan case with 18 column pointers
-	if len(dest) >= 18 {
+	// Handle scanPlan case with 20 column pointers
+	if len(dest) >= 20 {
 		if id, ok := dest[0].(*string); ok {
 			*id = m.plan.ID
 		}
@@ -119,34 +119,40 @@ func (m mockPlanRow) Scan(dest ...any) error {
 		if portSpeedMbps, ok := dest[7].(*int); ok {
 			*portSpeedMbps = m.plan.PortSpeedMbps
 		}
-		if priceMonthly, ok := dest[8].(*int64); ok {
+		if priceMonthly, ok := dest[8].(**int64); ok {
 			*priceMonthly = m.plan.PriceMonthly
 		}
-		if priceHourly, ok := dest[9].(*int64); ok {
+		if priceHourly, ok := dest[9].(**int64); ok {
 			*priceHourly = m.plan.PriceHourly
 		}
-		if storageBackend, ok := dest[10].(*string); ok {
+		if priceHourlyStopped, ok := dest[10].(**int64); ok {
+			*priceHourlyStopped = m.plan.PriceHourlyStopped
+		}
+		if currency, ok := dest[11].(*string); ok {
+			*currency = m.plan.Currency
+		}
+		if storageBackend, ok := dest[12].(*string); ok {
 			*storageBackend = m.plan.StorageBackend
 		}
-		if isActive, ok := dest[11].(*bool); ok {
+		if isActive, ok := dest[13].(*bool); ok {
 			*isActive = m.plan.IsActive
 		}
-		if sortOrder, ok := dest[12].(*int); ok {
+		if sortOrder, ok := dest[14].(*int); ok {
 			*sortOrder = m.plan.SortOrder
 		}
-		if createdAt, ok := dest[13].(*time.Time); ok {
+		if createdAt, ok := dest[15].(*time.Time); ok {
 			*createdAt = m.plan.CreatedAt
 		}
-		if updatedAt, ok := dest[14].(*time.Time); ok {
+		if updatedAt, ok := dest[16].(*time.Time); ok {
 			*updatedAt = m.plan.UpdatedAt
 		}
-		if snapshotLimit, ok := dest[15].(*int); ok {
+		if snapshotLimit, ok := dest[17].(*int); ok {
 			*snapshotLimit = m.plan.SnapshotLimit
 		}
-		if backupLimit, ok := dest[16].(*int); ok {
+		if backupLimit, ok := dest[18].(*int); ok {
 			*backupLimit = m.plan.BackupLimit
 		}
-		if isoUploadLimit, ok := dest[17].(*int); ok {
+		if isoUploadLimit, ok := dest[19].(*int); ok {
 			*isoUploadLimit = m.plan.ISOUploadLimit
 		}
 		return nil
@@ -180,7 +186,7 @@ func (m *mockPlanRows) Scan(dest ...any) error {
 	}
 	plan := m.plans[m.idx-1]
 
-	if len(dest) >= 18 {
+	if len(dest) >= 20 {
 		if id, ok := dest[0].(*string); ok {
 			*id = plan.ID
 		}
@@ -205,34 +211,40 @@ func (m *mockPlanRows) Scan(dest ...any) error {
 		if portSpeedMbps, ok := dest[7].(*int); ok {
 			*portSpeedMbps = plan.PortSpeedMbps
 		}
-		if priceMonthly, ok := dest[8].(*int64); ok {
+		if priceMonthly, ok := dest[8].(**int64); ok {
 			*priceMonthly = plan.PriceMonthly
 		}
-		if priceHourly, ok := dest[9].(*int64); ok {
+		if priceHourly, ok := dest[9].(**int64); ok {
 			*priceHourly = plan.PriceHourly
 		}
-		if storageBackend, ok := dest[10].(*string); ok {
+		if priceHourlyStopped, ok := dest[10].(**int64); ok {
+			*priceHourlyStopped = plan.PriceHourlyStopped
+		}
+		if currency, ok := dest[11].(*string); ok {
+			*currency = plan.Currency
+		}
+		if storageBackend, ok := dest[12].(*string); ok {
 			*storageBackend = plan.StorageBackend
 		}
-		if isActive, ok := dest[11].(*bool); ok {
+		if isActive, ok := dest[13].(*bool); ok {
 			*isActive = plan.IsActive
 		}
-		if sortOrder, ok := dest[12].(*int); ok {
+		if sortOrder, ok := dest[14].(*int); ok {
 			*sortOrder = plan.SortOrder
 		}
-		if createdAt, ok := dest[13].(*time.Time); ok {
+		if createdAt, ok := dest[15].(*time.Time); ok {
 			*createdAt = plan.CreatedAt
 		}
-		if updatedAt, ok := dest[14].(*time.Time); ok {
+		if updatedAt, ok := dest[16].(*time.Time); ok {
 			*updatedAt = plan.UpdatedAt
 		}
-		if snapshotLimit, ok := dest[15].(*int); ok {
+		if snapshotLimit, ok := dest[17].(*int); ok {
 			*snapshotLimit = plan.SnapshotLimit
 		}
-		if backupLimit, ok := dest[16].(*int); ok {
+		if backupLimit, ok := dest[18].(*int); ok {
 			*backupLimit = plan.BackupLimit
 		}
-		if isoUploadLimit, ok := dest[17].(*int); ok {
+		if isoUploadLimit, ok := dest[19].(*int); ok {
 			*isoUploadLimit = plan.ISOUploadLimit
 		}
 	}
@@ -259,6 +271,8 @@ func (m *mockPlanRows) FieldDescriptions() []pgconn.FieldDescription {
 	return nil
 }
 
+func int64Ptr(v int64) *int64 { return &v }
+
 // newTestPlan creates a Plan with sensible test defaults.
 func newTestPlan() models.Plan {
 	now := time.Now()
@@ -271,8 +285,9 @@ func newTestPlan() models.Plan {
 		DiskGB:           40,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     999,
-		PriceHourly:      1,
+		PriceMonthly:     int64Ptr(999),
+		PriceHourly:      int64Ptr(1),
+		Currency:         "USD",
 		StorageBackend:   "ceph",
 		IsActive:         true,
 		SortOrder:        1,
@@ -748,8 +763,9 @@ func TestPlanRepository_Update(t *testing.T) {
 				DiskGB:           80,
 				BandwidthLimitGB: 2000,
 				PortSpeedMbps:    2000,
-				PriceMonthly:     1999,
-				PriceHourly:      2,
+				PriceMonthly:     int64Ptr(1999),
+				PriceHourly:      int64Ptr(2),
+				Currency:         "USD",
 				StorageBackend:   "ceph",
 				IsActive:         true,
 				SortOrder:        2,

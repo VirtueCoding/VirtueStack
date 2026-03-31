@@ -564,8 +564,9 @@ func TestPlanCreateRequest_ValidationRules(t *testing.T) {
 				DiskGB:           10,
 				PortSpeedMbps:    100,
 				BandwidthLimitGB: 0,
-				PriceMonthly:     999,
-				PriceHourly:      1,
+				PriceMonthly:     int64Ptr(999),
+				PriceHourly:      int64Ptr(1),
+				Currency:         "USD",
 				StorageBackend:   "ceph",
 				IsActive:         true,
 				SortOrder:        0,
@@ -682,8 +683,9 @@ func TestPlanCreateRequest_ValidationRules(t *testing.T) {
 				MemoryMB:      512,
 				DiskGB:        10,
 				PortSpeedMbps: 100,
-				PriceMonthly:  0,
-				PriceHourly:   0,
+				PriceMonthly:  int64Ptr(0),
+				PriceHourly:   int64Ptr(0),
+				Currency:      "USD",
 			},
 			expectValid: true,
 		},
@@ -700,8 +702,12 @@ func TestPlanCreateRequest_ValidationRules(t *testing.T) {
 				assert.GreaterOrEqual(t, tt.request.DiskGB, 10)
 				assert.GreaterOrEqual(t, tt.request.PortSpeedMbps, 1)
 				assert.GreaterOrEqual(t, tt.request.BandwidthLimitGB, 0)
-				assert.GreaterOrEqual(t, tt.request.PriceMonthly, int64(0))
-				assert.GreaterOrEqual(t, tt.request.PriceHourly, int64(0))
+				if tt.request.PriceMonthly != nil {
+					assert.GreaterOrEqual(t, *tt.request.PriceMonthly, int64(0))
+				}
+				if tt.request.PriceHourly != nil {
+					assert.GreaterOrEqual(t, *tt.request.PriceHourly, int64(0))
+				}
 				assert.GreaterOrEqual(t, tt.request.SortOrder, 0)
 				assert.GreaterOrEqual(t, tt.request.SnapshotLimit, 0)
 				assert.GreaterOrEqual(t, tt.request.BackupLimit, 0)
@@ -867,8 +873,9 @@ func TestPlan_Structure(t *testing.T) {
 		DiskGB:           10,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    100,
-		PriceMonthly:     999,
-		PriceHourly:      1,
+		PriceMonthly:     int64Ptr(999),
+		PriceHourly:      int64Ptr(1),
+		Currency:         "USD",
 		StorageBackend:   "ceph",
 		IsActive:         true,
 		SortOrder:        1,
@@ -885,8 +892,8 @@ func TestPlan_Structure(t *testing.T) {
 	assert.Equal(t, 10, plan.DiskGB)
 	assert.Equal(t, 1000, plan.BandwidthLimitGB)
 	assert.Equal(t, 100, plan.PortSpeedMbps)
-	assert.Equal(t, int64(999), plan.PriceMonthly)
-	assert.Equal(t, int64(1), plan.PriceHourly)
+	assert.Equal(t, int64Ptr(999), plan.PriceMonthly)
+	assert.Equal(t, int64Ptr(1), plan.PriceHourly)
 	assert.Equal(t, "ceph", plan.StorageBackend)
 	assert.True(t, plan.IsActive)
 	assert.Equal(t, 1, plan.SortOrder)
@@ -935,8 +942,9 @@ func TestApplyPlanUpdates(t *testing.T) {
 		DiskGB:           10,
 		BandwidthLimitGB: 100,
 		PortSpeedMbps:    100,
-		PriceMonthly:     999,
-		PriceHourly:      1,
+		PriceMonthly:     int64Ptr(999),
+		PriceHourly:      int64Ptr(1),
+		Currency:         "USD",
 		StorageBackend:   "ceph",
 		IsActive:         true,
 		SortOrder:        1,
@@ -1000,8 +1008,8 @@ func TestApplyPlanUpdates(t *testing.T) {
 			},
 			expectChanged: func(p *models.Plan) bool {
 				return p.BandwidthLimitGB == 500 &&
-					p.PriceMonthly == 1999 &&
-					p.PriceHourly == 2 &&
+					*p.PriceMonthly == 1999 &&
+					*p.PriceHourly == 2 &&
 					p.SortOrder == 10 &&
 					p.SnapshotLimit == 10 &&
 					p.BackupLimit == 5 &&

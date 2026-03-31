@@ -16,6 +16,8 @@ func TestDefaultStorageBackend(t *testing.T) {
 	assert.Equal(t, StorageBackendCeph, DefaultStorageBackend)
 }
 
+func int64Ptr(v int64) *int64 { return &v }
+
 func TestPlan_Fields(t *testing.T) {
 	plan := Plan{
 		ID:               "plan-123",
@@ -26,8 +28,9 @@ func TestPlan_Fields(t *testing.T) {
 		DiskGB:           50,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     500,
-		PriceHourly:      1,
+		PriceMonthly:     int64Ptr(500),
+		PriceHourly:      int64Ptr(1),
+		Currency:         "USD",
 		StorageBackend:   StorageBackendCeph,
 		IsActive:         true,
 		SortOrder:        1,
@@ -42,8 +45,8 @@ func TestPlan_Fields(t *testing.T) {
 	assert.Equal(t, 2, plan.VCPU)
 	assert.Equal(t, 2048, plan.MemoryMB)
 	assert.Equal(t, 50, plan.DiskGB)
-	assert.Equal(t, int64(500), plan.PriceMonthly)
-	assert.Equal(t, int64(1), plan.PriceHourly)
+	assert.Equal(t, int64Ptr(500), plan.PriceMonthly)
+	assert.Equal(t, int64Ptr(1), plan.PriceHourly)
 	assert.Equal(t, 2, plan.SnapshotLimit)
 	assert.Equal(t, 2, plan.BackupLimit)
 	assert.Equal(t, 2, plan.ISOUploadLimit)
@@ -58,8 +61,9 @@ func TestPlanCreateRequest_Fields(t *testing.T) {
 		DiskGB:           100,
 		BandwidthLimitGB: 5000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     2000,
-		PriceHourly:      3,
+		PriceMonthly:     int64Ptr(2000),
+		PriceHourly:      int64Ptr(3),
+		Currency:         "USD",
 		StorageBackend:   "lvm",
 		IsActive:         true,
 		SnapshotLimit:    5,

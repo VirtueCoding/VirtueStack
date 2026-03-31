@@ -36,10 +36,16 @@ func applyPlanUpdates(plan *models.Plan, req models.PlanUpdateRequest) {
 		plan.PortSpeedMbps = *req.PortSpeedMbps
 	}
 	if req.PriceMonthly != nil {
-		plan.PriceMonthly = *req.PriceMonthly
+		plan.PriceMonthly = req.PriceMonthly
 	}
 	if req.PriceHourly != nil {
-		plan.PriceHourly = *req.PriceHourly
+		plan.PriceHourly = req.PriceHourly
+	}
+	if req.PriceHourlyStopped != nil {
+		plan.PriceHourlyStopped = req.PriceHourlyStopped
+	}
+	if req.Currency != nil {
+		plan.Currency = *req.Currency
 	}
 	if req.IsActive != nil {
 		plan.IsActive = *req.IsActive

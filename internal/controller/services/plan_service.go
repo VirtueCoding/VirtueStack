@@ -82,20 +82,27 @@ func (s *PlanService) Create(ctx context.Context, req *models.PlanCreateRequest)
 	}
 
 	plan := &models.Plan{
-		Name:             req.Name,
-		Slug:             req.Slug,
-		VCPU:             req.VCPU,
-		MemoryMB:         req.MemoryMB,
-		DiskGB:           req.DiskGB,
-		BandwidthLimitGB: req.BandwidthLimitGB,
-		PortSpeedMbps:    req.PortSpeedMbps,
-		PriceMonthly:     req.PriceMonthly,
-		PriceHourly:      req.PriceHourly,
-		IsActive:         req.IsActive,
-		SortOrder:        req.SortOrder,
-		SnapshotLimit:    req.SnapshotLimit,
-		BackupLimit:      req.BackupLimit,
-		ISOUploadLimit:   req.ISOUploadLimit,
+		Name:               req.Name,
+		Slug:               req.Slug,
+		VCPU:               req.VCPU,
+		MemoryMB:           req.MemoryMB,
+		DiskGB:             req.DiskGB,
+		BandwidthLimitGB:   req.BandwidthLimitGB,
+		PortSpeedMbps:      req.PortSpeedMbps,
+		PriceMonthly:       req.PriceMonthly,
+		PriceHourly:        req.PriceHourly,
+		PriceHourlyStopped: req.PriceHourlyStopped,
+		IsActive:           req.IsActive,
+		SortOrder:          req.SortOrder,
+		SnapshotLimit:      req.SnapshotLimit,
+		BackupLimit:        req.BackupLimit,
+		ISOUploadLimit:     req.ISOUploadLimit,
+	}
+
+	if req.Currency != "" {
+		plan.Currency = req.Currency
+	} else {
+		plan.Currency = "USD"
 	}
 
 	if req.SnapshotLimit <= 0 {

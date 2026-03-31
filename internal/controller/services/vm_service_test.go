@@ -406,10 +406,13 @@ func TestVMService_PowerAndDeleteConflictPaths(t *testing.T) {
 
 func planRow(id string, isActive bool, diskGB int) []any {
 	now := time.Now().UTC()
+	pm := int64(1000)
+	ph := int64(14)
 	return []any{
 		id, "test-plan", "test-plan", 2, 2048,
 		diskGB, 1000, 1000,
-		1000, 14, models.StorageTypeCeph, isActive,
+		&pm, &ph, (*int64)(nil), "USD",
+		models.StorageTypeCeph, isActive,
 		1, now, now, 2, 2, 2,
 	}
 }

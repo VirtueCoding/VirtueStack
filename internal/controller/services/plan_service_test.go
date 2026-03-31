@@ -143,6 +143,8 @@ func testPlanLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+func int64Ptr(v int64) *int64 { return &v }
+
 // Helper function to create a test plan.
 func testPlan(id, name, slug string) *models.Plan {
 	return &models.Plan{
@@ -154,8 +156,9 @@ func testPlan(id, name, slug string) *models.Plan {
 		DiskGB:           40,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     1000,  // $10.00 in cents
-		PriceHourly:      14,    // $0.14 in cents
+		PriceMonthly:     int64Ptr(1000),  // $10.00 in cents
+		PriceHourly:      int64Ptr(14),    // $0.14 in cents
+		Currency:         "USD",
 		StorageBackend:   models.StorageBackendCeph,
 		IsActive:         true,
 		SortOrder:        1,
@@ -175,8 +178,9 @@ func testPlanCreateRequest(slug string) *models.PlanCreateRequest {
 		DiskGB:           40,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     1000,
-		PriceHourly:      14,
+		PriceMonthly:     int64Ptr(1000),
+		PriceHourly:      int64Ptr(14),
+		Currency:         "USD",
 		IsActive:         true,
 		SortOrder:        1,
 	}
