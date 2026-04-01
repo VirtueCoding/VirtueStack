@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestISOMagicReadBytesReachesPrimaryVolumeDescriptor(t *testing.T) {
-	const iso9660Offset = 0x8001
-	const iso9660IdentifierLength = len("CD001")
+func TestISOMagicReadBytesReachesUDFRecognitionSequence(t *testing.T) {
+	const udfEndOffset = 0x9001
+	const udfIdentifierLength = len("TEA01")
 
-	require.GreaterOrEqual(t, isoMagicReadBytes, iso9660Offset+iso9660IdentifierLength)
+	require.GreaterOrEqual(t, isoMagicReadBytes, udfEndOffset+udfIdentifierLength)
 }
 
 func TestIsValidISOMagic(t *testing.T) {

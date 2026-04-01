@@ -27,9 +27,9 @@ const (
 	maxISOSizeBytes int64 = 10 * 1024 * 1024 * 1024
 
 	// isoMagicReadBytes is the number of bytes read at the start of the file
-	// to detect ISO 9660 / UDF magic identifiers (F-074). The ISO 9660
-	// primary volume descriptor identifier begins at offset 0x8001.
-	isoMagicReadBytes = 0x8001 + len("CD001")
+	// to detect ISO 9660 / UDF magic identifiers (F-074). UDF recognition
+	// markers extend to offset 0x9001.
+	isoMagicReadBytes = 0x9001 + len("TEA01")
 
 	// defaultISOLimit is the default maximum number of ISO files per VM
 	// when the plan does not specify a limit.
