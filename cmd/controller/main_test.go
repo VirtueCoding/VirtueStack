@@ -127,21 +127,58 @@ func TestBuildNodeClient_UsesSecureConstructorWithoutClientCertificate(t *testin
 
 func TestBuildNodeClient_RequiresCAFileInProduction(t *testing.T) {
 	originalLookup := envLookup
+	originalSecure := secureNodeClientFactory
+	originalMTLS := mTLSNodeClientFactory
 	t.Cleanup(func() {
 		envLookup = originalLookup
+		secureNodeClientFactory = originalSecure
+		mTLSNodeClientFactory = originalMTLS
 	})
 	envLookup = func(string) string { return "" }
+	secureCalled := false
+	mTLSCalled := false
+	secureNodeClientFactory = func(string, *slog.Logger) (*controller.NodeClient, error) {
+		secureCalled = true
+		return nil, fmt.Errorf("unexpected secure factory call")
+	}
+	mTLSNodeClientFactory = func(string, string, string, *slog.Logger) (*controller.NodeClient, error) {
+		mTLSCalled = true
+		return nil, fmt.Errorf("unexpected mtls factory call")
+	}
 
-	cfg := &controller.Config{
-		ControllerConfig: &sharedconfig.ControllerConfig{
-			Environment: "production",
+	tests := []struct {
+		name        string
+		environment string
+	}{
+		{
+			name:        "lowercase production",
+			environment: "production",
+		},
+		{
+			name:        "mixed case production",
+			environment: "Production",
 		},
 	}
 
-	client, err := buildNodeClient(cfg, testMainLogger())
-	require.Nil(t, client)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "TLS_CA_FILE must be set in production")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secureCalled = false
+			mTLSCalled = false
+
+			cfg := &controller.Config{
+				ControllerConfig: &sharedconfig.ControllerConfig{
+					Environment: tt.environment,
+				},
+			}
+
+			client, err := buildNodeClient(cfg, testMainLogger())
+			require.Nil(t, client)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "TLS_CA_FILE must be set in production")
+			require.False(t, secureCalled)
+			require.False(t, mTLSCalled)
+		})
+	}
 }
 
 func TestBuildNodeClient_RejectsPartialMTLSConfiguration(t *testing.T) {

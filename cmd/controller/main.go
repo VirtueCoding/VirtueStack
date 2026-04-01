@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -226,7 +227,7 @@ func buildNodeClient(cfg *controller.Config, logger *slog.Logger) (*controller.N
 		return client, nil
 	}
 
-	if cfg.Environment == "production" {
+	if strings.EqualFold(cfg.Environment, "production") {
 		return nil, fmt.Errorf("TLS_CA_FILE must be set in production; refusing to start with insecure node client")
 	}
 
