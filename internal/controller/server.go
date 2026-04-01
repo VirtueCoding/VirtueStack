@@ -68,6 +68,8 @@ type Server struct {
 	router        *gin.Engine
 	httpServer    *http.Server
 	metricsServer *http.Server
+	metricsLn     net.Listener
+	metricsDone   chan struct{}
 	dbPool        *pgxpool.Pool
 	powerDNSDB    *sql.DB // MySQL connection to PowerDNS database
 	natsConn      *nats.Conn
@@ -110,6 +112,8 @@ type Server struct {
 	cryptoWebhookHandler      *webhooks.CryptoWebhookHandler
 	readinessDBPing           func(context.Context) error
 	readinessNATSStatus       func() nats.Status
+	serveHTTPFunc             func(*http.Server, net.Listener) error
+	shutdownHTTPFunc          func(*http.Server, context.Context) error
 }
 
 // NewServer creates a new Controller server.
@@ -320,8 +324,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.logger.Info("starting HTTP server", "address", s.config.ListenAddr)
 
-	err = s.httpServer.Serve(listener)
+	err = s.serveHTTP(listener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			s.logger.Warn("failed to close HTTP listener after startup failure", "error", closeErr)
+		}
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if shutdownErr := s.shutdownMetricsServer(shutdownCtx); shutdownErr != nil {
@@ -346,54 +354,109 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
-	s.metricsServer = &http.Server{
+	metricsServer := &http.Server{
 		Addr:         s.config.MetricsAddr,
 		Handler:      mux,
 		ReadTimeout:  ReadTimeout,
 		WriteTimeout: WriteTimeout,
 		IdleTimeout:  IdleTimeout,
 	}
+	metricsDone := make(chan struct{})
+
+	s.metricsServer = metricsServer
+	s.metricsLn = listener
+	s.metricsDone = metricsDone
 
 	s.logger.Info("starting metrics server", "address", s.config.MetricsAddr)
 
-	go func() {
-		if serveErr := s.metricsServer.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+	go func(server *http.Server, ln net.Listener, done chan struct{}) {
+		defer close(done)
+		if serveErr := server.Serve(ln); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			s.logger.Error("metrics server stopped unexpectedly", "error", serveErr)
 		}
-	}()
+	}(metricsServer, listener, metricsDone)
 
 	return nil
 }
 
 func (s *Server) shutdownMetricsServer(ctx context.Context) error {
-	if s.metricsServer == nil {
+	server := s.metricsServer
+	listener := s.metricsLn
+	done := s.metricsDone
+
+	s.metricsServer = nil
+	s.metricsLn = nil
+	s.metricsDone = nil
+
+	if server == nil {
 		return nil
 	}
-	if err := s.metricsServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("shutting down metrics server: %w", err)
+
+	var shutdownErr error
+	if err := server.Shutdown(ctx); err != nil {
+		shutdownErr = fmt.Errorf("shutting down metrics server: %w", err)
 	}
-	s.metricsServer = nil
-	return nil
+
+	if listener != nil {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("closing metrics listener: %w", err))
+		}
+	}
+
+	if done != nil && ctx.Err() == nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("waiting for metrics server shutdown: %w", ctx.Err()))
+		}
+	}
+
+	return shutdownErr
+}
+
+func (s *Server) serveHTTP(listener net.Listener) error {
+	if s.serveHTTPFunc != nil {
+		return s.serveHTTPFunc(s.httpServer, listener)
+	}
+	return s.httpServer.Serve(listener)
+}
+
+func (s *Server) shutdownHTTP(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	if s.shutdownHTTPFunc != nil {
+		return s.shutdownHTTPFunc(s.httpServer, ctx)
+	}
+	return s.httpServer.Shutdown(ctx)
 }
 
 // Stop gracefully stops the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil {
+	if s.httpServer == nil && s.metricsServer == nil {
 		return nil
 	}
 
 	s.logger.Info("stopping HTTP server")
 
-	// Create shutdown context with deadline
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	var shutdownErr error
 
-	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutting down HTTP server: %w", err)
+	if s.httpServer != nil {
+		httpShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		httpErr := s.shutdownHTTP(httpShutdownCtx)
+		cancel()
+		if httpErr != nil {
+			shutdownErr = fmt.Errorf("shutting down HTTP server: %w", httpErr)
+		}
 	}
 
-	if err := s.shutdownMetricsServer(shutdownCtx); err != nil {
-		return err
+	if s.metricsServer != nil {
+		metricsShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		metricsErr := s.shutdownMetricsServer(metricsShutdownCtx)
+		cancel()
+		if metricsErr != nil {
+			shutdownErr = errors.Join(shutdownErr, metricsErr)
+		}
 	}
 
 	// Close the PowerDNS MySQL connection if it was opened.
@@ -403,6 +466,10 @@ func (s *Server) Stop(ctx context.Context) error {
 		} else {
 			s.logger.Info("PowerDNS MySQL connection closed")
 		}
+	}
+
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 
 	s.logger.Info("HTTP server stopped")

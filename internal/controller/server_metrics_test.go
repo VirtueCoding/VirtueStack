@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -53,29 +54,55 @@ func TestSetupRoutes_PublicEndpoints(t *testing.T) {
 	}
 }
 
-func TestStart_ReleasesMetricsListenerWhenHTTPStartupFails(t *testing.T) {
+func TestStart_ReleasesMetricsListenerWhenHTTPServeFailsAfterMetricsStartup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	httpListener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = httpListener.Close()
-	})
+	httpAddr := reserveTCPAddress(t)
+	metricsAddr := reserveTCPAddress(t)
+
+	server := &Server{
+		config: &config.ControllerConfig{
+			ListenAddr:  httpAddr,
+			MetricsAddr: metricsAddr,
+		},
+		router: gin.New(),
+		logger: testLogger(),
+		serveHTTPFunc: func(_ *http.Server, _ net.Listener) error {
+			return errors.New("simulated serve failure")
+		},
+	}
+	server.setupRoutes()
+
+	err := server.Start(context.Background())
+	require.Error(t, err)
+	require.ErrorContains(t, err, "simulated serve failure")
+
+	metricsListener, listenErr := net.Listen("tcp", metricsAddr)
+	require.NoError(t, listenErr)
+	_ = metricsListener.Close()
+}
+
+func TestStop_ShutsDownMetricsWhenHTTPShutdownFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
 	metricsAddr := reserveTCPAddress(t)
 
 	server := &Server{
 		config: &config.ControllerConfig{
-			ListenAddr:  httpListener.Addr().String(),
 			MetricsAddr: metricsAddr,
 		},
-		router: gin.New(),
-		logger: testLogger(),
+		httpServer: &http.Server{},
+		logger:     testLogger(),
+		shutdownHTTPFunc: func(_ *http.Server, _ context.Context) error {
+			return errors.New("simulated shutdown failure")
+		},
 	}
-	server.setupRoutes()
 
-	err = server.Start(context.Background())
+	require.NoError(t, server.startMetricsHTTPServer(context.Background()))
+
+	err := server.Stop(context.Background())
 	require.Error(t, err)
+	require.ErrorContains(t, err, "simulated shutdown failure")
 
 	metricsListener, listenErr := net.Listen("tcp", metricsAddr)
 	require.NoError(t, listenErr)
