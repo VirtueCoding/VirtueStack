@@ -30,13 +30,14 @@ const (
 
 // NodeClient manages gRPC connections to Node Agents with mTLS.
 type NodeClient struct {
-	conns    map[string]*grpc.ClientConn // nodeID -> connection
-	mu       sync.RWMutex
-	caCert   []byte
-	logger   *slog.Logger
-	tlsCert  string
-	tlsKey   string
-	insecure bool
+	conns             map[string]*grpc.ClientConn // nodeID -> connection
+	mu                sync.RWMutex
+	caCert            []byte
+	logger            *slog.Logger
+	tlsCert           string
+	tlsKey            string
+	insecure          bool
+	afterReadMissHook func()
 }
 
 // NewNodeClient creates a new NodeClient for managing gRPC connections.
@@ -94,6 +95,10 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 		nc.mu.Unlock()
 	}
 
+	if nc.afterReadMissHook != nil {
+		nc.afterReadMissHook()
+	}
+
 	// Create new connection
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
@@ -101,13 +106,6 @@ func (nc *NodeClient) GetConnection(ctx context.Context, nodeID, address string)
 	// Double-check after acquiring write lock - another goroutine may have
 	// created the connection while we waited for the lock.
 	if conn, exists := nc.conns[nodeID]; exists {
-		// Another goroutine beat us - close the connection we just created
-		// to prevent a leak.
-		if err := conn.Close(); err != nil {
-			nc.logger.Warn("failed to close leaked gRPC connection",
-				"node_id", nodeID,
-				"error", err)
-		}
 		return conn, nil
 	}
 

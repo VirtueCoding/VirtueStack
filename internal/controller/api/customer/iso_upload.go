@@ -27,8 +27,9 @@ const (
 	maxISOSizeBytes int64 = 10 * 1024 * 1024 * 1024
 
 	// isoMagicReadBytes is the number of bytes read at the start of the file
-	// to detect ISO 9660 / UDF magic identifiers (F-074).
-	isoMagicReadBytes = 32 * 1024
+	// to detect ISO 9660 / UDF magic identifiers (F-074). The ISO 9660
+	// primary volume descriptor identifier begins at offset 0x8001.
+	isoMagicReadBytes = 0x8001 + len("CD001")
 
 	// defaultISOLimit is the default maximum number of ISO files per VM
 	// when the plan does not specify a limit.
@@ -357,10 +358,9 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 	}, true
 }
 
-// isValidISOMagic checks ISO 9660 and UDF magic signatures in the first bytes of the file.
-// F-074: ISO 9660 Primary Volume Descriptor begins at byte 32768 (sector 16, 2048 bytes/sector).
-// For files smaller than 32768 + 5 bytes the check is skipped (graceful degradation).
-// UDF recognition volume structures also appear in this region.
+// isValidISOMagic checks ISO 9660 and UDF magic signatures in the captured bytes.
+// F-074: ISO 9660 Primary Volume Descriptor begins at byte 32768 (sector 16,
+// 2048 bytes/sector) and the identifier starts at offset 0x8001.
 func isValidISOMagic(buf []byte) bool {
 	// ISO 9660: the Primary Volume Descriptor starts at offset 0x8000 (32768).
 	// The 5-byte identifier "CD001" starts at offset 0x8001.
@@ -373,9 +373,27 @@ func isValidISOMagic(buf []byte) bool {
 		}
 	}
 
-	// If the buffer is too small to reach the ISO 9660 region, skip the check
-	// (graceful degradation for very small test files; in practice real ISOs are large).
-	return len(buf) < iso9660Offset
+	// UDF volume recognition sequence descriptors are recorded in the same
+	// descriptor area, one 2048-byte sector apart.
+	udfMarkers := []struct {
+		offset int
+		magic  []byte
+	}{
+		{offset: 0x8001, magic: []byte("BEA01")},
+		{offset: 0x8801, magic: []byte("NSR02")},
+		{offset: 0x9001, magic: []byte("TEA01")},
+	}
+
+	for _, marker := range udfMarkers {
+		if len(buf) < marker.offset+len(marker.magic) {
+			return false
+		}
+		if !bytes.Equal(buf[marker.offset:marker.offset+len(marker.magic)], marker.magic) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // copyFileWithHash copies data from reader to file while computing SHA256 hash.
@@ -391,7 +409,7 @@ func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath
 	// The buffer only ever needs isoMagicReadBytes worth of data.
 	magicBuf := bytes.NewBuffer(make([]byte, 0, isoMagicReadBytes))
 	teeReader := io.TeeReader(src, magicBuf)
-	limitedMagic := io.LimitReader(teeReader, isoMagicReadBytes)
+	limitedMagic := io.LimitReader(teeReader, int64(isoMagicReadBytes))
 
 	// Write the first isoMagicReadBytes through hasher and dst.
 	multiWriter := io.MultiWriter(dst, hasher)

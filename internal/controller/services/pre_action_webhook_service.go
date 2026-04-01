@@ -55,7 +55,7 @@ func (s *PreActionWebhookService) CheckPreAction(ctx context.Context, event stri
 	webhooks, err := s.repo.ListActiveForEvent(ctx, event)
 	if err != nil {
 		s.logger.Error("failed to list pre-action webhooks", "event", event, "error", err)
-		return nil
+		return fmt.Errorf("failed to load pre-action webhooks for %q: %w", event, sharederrors.ErrForbidden)
 	}
 
 	if len(webhooks) == 0 {
