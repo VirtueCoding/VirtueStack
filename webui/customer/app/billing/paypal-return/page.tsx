@@ -67,7 +67,7 @@ export default function PayPalReturnPage() {
   return (
     <RequireAuth>
       <div className="flex h-screen">
-        <Sidebar collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <header className="flex h-14 items-center justify-between border-b px-4 lg:px-6">
             <MobileNav />
