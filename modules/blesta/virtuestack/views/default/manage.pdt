@@ -1,0 +1,31 @@
+<div class="title_row">
+    <h3>VirtueStack Package Configuration</h3>
+</div>
+<div class="pad">
+    <ul>
+        <li>
+            <label for="virtuestack_plan_id">
+                <?php echo $this->_('Virtuestack.package_fields.plan_id', true);?>
+            </label>
+            <?php $this->Form->fieldText('meta[plan_id]', $this->Html->ifSet($vars->meta['plan_id'] ?? null), ['id' => 'virtuestack_plan_id', 'maxlength' => 36]);?>
+        </li>
+        <li>
+            <label for="virtuestack_template_id">
+                <?php echo $this->_('Virtuestack.package_fields.template_id', true);?>
+            </label>
+            <?php $this->Form->fieldText('meta[template_id]', $this->Html->ifSet($vars->meta['template_id'] ?? null), ['id' => 'virtuestack_template_id', 'maxlength' => 36]);?>
+        </li>
+        <li>
+            <label for="virtuestack_location_id">
+                <?php echo $this->_('Virtuestack.package_fields.location_id', true);?>
+            </label>
+            <?php $this->Form->fieldText('meta[location_id]', $this->Html->ifSet($vars->meta['location_id'] ?? null), ['id' => 'virtuestack_location_id', 'maxlength' => 36]);?>
+        </li>
+        <li>
+            <label for="virtuestack_hostname_prefix">
+                <?php echo $this->_('Virtuestack.package_fields.hostname_prefix', true);?>
+            </label>
+            <?php $this->Form->fieldText('meta[hostname_prefix]', $this->Html->ifSet($vars->meta['hostname_prefix'] ?? null, 'vps'), ['id' => 'virtuestack_hostname_prefix', 'maxlength' => 20]);?>
+        </li>
+    </ul>
+</div>
