@@ -153,13 +153,12 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 	}
 
 	// Handle QCOW source (default)
-	// Validate source disk path against configured StoragePath to prevent traversal
-	if err := validatePath(req.GetSourceDiskPath(), h.server.config.StoragePath); err != nil {
+	sourcePath, err := transferutil.ResolveQCOWSourcePath(req.GetSourceDiskPath(), h.server.config.StoragePath)
+	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid source_disk_path: %v", err)
 	}
 
 	// Get disk info
-	sourcePath := req.GetSourceDiskPath()
 	snapshotName := req.GetSnapshotName()
 
 	// For QCOW with snapshot, export the snapshot

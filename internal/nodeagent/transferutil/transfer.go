@@ -61,6 +61,13 @@ func ResolveLVMSourcePath(sourceDiskPath, snapshotName, requestedVG, configuredV
 	return canonicalLVMPath(vg, lv), nil
 }
 
+func ResolveQCOWSourcePath(sourceDiskPath, storagePath string) (string, error) {
+	if err := validatePathWithin(sourceDiskPath, storagePath); err != nil {
+		return "", err
+	}
+	return filepath.Clean(sourceDiskPath), nil
+}
+
 func ResolveReceiveTarget(storageBackend, targetPath, storagePath, configuredVG, configuredThinPool, requestedVG, requestedThinPool string) (ReceiveTarget, error) {
 	switch storageBackend {
 	case "lvm":

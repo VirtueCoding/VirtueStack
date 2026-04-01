@@ -6,13 +6,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/guest"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/reinstallutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	sharedlibvirtutil "github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
@@ -39,7 +39,7 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 
 	// Stop the VM if running
 	if err := h.server.vmManager.ForceStopVM(ctx, req.GetVmId()); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
+		if !sharederrors.Is(err, sharederrors.ErrNotFound) {
 			logger.Warn("failed to stop VM before reinstall", "error", err)
 		}
 	}
@@ -175,13 +175,12 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			}), nil
 		},
 		func() error {
-			if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
-				if strings.Contains(err.Error(), "not found") {
-					return nil
-				}
-				logger.Warn("failed to delete old domain", "error", err)
-			}
-			return nil
+			return reinstallutil.IgnoreDeleteNotFound(
+				h.server.vmManager.DeleteVM(ctx, req.GetVmId()),
+				func(deleteErr error) bool {
+					return sharederrors.Is(deleteErr, sharederrors.ErrNotFound)
+				},
+			)
 		},
 	)
 	if err != nil {

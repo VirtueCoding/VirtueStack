@@ -40,3 +40,13 @@ func LookupSizingThenDelete(lookup func() (Sizing, error), deleteFunc func() err
 	}
 	return sizing, nil
 }
+
+func IgnoreDeleteNotFound(err error, isNotFound func(error) bool) error {
+	if err == nil {
+		return nil
+	}
+	if isNotFound != nil && isNotFound(err) {
+		return nil
+	}
+	return err
+}

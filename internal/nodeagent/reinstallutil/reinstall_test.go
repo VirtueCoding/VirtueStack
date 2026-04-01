@@ -73,6 +73,49 @@ func TestLookupSizingThenDelete(t *testing.T) {
 	})
 }
 
+func TestIgnoreDeleteNotFound(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		isNotFound func(error) bool
+		wantErr    error
+	}{
+		{
+			name: "returns nil when delete succeeds",
+		},
+		{
+			name: "ignores delete not found errors",
+			err:  assertErr("not found"),
+			isNotFound: func(err error) bool {
+				return errors.Is(err, assertErr("not found"))
+			},
+		},
+		{
+			name: "returns unexpected delete errors",
+			err:  assertErr("delete failed"),
+			isNotFound: func(error) bool {
+				return false
+			},
+			wantErr: assertErr("delete failed"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := IgnoreDeleteNotFound(tt.err, tt.isNotFound)
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("IgnoreDeleteNotFound() error = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("IgnoreDeleteNotFound() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNormalizeSizing(t *testing.T) {
 	tests := []struct {
 		name   string

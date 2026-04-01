@@ -197,6 +197,74 @@ func TestResolveReceiveTarget_RejectsSymlinkEscapes(t *testing.T) {
 	}
 }
 
+func TestResolveQCOWSourcePath_RejectsSymlinkEscapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		prepare  func(t *testing.T, storageRoot, outsideRoot string) string
+		wantErr  bool
+		wantPath func(storageRoot string) string
+	}{
+		{
+			name: "accepts existing source within storage root",
+			prepare: func(t *testing.T, storageRoot, _ string) string {
+				t.Helper()
+				sourcePath := filepath.Join(storageRoot, "vm-1-disk0.qcow2")
+				requireNoError(t, os.WriteFile(sourcePath, []byte("disk"), 0o600))
+				return sourcePath
+			},
+			wantPath: func(storageRoot string) string {
+				return filepath.Join(storageRoot, "vm-1-disk0.qcow2")
+			},
+		},
+		{
+			name: "rejects source symlink escape",
+			prepare: func(t *testing.T, storageRoot, outsideRoot string) string {
+				t.Helper()
+				outsidePath := filepath.Join(outsideRoot, "escaped.qcow2")
+				requireNoError(t, os.WriteFile(outsidePath, []byte("disk"), 0o600))
+				sourcePath := filepath.Join(storageRoot, "vm-1-disk0.qcow2")
+				requireNoError(t, os.Symlink(outsidePath, sourcePath))
+				return sourcePath
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects source path through symlinked parent",
+			prepare: func(t *testing.T, storageRoot, outsideRoot string) string {
+				t.Helper()
+				parentPath := filepath.Join(storageRoot, "vms")
+				requireNoError(t, os.Symlink(outsideRoot, parentPath))
+				outsidePath := filepath.Join(outsideRoot, "vm-1-disk0.qcow2")
+				requireNoError(t, os.WriteFile(outsidePath, []byte("disk"), 0o600))
+				return filepath.Join(parentPath, "vm-1-disk0.qcow2")
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storageRoot := t.TempDir()
+			outsideRoot := t.TempDir()
+
+			sourcePath := tt.prepare(t, storageRoot, outsideRoot)
+			got, err := ResolveQCOWSourcePath(sourcePath, storageRoot)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ResolveQCOWSourcePath() expected error for symlink escape")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveQCOWSourcePath() error = %v", err)
+			}
+			if got != tt.wantPath(storageRoot) {
+				t.Fatalf("ResolveQCOWSourcePath() = %q, want %q", got, tt.wantPath(storageRoot))
+			}
+		})
+	}
+}
+
 func TestReceiveTracker(t *testing.T) {
 	t.Run("accepts sequential chunks and finalizes exact total", func(t *testing.T) {
 		tracker, err := NewReceiveTracker(5)
