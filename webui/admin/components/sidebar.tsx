@@ -1,18 +1,13 @@
 "use client";
 
-import {
-  LogOut,
-  Settings,
-  ChevronLeft,
-} from "lucide-react";
+import { LogOut, Settings, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
-import { adminNavItems } from "@/lib/navigation";
-import { Button } from "@virtuestack/ui";
-import { ScrollArea } from "@virtuestack/ui";
+import { adminNavGroups } from "@/lib/navigation";
+import { Button, ScrollArea } from "@virtuestack/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,76 +34,104 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     ? localPart.slice(0, 2).toUpperCase()
     : "??";
 
-
   return (
     <div
       className={cn(
-        "relative flex h-screen flex-col border-r bg-card transition-all duration-300",
+        "relative flex h-screen flex-col border-r bg-sidebar transition-all duration-300",
         collapsed ? "w-16" : "w-64"
       )}
     >
-      <div className="flex h-14 items-center border-b px-4">
+      <div className="flex h-14 items-center border-b border-sidebar-border px-4">
         {!collapsed && (
-          <span className="text-lg font-semibold">VirtueStack</span>
+          <span className="text-lg font-semibold tracking-tight">
+            VirtueStack
+          </span>
         )}
-        <div className={cn("ml-auto flex items-center gap-1", collapsed && "mx-auto")}>
+        <div
+          className={cn(
+            "ml-auto flex items-center gap-1",
+            collapsed && "mx-auto"
+          )}
+        >
           {!collapsed && <NotificationBell />}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-          >
+          <Button variant="ghost" size="icon" onClick={onToggle}>
             <ChevronLeft
-              className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")}
+              className={cn(
+                "h-4 w-4 transition-transform duration-200",
+                collapsed && "rotate-180"
+              )}
             />
             <span className="sr-only">Toggle sidebar</span>
           </Button>
         </div>
       </div>
 
-      <ScrollArea className="flex-1 py-4">
+      <ScrollArea className="flex-1 py-2">
         <nav className="flex flex-col gap-1 px-2">
-          {adminNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                  collapsed && "justify-center px-2"
-                )}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-            );
-          })}
+          {adminNavGroups.map((group) => (
+            <div key={group.label} className="mt-2 first:mt-0">
+              {!collapsed && (
+                <p className="mb-1 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                  {group.label}
+                </p>
+              )}
+              {collapsed && <div className="mx-auto my-1 h-px w-6 bg-sidebar-border" />}
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    title={collapsed ? item.label : undefined}
+                    className={cn(
+                      "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150",
+                      isActive
+                        ? "bg-primary/10 text-primary dark:text-primary"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                      collapsed && "justify-center px-2"
+                    )}
+                  >
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+                    )}
+                    <Icon
+                      className={cn(
+                        "h-4 w-4 shrink-0 transition-colors",
+                        isActive && "text-primary"
+                      )}
+                    />
+                    {!collapsed && <span>{item.label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </ScrollArea>
 
-      <div className="border-t p-4">
+      <div className="border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               className={cn(
-                "w-full justify-start gap-3",
+                "w-full justify-start gap-3 rounded-lg",
                 collapsed && "justify-center px-2"
               )}
             >
               <Avatar className="h-8 w-8">
                 <AvatarImage src="/avatars/admin.png" alt={userEmail} />
-                <AvatarFallback>{initials}</AvatarFallback>
+                <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                  {initials}
+                </AvatarFallback>
               </Avatar>
               {!collapsed && (
                 <div className="flex flex-col items-start text-xs">
-                  <span className="font-medium">{userEmail}</span>
-                  <span className="text-muted-foreground">{user?.role || "Admin"}</span>
+                  <span className="font-medium">{localPart}</span>
+                  <span className="text-muted-foreground">
+                    {user?.role || "Admin"}
+                  </span>
                 </div>
               )}
             </Button>
