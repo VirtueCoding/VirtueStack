@@ -1,0 +1,294 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go-lint-test:
+    name: Go Lint & Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: virtuestack
+          POSTGRES_PASSWORD: virtuestack_test_password
+          POSTGRES_DB: virtuestack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      nats:
+        image: nats:2.12-alpine
+        ports:
+          - 4222:4222
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libvirt-dev librados-dev librbd-dev
+
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Install golangci-lint
+        run: |
+          GOTOOLCHAIN=go1.26.0 GOBIN=/home/runner/go/bin \
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+
+      - name: Run golangci-lint
+        run: /home/runner/go/bin/golangci-lint run --timeout=5m ./...
+
+      - name: Go Test
+        run: make test-race
+        env:
+          DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@localhost:5432/virtuestack_test?sslmode=disable
+          NATS_URL: nats://localhost:4222
+
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Check proto breaking changes
+        uses: bufbuild/buf-breaking-action@v1
+        with:
+          against: 'https://github.com/AbuGosok/VirtueStack.git#branch=main'
+
+      - name: Install swag
+        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+
+      - name: Validate Swagger spec is up to date
+        run: |
+          make swagger
+          git diff --exit-code docs/swagger.json docs/swagger.yaml
+
+  php-module-check:
+    name: PHP Module Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: PHP syntax check
+        run: find modules/servers/virtuestack -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  frontend-admin:
+    name: Admin Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - run: cd webui && npm ci
+      - run: cd webui && npm run -w @virtuestack/admin-webui lint
+      - run: cd webui && npm run -w @virtuestack/admin-webui type-check
+      - run: cd webui && npm run -w @virtuestack/admin-webui build
+
+  frontend-customer:
+    name: Customer Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - run: cd webui && npm ci
+      - run: cd webui && npm run -w @virtuestack/customer-webui lint
+      - run: cd webui && npm run -w @virtuestack/customer-webui type-check
+      - run: cd webui && npm run -w @virtuestack/customer-webui build
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [go-lint-test, frontend-admin, frontend-customer, php-module-check]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build Controller image
+        run: docker build -f Dockerfile.controller -t virtuestack/controller:${{ github.sha }} -t virtuestack-controller:latest .
+
+      - name: Scan controller image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-controller:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Build Admin WebUI image
+        run: docker build -f Dockerfile.admin-webui -t virtuestack/admin-webui:${{ github.sha }} -t virtuestack-admin-webui:latest .
+
+      - name: Scan admin-webui image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-admin-webui:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Build Customer WebUI image
+        run: docker build -f Dockerfile.customer-webui -t virtuestack/customer-webui:${{ github.sha }} -t virtuestack-customer-webui:latest .
+
+      - name: Scan customer-webui image for vulnerabilities
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        with:
+          image-ref: 'virtuestack-customer-webui:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libvirt-dev librados-dev librbd-dev
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: NPM Audit (Admin)
+        run: cd webui/admin && npm audit --audit-level=high
+
+      - name: NPM Audit (Customer)
+        run: cd webui/customer && npm audit --audit-level=high
+
+  # ===========================================================================
+  # QG-17: SBOM Generation, Artifact Signing, and SLSA Provenance
+  # ===========================================================================
+  # This job runs on main branch pushes (not PRs) to generate:
+  # - Software Bill of Materials (SBOM) in SPDX format
+  # - Signed artifacts using Sigstore/cosign
+  # - SLSA Level 3 provenance attestation
+  # ===========================================================================
+  release-artifacts:
+    name: Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write   # Required for OIDC token for Sigstore
+      contents: read
+      packages: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@3454352a67e1c3f5255b1d3ce0b7b5095b8b28b4 # v3.8.2
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@f3253ca2e4e40c5e3207e1b9b6a8e6d6d2d8c4e5 # v0.17.9
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a1a7b263c95dccbf502a6e0 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Controller image
+        id: build-controller
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.controller
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/controller:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/controller:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Controller image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/controller@${{ steps.build-controller.outputs.digest }}
+
+      - name: Generate Controller SBOM
+        run: |
+          syft ghcr.io/${{ github.repository_owner }}/controller@${{ steps.build-controller.outputs.digest }} \
+            -o spdx-json > controller-sbom.spdx.json
+
+      - name: Upload Controller SBOM
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: controller-sbom
+          path: controller-sbom.spdx.json
+          retention-days: 90
+
+      - name: Build and push Admin WebUI image
+        id: build-admin
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.admin-webui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/admin-webui:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/admin-webui:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Admin WebUI image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/admin-webui@${{ steps.build-admin.outputs.digest }}
+
+      - name: Build and push Customer WebUI image
+        id: build-customer
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.customer-webui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/customer-webui:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/customer-webui:latest
+          sbom: true
+          provenance: true
+
+      - name: Sign Customer WebUI image
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/customer-webui@${{ steps.build-customer.outputs.digest }}
+
+      - name: Generate attestation for Controller
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/controller
+          subject-digest: ${{ steps.build-controller.outputs.digest }}
+          push-to-registry: true

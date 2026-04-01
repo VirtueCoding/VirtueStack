@@ -1,0 +1,11 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/forgot-password/page": "/forgot-password",
+  "/login/page": "/login",
+  "/page": "/",
+  "/reset-password/page": "/reset-password",
+  "/settings/page": "/settings",
+  "/vms/[id]/page": "/vms/[id]",
+  "/vms/page": "/vms"
+}

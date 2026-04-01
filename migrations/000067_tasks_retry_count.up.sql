@@ -1,0 +1,4 @@
+SET lock_timeout = '5s';
+
+ALTER TABLE tasks
+ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;

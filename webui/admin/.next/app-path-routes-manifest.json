@@ -1,0 +1,20 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/audit-logs/page": "/audit-logs",
+  "/backup-schedules/page": "/backup-schedules",
+  "/customers/page": "/customers",
+  "/dashboard/page": "/dashboard",
+  "/failover-requests/page": "/failover-requests",
+  "/ip-sets/page": "/ip-sets",
+  "/login/page": "/login",
+  "/nodes/page": "/nodes",
+  "/page": "/",
+  "/plans/page": "/plans",
+  "/provisioning-keys/page": "/provisioning-keys",
+  "/settings/page": "/settings",
+  "/settings/permissions/page": "/settings/permissions",
+  "/storage-backends/page": "/storage-backends",
+  "/templates/page": "/templates",
+  "/vms/page": "/vms"
+}

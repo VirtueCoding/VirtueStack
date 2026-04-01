@@ -1,0 +1,213 @@
+# =============================================================================
+# VirtueStack Docker Compose - Production Overrides
+# =============================================================================
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # PostgreSQL - Production Settings
+  # ===========================================================================
+  postgres:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+        tag: "{{.Name}}"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-virtuestack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=2621kB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "max_worker_processes=4"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
+      - "-c"
+      - "max_parallel_maintenance_workers=2"
+
+  # ===========================================================================
+  # NATS JetStream - Production Settings
+  # ===========================================================================
+  nats:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        labels: "service"
+        tag: "{{.Name}}"
+    command: >
+      --jetstream
+      --store_dir /data
+      --http_port 8222
+      --cluster_name virtuestack
+      --max_memory_store 1GB
+      --max_file_store 10GB
+      --max_payload 8MB
+      --max_pending 64MB
+      --max_subscriptions 0
+      --max_control_line 4KB
+      --write_deadline 10s
+      --no_advertise
+
+  # ===========================================================================
+  # Controller - Production Settings
+  # ===========================================================================
+  controller:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+        tag: "{{.Name}}"
+    environment:
+      # DATABASE_SSL_MODE controls PostgreSQL SSL verification:
+      # - "disable": No SSL (ONLY safe for single-host Docker deployments on the same machine)
+      # - "require": SSL required, but does not verify server certificate
+      # - "verify-full": SSL required with verified server certificate (recommended for multi-host)
+      # Default is "require" for production security. Set to "verify-full" if using proper TLS certs.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=${DATABASE_SSL_MODE:-require}
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LISTEN_ADDR: :8080
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: "900MiB"
+
+  # ===========================================================================
+  # Admin WebUI - Production Settings
+  # ===========================================================================
+  admin-webui:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        labels: "service"
+        tag: "{{.Name}}"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+
+  # ===========================================================================
+  # Customer WebUI - Production Settings
+  # ===========================================================================
+  customer-webui:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        labels: "service"
+        tag: "{{.Name}}"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+
+  # ===========================================================================
+  # Nginx - Production Settings
+  # ===========================================================================
+  nginx:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+        tag: "{{.Name}}"
+    environment:
+      - TZ=UTC

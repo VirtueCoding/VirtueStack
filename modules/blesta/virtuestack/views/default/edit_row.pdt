@@ -1,0 +1,41 @@
+<div class="title_row">
+    <h3><?php echo $this->_('Virtuestack.edit_row.title', true);?></h3>
+</div>
+<div class="pad">
+    <ul>
+        <li>
+            <label for="hostname">
+                <?php echo $this->_('Virtuestack.edit_row.hostname', true);?>
+            </label>
+            <?php $this->Form->fieldText('hostname', $this->Html->ifSet($vars->hostname), ['id' => 'hostname']);?>
+        </li>
+        <li>
+            <label for="port">
+                <?php echo $this->_('Virtuestack.edit_row.port', true);?>
+            </label>
+            <?php $this->Form->fieldText('port', $this->Html->ifSet($vars->port, '443'), ['id' => 'port', 'size' => 5]);?>
+        </li>
+        <li>
+            <label for="api_key">
+                <?php echo $this->_('Virtuestack.edit_row.api_key', true);?>
+            </label>
+            <?php $this->Form->fieldPassword('api_key', ['id' => 'api_key', 'placeholder' => '••••••••']);?>
+        </li>
+        <li>
+            <label for="use_ssl">
+                <?php echo $this->_('Virtuestack.edit_row.use_ssl', true);?>
+            </label>
+            <?php $this->Form->fieldCheckbox('use_ssl', '1', $this->Html->ifSet($vars->use_ssl, '1') === '1', ['id' => 'use_ssl']);?>
+        </li>
+        <li>
+            <label for="webui_url">
+                <?php echo $this->_('Virtuestack.edit_row.webui_url', true);?>
+            </label>
+            <?php $this->Form->fieldText('webui_url', $this->Html->ifSet($vars->webui_url), ['id' => 'webui_url', 'placeholder' => 'https://panel.example.com']);?>
+        </li>
+        <li>
+            <label for="webhook_secret">Webhook Secret</label>
+            <?php $this->Form->fieldPassword('webhook_secret', ['id' => 'webhook_secret', 'placeholder' => '••••••••']);?>
+        </li>
+    </ul>
+</div>
