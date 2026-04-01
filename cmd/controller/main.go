@@ -189,13 +189,27 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	return server, worker, nil
 }
 
-// buildNodeClient creates a node client using TLS if TLS_CA_FILE is set,
-// or an insecure client for non-production environments.
+// buildNodeClient creates a node client using TLS when TLS_CA_FILE is set.
+// Client-certificate authentication requires TLS_CERT_FILE and TLS_KEY_FILE
+// to be configured together; partial mTLS configuration is rejected.
 func buildNodeClient(cfg *controller.Config, logger *slog.Logger) (*controller.NodeClient, error) {
-	if tlsCAFile := envLookup("TLS_CA_FILE"); tlsCAFile != "" {
-		tlsCertFile := envLookup("TLS_CERT_FILE")
-		tlsKeyFile := envLookup("TLS_KEY_FILE")
-		if tlsCertFile != "" && tlsKeyFile != "" {
+	tlsCAFile := envLookup("TLS_CA_FILE")
+	tlsCertFile := envLookup("TLS_CERT_FILE")
+	tlsKeyFile := envLookup("TLS_KEY_FILE")
+
+	hasCA := tlsCAFile != ""
+	hasCert := tlsCertFile != ""
+	hasKey := tlsKeyFile != ""
+
+	if hasCert != hasKey {
+		return nil, fmt.Errorf("TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty")
+	}
+	if (hasCert || hasKey) && !hasCA {
+		return nil, fmt.Errorf("TLS_CA_FILE must be set when TLS_CERT_FILE and TLS_KEY_FILE are configured")
+	}
+
+	if hasCA {
+		if hasCert {
 			client, err := mTLSNodeClientFactory(tlsCAFile, tlsCertFile, tlsKeyFile, logger)
 			if err != nil {
 				return nil, fmt.Errorf("creating secure node client with client cert (tls_ca_file=%s): %w", tlsCAFile, err)
