@@ -1,28 +1,26 @@
-"use client"
+"use client";
 
-import { useTheme } from "next-themes"
-import { Button } from "@virtuestack/ui"
+import { useTheme } from "next-themes";
+import { Button } from "@virtuestack/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@virtuestack/ui"
-import { Moon, Sun, Monitor } from "lucide-react"
+} from "@virtuestack/ui";
+import { Moon, Sun, Monitor } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 
 export function ThemeToggle() {
-  const { setTheme, theme } = useTheme()
+  const { setTheme, theme } = useTheme();
 
-  const getIcon = () => {
-    switch (theme) {
-      case "light":
-        return <Sun className="h-5 w-5" />
-      case "dark":
-        return <Moon className="h-5 w-5" />
-      default:
-        return <Monitor className="h-5 w-5" />
-    }
-  }
+  const iconMap = {
+    light: Sun,
+    dark: Moon,
+    system: Monitor,
+  } as const;
+
+  const CurrentIcon = iconMap[(theme as keyof typeof iconMap)] || Monitor;
 
   return (
     <DropdownMenu>
@@ -31,9 +29,19 @@ export function ThemeToggle() {
           variant="outline"
           size="icon"
           aria-label="Toggle theme"
-          className="relative"
+          className="relative overflow-hidden"
         >
-          {getIcon()}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={theme}
+              initial={{ y: -20, opacity: 0, rotate: -90 }}
+              animate={{ y: 0, opacity: 1, rotate: 0 }}
+              exit={{ y: 20, opacity: 0, rotate: 90 }}
+              transition={{ duration: 0.15 }}
+            >
+              <CurrentIcon className="h-[1.2rem] w-[1.2rem]" />
+            </motion.div>
+          </AnimatePresence>
           <span className="sr-only">Toggle theme</span>
         </Button>
       </DropdownMenuTrigger>
@@ -52,5 +60,5 @@ export function ThemeToggle() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }
