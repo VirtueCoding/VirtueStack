@@ -1,5 +1,6 @@
-# Build output
+# Build output — controller/webui run in Docker; only node-agent is compiled on host
 bin/
+controller
 
 # Go
 *.exe
@@ -11,6 +12,7 @@ bin/
 *.out
 coverage.html
 coverage.out
+vendor/
 
 # Environment
 .env
@@ -24,19 +26,26 @@ coverage.out
 *.swp
 *.swo
 *~
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+._*
 
-# Node.js
+# Node.js — npm ci runs inside Docker for webui builds
 node_modules/
+.next/
+.turbo/
+.npm/
+npm-debug.log*
 
 # Test artifacts
 tests/e2e/test-results/
 tests/e2e/playwright-report/
 
-# Generated
+# Generated docs (rebuilt with make swagger)
 docs/swagger.json
 docs/swagger.yaml
 
@@ -46,11 +55,22 @@ invoices/
 # Logs
 *.log
 
-# Certificates (generated, not tracked)
+# Certificates (generated, never commit secrets)
 *.pem
 *.key
 *.crt
 !ssl/
 
-# Docker data
+# Docker runtime data
 docker-data/
+postgres-data/
+
+# Backup data
+backups/
+
+# Cloud-init / ISO runtime
+cloudinit/
+iso-storage/
+
+# Go tools cache
+/tmp/
