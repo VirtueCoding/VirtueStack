@@ -192,20 +192,21 @@ type OAuthConfig struct {
 
 // ControllerConfig holds all configuration for the VirtueStack Controller.
 type ControllerConfig struct {
-	DatabaseURL    string   `yaml:"database_url" env:"DATABASE_URL"`
-	JWTSecret      Secret   `yaml:"jwt_secret" env:"JWT_SECRET"`
-	EncryptionKey  Secret   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
-	ListenAddr     string   `yaml:"listen_addr" env:"LISTEN_ADDR"`
-	LogLevel       string   `yaml:"log_level" env:"LOG_LEVEL"`
-	Environment    string   `yaml:"environment" env:"APP_ENV"`
-	ConsoleBaseURL string   `yaml:"console_base_url" env:"CONSOLE_BASE_URL"`
-	CORSOrigins    []string `yaml:"cors_origins" env:"CORS_ORIGINS"`
-	DNSNameservers []string `yaml:"dns_nameservers" env:"DNS_NAMESERVERS"`
-	CephUser       string   `yaml:"ceph_user" env:"CEPH_USER"`
-	CephSecretUUID string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
-	CephMonitors   []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
-	AllowSelfRegistration      bool `yaml:"allow_self_registration" env:"ALLOW_SELF_REGISTRATION"`
-	RegistrationEmailVerification bool `yaml:"registration_email_verification" env:"REGISTRATION_EMAIL_VERIFICATION"`
+	DatabaseURL                   string   `yaml:"database_url" env:"DATABASE_URL"`
+	JWTSecret                     Secret   `yaml:"jwt_secret" env:"JWT_SECRET"`
+	EncryptionKey                 Secret   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
+	ListenAddr                    string   `yaml:"listen_addr" env:"LISTEN_ADDR"`
+	MetricsAddr                   string   `yaml:"metrics_addr" env:"METRICS_ADDR"`
+	LogLevel                      string   `yaml:"log_level" env:"LOG_LEVEL"`
+	Environment                   string   `yaml:"environment" env:"APP_ENV"`
+	ConsoleBaseURL                string   `yaml:"console_base_url" env:"CONSOLE_BASE_URL"`
+	CORSOrigins                   []string `yaml:"cors_origins" env:"CORS_ORIGINS"`
+	DNSNameservers                []string `yaml:"dns_nameservers" env:"DNS_NAMESERVERS"`
+	CephUser                      string   `yaml:"ceph_user" env:"CEPH_USER"`
+	CephSecretUUID                string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
+	CephMonitors                  []string `yaml:"ceph_monitors" env:"CEPH_MONITORS"`
+	AllowSelfRegistration         bool     `yaml:"allow_self_registration" env:"ALLOW_SELF_REGISTRATION"`
+	RegistrationEmailVerification bool     `yaml:"registration_email_verification" env:"REGISTRATION_EMAIL_VERIFICATION"`
 
 	// NATS configuration
 	NATS NATSConfig `yaml:"nats"`
@@ -335,12 +336,13 @@ type NodeAgentConfig struct {
 // Required fields: DatabaseURL, NATS.URL, JWTSecret, EncryptionKey.
 func LoadControllerConfig() (*ControllerConfig, error) {
 	cfg := &ControllerConfig{
-		ListenAddr:     defaultListenAddr,
-		LogLevel:       defaultLogLevel,
-		ConsoleBaseURL: defaultConsoleBaseURL,
-		DNSNameservers: splitAndTrimCSV(defaultDNSNameservers),
-		CephUser:       defaultCephUser,
-		AllowSelfRegistration: false,
+		ListenAddr:                    defaultListenAddr,
+		MetricsAddr:                   ":9091",
+		LogLevel:                      defaultLogLevel,
+		ConsoleBaseURL:                defaultConsoleBaseURL,
+		DNSNameservers:                splitAndTrimCSV(defaultDNSNameservers),
+		CephUser:                      defaultCephUser,
+		AllowSelfRegistration:         false,
 		RegistrationEmailVerification: true,
 		Billing: BillingConfig{
 			Providers: BillingProvidersConfig{
@@ -472,6 +474,9 @@ func applyEnvOverridesCore(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("LISTEN_ADDR"); v != "" {
 		cfg.ListenAddr = v
+	}
+	if v := os.Getenv("METRICS_ADDR"); v != "" {
+		cfg.MetricsAddr = v
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v

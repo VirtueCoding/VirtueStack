@@ -1,17 +1,13 @@
 package admin
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 func (h *AdminHandler) ListSystemWebhooks(c *gin.Context) {
@@ -108,14 +104,3 @@ func (h *AdminHandler) DeleteSystemWebhook(c *gin.Context) {
 	h.logAuditEvent(c, "system_webhook.delete", "system_webhook", id, nil, true)
 	c.Status(http.StatusNoContent)
 }
-
-// helper kept local for future system webhook secret rotation workflows.
-func generateSystemWebhookSecret() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generating system webhook secret: %w", err)
-	}
-	return hex.EncodeToString(b), nil
-}
-
-var _ = uuid.Nil

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -63,17 +64,18 @@ const (
 
 // Server represents the VirtueStack Controller HTTP server.
 type Server struct {
-	config     *config.ControllerConfig
-	router     *gin.Engine
-	httpServer *http.Server
-	dbPool     *pgxpool.Pool
-	powerDNSDB *sql.DB // MySQL connection to PowerDNS database
-	natsConn   *nats.Conn
-	jetstream  nats.JetStreamContext
-	taskWorker *tasks.Worker
-	logger     *slog.Logger
-	nodeClient *NodeClient
-	storage    services.TemplateStorage
+	config        *config.ControllerConfig
+	router        *gin.Engine
+	httpServer    *http.Server
+	metricsServer *http.Server
+	dbPool        *pgxpool.Pool
+	powerDNSDB    *sql.DB // MySQL connection to PowerDNS database
+	natsConn      *nats.Conn
+	jetstream     nats.JetStreamContext
+	taskWorker    *tasks.Worker
+	logger        *slog.Logger
+	nodeClient    *NodeClient
+	storage       services.TemplateStorage
 	// Services
 	vmService                  *services.VMService
 	authService                *services.AuthService
@@ -94,20 +96,20 @@ type Server struct {
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
-	provisioningHandler        *provisioning.ProvisioningHandler
-	customerHandler            *customer.CustomerHandler
-	adminHandler               *admin.AdminHandler
-	notifyHandler              *customer.NotificationsHandler
-	customerInAppNotifHandler  *customer.InAppNotificationsHandler
-	adminInAppNotifHandler     *admin.AdminInAppNotificationsHandler
-	sseHub                     *services.SSEHub
-	inAppNotifService          *services.InAppNotificationService
-	stripeWebhookHandler       *webhooks.StripeWebhookHandler
-	paypalProvider             *paypalPayments.Provider
-	paypalWebhookHandler       *webhooks.PayPalWebhookHandler
-	cryptoWebhookHandler       *webhooks.CryptoWebhookHandler
-	readinessDBPing            func(context.Context) error
-	readinessNATSStatus        func() nats.Status
+	provisioningHandler       *provisioning.ProvisioningHandler
+	customerHandler           *customer.CustomerHandler
+	adminHandler              *admin.AdminHandler
+	notifyHandler             *customer.NotificationsHandler
+	customerInAppNotifHandler *customer.InAppNotificationsHandler
+	adminInAppNotifHandler    *admin.AdminInAppNotificationsHandler
+	sseHub                    *services.SSEHub
+	inAppNotifService         *services.InAppNotificationService
+	stripeWebhookHandler      *webhooks.StripeWebhookHandler
+	paypalProvider            *paypalPayments.Provider
+	paypalWebhookHandler      *webhooks.PayPalWebhookHandler
+	cryptoWebhookHandler      *webhooks.CryptoWebhookHandler
+	readinessDBPing           func(context.Context) error
+	readinessNATSStatus       func() nats.Status
 }
 
 // NewServer creates a new Controller server.
@@ -197,9 +199,6 @@ func (s *Server) setupRoutes() {
 	// Health check endpoints
 	s.router.GET("/health", s.healthHandler)
 	s.router.GET("/ready", s.readinessHandler)
-
-	// Metrics endpoint
-	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Provisioning API (WHMCS) - requires API key authentication
 	// Note: Handlers are nil until InitializeServices is called
@@ -307,12 +306,48 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:  IdleTimeout,
 	}
 
+	if err := s.startMetricsHTTPServer(ctx); err != nil {
+		return err
+	}
+
 	s.logger.Info("starting HTTP server", "address", s.config.ListenAddr)
 
 	err := s.httpServer.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("starting HTTP server: %w", err)
 	}
+
+	return nil
+}
+
+func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
+	if s.config == nil || s.config.MetricsAddr == "" {
+		return nil
+	}
+
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.config.MetricsAddr)
+	if err != nil {
+		return fmt.Errorf("listening on metrics address %s: %w", s.config.MetricsAddr, err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+
+	s.metricsServer = &http.Server{
+		Addr:         s.config.MetricsAddr,
+		Handler:      mux,
+		ReadTimeout:  ReadTimeout,
+		WriteTimeout: WriteTimeout,
+		IdleTimeout:  IdleTimeout,
+	}
+
+	s.logger.Info("starting metrics server", "address", s.config.MetricsAddr)
+
+	go func() {
+		if serveErr := s.metricsServer.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			s.logger.Error("metrics server stopped unexpectedly", "error", serveErr)
+		}
+	}()
 
 	return nil
 }
@@ -331,6 +366,12 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutting down HTTP server: %w", err)
+	}
+
+	if s.metricsServer != nil {
+		if err := s.metricsServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutting down metrics server: %w", err)
+		}
 	}
 
 	// Close the PowerDNS MySQL connection if it was opened.
