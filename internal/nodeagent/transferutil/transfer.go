@@ -1,8 +1,11 @@
 package transferutil
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +17,11 @@ var (
 
 	ErrInvalidOffset = errors.New("invalid transfer offset")
 	ErrTransferSize  = errors.New("invalid transfer size")
+	ErrCreateImage   = errors.New("create transfer image")
+	ErrOpenTarget    = errors.New("open transfer target")
+	ErrReadProcess   = errors.New("read process output")
+	ErrSendProcess   = errors.New("send process chunk")
+	ErrWaitProcess   = errors.New("wait for process")
 )
 
 type ReceiveTarget struct {
@@ -122,6 +130,101 @@ func ValidateTransferredBytes(expected, actual int64) error {
 		return fmt.Errorf("%w: expected %d bytes, received %d", ErrTransferSize, expected, actual)
 	}
 	return nil
+}
+
+func WriteFull(writer io.Writer, data []byte) error {
+	n, err := writer.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func SeekAndWriteFull(writer io.WriteSeeker, offset int64, data []byte) error {
+	if _, err := writer.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	return WriteFull(writer, data)
+}
+
+func OpenLVMReceiveTarget(
+	ctx context.Context,
+	imageID string,
+	sizeGB int,
+	openPath string,
+	createImage func(context.Context, string, int) error,
+	openFile func(string) (*os.File, error),
+	deleteImage func(context.Context, string) error,
+) (*os.File, func() error, error) {
+	if err := createImage(ctx, imageID, sizeGB); err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrCreateImage, err)
+	}
+
+	file, err := openFile(openPath)
+	if err != nil {
+		cleanupErr := deleteImage(ctx, imageID)
+		if cleanupErr != nil {
+			return nil, nil, errors.Join(fmt.Errorf("%w: %w", ErrOpenTarget, err), cleanupErr)
+		}
+		return nil, nil, fmt.Errorf("%w: %w", ErrOpenTarget, err)
+	}
+
+	rollback := func() error {
+		return deleteImage(ctx, imageID)
+	}
+	return file, rollback, nil
+}
+
+func StreamProcessOutput(
+	reader io.Reader,
+	totalSize int64,
+	send func(offset, total int64, data []byte) error,
+	terminate func() error,
+	wait func() error,
+) (int64, error) {
+	buf := make([]byte, 64*1024)
+	var bytesSent int64
+
+	waitForExit := func(baseErr error) error {
+		waitErr := wait()
+		if waitErr != nil {
+			return errors.Join(baseErr, waitErr)
+		}
+		return baseErr
+	}
+
+	terminateAndWait := func(baseErr error) error {
+		terminateErr := terminate()
+		if terminateErr != nil {
+			baseErr = errors.Join(baseErr, terminateErr)
+		}
+		return waitForExit(baseErr)
+	}
+
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			if sendErr := send(bytesSent, totalSize, buf[:n]); sendErr != nil {
+				return bytesSent, terminateAndWait(fmt.Errorf("%w: %w", ErrSendProcess, sendErr))
+			}
+			bytesSent += int64(n)
+		}
+
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			waitErr := waitForExit(nil)
+			if waitErr != nil {
+				return bytesSent, fmt.Errorf("%w: %w", ErrWaitProcess, waitErr)
+			}
+			return bytesSent, nil
+		}
+		return bytesSent, terminateAndWait(fmt.Errorf("%w: %w", ErrReadProcess, err))
+	}
 }
 
 func validatePathWithin(path, allowedPrefix string) error {
