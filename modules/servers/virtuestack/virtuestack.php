@@ -291,7 +291,7 @@ function virtuestack_CreateAccount(array $params): string
             'plan_id'          => $planId,
             'template_id'      => $templateId,
             'hostname'         => $hostname,
-            'whmcs_service_id' => $serviceId,
+            'external_service_id' => $serviceId,
         ];
 
         if (!empty($locationId)) {
@@ -1027,7 +1027,8 @@ function virtuestack_ensureCustomer(array $params, ApiClient $client, int $clien
     $created = $client->createCustomer([
         'email' => $email,
         'name' => $name,
-        'whmcs_client_id' => $clientId,
+        'external_client_id' => $clientId,
+        'billing_provider' => 'whmcs',
     ]);
 
     $createdCustomerId = (string) ($created['id'] ?? $created['customer_id'] ?? '');

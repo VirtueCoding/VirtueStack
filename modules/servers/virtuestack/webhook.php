@@ -96,7 +96,7 @@ function handleWebhook(): void
     $eventType = isset($data['event']) && is_string($data['event']) ? trim($data['event']) : '';
     $taskId = isset($data['task_id']) && is_string($data['task_id']) ? trim($data['task_id']) : '';
     $vmId = isset($data['vm_id']) && is_string($data['vm_id']) ? trim($data['vm_id']) : '';
-    $whmcsServiceId = isset($data['whmcs_service_id']) && is_int($data['whmcs_service_id']) ? $data['whmcs_service_id'] : 0;
+    $externalServiceId = isset($data['external_service_id']) && is_int($data['external_service_id']) ? $data['external_service_id'] : 0;
     $result = isset($data['result']) && is_array($data['result']) ? $data['result'] : [];
     $timestamp = isset($data['timestamp']) && is_string($data['timestamp']) ? trim($data['timestamp']) : date('c');
 
@@ -129,38 +129,38 @@ function handleWebhook(): void
     logWebhook('info', "Received webhook: {$eventType}", [
         'task_id' => $taskId,
         'vm_id' => $vmId,
-        'service_id' => $whmcsServiceId,
+        'service_id' => $externalServiceId,
     ]);
 
     try {
         switch ($eventType) {
             case 'vm.created':
-                handleVMCreated($taskId, $vmId, $whmcsServiceId, $result);
+                handleVMCreated($taskId, $vmId, $externalServiceId, $result);
                 break;
 
             case 'vm.creation_failed':
-                handleVMCreationFailed($taskId, $whmcsServiceId, $data);
+                handleVMCreationFailed($taskId, $externalServiceId, $data);
                 break;
 
             case 'vm.deleted':
-                handleVMDeleted($vmId, $whmcsServiceId);
+                handleVMDeleted($vmId, $externalServiceId);
                 break;
 
             case 'vm.suspended':
-                handleVMSuspended($vmId, $whmcsServiceId);
+                handleVMSuspended($vmId, $externalServiceId);
                 break;
 
             case 'vm.unsuspended':
-                handleVMUnsuspended($vmId, $whmcsServiceId);
+                handleVMUnsuspended($vmId, $externalServiceId);
                 break;
 
             case 'vm.resized':
-                handleVMResized($vmId, $whmcsServiceId, $result);
+                handleVMResized($vmId, $externalServiceId, $result);
                 break;
 
             case 'vm.started':
-                if ($whmcsServiceId > 0) {
-                    updateServiceField($whmcsServiceId, 'vm_status', 'running');
+                if ($externalServiceId > 0) {
+                    updateServiceField($externalServiceId, 'vm_status', 'running');
                 } else if (!empty($vmId)) {
                     $serviceId = findServiceByVmId($vmId);
                     if ($serviceId > 0) {
@@ -170,8 +170,8 @@ function handleWebhook(): void
                 break;
 
             case 'vm.stopped':
-                if ($whmcsServiceId > 0) {
-                    updateServiceField($whmcsServiceId, 'vm_status', 'stopped');
+                if ($externalServiceId > 0) {
+                    updateServiceField($externalServiceId, 'vm_status', 'stopped');
                 } else if (!empty($vmId)) {
                     $serviceId = findServiceByVmId($vmId);
                     if ($serviceId > 0) {
@@ -181,42 +181,42 @@ function handleWebhook(): void
                 break;
 
             case 'vm.reinstalled':
-                if ($whmcsServiceId > 0) {
-                    updateServiceField($whmcsServiceId, 'provisioning_status', 'active');
-                    updateServiceField($whmcsServiceId, 'vm_status', 'running');
-                    logActivity("VirtueStack: VM reinstalled for service {$whmcsServiceId}");
+                if ($externalServiceId > 0) {
+                    updateServiceField($externalServiceId, 'provisioning_status', 'active');
+                    updateServiceField($externalServiceId, 'vm_status', 'running');
+                    logActivity("VirtueStack: VM reinstalled for service {$externalServiceId}");
                 }
                 break;
 
             case 'vm.migrated':
-                if ($whmcsServiceId > 0) {
+                if ($externalServiceId > 0) {
                     $newNodeId = $data['node_id'] ?? '';
                     // SECURITY: Validate node_id is a valid UUID before storing
                     if (!empty($newNodeId) && !VirtueStackHelper::isValidUuid($newNodeId)) {
                         logWebhook('warning', "Invalid node_id received in vm.migrated webhook", [
                             'node_id' => $newNodeId,
-                            'service_id' => $whmcsServiceId,
+                            'service_id' => $externalServiceId,
                         ]);
                         break;
                     }
-                    updateServiceField($whmcsServiceId, 'node_id', $newNodeId);
-                    logActivity("VirtueStack: VM migrated for service {$whmcsServiceId} to node {$newNodeId}");
+                    updateServiceField($externalServiceId, 'node_id', $newNodeId);
+                    logActivity("VirtueStack: VM migrated for service {$externalServiceId} to node {$newNodeId}");
                 }
                 break;
 
             case 'backup.completed':
-                if ($whmcsServiceId > 0) {
-                    logActivity("VirtueStack: Backup completed for service {$whmcsServiceId}");
+                if ($externalServiceId > 0) {
+                    logActivity("VirtueStack: Backup completed for service {$externalServiceId}");
                 }
                 break;
 
             case 'backup.failed':
-                if ($whmcsServiceId > 0) {
+                if ($externalServiceId > 0) {
                     $errorMsg = $data['message'] ?? $data['error'] ?? 'Unknown error';
-                    logActivity("VirtueStack: Backup FAILED for service {$whmcsServiceId}: {$errorMsg}");
+                    logActivity("VirtueStack: Backup FAILED for service {$externalServiceId}: {$errorMsg}");
                     notifyAdmin(
                         'VirtueStack Backup Failure',
-                        "Backup failed for service ID {$whmcsServiceId}\n\nError: {$errorMsg}"
+                        "Backup failed for service ID {$externalServiceId}\n\nError: {$errorMsg}"
                     );
                 }
                 break;

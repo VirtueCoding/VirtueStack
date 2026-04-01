@@ -95,7 +95,7 @@ final class ApiClient
      *                      - plan_id (string, UUID): Plan ID
      *                      - template_id (string, UUID): Template ID
      *                      - hostname (string): VM hostname
-     *                      - whmcs_service_id (int): WHMCS service ID
+     *                      - external_service_id (int): External billing service ID
      *                      - ssh_keys (array, optional): SSH public keys
      *                      - location_id (string, optional): Location ID
      *
@@ -105,11 +105,11 @@ final class ApiClient
      */
     public function createVM(array $params): array
     {
-        $required = ['customer_id', 'plan_id', 'template_id', 'hostname', 'whmcs_service_id'];
+        $required = ['customer_id', 'plan_id', 'template_id', 'hostname', 'external_service_id'];
         $this->validateRequired($params, $required);
 
         // SECURITY: Generate idempotency key from service_id to prevent duplicate VMs on retry
-        $idempotencyKey = 'whmcs-service-' . $params['whmcs_service_id'];
+        $idempotencyKey = 'whmcs-service-' . $params['external_service_id'];
 
         $response = $this->request('POST', '/provisioning/vms', $params, $idempotencyKey);
 
@@ -415,7 +415,7 @@ final class ApiClient
             throw new InvalidArgumentException('Service ID must be a positive integer');
         }
 
-        $payload = ['whmcs_service_id' => $serviceId];
+        $payload = ['external_service_id' => $serviceId];
         if (!empty($vmId)) {
             $this->validateUuid($vmId, 'VM ID');
             $payload['vm_id'] = $vmId;
