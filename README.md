@@ -33,7 +33,8 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 - **Distributed** - Scale across multiple hypervisor nodes
 - **Flexible Storage** - Ceph RBD, QCOW2, or LVM thin-provisioned backends
 - **Live Migration** - Zero-downtime VM movement
-- **API Integration** - REST API for WHMCS and custom billing
+- **API Integration** - Neutral Provisioning REST API for WHMCS, Blesta, or custom billing
+- **Built-in Billing** - Native credit-based billing with Stripe, PayPal, and crypto payments
 - **High Availability** - Automatic node failover with IPMI fencing
 - **Monitoring** - Prometheus metrics with Grafana dashboards
 
@@ -59,6 +60,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | PowerDNS rDNS | ✅ Reverse DNS with MySQL direct access, IPv4+IPv6 PTR |
 | IPv6 Support | ✅ /48 prefix allocation, /64 per-VM subnets |
 | WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module with SSO token exchange |
+| Blesta Integration | ✅ Server module with provisioning, suspend, unsuspend, terminate, SSO |
 | ISO Management | ✅ Upload, attach, detach ISOs with plan-based limits and SHA256 validation |
 | Webhooks | ✅ Customer webhook delivery with retry and logging |
 | System Webhooks | ✅ Admin-managed webhooks for system events (node/failover/storage) |
@@ -81,6 +83,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
 | Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
 | Row Level Security | ✅ PostgreSQL RLS for customer data isolation |
+| OAuth Login | ✅ Google and GitHub OAuth with PKCE for customer registration/login |
 | Email Verification | ✅ Token-based email verification for customer registration |
 | Circuit Breaker | ✅ Resilience pattern preventing cascading failures to node agents |
 
@@ -93,12 +96,26 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Alerting Rules | ✅ Prometheus alerting configuration |
 | Background Collector | ✅ Periodic resource and health data collection |
 
+### Billing & Payments
+
+| Feature | Status |
+|---------|--------|
+| Multi-Provider Billing | ✅ WHMCS (external), Blesta (external), Native (built-in credit-based) |
+| Credit Ledger | ✅ Immutable transaction log with SELECT FOR UPDATE consistency |
+| Payment Gateways | ✅ Stripe Checkout, PayPal Orders API, BTCPay Server, NOWPayments |
+| Hourly VM Billing | ✅ Automatic usage-based charging with advisory locks for HA |
+| Invoice Generation | ✅ Invoice creation with PDF export (go-pdf/fpdf) |
+| Exchange Rates | ✅ Multi-currency support with admin-managed rates |
+| In-App Notifications | ✅ Notification center with Server-Sent Events (SSE) real-time delivery |
+| OAuth Registration | ✅ Google and GitHub OAuth with PKCE for customer login/registration |
+| Neutral Provisioning API | ✅ Billing-system-agnostic API with external_service_id/external_client_id |
+
 ### Web Interfaces
 
 | Portal | Technology | Pages |
 |--------|------------|-------|
-| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Storage Backends, Provisioning Keys, Failover Requests, Audit Logs, Settings (incl. Permissions) |
-| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, rDNS), Settings (profile, 2FA, API keys, webhooks, notifications), Forgot/Reset Password |
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Storage Backends, Provisioning Keys, Failover Requests, Audit Logs, Settings (incl. Permissions), Billing (transactions + payments), Invoices, Exchange Rates |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, rDNS), Settings (profile, 2FA, API keys, webhooks, notifications), Billing (balance, top-up, transactions, payments), Invoices, Notification Bell + SSE, OAuth Login, Forgot/Reset Password |
 
 ### API System
 
@@ -152,6 +169,7 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 | Layer | Technologies |
 |-------|-------------|
 | **Backend** | Go 1.26, Gin, gRPC, NATS JetStream, PostgreSQL |
+| **Billing** | Stripe, PayPal, BTCPay Server, NOWPayments, go-pdf/fpdf |
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui |
 | **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2/LVM, Docker, Nginx |
 
@@ -328,7 +346,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 |-----------|--------|
 | Controller APIs | 100% |
 | Node Agent | 100% |
-| Database Schema (71 migrations) | 100% |
+| Database Schema (80 migrations) | 100% |
 | Authentication (JWT, 2FA, API Keys, SSO) | 100% |
 | VM Lifecycle | 100% |
 | Storage (Ceph RBD + QCOW + LVM) | 100% |
@@ -341,6 +359,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 | WebSocket Console | 100% |
 | Web UIs | 100% |
 | WHMCS Module | 100% |
+| Blesta Module | 100% |
+| Billing System (Native + WHMCS + Blesta) | 100% |
+| Payment Gateways (Stripe, PayPal, Crypto) | 100% |
+| Invoicing & PDF Export | 100% |
+| In-App Notifications + SSE | 100% |
+| OAuth (Google, GitHub) | 100% |
 | Networking | 100% |
 | HA Failover | 100% |
 | PowerDNS rDNS | 100% |
