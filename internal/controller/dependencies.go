@@ -174,7 +174,9 @@ func (s *Server) InitializeServices() error {
 		if err := stripeProvider.ValidateConfig(); err != nil {
 			return fmt.Errorf("stripe config validation: %w", err)
 		}
-		paymentRegistry.Register("stripe", stripeProvider)
+		if err := paymentRegistry.Register("stripe", stripeProvider); err != nil {
+			return fmt.Errorf("register stripe payment provider: %w", err)
+		}
 		s.logger.Info("stripe payment provider registered")
 	}
 
@@ -193,7 +195,9 @@ func (s *Server) InitializeServices() error {
 		if err := paypalProvider.ValidateConfig(); err != nil {
 			return fmt.Errorf("paypal config validation: %w", err)
 		}
-		paymentRegistry.Register("paypal", paypalProvider)
+		if err := paymentRegistry.Register("paypal", paypalProvider); err != nil {
+			return fmt.Errorf("register paypal payment provider: %w", err)
+		}
 		s.paypalProvider = paypalProvider
 		s.logger.Info("paypal payment provider registered",
 			"mode", s.config.PayPal.Mode)
@@ -220,7 +224,9 @@ func (s *Server) InitializeServices() error {
 			return fmt.Errorf("initialize crypto provider: %w", err)
 		}
 		if cryptoProvider != nil {
-			paymentRegistry.Register("crypto", cryptoPayments.NewAdapter(cryptoProvider))
+			if err := paymentRegistry.Register("crypto", cryptoPayments.NewAdapter(cryptoProvider)); err != nil {
+				return fmt.Errorf("register crypto payment provider: %w", err)
+			}
 			s.logger.Info("crypto payment provider registered",
 				"provider", cryptoProvider.ProviderName())
 		}
@@ -432,38 +438,38 @@ func (s *Server) InitializeServices() error {
 	}
 
 	s.customerHandler = customer.NewCustomerHandler(customer.CustomerHandlerConfig{
-		VMService:       s.vmService,
-		BackupService:   s.backupService,
-		AuthService:     s.authService,
-		TemplateService: s.templateService,
-		WebhookService:  webhookService,
-		CustomerService: s.customerService,
-		BillingLedgerService: billingLedgerService,
-		PaymentService:       paymentService,
-		OAuthService:    oauthService,
-		VMRepo:          vmRepo,
-		NodeRepo:        nodeRepo,
-		BackupRepo:      backupRepo,
-		TemplateRepo:    templateRepo,
-		CustomerRepo:    customerRepo,
-		APIKeyRepo:      apiKeyRepo,
-		AuditRepo:       auditRepo,
-		BandwidthRepo:   bandwidthRepo,
-		IPRepo:          ipRepo,
-		PlanRepo:        planRepo,
-		ISOUploadRepo:   isoUploadRepo,
-		SSOTokenRepo:    ssoTokenRepo,
-		TaskRepo:        taskRepo,
-		RDNSService:     s.rdnsService,
-		InvoiceService:  billingInvoiceService,
-		NodeAgent:       s.nodeClient,
-		JWTSecret:       s.config.JWTSecret.Value(),
-		Issuer:          "virtuestack",
-		EncryptionKey:   s.config.EncryptionKey.Value(),
-		ConsoleBaseURL:  s.config.ConsoleBaseURL,
-		ISOStoragePath:  isoStoragePath,
+		VMService:                     s.vmService,
+		BackupService:                 s.backupService,
+		AuthService:                   s.authService,
+		TemplateService:               s.templateService,
+		WebhookService:                webhookService,
+		CustomerService:               s.customerService,
+		BillingLedgerService:          billingLedgerService,
+		PaymentService:                paymentService,
+		OAuthService:                  oauthService,
+		VMRepo:                        vmRepo,
+		NodeRepo:                      nodeRepo,
+		BackupRepo:                    backupRepo,
+		TemplateRepo:                  templateRepo,
+		CustomerRepo:                  customerRepo,
+		APIKeyRepo:                    apiKeyRepo,
+		AuditRepo:                     auditRepo,
+		BandwidthRepo:                 bandwidthRepo,
+		IPRepo:                        ipRepo,
+		PlanRepo:                      planRepo,
+		ISOUploadRepo:                 isoUploadRepo,
+		SSOTokenRepo:                  ssoTokenRepo,
+		TaskRepo:                      taskRepo,
+		RDNSService:                   s.rdnsService,
+		InvoiceService:                billingInvoiceService,
+		NodeAgent:                     s.nodeClient,
+		JWTSecret:                     s.config.JWTSecret.Value(),
+		Issuer:                        "virtuestack",
+		EncryptionKey:                 s.config.EncryptionKey.Value(),
+		ConsoleBaseURL:                s.config.ConsoleBaseURL,
+		ISOStoragePath:                isoStoragePath,
 		RegistrationEmailVerification: s.config.RegistrationEmailVerification,
-		Logger:          s.logger,
+		Logger:                        s.logger,
 	})
 
 	s.adminHandler = admin.NewAdminHandler(admin.AdminHandlerConfig{

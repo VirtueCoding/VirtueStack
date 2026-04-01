@@ -50,7 +50,7 @@ func (r *BillingTransactionRepository) CreditAccount(
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	if idempotencyKey != nil {
-		if existing, idErr := findByIdempotencyKey(ctx, tx, *idempotencyKey); idErr == nil && existing != nil {
+		if existing, idErr := findByIdempotencyKey(ctx, tx, customerID, *idempotencyKey); idErr == nil && existing != nil {
 			return existing, nil
 		}
 	}
@@ -90,7 +90,7 @@ func (r *BillingTransactionRepository) DebitAccount(
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	if idempotencyKey != nil {
-		if existing, idErr := findByIdempotencyKey(ctx, tx, *idempotencyKey); idErr == nil && existing != nil {
+		if existing, idErr := findByIdempotencyKey(ctx, tx, customerID, *idempotencyKey); idErr == nil && existing != nil {
 			return existing, nil
 		}
 	}
@@ -242,12 +242,12 @@ func insertTransaction(
 }
 
 func findByIdempotencyKey(
-	ctx context.Context, tx pgx.Tx, key string,
+	ctx context.Context, tx pgx.Tx, customerID, key string,
 ) (*models.BillingTransaction, error) {
 	q := `SELECT ` + billingTxSelectCols + `
-		FROM billing_transactions WHERE idempotency_key = $1`
+		FROM billing_transactions WHERE customer_id = $1 AND idempotency_key = $2`
 	var bt models.BillingTransaction
-	err := tx.QueryRow(ctx, q, key).Scan(
+	err := tx.QueryRow(ctx, q, customerID, key).Scan(
 		&bt.ID, &bt.CustomerID, &bt.Type, &bt.Amount, &bt.BalanceAfter,
 		&bt.Description, &bt.ReferenceType, &bt.ReferenceID,
 		&bt.IdempotencyKey, &bt.CreatedAt,

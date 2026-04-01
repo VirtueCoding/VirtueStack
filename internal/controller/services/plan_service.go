@@ -65,7 +65,7 @@ func (s *PlanService) GetByID(ctx context.Context, id string) (*models.Plan, err
 	plan, err := s.planRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("plan not found: %s", id)
+			return nil, fmt.Errorf("plan not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting plan: %w", err)
 	}
@@ -143,7 +143,7 @@ func (s *PlanService) Update(ctx context.Context, plan *models.Plan) error {
 	existing, err := s.planRepo.GetByID(ctx, plan.ID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("plan not found: %s", plan.ID)
+			return fmt.Errorf("plan not found: %s: %w", plan.ID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting plan: %w", err)
 	}
@@ -174,7 +174,7 @@ func (s *PlanService) Delete(ctx context.Context, id string) error {
 	_, err := s.planRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("plan not found: %s", id)
+			return fmt.Errorf("plan not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting plan: %w", err)
 	}
@@ -194,7 +194,7 @@ func (s *PlanService) GetPlanUsage(ctx context.Context, id string) (int, error) 
 	_, err := s.planRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return 0, fmt.Errorf("plan not found: %s", id)
+			return 0, fmt.Errorf("plan not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return 0, fmt.Errorf("getting plan: %w", err)
 	}

@@ -156,8 +156,8 @@ func testPlan(id, name, slug string) *models.Plan {
 		DiskGB:           40,
 		BandwidthLimitGB: 1000,
 		PortSpeedMbps:    1000,
-		PriceMonthly:     int64Ptr(1000),  // $10.00 in cents
-		PriceHourly:      int64Ptr(14),    // $0.14 in cents
+		PriceMonthly:     int64Ptr(1000), // $10.00 in cents
+		PriceHourly:      int64Ptr(14),   // $0.14 in cents
 		Currency:         "USD",
 		StorageBackend:   models.StorageBackendCeph,
 		IsActive:         true,
@@ -215,10 +215,10 @@ func TestPlanService_ListActive(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name:       "returns empty list when no plans exist",
-			setupMock:  func(m *MockPlanRepository) {},
-			wantCount:  0,
-			wantErr:    false,
+			name:      "returns empty list when no plans exist",
+			setupMock: func(m *MockPlanRepository) {},
+			wantCount: 0,
+			wantErr:   false,
 		},
 	}
 
@@ -350,10 +350,10 @@ func TestPlanService_GetByID(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:      "returns error when plan not found",
-			planID:    "nonexistent",
-			setupMock: func(m *MockPlanRepository) {},
-			wantErr:   true,
+			name:       "returns error when plan not found",
+			planID:     "nonexistent",
+			setupMock:  func(m *MockPlanRepository) {},
+			wantErr:    true,
 			errContain: "plan not found",
 		},
 	}
@@ -369,6 +369,7 @@ func TestPlanService_GetByID(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContain)
+				assert.ErrorIs(t, err, sharederrors.ErrNotFound)
 				assert.Nil(t, plan)
 				return
 			}
@@ -535,13 +536,13 @@ func TestPlanService_Update(t *testing.T) {
 		{
 			name: "updates existing plan",
 			plan: &models.Plan{
-				ID:           "plan-123",
-				Name:         "Updated Plan",
-				Slug:         "updated-plan",
-				VCPU:         4,
-				MemoryMB:     4096,
-				DiskGB:       80,
-				IsActive:     true,
+				ID:             "plan-123",
+				Name:           "Updated Plan",
+				Slug:           "updated-plan",
+				VCPU:           4,
+				MemoryMB:       4096,
+				DiskGB:         80,
+				IsActive:       true,
 				StorageBackend: models.StorageBackendCeph,
 			},
 			setupMock: func(m *MockPlanRepository) {
@@ -553,13 +554,13 @@ func TestPlanService_Update(t *testing.T) {
 		{
 			name: "allows changing slug to new unique value",
 			plan: &models.Plan{
-				ID:           "plan-123",
-				Name:         "Plan",
-				Slug:         "new-unique-slug",
-				VCPU:         2,
-				MemoryMB:     2048,
-				DiskGB:       40,
-				IsActive:     true,
+				ID:             "plan-123",
+				Name:           "Plan",
+				Slug:           "new-unique-slug",
+				VCPU:           2,
+				MemoryMB:       2048,
+				DiskGB:         40,
+				IsActive:       true,
 				StorageBackend: models.StorageBackendCeph,
 			},
 			setupMock: func(m *MockPlanRepository) {
@@ -571,13 +572,13 @@ func TestPlanService_Update(t *testing.T) {
 		{
 			name: "returns error when plan not found",
 			plan: &models.Plan{
-				ID:           "nonexistent",
-				Name:         "Plan",
-				Slug:         "plan",
-				VCPU:         2,
-				MemoryMB:     2048,
-				DiskGB:       40,
-				IsActive:     true,
+				ID:             "nonexistent",
+				Name:           "Plan",
+				Slug:           "plan",
+				VCPU:           2,
+				MemoryMB:       2048,
+				DiskGB:         40,
+				IsActive:       true,
 				StorageBackend: models.StorageBackendCeph,
 			},
 			setupMock:  func(m *MockPlanRepository) {},
@@ -587,13 +588,13 @@ func TestPlanService_Update(t *testing.T) {
 		{
 			name: "returns error when new slug conflicts with another plan",
 			plan: &models.Plan{
-				ID:           "plan-1",
-				Name:         "Plan 1",
-				Slug:         "plan-2-slug", // Trying to use another plan's slug
-				VCPU:         2,
-				MemoryMB:     2048,
-				DiskGB:       40,
-				IsActive:     true,
+				ID:             "plan-1",
+				Name:           "Plan 1",
+				Slug:           "plan-2-slug", // Trying to use another plan's slug
+				VCPU:           2,
+				MemoryMB:       2048,
+				DiskGB:         40,
+				IsActive:       true,
 				StorageBackend: models.StorageBackendCeph,
 			},
 			setupMock: func(m *MockPlanRepository) {
@@ -608,13 +609,13 @@ func TestPlanService_Update(t *testing.T) {
 		{
 			name: "allows keeping same slug",
 			plan: &models.Plan{
-				ID:           "plan-123",
-				Name:         "Updated Name",
-				Slug:         "same-slug",
-				VCPU:         4,
-				MemoryMB:     4096,
-				DiskGB:       80,
-				IsActive:     true,
+				ID:             "plan-123",
+				Name:           "Updated Name",
+				Slug:           "same-slug",
+				VCPU:           4,
+				MemoryMB:       4096,
+				DiskGB:         80,
+				IsActive:       true,
 				StorageBackend: models.StorageBackendCeph,
 			},
 			setupMock: func(m *MockPlanRepository) {
@@ -712,6 +713,7 @@ func TestPlanService_ErrorWrapping(t *testing.T) {
 		_, err := svc.GetByID(context.Background(), "nonexistent")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "plan not found")
+		assert.ErrorIs(t, err, sharederrors.ErrNotFound)
 	})
 
 	t.Run("Update wraps not found error correctly", func(t *testing.T) {
@@ -722,6 +724,7 @@ func TestPlanService_ErrorWrapping(t *testing.T) {
 		err := svc.Update(context.Background(), plan)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "plan not found")
+		assert.ErrorIs(t, err, sharederrors.ErrNotFound)
 	})
 
 	t.Run("Delete wraps not found error correctly", func(t *testing.T) {
@@ -731,6 +734,7 @@ func TestPlanService_ErrorWrapping(t *testing.T) {
 		err := svc.Delete(context.Background(), "nonexistent")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "plan not found")
+		assert.ErrorIs(t, err, sharederrors.ErrNotFound)
 	})
 }
 

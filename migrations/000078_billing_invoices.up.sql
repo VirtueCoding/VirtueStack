@@ -14,7 +14,7 @@ ON CONFLICT (prefix) DO NOTHING;
 -- Invoices generated from billing transactions.
 CREATE TABLE IF NOT EXISTS billing_invoices (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id  UUID NOT NULL REFERENCES customers(id),
+    customer_id  UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     invoice_number VARCHAR(30) NOT NULL UNIQUE,
     period_start TIMESTAMPTZ NOT NULL,
     period_end   TIMESTAMPTZ NOT NULL,
@@ -32,10 +32,10 @@ CREATE TABLE IF NOT EXISTS billing_invoices (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_billing_invoices_customer ON billing_invoices(customer_id, created_at DESC);
-CREATE INDEX idx_billing_invoices_number ON billing_invoices(invoice_number);
-CREATE INDEX idx_billing_invoices_status ON billing_invoices(status);
-CREATE INDEX idx_billing_invoices_period ON billing_invoices(period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_customer ON billing_invoices(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_number ON billing_invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_status ON billing_invoices(status);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_period ON billing_invoices(period_start, period_end);
 
 -- RLS: customers can only read their own invoices.
 ALTER TABLE billing_invoices ENABLE ROW LEVEL SECURITY;

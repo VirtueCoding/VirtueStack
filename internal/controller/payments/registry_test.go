@@ -57,7 +57,7 @@ func TestPaymentRegistry_RegisterAndGet(t *testing.T) {
 	}
 
 	reg := payments.NewPaymentRegistry()
-	reg.Register("stripe", &mockProvider{name: "stripe"})
+	require.NoError(t, reg.Register("stripe", &mockProvider{name: "stripe"}))
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,19 +76,20 @@ func TestPaymentRegistry_RegisterAndGet(t *testing.T) {
 
 func TestPaymentRegistry_Available(t *testing.T) {
 	reg := payments.NewPaymentRegistry()
-	reg.Register("stripe", &mockProvider{name: "stripe"})
-	reg.Register("paypal", &mockProvider{name: "paypal"})
+	require.NoError(t, reg.Register("stripe", &mockProvider{name: "stripe"}))
+	require.NoError(t, reg.Register("paypal", &mockProvider{name: "paypal"}))
 
 	available := reg.Available()
 	sort.Strings(available)
 	assert.Equal(t, []string{"paypal", "stripe"}, available)
 }
 
-func TestPaymentRegistry_DuplicateRegistrationPanics(t *testing.T) {
+func TestPaymentRegistry_DuplicateRegistrationReturnsError(t *testing.T) {
 	reg := payments.NewPaymentRegistry()
-	reg.Register("stripe", &mockProvider{name: "stripe"})
+	require.NoError(t, reg.Register("stripe", &mockProvider{name: "stripe"}))
 
-	assert.Panics(t, func() {
-		reg.Register("stripe", &mockProvider{name: "stripe"})
-	})
+	err := reg.Register("stripe", &mockProvider{name: "stripe"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already registered")
 }

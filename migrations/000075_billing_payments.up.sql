@@ -2,7 +2,7 @@ SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS billing_payments (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id        UUID NOT NULL REFERENCES customers(id),
+    customer_id        UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     gateway            VARCHAR(20) NOT NULL CHECK (gateway IN ('stripe', 'paypal', 'btcpay', 'nowpayments', 'admin')),
     gateway_payment_id VARCHAR(255),
     amount             BIGINT NOT NULL,

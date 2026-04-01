@@ -1,11 +1,12 @@
 package provisioning
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 
 	plan, err := h.planService.GetByID(c.Request.Context(), planID)
 	if err != nil {
-		if errors.Is(err, sharederrors.ErrNotFound) {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "PLAN_NOT_FOUND", "Plan not found")
 			return
 		}
@@ -47,7 +48,7 @@ func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": plan})
+	c.JSON(http.StatusOK, models.Response{Data: plan})
 }
 
 // ListPlans handles GET /plans - returns all active plans for billing module integration.
@@ -62,7 +63,12 @@ func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/v1/provisioning/plans [get]
 func (h *ProvisioningHandler) ListPlans(c *gin.Context) {
-	plans, err := h.planService.ListActive(c.Request.Context())
+	pagination := models.ParsePagination(c)
+	activeOnly := true
+	plans, hasMore, lastID, err := h.planService.List(c.Request.Context(), repository.PlanListFilter{
+		PaginationParams: pagination,
+		IsActive:         &activeOnly,
+	})
 	if err != nil {
 		h.logger.Error("failed to list plans",
 			"error", err,
@@ -71,5 +77,11 @@ func (h *ProvisioningHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	common.RespondWithCursorList(c, plans, "", false)
+	common.RespondWithCursorList(
+		c,
+		plans,
+		pagination.PerPage,
+		models.NewCursorPaginationMeta(pagination.PerPage, hasMore, lastID).NextCursor,
+		hasMore,
+	)
 }

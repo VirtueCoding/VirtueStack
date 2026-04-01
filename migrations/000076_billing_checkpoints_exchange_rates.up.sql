@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS billing_vm_checkpoints (
     vm_id          UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
     charge_hour    TIMESTAMPTZ NOT NULL,
     amount         BIGINT NOT NULL,
-    transaction_id UUID REFERENCES billing_transactions(id),
+    transaction_id UUID REFERENCES billing_transactions(id) ON DELETE RESTRICT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (vm_id, charge_hour)
 );

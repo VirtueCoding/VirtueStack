@@ -21,15 +21,15 @@ func NewPaymentRegistry() *PaymentRegistry {
 }
 
 // Register adds a payment provider to the registry.
-// Panics if a provider with the same name is already registered.
-func (r *PaymentRegistry) Register(name string, p PaymentProvider) {
+func (r *PaymentRegistry) Register(name string, p PaymentProvider) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if _, exists := r.providers[name]; exists {
-		panic(fmt.Sprintf("payment provider %q already registered", name))
+		return fmt.Errorf("payment provider %q already registered", name)
 	}
 	r.providers[name] = p
+	return nil
 }
 
 // Get retrieves a payment provider by name.

@@ -11,7 +11,7 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) NOT NUL
 
 -- OAuth provider links. One customer can link multiple providers.
 -- A single provider account can only be linked to one VirtueStack customer.
-CREATE TABLE customer_oauth_links (
+CREATE TABLE IF NOT EXISTS customer_oauth_links (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id             UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     provider                VARCHAR(20) NOT NULL CHECK (provider IN ('google', 'github')),
@@ -27,7 +27,7 @@ CREATE TABLE customer_oauth_links (
     UNIQUE (provider, provider_user_id)
 );
 
-CREATE INDEX idx_oauth_links_customer ON customer_oauth_links(customer_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_links_customer ON customer_oauth_links(customer_id);
 
 ALTER TABLE customer_oauth_links ENABLE ROW LEVEL SECURITY;
 CREATE POLICY oauth_links_customer_policy ON customer_oauth_links

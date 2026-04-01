@@ -8,7 +8,7 @@ COMMENT ON COLUMN customers.balance IS 'Credit balance in cents (minor currency 
 -- Immutable credit ledger: every balance change is recorded as an append-only row
 CREATE TABLE IF NOT EXISTS billing_transactions (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id      UUID NOT NULL REFERENCES customers(id),
+    customer_id      UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     type             VARCHAR(30) NOT NULL CHECK (type IN ('credit', 'debit', 'adjustment', 'refund')),
     amount           BIGINT NOT NULL,
     balance_after    BIGINT NOT NULL,
@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS idx_billing_tx_customer
     ON billing_transactions(customer_id, created_at DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_tx_idempotency
-    ON billing_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    ON billing_transactions(customer_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- RLS: customers can only read their own transactions
 ALTER TABLE billing_transactions ENABLE ROW LEVEL SECURITY;

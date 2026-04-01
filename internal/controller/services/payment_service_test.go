@@ -65,12 +65,12 @@ func (m *mockPaymentProvider) RefundPayment(
 func (m *mockPaymentProvider) ValidateConfig() error { return nil }
 
 type mockBillingPaymentRepo struct {
-	createFunc              func(ctx context.Context, p *models.BillingPayment) error
-	getByIDFunc             func(ctx context.Context, id string) (*models.BillingPayment, error)
-	getByGatewayFunc        func(ctx context.Context, gw, id string) (*models.BillingPayment, error)
-	updateStatusFunc        func(ctx context.Context, id, status string, gwID *string) error
-	listByCustomerFunc      func(ctx context.Context, cid string, f models.PaginationParams) ([]models.BillingPayment, bool, string, error)
-	listAllFunc             func(ctx context.Context, f repository.BillingPaymentListFilter) ([]models.BillingPayment, bool, string, error)
+	createFunc         func(ctx context.Context, p *models.BillingPayment) error
+	getByIDFunc        func(ctx context.Context, id string) (*models.BillingPayment, error)
+	getByGatewayFunc   func(ctx context.Context, gw, id string) (*models.BillingPayment, error)
+	updateStatusFunc   func(ctx context.Context, id, status string, gwID *string) error
+	listByCustomerFunc func(ctx context.Context, cid string, f models.PaginationParams) ([]models.BillingPayment, bool, string, error)
+	listAllFunc        func(ctx context.Context, f repository.BillingPaymentListFilter) ([]models.BillingPayment, bool, string, error)
 }
 
 func (m *mockBillingPaymentRepo) Create(ctx context.Context, p *models.BillingPayment) error {
@@ -130,7 +130,9 @@ func newTestPaymentService(
 ) *PaymentService {
 	reg := payments.NewPaymentRegistry()
 	if provider != nil {
-		reg.Register(provider.name, provider)
+		if err := reg.Register(provider.name, provider); err != nil {
+			panic(err)
+		}
 	}
 	logger := logging.NewLogger("error")
 	ledger := NewBillingLedgerService(BillingLedgerServiceConfig{
