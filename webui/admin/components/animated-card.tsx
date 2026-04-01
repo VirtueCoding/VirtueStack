@@ -6,8 +6,6 @@ import { cn } from "@/lib/utils";
 import { forwardRef } from "react";
 import { easeTransition } from "@/lib/animations";
 
-const MotionCard = motion.create(Card);
-
 interface AnimatedCardProps extends React.ComponentProps<typeof Card> {
   hoverLift?: boolean;
   delay?: number;
@@ -16,8 +14,7 @@ interface AnimatedCardProps extends React.ComponentProps<typeof Card> {
 export const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(
   ({ className, hoverLift = true, delay = 0, children, ...props }, ref) => {
     return (
-      <MotionCard
-        ref={ref}
+      <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...easeTransition, delay }}
@@ -29,14 +26,18 @@ export const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(
               }
             : undefined
         }
-        className={cn(
-          "transition-shadow duration-200 hover:shadow-md",
-          className
-        )}
-        {...props}
       >
-        {children}
-      </MotionCard>
+        <Card
+          ref={ref}
+          className={cn(
+            "transition-shadow duration-200 hover:shadow-md",
+            className
+          )}
+          {...props}
+        >
+          {children}
+        </Card>
+      </motion.div>
     );
   }
 );
