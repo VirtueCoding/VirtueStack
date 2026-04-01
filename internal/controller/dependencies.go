@@ -333,6 +333,7 @@ func (s *Server) InitializeServices() error {
 	}
 	if len(oauthProviders) > 0 {
 		oauthService = services.NewOAuthService(services.OAuthServiceConfig{
+			DB:                s.dbPool,
 			OAuthLinkRepo:     oauthLinkRepo,
 			CustomerRepo:      customerRepo,
 			AuthService:       s.authService,

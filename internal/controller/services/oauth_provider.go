@@ -39,7 +39,7 @@ type OAuthTokens struct {
 func ssrfSafeTransport() *http.Transport {
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, _, err := net.SplitHostPort(addr)
+			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
 				return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 			}
@@ -52,8 +52,9 @@ func ssrfSafeTransport() *http.Transport {
 					return nil, fmt.Errorf("blocked SSRF: %s resolves to private IP %s", host, ip)
 				}
 			}
+			// Dial using the resolved IP to prevent DNS rebinding attacks
 			dialer := &net.Dialer{Timeout: 10 * time.Second}
-			return dialer.DialContext(ctx, network, addr)
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 		},
 		TLSHandshakeTimeout: 10 * time.Second,
 	}

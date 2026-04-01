@@ -15,6 +15,7 @@ import (
 
 // OAuthServiceConfig holds dependencies for the OAuth service.
 type OAuthServiceConfig struct {
+	DB                repository.DB
 	OAuthLinkRepo     *repository.OAuthLinkRepository
 	CustomerRepo      *repository.CustomerRepository
 	AuthService       *AuthService
@@ -26,6 +27,7 @@ type OAuthServiceConfig struct {
 
 // OAuthService handles OAuth authentication and account linking.
 type OAuthService struct {
+	db                repository.DB
 	oauthLinkRepo     *repository.OAuthLinkRepository
 	customerRepo      *repository.CustomerRepository
 	authService       *AuthService
@@ -38,6 +40,7 @@ type OAuthService struct {
 // NewOAuthService creates a new OAuthService.
 func NewOAuthService(cfg OAuthServiceConfig) *OAuthService {
 	return &OAuthService{
+		db:                cfg.DB,
 		oauthLinkRepo:     cfg.OAuthLinkRepo,
 		customerRepo:      cfg.CustomerRepo,
 		authService:       cfg.AuthService,
@@ -178,7 +181,8 @@ func (s *OAuthService) linkExistingCustomer(
 	return customer, nil
 }
 
-// createOAuthCustomer creates a new customer from OAuth user info.
+// createOAuthCustomer creates a new customer from OAuth user info
+// inside a single transaction for atomicity.
 func (s *OAuthService) createOAuthCustomer(
 	ctx context.Context, provider string, info *models.OAuthUserInfo,
 ) (*models.Customer, error) {
@@ -187,14 +191,22 @@ func (s *OAuthService) createOAuthCustomer(
 			"Self-registration is disabled. Contact your provider.")
 	}
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	txCustomerRepo := repository.NewCustomerRepository(tx)
+	txOAuthRepo := repository.NewOAuthLinkRepository(tx)
+
 	customer := &models.Customer{
 		Email:        info.Email,
 		Name:         info.Name,
 		AuthProvider: provider,
 		Status:       models.CustomerStatusActive,
 	}
-
-	if err := s.customerRepo.Create(ctx, customer); err != nil {
+	if err := txCustomerRepo.Create(ctx, customer); err != nil {
 		return nil, fmt.Errorf("create oauth customer: %w", err)
 	}
 
@@ -206,8 +218,12 @@ func (s *OAuthService) createOAuthCustomer(
 		DisplayName:    info.Name,
 		AvatarURL:      info.AvatarURL,
 	}
-	if _, err := s.oauthLinkRepo.Create(ctx, oauthLink); err != nil {
-		return nil, fmt.Errorf("create oauth link for new customer: %w", err)
+	if _, err := txOAuthRepo.Create(ctx, oauthLink); err != nil {
+		return nil, fmt.Errorf("create oauth link: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit oauth customer: %w", err)
 	}
 
 	s.logger.Info("created oauth customer",

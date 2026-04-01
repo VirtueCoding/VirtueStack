@@ -28,3 +28,8 @@ CREATE TABLE customer_oauth_links (
 );
 
 CREATE INDEX idx_oauth_links_customer ON customer_oauth_links(customer_id);
+
+ALTER TABLE customer_oauth_links ENABLE ROW LEVEL SECURITY;
+CREATE POLICY oauth_links_customer_policy ON customer_oauth_links
+    FOR ALL TO PUBLIC
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
