@@ -158,8 +158,24 @@ func TestBuildNodeClient_RejectsPartialMTLSConfiguration(t *testing.T) {
 			wantErr: "TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty",
 		},
 		{
+			name: "ca and certificate without key",
+			env: map[string]string{
+				"TLS_CA_FILE":   "ca.pem",
+				"TLS_CERT_FILE": "client.pem",
+			},
+			wantErr: "TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty",
+		},
+		{
 			name: "key without certificate",
 			env: map[string]string{
+				"TLS_KEY_FILE": "client.key",
+			},
+			wantErr: "TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty",
+		},
+		{
+			name: "ca and key without certificate",
+			env: map[string]string{
+				"TLS_CA_FILE":  "ca.pem",
 				"TLS_KEY_FILE": "client.key",
 			},
 			wantErr: "TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty",
@@ -185,10 +201,15 @@ func TestBuildNodeClient_RejectsPartialMTLSConfiguration(t *testing.T) {
 				envLookup = originalLookup
 			})
 
+			secureCalled := false
+			mTLSCalled := false
+
 			secureNodeClientFactory = func(string, *slog.Logger) (*controller.NodeClient, error) {
+				secureCalled = true
 				return nil, fmt.Errorf("unexpected secure factory call")
 			}
 			mTLSNodeClientFactory = func(string, string, string, *slog.Logger) (*controller.NodeClient, error) {
+				mTLSCalled = true
 				return nil, fmt.Errorf("unexpected mtls factory call")
 			}
 			envLookup = func(key string) string {
@@ -205,6 +226,8 @@ func TestBuildNodeClient_RejectsPartialMTLSConfiguration(t *testing.T) {
 			require.Nil(t, client)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.wantErr)
+			require.False(t, secureCalled)
+			require.False(t, mTLSCalled)
 		})
 	}
 }
