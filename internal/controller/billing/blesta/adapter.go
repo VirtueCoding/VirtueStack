@@ -66,11 +66,14 @@ func (a *Adapter) CreateUser(
 
 // GetUserBillingStatus returns "active" because Blesta manages status externally.
 func (a *Adapter) GetUserBillingStatus(
-	_ context.Context, _ string,
+	_ context.Context, customerID string,
 ) (*billing.BillingStatus, error) {
 	return &billing.BillingStatus{
-		Status:  "active",
-		Message: "Blesta billing status is managed externally",
+		CustomerID: customerID,
+		Provider:   "blesta",
+		IsActive:   true,
+		Status:     "active",
+		Message:    "Blesta billing status is managed externally",
 	}, nil
 }
 

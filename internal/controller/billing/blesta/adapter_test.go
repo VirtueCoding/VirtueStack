@@ -171,6 +171,9 @@ func TestAdapter_GetUserBillingStatus_ReturnsActive(t *testing.T) {
 	status, err := adapter.GetUserBillingStatus(ctx, "cust-1")
 	require.NoError(t, err)
 	assert.Equal(t, "active", status.Status)
+	assert.Equal(t, "cust-1", status.CustomerID)
+	assert.Equal(t, "blesta", status.Provider)
+	assert.True(t, status.IsActive)
 	assert.Contains(t, status.Message, "externally")
 }
 
