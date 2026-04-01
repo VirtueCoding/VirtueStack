@@ -1,5 +1,56 @@
-CLAUDE.md
-AGENTS.md
-
 # Build output
 bin/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/settings.json
+.vscode/launch.json
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+
+# Test artifacts
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+
+# Generated
+docs/swagger.json
+docs/swagger.yaml
+
+# Invoices (generated at runtime)
+invoices/
+
+# Logs
+*.log
+
+# Certificates (generated, not tracked)
+*.pem
+*.key
+*.crt
+!ssl/
+
+# Docker data
+docker-data/

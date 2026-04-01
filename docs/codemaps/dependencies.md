@@ -33,6 +33,8 @@
 | `libvirt.org/go/libvirt` | v1.10005.0 | KVM/QEMU |
 | `github.com/gorilla/websocket` | v1.5.3 | WebSocket |
 | `github.com/prometheus/client_golang` | v1.20.5 | Metrics |
+| `github.com/stripe/stripe-go/v82` | v82 | Stripe payments |
+| `github.com/go-pdf/fpdf` | v0.6 | Invoice PDF generation |
 | `google.golang.org/protobuf` | latest | Protocol Buffers |
 
 ### Validation & Config
@@ -86,6 +88,11 @@ Includes everything above, plus:
 | SMTP Server | Email notifications | `SMTP_*` |
 | Telegram Bot | Notifications | `TELEGRAM_BOT_TOKEN` |
 | WHMCS | Billing integration | `modules/servers/virtuestack/` |
+| Blesta | Billing integration | `modules/blesta/virtuestack/` |
+| Stripe | Payment processing | `STRIPE_SECRET_KEY` |
+| PayPal | Payment processing | `PAYPAL_CLIENT_ID` |
+| BTCPay Server | Crypto payments | `BTCPAY_URL` |
+| NOWPayments | Crypto payments | `NOWPAYMENTS_API_KEY` |
 
 ## Infrastructure Dependencies
 

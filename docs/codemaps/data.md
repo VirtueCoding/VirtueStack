@@ -1,8 +1,8 @@
-<!-- Generated: 2026-03-30 | Files scanned: 71 migrations | Token estimate: ~1100 -->
+<!-- Generated: 2026-04-01 | Files scanned: 80 migrations | Token estimate: ~1400 -->
 
 # Data Architecture
 
-## Core Tables (30+ tables)
+## Core Tables (40+ tables)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -25,7 +25,12 @@ customers ──┬── vms
             ├── customer_api_keys
             ├── customer_webhooks ── webhook_deliveries
             ├── notification_preferences
-            └── sso_tokens          # WHMCS SSO bootstrap
+            ├── sso_tokens          # Billing SSO bootstrap
+            ├── billing_transactions
+            ├── billing_payments
+            ├── billing_invoices ── billing_invoice_line_items
+            ├── notifications       # In-app notifications
+            └── customer_oauth_links
 
 admins ───┬── sessions
           ├── console_tokens     # Time-limited console access
@@ -38,7 +43,7 @@ templates ──┬── vms
 
 storage_backends ── node_storage (junction) ── nodes
 
-provisioning_keys (WHMCS API keys)
+provisioning_keys (billing API keys — neutral, supports WHMCS/Blesta/any)
 
 tasks (async job queue)
 
@@ -55,6 +60,12 @@ system_webhooks (system-level webhook configs)
 email_verification_tokens (customer email verification)
 
 pre_action_webhooks (pre-action approval webhooks)
+
+billing_checkpoints (hourly VM usage billing dedup)
+
+exchange_rates (currency conversion rates)
+
+vms ── billing_checkpoints  # Hourly billing dedup per VM
 ```
 
 ## Table Schemas
@@ -121,6 +132,21 @@ pre_action_webhooks (pre-action approval webhooks)
 | `email_verification_tokens` | id, customer_id, token_hash, expires_at | Email verification |
 | `pre_action_webhooks` | id, name, url, secret, events[], timeout_ms, fail_open, is_active | Pre-action approval webhooks |
 
+### Billing & Payments
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `billing_transactions` | id, customer_id, type (credit/debit/refund), amount, currency, description, balance_after, reference_type, reference_id | Immutable credit ledger |
+| `billing_payments` | id, customer_id, provider, external_id, amount, currency, status, metadata | Payment gateway records |
+| `billing_invoices` | id, customer_id, invoice_number, status, total, currency, due_date | Invoice headers |
+| `billing_invoice_line_items` | id, invoice_id, description, quantity, unit_price, total | Invoice line items |
+| `billing_checkpoints` | id, vm_id, billed_at, amount | Hourly billing dedup |
+| `exchange_rates` | currency (PK), rate_to_usd, updated_at | Currency conversion |
+| `notifications` | id, customer_id, title, message, is_read, created_at | In-app notifications |
+| `customer_oauth_links` | id, customer_id, provider, provider_user_id, email | OAuth provider links |
+
+Note: `customers` table now includes `billing_provider` column (values: `whmcs`, `blesta`, `native`). The `vms` table references are via neutral `external_service_id` and `external_client_id` columns.
+
 ## Row Level Security
 
 ```sql
@@ -132,7 +158,8 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 -- Also protected: customer_api_keys, ip_addresses, backups, snapshots,
 -- backup_schedules, sessions, notification_preferences, notification_events,
 -- console_tokens, customers, password_resets, email_verification_tokens,
--- system_webhooks, pre_action_webhooks
+-- system_webhooks, pre_action_webhooks, billing_transactions, billing_payments,
+-- billing_invoices, billing_invoice_line_items, notifications, customer_oauth_links
 ```
 
 ## Index Strategy
@@ -164,6 +191,7 @@ CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
 | 000058-000060 | IPv6 subnet uniqueness, bandwidth snapshots, task progress messages |
 | 000061-000065 | ISO uploads, SSO tokens, provisioning key expiry, template cache, unify backup/snapshot |
 | 000066-000071 | VM state machine constraint, task retry count, system webhooks, email verification, pre-action webhooks, review fixes (RLS + GIN indexes) |
+| 000072-000080 | Billing system: billing_provider column, notifications, billing_transactions, billing_payments, billing_checkpoints, exchange_rates, billing_invoices + line_items, customer_oauth_links, neutral external_client_id + external_service_id |
 
 ## Database Roles
 

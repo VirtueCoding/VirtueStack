@@ -5,9 +5,10 @@
 ## API Tiers
 
 ```
-/api/v1/provisioning/*  → API Key Auth  → WHMCS Integration
+/api/v1/provisioning/*  → API Key Auth  → Billing System Integration (WHMCS/Blesta/any)
 /api/v1/customer/*      → JWT + Refresh → Customer Self-Service
 /api/v1/admin/*         → JWT + 2FA     → Admin Operations
+/webhooks/*             → Signature     → Payment Webhooks (Stripe/PayPal/Crypto)
 ```
 
 ## Admin API Routes
@@ -101,6 +102,15 @@ GET    /pre-action-webhooks
 POST   /pre-action-webhooks
 PUT    /pre-action-webhooks/:id
 DELETE /pre-action-webhooks/:id     # Requires re-auth
+
+GET    /billing/transactions, /billing/balance, /billing/payments, /billing/config
+POST   /billing/credit, /billing/refund/:paymentId
+
+GET    /exchange-rates
+PUT    /exchange-rates/:currency
+
+GET    /invoices, /invoices/:id, /invoices/:id/pdf
+POST   /invoices/:id/void
 ```
 
 ## Customer API Routes
@@ -161,6 +171,22 @@ POST   /2fa/backup-codes/regenerate
 
 GET    /notifications/preferences
 PUT    /notifications/preferences
+
+GET    /billing/balance, /billing/transactions, /billing/usage, /billing/payments
+POST   /billing/top-up
+GET    /billing/top-up/config
+POST   /billing/payments/paypal/capture
+
+GET    /invoices, /invoices/:id, /invoices/:id/pdf
+
+GET    /notifications
+POST   /notifications/:id/read, /notifications/read-all
+GET    /notifications/sse                  # Server-Sent Events stream
+
+GET    /auth/oauth/:provider               # OAuth initiate
+POST   /auth/oauth/:provider/callback      # OAuth callback
+DELETE /auth/oauth/:provider               # Unlink OAuth
+GET    /auth/oauth/links                   # List linked providers
 ```
 
 ## Provisioning API Routes
@@ -170,7 +196,7 @@ PUT    /notifications/preferences
 ```
 POST   /vms                    # Create VM (async, returns task_id)
 GET    /vms/:id                # Get VM by ID
-GET    /vms/by-service/:id     # Get VM by WHMCS service ID
+GET    /vms/by-service/:id     # Get VM by external service ID (neutral — works with WHMCS, Blesta, etc.)
 DELETE /vms/:id                # Delete VM (async)
 POST   /vms/:id/suspend        # Billing suspend
 POST   /vms/:id/unsuspend      # Unsuspend
@@ -195,7 +221,7 @@ GET    /plans/:id              # Get plan
 
 ## Service Layer
 
-**Directory:** `internal/controller/services/` (54 files)
+**Directory:** `internal/controller/services/` (65+ files)
 
 | Service | File | Purpose |
 |---------|------|---------|
@@ -224,10 +250,20 @@ GET    /plans/:id              # Get plan
 | NodeAgentClient | `node_agent_client.go` | gRPC client wrapper |
 | SystemWebhookService | `system_webhook_service.go` | System webhook CRUD |
 | PreActionWebhookService | `pre_action_webhook_service.go` | Pre-action approval webhooks |
+| BillingLedgerService | `billing_ledger_service.go` | Immutable credit/debit ledger |
+| BillingScheduler | `billing_scheduler.go` | Hourly VM usage billing |
+| BillingInvoiceService | `billing_invoice_service.go` | Invoice generation |
+| BillingInvoicePDF | `billing_invoice_pdf.go` | PDF rendering (go-pdf/fpdf) |
+| ExchangeRateService | `exchange_rate_service.go` | Currency exchange rates |
+| PaymentService | `payment_service.go` | Payment orchestration |
+| InAppNotificationService | `in_app_notification_service.go` | Notification CRUD |
+| SSEHub | `sse_hub.go` | Server-Sent Events hub |
+| OAuthService | `oauth_service.go` | OAuth account management |
+| OAuthProvider | `oauth_provider.go` | Google + GitHub OAuth with PKCE |
 
 ## Repository Layer
 
-**Directory:** `internal/controller/repository/` (30 files)
+**Directory:** `internal/controller/repository/` (38+ files)
 
 | Repository | File | Tables |
 |------------|------|--------|
@@ -256,6 +292,14 @@ GET    /plans/:id              # Get plan
 | BandwidthRepo | `bandwidth_repo.go` | bandwidth views |
 | SystemWebhookRepo | `system_webhook_repo.go` | system_webhooks |
 | PreActionWebhookRepo | `pre_action_webhook_repo.go` | pre_action_webhooks |
+| BillingTransactionRepo | `billing_transaction_repo.go` | billing_transactions |
+| BillingPaymentRepo | `billing_payment_repo.go` | billing_payments |
+| BillingInvoiceRepo | `billing_invoice_repo.go` | billing_invoices, billing_invoice_line_items |
+| BillingCheckpointRepo | `billing_checkpoint_repo.go` | billing_checkpoints |
+| ExchangeRateRepo | `exchange_rate_repo.go` | exchange_rates |
+| InAppNotificationRepo | `in_app_notification_repo.go` | notifications |
+| OAuthLinkRepo | `oauth_link_repo.go` | customer_oauth_links |
+| AdvisoryLock | `advisory_lock.go` | PostgreSQL advisory locks |
 | Pagination | `cursor/pagination.go` | Cursor-based pagination helper |
 
 ## Middleware Chain
