@@ -276,6 +276,8 @@ function handleVMCreated(string $taskId, string $vmId, int $serviceId, array $re
             $primaryIp = isset($ipAddresses[0]['address']) && is_string($ipAddresses[0]['address'])
                 ? $ipAddresses[0]['address']
                 : '';
+        } elseif (isset($ipAddresses[0]) && is_string($ipAddresses[0])) {
+            $primaryIp = $ipAddresses[0];
         }
         if (!empty($primaryIp)) {
             updateServiceField($serviceId, 'vm_ip', $primaryIp);
