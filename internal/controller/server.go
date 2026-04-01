@@ -306,14 +306,27 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:  IdleTimeout,
 	}
 
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.config.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listening on HTTP address %s: %w", s.config.ListenAddr, err)
+	}
+
 	if err := s.startMetricsHTTPServer(ctx); err != nil {
+		if closeErr := listener.Close(); closeErr != nil {
+			s.logger.Warn("failed to close HTTP listener after metrics setup failure", "error", closeErr)
+		}
 		return err
 	}
 
 	s.logger.Info("starting HTTP server", "address", s.config.ListenAddr)
 
-	err := s.httpServer.ListenAndServe()
+	err = s.httpServer.Serve(listener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if shutdownErr := s.shutdownMetricsServer(shutdownCtx); shutdownErr != nil {
+			s.logger.Error("failed to stop metrics server after HTTP server startup failure", "error", shutdownErr)
+		}
 		return fmt.Errorf("starting HTTP server: %w", err)
 	}
 
@@ -352,6 +365,17 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
 	return nil
 }
 
+func (s *Server) shutdownMetricsServer(ctx context.Context) error {
+	if s.metricsServer == nil {
+		return nil
+	}
+	if err := s.metricsServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutting down metrics server: %w", err)
+	}
+	s.metricsServer = nil
+	return nil
+}
+
 // Stop gracefully stops the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
 	if s.httpServer == nil {
@@ -368,10 +392,8 @@ func (s *Server) Stop(ctx context.Context) error {
 		return fmt.Errorf("shutting down HTTP server: %w", err)
 	}
 
-	if s.metricsServer != nil {
-		if err := s.metricsServer.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutting down metrics server: %w", err)
-		}
+	if err := s.shutdownMetricsServer(shutdownCtx); err != nil {
+		return err
 	}
 
 	// Close the PowerDNS MySQL connection if it was opened.
