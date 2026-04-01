@@ -16,6 +16,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage/downloadutil"
 )
 
 // templateBuildTimeout is the maximum time for the entire ISO build process.
@@ -344,17 +346,7 @@ func (b *TemplateBuilder) downloadISO(ctx context.Context, isoURL string) (strin
 	dlCtx, cancel := context.WithTimeout(ctx, isoDownloadTimeout)
 	defer cancel()
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: ssrfSafeDialContext(),
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
-			}
-			return nil
-		},
-	}
+	client := downloadutil.NewHTTPClient(ssrfSafeDialContext(), maxRedirects)
 
 	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, isoURL, nil)
 	if err != nil {
@@ -425,17 +417,7 @@ func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath 
 	dlCtx, cancel := context.WithTimeout(ctx, templateDownloadTimeout)
 	defer cancel()
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: ssrfSafeDialContext(),
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return fmt.Errorf("too many redirects (max %d)", maxRedirects)
-			}
-			return nil
-		},
-	}
+	client := downloadutil.NewHTTPClient(ssrfSafeDialContext(), maxRedirects)
 
 	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, sourceURL, nil)
 	if err != nil {

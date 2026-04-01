@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/transferutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
@@ -204,12 +205,12 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 
 	// Send metadata in first chunk
 	chunk := &nodeagentpb.DiskChunk{
-		Data:             nil,
-		Offset:           0,
-		Total:            totalSize,
-		TargetDiskPath:   req.GetTargetDiskPath(),
-		StorageBackend:   storageBackend,
-		DiskSizeGb:       req.GetDiskSizeGb(),
+		Data:                 nil,
+		Offset:               0,
+		Total:                totalSize,
+		TargetDiskPath:       req.GetTargetDiskPath(),
+		StorageBackend:       storageBackend,
+		DiskSizeGb:           req.GetDiskSizeGb(),
 		TargetLvmVolumeGroup: req.GetTargetLvmVolumeGroup(),
 		TargetLvmThinPool:    req.GetTargetLvmThinPool(),
 	}
@@ -247,18 +248,24 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 		}
 	}
 
+	if err := transferutil.ValidateTransferredBytes(totalSize, bytesSent); err != nil {
+		return status.Errorf(codes.DataLoss, "disk transfer size mismatch: %v", err)
+	}
+
 	logger.Info("disk transfer completed", "bytes_sent", bytesSent)
 	return nil
 }
 
 // transferLVMDisk handles LVM disk transfer using dd to read from block device.
 func (h *grpcHandler) transferLVMDisk(ctx context.Context, req *nodeagentpb.TransferDiskRequest, stream nodeagentpb.NodeAgentService_TransferDiskServer, logger *slog.Logger) error {
-	sourcePath := req.GetSourceDiskPath()
-	snapshotName := req.GetSnapshotName()
-
-	// If snapshot name is provided, use the snapshot LV instead of the main disk
-	if snapshotName != "" {
-		sourcePath = fmt.Sprintf("/dev/%s/%s", req.GetSourceLvmVolumeGroup(), snapshotName)
+	sourcePath, err := transferutil.ResolveLVMSourcePath(
+		req.GetSourceDiskPath(),
+		req.GetSnapshotName(),
+		req.GetSourceLvmVolumeGroup(),
+		h.server.config.LVMVolumeGroup,
+	)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid lvm source path: %v", err)
 	}
 
 	logger = logger.With("source_path", sourcePath)
@@ -308,9 +315,6 @@ func (h *grpcHandler) transferLVMDisk(ctx context.Context, req *nodeagentpb.Tran
 	if err := ddCmd.Start(); err != nil {
 		return status.Errorf(codes.Internal, "starting dd: %v", err)
 	}
-	defer func() {
-		_ = ddCmd.Wait()
-	}()
 
 	// Stream the output in chunks
 	buf := make([]byte, 64*1024) // 64KB chunks
@@ -341,6 +345,13 @@ func (h *grpcHandler) transferLVMDisk(ctx context.Context, req *nodeagentpb.Tran
 		}
 	}
 
+	if err := ddCmd.Wait(); err != nil {
+		return status.Errorf(codes.Internal, "waiting for dd to finish: %v", err)
+	}
+	if err := transferutil.ValidateTransferredBytes(totalSize, bytesSent); err != nil {
+		return status.Errorf(codes.DataLoss, "LVM transfer size mismatch: %v", err)
+	}
+
 	logger.Info("LVM disk transfer completed", "bytes_sent", bytesSent)
 	return nil
 }
@@ -365,23 +376,33 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	if targetPath == "" {
 		return status.Error(codes.InvalidArgument, "target_disk_path is required")
 	}
-	if err := validatePath(targetPath, h.server.config.StoragePath); err != nil {
+	receiveTarget, err := transferutil.ResolveReceiveTarget(
+		firstMsg.GetStorageBackend(),
+		targetPath,
+		h.server.config.StoragePath,
+		h.server.config.LVMVolumeGroup,
+		h.server.config.LVMThinPool,
+		firstMsg.GetTargetLvmVolumeGroup(),
+		firstMsg.GetTargetLvmThinPool(),
+	)
+	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid target_disk_path: %v", err)
 	}
 
-	logger := h.server.logger.With("operation", "receive-disk", "target_path", targetPath)
+	logger := h.server.logger.With("operation", "receive-disk", "target_path", receiveTarget.OpenPath)
 	logger.Info("receiving disk transfer")
 
-	// Create the target directory if needed
-	targetDir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return status.Errorf(codes.Internal, "creating target directory: %v", err)
-	}
-
-	// Create/truncate the target file
-	file, err := os.Create(targetPath)
+	totalSize := firstMsg.GetTotal()
+	tracker, err := transferutil.NewReceiveTracker(totalSize)
 	if err != nil {
-		return status.Errorf(codes.Internal, "creating target file: %v", err)
+		return status.Errorf(codes.InvalidArgument, "invalid transfer total: %v", err)
+	}
+	if err := tracker.Accept(firstMsg.GetOffset(), len(firstMsg.GetData())); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid initial chunk: %v", err)
+	}
+	file, err := h.openReceiveTarget(stream.Context(), firstMsg, receiveTarget)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -394,7 +415,6 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 		return status.Errorf(codes.Internal, "writing first chunk: %v", err)
 	}
 
-	totalSize := firstMsg.GetTotal()
 	var bytesReceived int64 = int64(len(firstMsg.GetData()))
 
 	// Receive remaining chunks
@@ -405,6 +425,15 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 		}
 		if err != nil {
 			return status.Errorf(codes.Internal, "receiving chunk: %v", err)
+		}
+		if chunk.GetTotal() != 0 && chunk.GetTotal() != totalSize {
+			return status.Errorf(codes.InvalidArgument, "chunk total %d does not match initial total %d", chunk.GetTotal(), totalSize)
+		}
+		if err := tracker.Accept(chunk.GetOffset(), len(chunk.GetData())); err != nil {
+			if errors.Is(err, transferutil.ErrInvalidOffset) {
+				return status.Errorf(codes.InvalidArgument, "invalid chunk offset: %v", err)
+			}
+			return status.Errorf(codes.DataLoss, "invalid chunk size: %v", err)
 		}
 
 		// Seek to the correct offset and write
@@ -425,13 +454,46 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 		}
 	}
 
+	if err := tracker.Finalize(); err != nil {
+		return status.Errorf(codes.DataLoss, "incomplete disk transfer: %v", err)
+	}
+
 	logger.Info("disk receive completed", "bytes_received", bytesReceived)
 
 	return stream.SendAndClose(&nodeagentpb.ReceiveDiskResponse{
-		TargetDiskPath: targetPath,
+		TargetDiskPath: receiveTarget.OpenPath,
 		BytesReceived:  bytesReceived,
 		Success:        true,
 	})
+}
+
+func (h *grpcHandler) openReceiveTarget(ctx context.Context, firstMsg *nodeagentpb.DiskChunk, target transferutil.ReceiveTarget) (*os.File, error) {
+	if firstMsg.GetStorageBackend() == "lvm" {
+		if target.CreateImageID == "" {
+			return nil, status.Error(codes.InvalidArgument, "target LVM identifier is required")
+		}
+		if firstMsg.GetDiskSizeGb() <= 0 {
+			return nil, status.Error(codes.InvalidArgument, "disk_size_gb is required for lvm transfers")
+		}
+		if err := h.server.storageBackend.CreateImage(ctx, target.CreateImageID, int(firstMsg.GetDiskSizeGb())); err != nil {
+			return nil, status.Errorf(codes.Internal, "creating target LVM image: %v", err)
+		}
+		file, err := os.OpenFile(target.OpenPath, os.O_WRONLY, 0)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "opening target LVM device: %v", err)
+		}
+		return file, nil
+	}
+
+	targetDir := filepath.Dir(target.OpenPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, status.Errorf(codes.Internal, "creating target directory: %v", err)
+	}
+	file, err := os.Create(target.OpenPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "creating target file: %v", err)
+	}
+	return file, nil
 }
 
 // PrepareMigratedVM creates a VM definition on this node using a transferred disk.

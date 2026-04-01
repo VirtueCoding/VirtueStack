@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/guest"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/reinstallutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
@@ -145,39 +146,46 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
 	}
 
-	// Delete the old domain definition
-	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
-			logger.Warn("failed to delete old domain", "error", err)
-		}
-	}
-
-	// Fetch current VM domain to retrieve VCPU and MemoryMB before deleting it
-	existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
-	var vcpu int
-	var memoryMB int
-	if lookupErr == nil {
-		if info, infoErr := existingDomain.GetInfo(); infoErr == nil {
-			vcpu = int(info.NrVirtCpu)
-			memoryMB = int(info.Memory / 1024) // Convert from KB to MB
-		}
-		if freeErr := existingDomain.Free(); freeErr != nil {
-			logger.Debug("failed to free domain after info fetch", "error", freeErr)
-		}
-	}
-	if vcpu <= 0 {
-		vcpu = 1
-	}
-	if memoryMB <= 0 {
-		memoryMB = 1024
+	sizing, err := reinstallutil.LookupSizingThenDelete(
+		func() (reinstallutil.Sizing, error) {
+			existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
+			if lookupErr != nil {
+				return reinstallutil.Sizing{}, lookupErr
+			}
+			defer func() {
+				if freeErr := existingDomain.Free(); freeErr != nil {
+					logger.Debug("failed to free domain after info fetch", "error", freeErr)
+				}
+			}()
+			info, infoErr := existingDomain.GetInfo()
+			if infoErr != nil {
+				return reinstallutil.Sizing{}, infoErr
+			}
+			return reinstallutil.NormalizeSizing(reinstallutil.Sizing{
+				VCPU:     int(info.NrVirtCpu),
+				MemoryMB: int(info.Memory / 1024),
+			}), nil
+		},
+		func() error {
+			if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					return nil
+				}
+				logger.Warn("failed to delete old domain", "error", err)
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "deleting old domain: %v", err)
 	}
 
 	// Re-create domain from existing config with new template
 	cfg := &vm.DomainConfig{
 		VMID:           req.GetVmId(),
 		Hostname:       req.GetHostname(),
-		VCPU:           vcpu,
-		MemoryMB:       memoryMB,
+		VCPU:           sizing.VCPU,
+		MemoryMB:       sizing.MemoryMB,
 		StorageBackend: storageBackend,
 		DiskPath:       diskPath,
 		CephPool:       h.server.config.CephPool,
