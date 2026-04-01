@@ -63,7 +63,7 @@ type VM struct {
 	TemplateID            *string   `json:"template_id,omitempty" db:"template_id"`
 	LibvirtDomainName     *string   `json:"libvirt_domain_name,omitempty" db:"libvirt_domain_name"`
 	RootPasswordEncrypted *string   `json:"-" db:"root_password_encrypted"` // Never expose in JSON
-	WHMCSServiceID        *int      `json:"whmcs_service_id,omitempty" db:"whmcs_service_id"`
+	ExternalServiceID     *int      `json:"external_service_id,omitempty" db:"external_service_id"`
 	// StorageBackend: "ceph" or "qcow". Defaults to "ceph" for backward compatibility.
 	StorageBackend string `json:"storage_backend" db:"storage_backend"`
 	// DiskPath: path to disk file for qcow2 storage. Empty for ceph (uses CephPool/RBDImage).
@@ -89,7 +89,7 @@ type VMCreateRequest struct {
 	Password       string   `json:"password" validate:"required,min=12,max=128"`
 	SSHKeys        []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
 	LocationID     *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
-	WHMCSServiceID *int     `json:"whmcs_service_id,omitempty"`
+	ExternalServiceID *int  `json:"external_service_id,omitempty"`
 	IdempotencyKey string   `json:"-"` // From header
 }
 

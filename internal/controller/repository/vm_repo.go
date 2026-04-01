@@ -33,7 +33,7 @@ func scanVM(row pgx.Row) (models.VM, error) {
 		&vm.DiskGB, &vm.PortSpeedMbps, &vm.BandwidthLimitGB,
 		&vm.BandwidthUsedBytes, &vm.BandwidthResetAt,
 		&vm.MACAddress, &vm.TemplateID, &vm.LibvirtDomainName,
-		&vm.RootPasswordEncrypted, &vm.WHMCSServiceID,
+		&vm.RootPasswordEncrypted, &vm.ExternalServiceID,
 		&vm.AttachedISO,
 		&vm.CreatedAt, &vm.UpdatedAt, &vm.DeletedAt,
 		&vm.StorageBackend, &vm.DiskPath, &vm.CephPool, &vm.RBDImage,
@@ -47,7 +47,7 @@ const vmSelectCols = `
 	disk_gb, port_speed_mbps, bandwidth_limit_gb,
 	bandwidth_used_bytes, bandwidth_reset_at,
 	mac_address, template_id, libvirt_domain_name,
-	root_password_encrypted, whmcs_service_id,
+	root_password_encrypted, external_service_id,
 	attached_iso,
 	created_at, updated_at, deleted_at,
 	storage_backend, disk_path, ceph_pool, rbd_image`
@@ -60,7 +60,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 			customer_id, node_id, plan_id, hostname, status,
 			vcpu, memory_mb, disk_gb, port_speed_mbps, bandwidth_limit_gb,
 			mac_address, template_id, libvirt_domain_name,
-			root_password_encrypted, whmcs_service_id,
+			root_password_encrypted, external_service_id,
 			storage_backend, disk_path
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING ` + vmSelectCols
@@ -69,7 +69,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 		vm.CustomerID, vm.NodeID, vm.PlanID, vm.Hostname, vm.Status,
 		vm.VCPU, vm.MemoryMB, vm.DiskGB, vm.PortSpeedMbps, vm.BandwidthLimitGB,
 		vm.MACAddress, vm.TemplateID, vm.LibvirtDomainName,
-		vm.RootPasswordEncrypted, vm.WHMCSServiceID,
+		vm.RootPasswordEncrypted, vm.ExternalServiceID,
 		vm.StorageBackend, vm.DiskPath,
 	)
 	created, err := scanVM(row)
@@ -263,13 +263,13 @@ func (r *VMRepository) SoftDelete(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetByWHMCSServiceID finds a VM by its WHMCS service ID.
+// GetByExternalServiceID finds a VM by its external billing service ID.
 // Returns ErrNotFound if no matching VM exists.
-func (r *VMRepository) GetByWHMCSServiceID(ctx context.Context, serviceID int) (*models.VM, error) {
-	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE whmcs_service_id = $1 AND deleted_at IS NULL`
+func (r *VMRepository) GetByExternalServiceID(ctx context.Context, serviceID int) (*models.VM, error) {
+	const q = `SELECT ` + vmSelectCols + ` FROM vms WHERE external_service_id = $1 AND deleted_at IS NULL`
 	vm, err := ScanRow(ctx, r.db, q, []any{serviceID}, scanVM)
 	if err != nil {
-		return nil, fmt.Errorf("getting VM by WHMCS service %d: %w", serviceID, err)
+		return nil, fmt.Errorf("getting VM by external service %d: %w", serviceID, err)
 	}
 	return &vm, nil
 }

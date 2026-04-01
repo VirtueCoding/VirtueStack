@@ -50,7 +50,7 @@ func TestBuildVMStatusResponse(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-func TestGetVMByWHMCSServiceID_InvalidServiceID(t *testing.T) {
+func TestGetVMByExternalServiceID_InvalidServiceID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	handler := &ProvisioningHandler{
@@ -71,7 +71,7 @@ func TestGetVMByWHMCSServiceID_InvalidServiceID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.GET("/vms/by-service/:service_id", handler.GetVMByWHMCSServiceID)
+			router.GET("/vms/by-service/:service_id", handler.GetVMByExternalServiceID)
 
 			req := httptest.NewRequest(http.MethodGet, "/vms/by-service/"+tt.serviceID, nil)
 			w := httptest.NewRecorder()

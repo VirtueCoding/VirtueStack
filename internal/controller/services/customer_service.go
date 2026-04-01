@@ -81,7 +81,7 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 	customer.TOTPEnabled = existing.TOTPEnabled
 	customer.TOTPSecretEncrypted = existing.TOTPSecretEncrypted
 	customer.TOTPBackupCodesHash = existing.TOTPBackupCodesHash
-	customer.WHMCSClientID = existing.WHMCSClientID
+	customer.ExternalClientID = existing.ExternalClientID
 	customer.CreatedAt = existing.CreatedAt
 
 	// Update customer in repository

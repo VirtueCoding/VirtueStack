@@ -93,10 +93,10 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 		return m.err
 	}
 	// The actual scanCustomer function scans into 14 fields:
-	// id, email, password_hash, name, phone, whmcs_client_id, billing_provider,
+	// id, email, password_hash, name, phone, external_client_id, billing_provider,
 	// auth_provider, totp_secret_encrypted, totp_enabled, totp_backup_codes_hash,
 	// totp_backup_codes_shown, status, created_at, updated_at
-	// Note: phone, whmcs_client_id, totp_secret_encrypted are pointers to pointers (**string, **int)
+	// Note: phone, external_client_id, totp_secret_encrypted are pointers to pointers (**string, **int)
 	c := m.customer
 	if len(dest) >= 15 {
 		if id, ok := dest[0].(*string); ok {
@@ -116,7 +116,7 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 			*phone = c.Phone
 		}
 		if whmcsID, ok := dest[5].(**int); ok {
-			*whmcsID = c.WHMCSClientID
+			*whmcsID = c.ExternalClientID
 		}
 		if bp, ok := dest[6].(**string); ok {
 			*bp = c.BillingProvider

@@ -10,9 +10,9 @@ import (
 )
 
 // ResizeVM handles POST /vms/:id/resize - resizes VM resources.
-// This endpoint is called by WHMCS when a service is upgraded.
+// This endpoint is called by the billing module when a service is upgraded.
 // SECURITY: plan_id is REQUIRED. All resize operations must be validated against
-// a plan to ensure billing integrity. WHMCS is responsible for price-to-plan matching.
+// a plan to ensure billing integrity. The billing module is responsible for price-to-plan matching.
 // Arbitrary resource values are NOT accepted - they must come from a valid plan.
 // @Tags Provisioning
 // @Summary Resize VM
@@ -47,13 +47,13 @@ func (h *ProvisioningHandler) ResizeVM(c *gin.Context) {
 	}
 
 	// SECURITY: plan_id is REQUIRED for all resize operations.
-	// This ensures billing integrity - WHMCS validates price-to-plan matching.
+	// This ensures billing integrity - the billing module validates price-to-plan matching.
 	// Arbitrary resource values without a plan_id are rejected.
 	if req.PlanID == "" {
 		respondWithValidationError(c, vmValidationError{
 			status:  http.StatusBadRequest,
 			errCode: "PLAN_ID_REQUIRED",
-			errMsg:  "plan_id is required for resize operations. Contact WHMCS to upgrade your service.",
+			errMsg:  "plan_id is required for resize operations. Use the billing module to upgrade your service.",
 		})
 		return
 	}

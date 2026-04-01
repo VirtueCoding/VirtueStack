@@ -334,7 +334,7 @@ func TestOAuthService_ResolveCustomer_RejectWHMCS(t *testing.T) {
 		ID:            "c1",
 		Email:         "test@example.com",
 		Status:        models.CustomerStatusActive,
-		WHMCSClientID: &whmcsID,
+		ExternalClientID: &whmcsID,
 	}
 
 	linkRepo := &mockOAuthLinkRepo{
@@ -468,7 +468,7 @@ func testResolveCustomer(
 			return nil, errors.New("unexpected status")
 		}
 
-		if existing.WHMCSClientID != nil {
+		if existing.ExternalClientID != nil {
 			return nil, sharederrors.NewValidationError("email",
 				"This email is linked to a billing account. Log in with your password and link OAuth from account settings.")
 		}

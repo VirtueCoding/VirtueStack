@@ -14,8 +14,8 @@ import (
 )
 
 type CreateSSOTokenRequest struct {
-	VMID           string `json:"vm_id,omitempty" validate:"omitempty,uuid"`
-	WHMCSServiceID *int   `json:"whmcs_service_id,omitempty" validate:"omitempty,gt=0"`
+	VMID              string `json:"vm_id,omitempty" validate:"omitempty,uuid"`
+	ExternalServiceID *int   `json:"external_service_id,omitempty" validate:"omitempty,gt=0"`
 }
 
 type CreateSSOTokenResponse struct {
@@ -25,7 +25,7 @@ type CreateSSOTokenResponse struct {
 	ExpiresAt    string `json:"expires_at"`
 }
 
-// CreateSSOToken issues a short-lived opaque token for WHMCS browser SSO.
+// CreateSSOToken issues a short-lived opaque token for billing system browser SSO.
 // @Tags Provisioning
 // @Summary Create SSO token
 // @Description Creates one-time SSO token for customer portal login from billing system.
@@ -45,8 +45,8 @@ func (h *ProvisioningHandler) CreateSSOToken(c *gin.Context) {
 		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
 		return
 	}
-	if req.VMID == "" && req.WHMCSServiceID == nil {
-		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Either vm_id or whmcs_service_id is required")
+	if req.VMID == "" && req.ExternalServiceID == nil {
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Either vm_id or external_service_id is required")
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *ProvisioningHandler) CreateSSOToken(c *gin.Context) {
 		}
 		h.logger.Error("failed to resolve vm for sso token",
 			"vm_id", req.VMID,
-			"whmcs_service_id", req.WHMCSServiceID,
+			"external_service_id", req.ExternalServiceID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "SSO_TOKEN_FAILED", "Failed to issue SSO token")
@@ -106,7 +106,7 @@ func (h *ProvisioningHandler) lookupVMForSSO(c *gin.Context, req CreateSSOTokenR
 		}
 		return vm, nil
 	}
-	return h.vmRepo.GetByWHMCSServiceID(c.Request.Context(), *req.WHMCSServiceID)
+	return h.vmRepo.GetByExternalServiceID(c.Request.Context(), *req.ExternalServiceID)
 }
 
 func (h *ProvisioningHandler) logSSOTokenIssued(c *gin.Context, token *models.SSOToken) {

@@ -15,7 +15,7 @@ import (
 )
 
 // CreateVM handles POST /vms - creates a new VM asynchronously.
-// This endpoint is called by WHMCS when a new service is provisioned.
+// This endpoint is called by the billing module when a new service is provisioned.
 // @Tags Provisioning
 // @Summary Create VM
 // @Description Creates a VM for a provisioning request and returns async task details.
@@ -56,12 +56,12 @@ func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("VM creation initiated via provisioning API", "vm_id", vm.ID, "task_id", taskID, "customer_id", req.CustomerID, "whmcs_service_id", req.WHMCSServiceID, "correlation_id", middleware.GetCorrelationID(c))
+	h.logger.Info("VM creation initiated via provisioning API", "vm_id", vm.ID, "task_id", taskID, "customer_id", req.CustomerID, "external_service_id", req.ExternalServiceID, "correlation_id", middleware.GetCorrelationID(c))
 	c.JSON(http.StatusAccepted, models.Response{Data: CreateVMResponse{TaskID: taskID, VMID: vm.ID}})
 }
 
 // DeleteVM handles DELETE /vms/:id - terminates a VM asynchronously.
-// This endpoint is called by WHMCS when a service is cancelled/terminated.
+// This endpoint is called by the billing module when a service is cancelled/terminated.
 // @Tags Provisioning
 // @Summary Delete VM
 // @Description Deletes a VM through provisioning workflow and returns async task details.
@@ -106,7 +106,7 @@ func buildVMCreateRequest(req *ProvisioningCreateVMRequest, password, idempotenc
 		Hostname:       req.Hostname,
 		Password:       password,
 		SSHKeys:        req.SSHKeys,
-		WHMCSServiceID: &req.WHMCSServiceID,
+		ExternalServiceID: &req.ExternalServiceID,
 		IdempotencyKey: idempotencyKey,
 	}
 	if req.LocationID != "" {

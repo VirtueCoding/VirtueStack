@@ -12,7 +12,7 @@ import (
 )
 
 // SuspendVM handles POST /vms/:id/suspend - suspends a VM for billing purposes.
-// This endpoint is called by WHMCS when a service is suspended (e.g., non-payment).
+// This endpoint is called by the billing module when a service is suspended (e.g., non-payment).
 // @Tags Provisioning
 // @Summary Suspend VM
 // @Description Suspends a VM for billing or policy reasons.
@@ -74,7 +74,7 @@ func (h *ProvisioningHandler) SuspendVM(c *gin.Context) {
 }
 
 // UnsuspendVM handles POST /vms/:id/unsuspend - unsuspends a VM.
-// This endpoint is called by WHMCS when a service is reactivated (e.g., payment received).
+// This endpoint is called by the billing module when a service is reactivated (e.g., payment received).
 // @Tags Provisioning
 // @Summary Unsuspend VM
 // @Description Lifts VM suspension and restores normal operation.

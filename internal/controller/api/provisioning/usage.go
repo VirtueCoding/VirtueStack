@@ -10,7 +10,7 @@ import (
 )
 
 // VMUsageResponse represents the metering values returned for a VM.
-// This is consumed by WHMCS UsageUpdate() for billing.
+// This is consumed by billing modules (e.g. UsageUpdate) for billing.
 // BandwidthUsedGB is actual monthly bandwidth usage, while disk values reflect
 // the provisioned disk size currently tracked by the controller.
 type VMUsageResponse struct {
@@ -23,7 +23,7 @@ type VMUsageResponse struct {
 
 // GetVMUsage handles GET /vms/:id/usage.
 // It returns actual monthly bandwidth usage and the VM's provisioned disk size
-// for WHMCS billing integrations.
+// for billing integrations.
 // @Tags Provisioning
 // @Summary Get VM usage
 // @Description Returns VM resource usage statistics for billing synchronization.

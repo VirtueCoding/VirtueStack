@@ -14,11 +14,12 @@ import (
 
 // CreateCustomerRequest represents the request body for creating a customer
 // via the provisioning API. Only email and name are required; a random
-// password is generated automatically because WHMCS manages auth via SSO.
+// password is generated automatically because the billing module manages auth via SSO.
 type CreateCustomerRequest struct {
-	Email        string `json:"email" validate:"required,email,max=254"`
-	Name         string `json:"name" validate:"required,max=255"`
-	WHMCSClientID *int  `json:"whmcs_client_id,omitempty" validate:"omitempty,gt=0"`
+	Email            string  `json:"email" validate:"required,email,max=254"`
+	Name             string  `json:"name" validate:"required,max=255"`
+	ExternalClientID *int    `json:"external_client_id,omitempty" validate:"omitempty,gt=0"`
+	BillingProvider  *string `json:"billing_provider,omitempty" validate:"omitempty,oneof=whmcs blesta native"`
 }
 
 // CreateCustomerResponse represents the response for customer creation or lookup.
@@ -65,7 +66,7 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 
 	existing, err := h.customerRepo.GetByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
-		h.updateWHMCSClientID(c, existing, req.WHMCSClientID)
+		h.updateExternalClientID(c, existing, req.ExternalClientID)
 		h.logger.Info("existing customer returned via provisioning API",
 			"customer_id", existing.ID,
 			"correlation_id", correlationID)
@@ -103,14 +104,19 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 		return
 	}
 
+	billingProvider := models.BillingProviderWHMCS
+	if req.BillingProvider != nil {
+		billingProvider = *req.BillingProvider
+	}
+
 	customer := &models.Customer{
-		Email:           req.Email,
-		Name:            req.Name,
-		PasswordHash:    &passwordHash,
-		AuthProvider:    models.AuthProviderLocal,
-		WHMCSClientID:   req.WHMCSClientID,
-		BillingProvider: util.StringPtr(models.BillingProviderWHMCS),
-		Status:          models.CustomerStatusActive,
+		Email:            req.Email,
+		Name:             req.Name,
+		PasswordHash:     &passwordHash,
+		AuthProvider:     models.AuthProviderLocal,
+		ExternalClientID: req.ExternalClientID,
+		BillingProvider:  util.StringPtr(billingProvider),
+		Status:           models.CustomerStatusActive,
 	}
 
 	actorID := "provisioning"
@@ -137,25 +143,25 @@ func (h *ProvisioningHandler) CreateOrGetCustomer(c *gin.Context) {
 	}})
 }
 
-// updateWHMCSClientID sets whmcs_client_id on an existing customer if the
+// updateExternalClientID sets external_client_id on an existing customer if the
 // request carries one and the customer does not already have one set.
-func (h *ProvisioningHandler) updateWHMCSClientID(c *gin.Context, customer *models.Customer, whmcsClientID *int) {
-	if whmcsClientID == nil {
+func (h *ProvisioningHandler) updateExternalClientID(c *gin.Context, customer *models.Customer, externalClientID *int) {
+	if externalClientID == nil {
 		return
 	}
-	if customer.WHMCSClientID != nil {
-		if *customer.WHMCSClientID == *whmcsClientID {
+	if customer.ExternalClientID != nil {
+		if *customer.ExternalClientID == *externalClientID {
 			return
 		}
-		h.logger.Warn("whmcs_client_id mismatch on existing customer",
+		h.logger.Warn("external_client_id mismatch on existing customer",
 			"customer_id", customer.ID,
-			"existing_whmcs_client_id", *customer.WHMCSClientID,
-			"requested_whmcs_client_id", *whmcsClientID,
+			"existing_external_client_id", *customer.ExternalClientID,
+			"requested_external_client_id", *externalClientID,
 			"correlation_id", middleware.GetCorrelationID(c))
 		return
 	}
-	if err := h.customerRepo.UpdateWHMCSClientID(c.Request.Context(), customer.ID, *whmcsClientID); err != nil {
-		h.logger.Error("failed to update whmcs_client_id on existing customer",
+	if err := h.customerRepo.UpdateExternalClientID(c.Request.Context(), customer.ID, *externalClientID); err != nil {
+		h.logger.Error("failed to update external_client_id on existing customer",
 			"customer_id", customer.ID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))

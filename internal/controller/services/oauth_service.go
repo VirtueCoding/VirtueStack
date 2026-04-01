@@ -158,7 +158,7 @@ func (s *OAuthService) linkExistingCustomer(
 		return nil, fmt.Errorf("unexpected customer status: %s", customer.Status)
 	}
 
-	if customer.WHMCSClientID != nil {
+	if customer.ExternalClientID != nil {
 		return nil, sharederrors.NewValidationError("email",
 			"This email is linked to a billing account. "+
 				"Log in with your password and link OAuth from account settings.")

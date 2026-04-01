@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// GetPlan handles GET /plans/:id - returns plan details for WHMCS integration.
-// This endpoint is used by WHMCS to fetch plan resource specs for ChangePackage operations.
+// GetPlan handles GET /plans/:id - returns plan details for billing module integration.
+// This endpoint is used by billing modules to fetch plan resource specs for ChangePackage operations.
 // @Tags Provisioning
 // @Summary Get plan
 // @Description Returns plan details by plan ID.
@@ -50,8 +50,8 @@ func (h *ProvisioningHandler) GetPlan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": plan})
 }
 
-// ListPlans handles GET /plans - returns all active plans for WHMCS integration.
-// This endpoint is used by WHMCS to list available plans for product configuration.
+// ListPlans handles GET /plans - returns all active plans for billing module integration.
+// This endpoint is used by billing modules to list available plans for product configuration.
 // @Tags Provisioning
 // @Summary List plans
 // @Description Lists active plans available to provisioning clients.

@@ -1,5 +1,5 @@
-// Package provisioning provides HTTP handlers for the WHMCS Provisioning API.
-// These endpoints are designed for integration with billing systems like WHMCS.
+// Package provisioning provides HTTP handlers for the Provisioning API.
+// These endpoints are designed for integration with external billing systems (WHMCS, Blesta, etc.).
 // All endpoints require API key authentication via the X-API-Key header.
 package provisioning
 
@@ -12,7 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 )
 
-// ProvisioningHandler handles WHMCS provisioning API requests.
+// ProvisioningHandler handles provisioning API requests from external billing systems.
 // It provides endpoints for VM lifecycle operations that integrate with
 // billing systems. All operations are authenticated via API keys.
 type ProvisioningHandler struct {
@@ -120,14 +120,14 @@ type PasswordRequest struct {
 	Password string `json:"password" validate:"required,min=12,max=128"`
 }
 
-// ProvisioningCreateVMRequest represents the WHMCS provisioning create VM request.
+// ProvisioningCreateVMRequest represents the provisioning create VM request.
 // This is specific to the provisioning API and differs from the customer-facing API.
 type ProvisioningCreateVMRequest struct {
-	CustomerID     string   `json:"customer_id" validate:"required,uuid"`
-	PlanID         string   `json:"plan_id" validate:"required,uuid"`
-	TemplateID     string   `json:"template_id" validate:"required,uuid"`
-	Hostname       string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
-	SSHKeys        []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
-	WHMCSServiceID int      `json:"whmcs_service_id" validate:"required"`
-	LocationID     string   `json:"location_id,omitempty" validate:"omitempty,uuid"`
+	CustomerID        string   `json:"customer_id" validate:"required,uuid"`
+	PlanID            string   `json:"plan_id" validate:"required,uuid"`
+	TemplateID        string   `json:"template_id" validate:"required,uuid"`
+	Hostname          string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
+	SSHKeys           []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
+	ExternalServiceID int      `json:"external_service_id" validate:"required"`
+	LocationID        string   `json:"location_id,omitempty" validate:"omitempty,uuid"`
 }

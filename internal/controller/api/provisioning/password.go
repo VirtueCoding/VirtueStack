@@ -13,7 +13,7 @@ import (
 )
 
 // SetPassword handles POST /vms/:id/password - sets the root password for a VM.
-// This endpoint is called by WHMCS to set or change the root password.
+// This endpoint is called by the billing module to set or change the root password.
 // @Tags Provisioning
 // @Summary Set VM password
 // @Description Sets guest OS password for a VM.

@@ -96,7 +96,7 @@ func (r *billingTestCustomerRow) Scan(dest ...any) error {
 			*v = c.Phone
 		}
 		if v, ok := dest[5].(**int); ok {
-			*v = c.WHMCSClientID
+			*v = c.ExternalClientID
 		}
 		if v, ok := dest[6].(**string); ok {
 			*v = c.BillingProvider

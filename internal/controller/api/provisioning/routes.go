@@ -91,7 +91,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 	{
 		vms.POST("", handler.CreateVM)
 		vms.GET("/:id", handler.GetVMInfo)
-		vms.GET("/by-service/:service_id", handler.GetVMByWHMCSServiceID)
+		vms.GET("/by-service/:service_id", handler.GetVMByExternalServiceID)
 		vms.DELETE("/:id", handler.DeleteVM)
 		vms.POST("/:id/suspend", handler.SuspendVM)
 		vms.POST("/:id/unsuspend", handler.UnsuspendVM)
@@ -121,7 +121,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 }
 
 // RegisterProvisioningRoutes registers all provisioning API routes.
-// These routes are designed for WHMCS integration and use API key authentication.
+// These routes are designed for billing module integration and use API key authentication.
 //
 // Base path: /api/v1/provisioning
 // Authentication: X-API-Key header (validated against provisioning_keys table)
@@ -130,7 +130,7 @@ func registerRoutes(group *gin.RouterGroup, handler *ProvisioningHandler) {
 //
 //	POST   /vms                    - Create a new VM (async, returns task_id)
 //	GET    /vms/:id                - Get VM details by ID
-//	GET    /vms/by-service/:id     - Get VM by WHMCS service ID
+//	GET    /vms/by-service/:id     - Get VM by external billing service ID
 //	DELETE /vms/:id                - Terminate a VM (async, returns task_id)
 //	POST   /vms/:id/suspend        - Suspend a VM (billing suspension)
 //	POST   /vms/:id/unsuspend      - Unsuspend a VM

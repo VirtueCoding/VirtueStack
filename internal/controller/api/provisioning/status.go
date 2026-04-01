@@ -56,7 +56,7 @@ func buildVMStatusResponse(vm *models.VM) VMStatusResponse {
 }
 
 // GetVMInfo handles GET /vms/:id - retrieves detailed VM information.
-// This endpoint provides complete VM details for WHMCS module integration.
+// This endpoint provides complete VM details for billing module integration.
 // @Tags Provisioning
 // @Summary Get VM info
 // @Description Returns detailed VM information for provisioning integration.
@@ -90,20 +90,20 @@ func (h *ProvisioningHandler) GetVMInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Data: detail})
 }
 
-// GetVMByWHMCSServiceID handles GET /vms/by-service/:service_id - finds a VM by WHMCS service ID.
-// This endpoint is useful for WHMCS to lookup a VM by its service ID instead of UUID.
+// GetVMByExternalServiceID handles GET /vms/by-service/:service_id - finds a VM by external billing service ID.
+// This endpoint is useful for billing modules to lookup a VM by its service ID instead of UUID.
 // @Tags Provisioning
 // @Summary Get VM by service ID
-// @Description Returns VM by WHMCS service identifier.
+// @Description Returns VM by external billing service identifier.
 // @Produce json
 // @Security APIKeyAuth
-// @Param service_id path string true "WHMCS service ID"
+// @Param service_id path string true "External billing service ID"
 // @Success 200 {object} models.Response
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
 // @Router /api/v1/provisioning/vms/by-service/{service_id} [get]
-func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
+func (h *ProvisioningHandler) GetVMByExternalServiceID(c *gin.Context) {
 	serviceIDStr := c.Param("service_id")
 
 	// strconv.Atoi rejects non-digit suffixes (e.g. "123abc") that Sscanf would silently accept.
@@ -113,13 +113,13 @@ func (h *ProvisioningHandler) GetVMByWHMCSServiceID(c *gin.Context) {
 		return
 	}
 
-	vm, err := h.vmRepo.GetByWHMCSServiceID(c.Request.Context(), serviceID)
+	vm, err := h.vmRepo.GetByExternalServiceID(c.Request.Context(), serviceID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "No VM found with the specified WHMCS service ID")
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "No VM found with the specified service ID")
 			return
 		}
-		h.logger.Error("failed to get VM by WHMCS service ID",
+		h.logger.Error("failed to get VM by external service ID",
 			"service_id", serviceID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))

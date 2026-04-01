@@ -260,7 +260,7 @@ func buildVMRecord(req *models.VMCreateRequest, deps vmCreateDeps, customerID, m
 		BandwidthUsedBytes: 0, BandwidthResetAt: time.Now().UTC(),
 		MACAddress: macAddress, TemplateID: &deps.template.ID,
 		LibvirtDomainName: &libvirtDomainName, RootPasswordEncrypted: &encryptedPassword,
-		WHMCSServiceID: req.WHMCSServiceID, StorageBackend: deps.plan.StorageBackend,
+		ExternalServiceID: req.ExternalServiceID, StorageBackend: deps.plan.StorageBackend,
 	}
 	// Set StorageBackendID if we have a resolved storage backend
 	if deps.storageBackend != nil {
@@ -361,17 +361,17 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 //
 // Idempotency: If an IdempotencyKey is provided and a task with that key exists,
 // returns the existing VM and task instead of creating duplicates.
-// Also checks for existing VM by WHMCSServiceID to handle WHMCS retries.
+// Also checks for existing VM by ExternalServiceID to handle billing module retries.
 func (s *VMService) CreateVM(ctx context.Context, req *models.VMCreateRequest, customerID string) (*models.VM, string, error) {
-	// Idempotency check: If WHMCSServiceID provided, check for existing VM
-	// This handles WHMCS retry scenarios where the provisioning call times out
+	// Idempotency check: If ExternalServiceID provided, check for existing VM
+	// This handles billing module retry scenarios where the provisioning call times out
 	// but the VM was already created.
-	if req.WHMCSServiceID != nil && *req.WHMCSServiceID > 0 {
-		existingVM, err := s.vmRepo.GetByWHMCSServiceID(ctx, *req.WHMCSServiceID)
+	if req.ExternalServiceID != nil && *req.ExternalServiceID > 0 {
+		existingVM, err := s.vmRepo.GetByExternalServiceID(ctx, *req.ExternalServiceID)
 		if err == nil && existingVM != nil {
-			// VM already exists for this WHMCS service - find the associated task
-			s.logger.Info("VM already exists for WHMCS service, returning existing",
-				"vm_id", existingVM.ID, "whmcs_service_id", *req.WHMCSServiceID, "customer_id", customerID)
+			// VM already exists for this service - find the associated task
+			s.logger.Info("VM already exists for external service, returning existing",
+				"vm_id", existingVM.ID, "external_service_id", *req.ExternalServiceID, "customer_id", customerID)
 			// Return the existing VM. Task lookup would require storing vm_id in task payload.
 			// For now, return empty task ID since the VM exists.
 			return existingVM, "", nil

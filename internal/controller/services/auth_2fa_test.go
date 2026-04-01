@@ -128,7 +128,7 @@ func (m *mock2FACustomerRepo) List(ctx context.Context, filter repository.Custom
 	return nil, false, "", nil
 }
 
-func (m *mock2FACustomerRepo) UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error {
+func (m *mock2FACustomerRepo) UpdateExternalClientID(ctx context.Context, id string, externalClientID int) error {
 	return nil
 }
 

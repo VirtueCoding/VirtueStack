@@ -47,7 +47,7 @@ type CustomerRepo interface {
 	UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error
 	UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error
 	List(ctx context.Context, filter CustomerListFilter) ([]models.Customer, bool, string, error)
-	UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error
+	UpdateExternalClientID(ctx context.Context, id string, externalClientID int) error
 }
 
 // CustomerRepository provides database operations for customer accounts.
@@ -65,7 +65,7 @@ func scanCustomer(row pgx.Row) (models.Customer, error) {
 	var c models.Customer
 	err := row.Scan(
 		&c.ID, &c.Email, &c.PasswordHash, &c.Name, &c.Phone,
-		&c.WHMCSClientID, &c.BillingProvider, &c.AuthProvider, &c.TOTPSecretEncrypted, &c.TOTPEnabled,
+		&c.ExternalClientID, &c.BillingProvider, &c.AuthProvider, &c.TOTPSecretEncrypted, &c.TOTPEnabled,
 		&c.TOTPBackupCodesHash, &c.TOTPBackupCodesShown, &c.Status,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
@@ -74,7 +74,7 @@ func scanCustomer(row pgx.Row) (models.Customer, error) {
 
 const customerSelectCols = `
 	id, email, password_hash, name, phone,
-	whmcs_client_id, billing_provider, auth_provider, totp_secret_encrypted, totp_enabled,
+	external_client_id, billing_provider, auth_provider, totp_secret_encrypted, totp_enabled,
 	totp_backup_codes_hash, totp_backup_codes_shown, status,
 	created_at, updated_at`
 
@@ -83,13 +83,13 @@ const customerSelectCols = `
 func (r *CustomerRepository) Create(ctx context.Context, customer *models.Customer) error {
 	const q = `
 		INSERT INTO customers (
-			email, password_hash, name, whmcs_client_id, billing_provider,
+			email, password_hash, name, external_client_id, billing_provider,
 			auth_provider, totp_secret_encrypted, totp_enabled, totp_backup_codes_hash, status
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING ` + customerSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		customer.Email, customer.PasswordHash, customer.Name, customer.WHMCSClientID, customer.BillingProvider,
+		customer.Email, customer.PasswordHash, customer.Name, customer.ExternalClientID, customer.BillingProvider,
 		customer.AuthProvider, customer.TOTPSecretEncrypted, customer.TOTPEnabled, customer.TOTPBackupCodesHash, customer.Status,
 	)
 	created, err := scanCustomer(row)
@@ -182,15 +182,15 @@ func (r *CustomerRepository) UpdateStatus(ctx context.Context, id, status string
 	return nil
 }
 
-// UpdateWHMCSClientID updates the WHMCS client ID for a customer.
-func (r *CustomerRepository) UpdateWHMCSClientID(ctx context.Context, id string, whmcsClientID int) error {
-	const q = `UPDATE customers SET whmcs_client_id = $1, updated_at = NOW() WHERE id = $2 AND status != 'deleted'`
-	tag, err := r.db.Exec(ctx, q, whmcsClientID, id)
+// UpdateExternalClientID updates the external billing system client ID for a customer.
+func (r *CustomerRepository) UpdateExternalClientID(ctx context.Context, id string, externalClientID int) error {
+	const q = `UPDATE customers SET external_client_id = $1, updated_at = NOW() WHERE id = $2 AND status != 'deleted'`
+	tag, err := r.db.Exec(ctx, q, externalClientID, id)
 	if err != nil {
-		return fmt.Errorf("updating customer %s WHMCS client ID: %w", id, err)
+		return fmt.Errorf("updating customer %s external client ID: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("updating customer %s WHMCS client ID: %w", id, ErrNoRowsAffected)
+		return fmt.Errorf("updating customer %s external client ID: %w", id, ErrNoRowsAffected)
 	}
 	return nil
 }
