@@ -439,7 +439,10 @@ func (s *Server) shutdownHTTP(ctx context.Context) error {
 
 // Stop gracefully stops the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil && s.metricsServer == nil {
+	s.metricsMu.Lock()
+	hasMetricsServer := s.metricsServer != nil
+	s.metricsMu.Unlock()
+	if s.httpServer == nil && !hasMetricsServer {
 		return nil
 	}
 
@@ -456,13 +459,11 @@ func (s *Server) Stop(ctx context.Context) error {
 		}
 	}
 
-	if s.metricsServer != nil {
-		metricsShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		metricsErr := s.shutdownMetricsServer(metricsShutdownCtx)
-		cancel()
-		if metricsErr != nil {
-			shutdownErr = errors.Join(shutdownErr, metricsErr)
-		}
+	metricsShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	metricsErr := s.shutdownMetricsServer(metricsShutdownCtx)
+	cancel()
+	if metricsErr != nil {
+		shutdownErr = errors.Join(shutdownErr, metricsErr)
 	}
 
 	// Close the PowerDNS MySQL connection if it was opened.
