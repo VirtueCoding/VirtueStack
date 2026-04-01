@@ -157,7 +157,7 @@ func (s *Server) InitializeServices() error {
 		if err := billingRegistry.Register(blestaAdapter); err != nil {
 			return fmt.Errorf("register blesta billing provider: %w", err)
 		}
-		s.logger.Info("blesta billing provider registered (stub)")
+		s.logger.Info("blesta billing provider registered")
 	}
 
 	// Payment gateway registry
