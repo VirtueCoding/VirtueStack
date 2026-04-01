@@ -483,6 +483,9 @@ func (h *grpcHandler) openReceiveTarget(ctx context.Context, firstMsg *nodeagent
 		if firstMsg.GetDiskSizeGb() <= 0 {
 			return nil, nil, status.Error(codes.InvalidArgument, "disk_size_gb is required for lvm transfers")
 		}
+		if err := transferutil.ValidateLVMImageCapacity(firstMsg.GetTotal(), int64(firstMsg.GetDiskSizeGb())); err != nil {
+			return nil, nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
 		file, rollback, err := transferutil.OpenLVMReceiveTarget(
 			ctx,
 			target.CreateImageID,

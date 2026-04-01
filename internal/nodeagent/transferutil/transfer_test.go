@@ -253,6 +253,34 @@ func TestValidateTransferredBytes(t *testing.T) {
 	}
 }
 
+func TestValidateLVMImageCapacity(t *testing.T) {
+	tests := []struct {
+		name       string
+		totalBytes int64
+		sizeGB     int64
+		wantErr    bool
+	}{
+		{name: "fits within declared image size", totalBytes: bytesPerGiB, sizeGB: 2},
+		{name: "rejects oversized transfer", totalBytes: 2*bytesPerGiB + 1, sizeGB: 2, wantErr: true},
+		{name: "rejects non positive size", totalBytes: bytesPerGiB, sizeGB: 0, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateLVMImageCapacity(tt.totalBytes, tt.sizeGB)
+			if tt.wantErr {
+				if !errors.Is(err, ErrTransferSize) {
+					t.Fatalf("ValidateLVMImageCapacity() error = %v, want ErrTransferSize", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateLVMImageCapacity() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestWriteFull(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -379,6 +407,7 @@ func TestOpenLVMReceiveTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var created []string
 			var deleted []string
+			var deleteCtx context.Context
 
 			file, rollback, err := OpenLVMReceiveTarget(
 				context.Background(),
@@ -398,7 +427,8 @@ func TestOpenLVMReceiveTarget(t *testing.T) {
 					}
 					return os.OpenFile("/dev/null", os.O_WRONLY, 0)
 				},
-				func(_ context.Context, imageID string) error {
+				func(deleteImageCtx context.Context, imageID string) error {
+					deleteCtx = deleteImageCtx
 					deleted = append(deleted, imageID)
 					return tt.deleteErr
 				},
@@ -443,7 +473,93 @@ func TestOpenLVMReceiveTarget(t *testing.T) {
 			if len(deleted) != 1 || deleted[0] != "vs-vm-disk0" {
 				t.Fatalf("DeleteImage calls = %v, want [vs-vm-disk0]", deleted)
 			}
+			if deleteCtx == nil {
+				t.Fatal("DeleteImage context was not captured")
+			}
+			if deleteCtx.Err() != nil {
+				t.Fatalf("DeleteImage context should not be canceled, got %v", deleteCtx.Err())
+			}
 		})
+	}
+}
+
+func TestOpenLVMReceiveTarget_OpenFailureUsesDetachedContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var deleteCtx context.Context
+
+	file, rollback, err := OpenLVMReceiveTarget(
+		ctx,
+		"vs-vm-disk0",
+		10,
+		"/dev/vg0/vs-vm-disk0",
+		func(context.Context, string, int) error { return nil },
+		func(_ string) (*os.File, error) {
+			return nil, errOpenFailed
+		},
+		func(ctx context.Context, _ string) error {
+			deleteCtx = ctx
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("OpenLVMReceiveTarget() expected error")
+	}
+	if file != nil {
+		t.Fatal("OpenLVMReceiveTarget() file should be nil on error")
+	}
+	if rollback != nil {
+		t.Fatal("OpenLVMReceiveTarget() rollback should be nil on error")
+	}
+	if deleteCtx == nil {
+		t.Fatal("DeleteImage context was not captured")
+	}
+	if deleteCtx.Err() != nil {
+		t.Fatalf("DeleteImage context should be detached from cancellation, got %v", deleteCtx.Err())
+	}
+}
+
+func TestOpenLVMReceiveTarget_RollbackUsesDetachedContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var deleteCtx context.Context
+
+	file, rollback, err := OpenLVMReceiveTarget(
+		ctx,
+		"vs-vm-disk0",
+		10,
+		"/dev/vg0/vs-vm-disk0",
+		func(context.Context, string, int) error { return nil },
+		func(_ string) (*os.File, error) {
+			return os.OpenFile("/dev/null", os.O_WRONLY, 0)
+		},
+		func(ctx context.Context, _ string) error {
+			deleteCtx = ctx
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("OpenLVMReceiveTarget() error = %v", err)
+	}
+	if file == nil {
+		t.Fatal("OpenLVMReceiveTarget() returned nil file")
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		t.Fatalf("Close() error = %v", closeErr)
+	}
+	if rollback == nil {
+		t.Fatal("OpenLVMReceiveTarget() rollback should not be nil")
+	}
+	if err := rollback(); err != nil {
+		t.Fatalf("rollback() error = %v", err)
+	}
+	if deleteCtx == nil {
+		t.Fatal("DeleteImage context was not captured")
+	}
+	if deleteCtx.Err() != nil {
+		t.Fatalf("DeleteImage context should be detached from cancellation, got %v", deleteCtx.Err())
 	}
 }
 

@@ -24,6 +24,8 @@ var (
 	ErrWaitProcess   = errors.New("wait for process")
 )
 
+const bytesPerGiB int64 = 1024 * 1024 * 1024
+
 type ReceiveTarget struct {
 	OpenPath      string
 	CreateImageID string
@@ -132,6 +134,19 @@ func ValidateTransferredBytes(expected, actual int64) error {
 	return nil
 }
 
+func ValidateLVMImageCapacity(totalBytes, sizeGB int64) error {
+	if totalBytes < 0 {
+		return fmt.Errorf("%w: total bytes cannot be negative", ErrTransferSize)
+	}
+	if sizeGB <= 0 {
+		return fmt.Errorf("%w: disk_size_gb must be positive", ErrTransferSize)
+	}
+	if totalBytes > sizeGB*bytesPerGiB {
+		return fmt.Errorf("%w: disk_size_gb %d is too small for total transfer size %d bytes", ErrTransferSize, sizeGB, totalBytes)
+	}
+	return nil
+}
+
 func WriteFull(writer io.Writer, data []byte) error {
 	n, err := writer.Write(data)
 	if err != nil {
@@ -165,15 +180,17 @@ func OpenLVMReceiveTarget(
 
 	file, err := openFile(openPath)
 	if err != nil {
-		cleanupErr := deleteImage(ctx, imageID)
+		cleanupCtx := context.WithoutCancel(ctx)
+		cleanupErr := deleteImage(cleanupCtx, imageID)
 		if cleanupErr != nil {
 			return nil, nil, errors.Join(fmt.Errorf("%w: %w", ErrOpenTarget, err), cleanupErr)
 		}
 		return nil, nil, fmt.Errorf("%w: %w", ErrOpenTarget, err)
 	}
 
+	cleanupCtx := context.WithoutCancel(ctx)
 	rollback := func() error {
-		return deleteImage(ctx, imageID)
+		return deleteImage(cleanupCtx, imageID)
 	}
 	return file, rollback, nil
 }
