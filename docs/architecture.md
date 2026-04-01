@@ -2430,6 +2430,79 @@ Every component maps to the 19 Quality Gates from `CODING_STANDARD.md`:
 
 ---
 
+## 23. BILLING SYSTEM
+
+### 23.1 Overview
+
+VirtueStack supports three billing modes via a provider abstraction:
+
+| Mode | Provider | Description |
+|------|----------|-------------|
+| **WHMCS** | `whmcs` | External billing. WHMCS handles invoicing, payments, and customer management. VirtueStack provides provisioning via the neutral Provisioning API. |
+| **Blesta** | `blesta` | External billing. Blesta handles invoicing, payments, and customer management. VirtueStack provides provisioning via the neutral Provisioning API. |
+| **Native** | `native` | Built-in credit-based billing. VirtueStack manages a credit ledger, accepts payments via Stripe/PayPal/crypto, generates invoices, and bills hourly for VM usage. |
+
+### 23.2 Provider Abstraction
+
+```
+┌──────────────────────────────────┐
+│        BillingProvider           │ ← Interface
+│  Name(), OnVMCreated(),          │
+│  GetBalance(), ProcessTopUp()    │
+└────────┬───────────┬─────────────┘
+         │           │
+    ┌────▼────┐ ┌────▼────┐ ┌─────────┐
+    │  WHMCS  │ │ Blesta  │ │ Native  │
+    │ (no-op) │ │ (no-op) │ │ (full)  │
+    └─────────┘ └─────────┘ └────┬────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │   PaymentProvider       │ ← Interface
+                    │  CreateCheckoutSession  │
+                    │  VerifyWebhookSignature │
+                    └───┬────┬────┬──────────┘
+                    Stripe PayPal  Crypto
+                                (BTCPay/NOW)
+```
+
+The `BillingRegistry` maps provider names to implementations and selects the provider per-customer via the `customers.billing_provider` column.
+
+### 23.3 Payment Gateways
+
+| Gateway | Integration | Webhook Verification |
+|---------|-------------|---------------------|
+| Stripe | Checkout Sessions API (stripe-go v82) | `stripe.ConstructEvent()` with webhook secret |
+| PayPal | Orders API (REST v2) | PayPal REST API signature verification |
+| BTCPay Server | Store API | HMAC-SHA256 signature header |
+| NOWPayments | Payment API | HMAC-SHA512 IPN signature |
+
+### 23.4 Credit Ledger
+
+The credit ledger is an immutable append-only transaction log in `billing_transactions`. Each entry records a credit or debit with a `balance_after` field computed via `SELECT FOR UPDATE` to prevent race conditions under concurrent access.
+
+Transaction types: `credit` (top-up, admin grant), `debit` (hourly VM usage), `refund`.
+
+### 23.5 Hourly Billing
+
+A background scheduler runs every hour:
+
+1. Acquires PostgreSQL advisory lock (`pg_try_advisory_lock`) — only one Controller instance runs billing in HA
+2. Iterates all running VMs belonging to `native` billing customers
+3. Calculates hourly cost from the VM's plan pricing
+4. Creates debit transactions in the credit ledger
+5. Records `billing_checkpoints` to prevent double-billing
+6. Optionally auto-suspends VMs when balance reaches zero
+
+### 23.6 Invoicing
+
+Invoices aggregate billing transactions for a billing period. PDFs are rendered via go-pdf/fpdf with configurable company branding. Invoice states: `draft` → `issued` → `paid` | `void`.
+
+### 23.7 API Neutrality
+
+The Provisioning API uses neutral field names (`external_service_id`, `external_client_id`) instead of WHMCS-specific names, allowing any billing system to integrate via the same API.
+
+---
+
 ## APPENDIX A: DOCKER COMPOSE (Production)
 
 ```yaml

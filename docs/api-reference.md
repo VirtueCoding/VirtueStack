@@ -3681,4 +3681,476 @@ Extends `VM` with:
 
 ---
 
+## Billing API
+
+### Admin Billing
+
+#### Get Billing Transactions
+
+```
+GET /api/v1/admin/billing/transactions
+```
+
+Query parameters: `customer_id` (optional), `type` (credit/debit/refund), `page`, `per_page`.
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "customer_id": "uuid",
+      "type": "debit",
+      "amount": "0.0150",
+      "currency": "USD",
+      "description": "Hourly usage: vm-abc123 (Plan: VPS-2)",
+      "balance_after": "45.9850",
+      "reference_type": "vm_usage",
+      "reference_id": "uuid",
+      "created_at": "2026-04-01T12:00:00Z"
+    }
+  ],
+  "meta": { "page": 1, "per_page": 20, "total": 500 }
+}
+```
+
+#### Get Customer Balance
+
+```
+GET /api/v1/admin/billing/balance?customer_id=<uuid>
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "customer_id": "uuid",
+    "balance": "45.9850",
+    "currency": "USD"
+  }
+}
+```
+
+#### Admin Credit
+
+```
+POST /api/v1/admin/billing/credit
+```
+
+**Request:**
+```json
+{
+  "customer_id": "uuid",
+  "amount": "50.00",
+  "description": "Manual credit adjustment"
+}
+```
+
+**Response (201):**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "type": "credit",
+    "amount": "50.00",
+    "balance_after": "95.9850"
+  }
+}
+```
+
+#### Get Billing Payments
+
+```
+GET /api/v1/admin/billing/payments
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "customer_id": "uuid",
+      "provider": "stripe",
+      "external_id": "cs_abc123",
+      "amount": "50.00",
+      "currency": "USD",
+      "status": "completed",
+      "created_at": "2026-04-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+#### Refund Payment
+
+```
+POST /api/v1/admin/billing/refund/:paymentId
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "type": "refund",
+    "amount": "50.00",
+    "balance_after": "45.9850"
+  }
+}
+```
+
+#### Get Billing Config
+
+```
+GET /api/v1/admin/billing/config
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "provider": "native",
+    "payment_gateways": ["stripe", "paypal"],
+    "currency": "USD",
+    "hourly_billing_enabled": true
+  }
+}
+```
+
+### Admin Exchange Rates
+
+#### List Exchange Rates
+
+```
+GET /api/v1/admin/exchange-rates
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    { "currency": "EUR", "rate_to_usd": "0.92", "updated_at": "2026-04-01T00:00:00Z" },
+    { "currency": "GBP", "rate_to_usd": "0.79", "updated_at": "2026-04-01T00:00:00Z" }
+  ]
+}
+```
+
+#### Update Exchange Rate
+
+```
+PUT /api/v1/admin/exchange-rates/:currency
+```
+
+**Request:**
+```json
+{ "rate_to_usd": "0.93" }
+```
+
+### Admin Invoices
+
+#### List Invoices
+
+```
+GET /api/v1/admin/invoices
+```
+
+Query parameters: `customer_id`, `status` (draft/issued/paid/void), `page`, `per_page`.
+
+#### Get Invoice
+
+```
+GET /api/v1/admin/invoices/:id
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "customer_id": "uuid",
+    "invoice_number": "INV-2026-0001",
+    "status": "issued",
+    "total": "150.00",
+    "currency": "USD",
+    "due_date": "2026-05-01T00:00:00Z",
+    "line_items": [
+      {
+        "description": "VPS-2 usage (March 2026)",
+        "quantity": 720,
+        "unit_price": "0.0150",
+        "total": "10.80"
+      }
+    ],
+    "created_at": "2026-04-01T00:00:00Z"
+  }
+}
+```
+
+#### Download Invoice PDF
+
+```
+GET /api/v1/admin/invoices/:id/pdf
+```
+
+Returns `application/pdf` content.
+
+#### Void Invoice
+
+```
+POST /api/v1/admin/invoices/:id/void
+```
+
+### Customer Billing
+
+#### Get Balance
+
+```
+GET /api/v1/customer/billing/balance
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "balance": "45.9850",
+    "currency": "USD"
+  }
+}
+```
+
+#### Get Transactions
+
+```
+GET /api/v1/customer/billing/transactions
+```
+
+#### Get Usage
+
+```
+GET /api/v1/customer/billing/usage
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "vm_id": "uuid",
+      "hostname": "web-server-1",
+      "plan_name": "VPS-2",
+      "hourly_rate": "0.0150",
+      "hours_this_period": 720,
+      "total_cost": "10.80"
+    }
+  ]
+}
+```
+
+#### Create Top-Up
+
+```
+POST /api/v1/customer/billing/top-up
+```
+
+**Request:**
+```json
+{
+  "amount": "50.00",
+  "currency": "USD",
+  "gateway": "stripe",
+  "return_url": "https://panel.example.com/billing"
+}
+```
+
+**Response (201):**
+```json
+{
+  "data": {
+    "payment_id": "uuid",
+    "checkout_url": "https://checkout.stripe.com/c/pay/cs_abc123",
+    "gateway": "stripe"
+  }
+}
+```
+
+#### Get Top-Up Config
+
+```
+GET /api/v1/customer/billing/top-up/config
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "gateways": ["stripe", "paypal", "btcpay"],
+    "min_amount": "5.00",
+    "max_amount": "1000.00",
+    "currency": "USD"
+  }
+}
+```
+
+#### PayPal Capture
+
+```
+POST /api/v1/customer/billing/payments/paypal/capture
+```
+
+**Request:**
+```json
+{ "order_id": "PAYPAL-ORDER-123" }
+```
+
+### Customer Invoices
+
+#### List Invoices
+
+```
+GET /api/v1/customer/invoices
+```
+
+#### Get Invoice
+
+```
+GET /api/v1/customer/invoices/:id
+```
+
+#### Download Invoice PDF
+
+```
+GET /api/v1/customer/invoices/:id/pdf
+```
+
+### Customer In-App Notifications
+
+#### List Notifications
+
+```
+GET /api/v1/customer/notifications
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "title": "Payment received",
+      "message": "Your $50.00 top-up has been processed.",
+      "is_read": false,
+      "created_at": "2026-04-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+#### Mark as Read
+
+```
+POST /api/v1/customer/notifications/:id/read
+```
+
+#### Mark All as Read
+
+```
+POST /api/v1/customer/notifications/read-all
+```
+
+#### SSE Stream
+
+```
+GET /api/v1/customer/notifications/sse
+```
+
+Server-Sent Events stream. Sends `event: notification` with JSON data for real-time delivery.
+
+### Customer OAuth
+
+#### Initiate OAuth Login
+
+```
+GET /api/v1/customer/auth/oauth/:provider
+```
+
+Redirects to OAuth provider (Google or GitHub) with PKCE.
+
+#### OAuth Callback
+
+```
+POST /api/v1/customer/auth/oauth/:provider/callback
+```
+
+**Request:**
+```json
+{
+  "code": "authorization_code",
+  "code_verifier": "pkce_verifier"
+}
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "access_token": "jwt_token",
+    "refresh_token": "refresh_token",
+    "customer": { "id": "uuid", "email": "user@example.com" }
+  }
+}
+```
+
+#### Unlink OAuth Provider
+
+```
+DELETE /api/v1/customer/auth/oauth/:provider
+```
+
+#### List OAuth Links
+
+```
+GET /api/v1/customer/auth/oauth/links
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    { "provider": "google", "linked_at": "2026-04-01T12:00:00Z" },
+    { "provider": "github", "linked_at": "2026-03-15T08:00:00Z" }
+  ]
+}
+```
+
+### Webhook Endpoints (No Auth)
+
+These endpoints are signature-verified by the respective payment provider SDKs.
+
+#### Stripe Webhook
+
+```
+POST /webhooks/stripe
+```
+
+Verified via `stripe.ConstructEvent()`. Processes `checkout.session.completed` events to credit customer accounts.
+
+#### PayPal Webhook
+
+```
+POST /webhooks/paypal
+```
+
+Verified via PayPal REST API. Processes `CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.COMPLETED` events.
+
+#### Crypto Webhook
+
+```
+POST /webhooks/crypto
+```
+
+Verified via HMAC signature. Processes BTCPay `InvoiceSettled` and NOWPayments `finished` IPN events.
+
+---
+
 *This document is auto-generated from the VirtueStack codebase. For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md). For coding standards, see [CODING_STANDARD.md](CODING_STANDARD.md).*
