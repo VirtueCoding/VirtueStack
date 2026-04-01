@@ -7,14 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
 import { useQuery } from "@tanstack/react-query";
 import { oauthApi } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { retrieveOAuthState } from "@/lib/utils/oauth";
 import { fetchCustomerProfileAfter2FA } from "@/lib/auth-utils";
-
-const AUTH_STATE_KEY = "customer_auth_state";
 
 function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { setAuthenticatedUser } = useAuth();
 
   // Derive validation synchronously from URL params.
   const callbackInput = useMemo(() => {
@@ -62,13 +62,7 @@ function OAuthCallbackContent() {
       });
 
       const user = await fetchCustomerProfileAfter2FA();
-
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(
-          AUTH_STATE_KEY,
-          JSON.stringify({ user, isAuthenticated: true })
-        );
-      }
+      setAuthenticatedUser(user);
 
       router.push("/vms");
       return true;

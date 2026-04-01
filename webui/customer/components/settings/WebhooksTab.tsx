@@ -30,11 +30,11 @@ import { settingsApi, Webhook as WebhookType } from "@/lib/api-client";
 import { useMutationToast } from "@/lib/utils/toast-helpers";
 import { Webhook, Calendar, Loader2, Trash2, Edit3, Plus, Play } from "lucide-react";
 
+const WEBHOOK_SECRET_MIN_LENGTH = 16;
+
 const webhookSchema = z.object({
   url: z.string().url("Invalid URL"),
   events: z.array(z.string()).min(1, "At least one event is required"),
-  // secret is required when creating a new webhook, but omitted when editing
-  // (the secret field is hidden in the edit form).
   secret: z.string().optional(),
 });
 
@@ -166,10 +166,19 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
         },
       });
     } else {
+      const secret = data.secret?.trim() ?? "";
+      if (secret.length < WEBHOOK_SECRET_MIN_LENGTH) {
+        webhookForm.setError("secret", {
+          type: "min",
+          message: `Secret must be at least ${WEBHOOK_SECRET_MIN_LENGTH} characters`,
+        });
+        return;
+      }
+
       createWebhookMutation.mutate({
         url: data.url,
         events: data.events,
-        secret: data.secret ?? "",
+        secret,
       });
     }
   };
@@ -361,12 +370,16 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
             {!editingWebhook && (
               <div className="space-y-2">
                 <Label htmlFor="webhook-secret">Secret</Label>
-                <Input
-                  id="webhook-secret"
-                  type="password"
-                  placeholder="Webhook secret for signature verification"
-                  {...webhookForm.register("secret")}
-                />
+                 <Input
+                   id="webhook-secret"
+                   type="password"
+                   placeholder="Webhook secret for signature verification"
+                   {...webhookForm.register("secret", {
+                     validate: (value) =>
+                       editingWebhook || (value?.trim().length ?? 0) >= WEBHOOK_SECRET_MIN_LENGTH ||
+                       `Secret must be at least ${WEBHOOK_SECRET_MIN_LENGTH} characters`,
+                   })}
+                 />
                 {webhookForm.formState.errors.secret && (
                   <p className="text-sm text-destructive">{webhookForm.formState.errors.secret.message}</p>
                 )}

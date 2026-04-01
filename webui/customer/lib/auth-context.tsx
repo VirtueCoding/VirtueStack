@@ -32,6 +32,7 @@ interface AuthContextType extends AuthState {
   login: (credentials: LoginRequest) => Promise<void>;
   verify2FA: (request: Verify2FARequest) => Promise<void>;
   logout: () => Promise<void>;
+  setAuthenticatedUser: (user: CustomerUser) => void;
   clearError: () => void;
   reset2FA: () => void;
   error: string | null;
@@ -88,6 +89,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const clearError = useCallback(() => setError(null), []);
+
+  const setAuthenticatedUser = useCallback(
+    (user: CustomerUser) => {
+      setState({
+        user,
+        isAuthenticated: true,
+        isLoading: false,
+        requires2FA: false,
+      });
+      setTempToken(null);
+      setPendingEmail(null);
+      setError(null);
+      persistState(user, true);
+    },
+    [persistState]
+  );
 
   const reset2FA = useCallback(() => {
     setState((prev) => ({ ...prev, requires2FA: false }));
@@ -152,15 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Fetch the real profile to get the UUID rather than using email as ID.
         const user = await fetchCustomerProfileAfter2FA();
-        setState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
-        });
-        setTempToken(null);
-        setPendingEmail(null);
-        persistState(user, true);
+        setAuthenticatedUser(user);
         router.push("/vms");
       } catch (err) {
         let message = "Login failed. Please try again.";
@@ -175,7 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, persistState]
+    [router, setAuthenticatedUser]
   );
 
   const verify2FA = useCallback(
@@ -224,15 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        setState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
-        });
-        setTempToken(null);
-        setPendingEmail(null);
-        persistState(user, true);
+        setAuthenticatedUser(user);
         router.push("/vms");
       } catch (err) {
         let message = "2FA verification failed. Please try again.";
@@ -247,7 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, persistState, pendingEmail]
+    [router, pendingEmail, setAuthenticatedUser]
   );
 
   const logout = useCallback(async () => {
@@ -277,6 +278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     verify2FA,
     logout,
+    setAuthenticatedUser,
     error,
     clearError,
     reset2FA,
