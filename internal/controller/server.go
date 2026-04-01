@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/admin"
@@ -70,6 +71,7 @@ type Server struct {
 	metricsServer *http.Server
 	metricsLn     net.Listener
 	metricsDone   chan struct{}
+	metricsMu     sync.Mutex
 	dbPool        *pgxpool.Pool
 	powerDNSDB    *sql.DB // MySQL connection to PowerDNS database
 	natsConn      *nats.Conn
@@ -363,9 +365,11 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
 	}
 	metricsDone := make(chan struct{})
 
+	s.metricsMu.Lock()
 	s.metricsServer = metricsServer
 	s.metricsLn = listener
 	s.metricsDone = metricsDone
+	s.metricsMu.Unlock()
 
 	s.logger.Info("starting metrics server", "address", s.config.MetricsAddr)
 
@@ -380,6 +384,7 @@ func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
 }
 
 func (s *Server) shutdownMetricsServer(ctx context.Context) error {
+	s.metricsMu.Lock()
 	server := s.metricsServer
 	listener := s.metricsLn
 	done := s.metricsDone
@@ -387,6 +392,7 @@ func (s *Server) shutdownMetricsServer(ctx context.Context) error {
 	s.metricsServer = nil
 	s.metricsLn = nil
 	s.metricsDone = nil
+	s.metricsMu.Unlock()
 
 	if server == nil {
 		return nil

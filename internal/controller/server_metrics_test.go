@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	"github.com/gin-gonic/gin"
@@ -107,6 +108,60 @@ func TestStop_ShutsDownMetricsWhenHTTPShutdownFails(t *testing.T) {
 	metricsListener, listenErr := net.Listen("tcp", metricsAddr)
 	require.NoError(t, listenErr)
 	_ = metricsListener.Close()
+}
+
+func TestMetricsShutdownHandlesConcurrentStartFailureAndStop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	httpAddr := reserveTCPAddress(t)
+	metricsAddr := reserveTCPAddress(t)
+	serveStarted := make(chan struct{})
+	releaseServe := make(chan struct{})
+
+	server := &Server{
+		config: &config.ControllerConfig{
+			ListenAddr:  httpAddr,
+			MetricsAddr: metricsAddr,
+		},
+		router: gin.New(),
+		logger: testLogger(),
+		serveHTTPFunc: func(_ *http.Server, _ net.Listener) error {
+			close(serveStarted)
+			<-releaseServe
+			return errors.New("simulated serve failure")
+		},
+	}
+	server.setupRoutes()
+
+	startErrCh := make(chan error, 1)
+	go func() {
+		startErrCh <- server.Start(context.Background())
+	}()
+
+	<-serveStarted
+
+	stopErrCh := make(chan error, 1)
+	go func() {
+		stopErrCh <- server.Stop(context.Background())
+	}()
+
+	close(releaseServe)
+
+	startErr := <-startErrCh
+	require.Error(t, startErr)
+	require.ErrorContains(t, startErr, "simulated serve failure")
+
+	stopErr := <-stopErrCh
+	require.NoError(t, stopErr)
+
+	require.Eventually(t, func() bool {
+		metricsListener, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return false
+		}
+		_ = metricsListener.Close()
+		return true
+	}, time.Second, 10*time.Millisecond)
 }
 
 func reserveTCPAddress(t *testing.T) string {
