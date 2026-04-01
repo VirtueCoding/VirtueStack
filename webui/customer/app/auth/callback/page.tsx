@@ -6,10 +6,11 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
 import { useQuery } from "@tanstack/react-query";
-import { oauthApi } from "@/lib/api-client";
+import { customerAuthApi, oauthApi } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { retrieveOAuthState } from "@/lib/utils/oauth";
 import { fetchCustomerProfileAfter2FA } from "@/lib/auth-utils";
+import { finalizeOAuthSession } from "@/lib/oauth-callback-session";
 
 function OAuthCallbackContent() {
   const router = useRouter();
@@ -61,8 +62,11 @@ function OAuthCallbackContent() {
         state: input.state,
       });
 
-      const user = await fetchCustomerProfileAfter2FA();
-      setAuthenticatedUser(user);
+      await finalizeOAuthSession({
+        loadUser: fetchCustomerProfileAfter2FA,
+        setAuthenticatedUser,
+        logout: customerAuthApi.logout,
+      });
 
       router.push("/vms");
       return true;
