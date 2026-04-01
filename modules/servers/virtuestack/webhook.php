@@ -271,7 +271,12 @@ function handleVMCreated(string $taskId, string $vmId, int $serviceId, array $re
     // Update IP addresses
     $ipAddresses = $result['ip_addresses'] ?? [];
     if (!empty($ipAddresses)) {
-        $primaryIp = $ipAddresses[0]['address'] ?? '';
+        $primaryIp = '';
+        if (isset($ipAddresses[0]) && is_array($ipAddresses[0])) {
+            $primaryIp = isset($ipAddresses[0]['address']) && is_string($ipAddresses[0]['address'])
+                ? $ipAddresses[0]['address']
+                : '';
+        }
         if (!empty($primaryIp)) {
             updateServiceField($serviceId, 'vm_ip', $primaryIp);
             updateServiceDedicatedIp($serviceId, $primaryIp);
@@ -581,7 +586,12 @@ function logWebhook(string $level, string $message, array $context = []): void
         rename($logFile, $backupFile);
         $logFiles = glob($logDir . '/webhook.log.*');
         if (count($logFiles) > 5) {
-            usort($logFiles);
+            usort(
+                $logFiles,
+                static function (string $left, string $right): int {
+                    return strcmp($left, $right);
+                }
+            );
             array_map('unlink', array_slice($logFiles, 0, count($logFiles) - 5));
         }
     }

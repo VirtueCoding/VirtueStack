@@ -590,6 +590,7 @@ function virtuestack_ClientArea(array $params): array
         $ssoToken = '';
         if (!empty($vmId) && !empty($webuiUrl)) {
             try {
+                $client = virtuestack_getApiClient($params);
                 $sso = $client->createSSOToken($serviceId, $vmId);
                 $ssoToken = (string) ($sso['token'] ?? '');
             } catch (\Exception $e) {
@@ -624,7 +625,7 @@ function virtuestack_ClientArea(array $params): array
             'templatefile' => 'templates/overview.tpl',
             'vars' => [
                 'status' => 'error',
-                'error'  => $e->getMessage(),
+                'error'  => 'The VirtueStack portal is temporarily unavailable. Please try again later.',
             ],
         ];
     }

@@ -85,6 +85,11 @@ function processWebhook(): void
         return;
     }
 
+    if (empty($webhookSecret)) {
+        sendResponse(401, ['error' => 'Invalid signature.']);
+        return;
+    }
+
     if (!VirtueStackHelper::verifyWebhookSignature($body, $signature, $webhookSecret)) {
         sendResponse(401, ['error' => 'Invalid signature.']);
         return;
@@ -162,8 +167,14 @@ function handleEvent(
         case 'vm.created':
             $vmIp = '';
             if (!empty($data['ip_addresses']) && is_array($data['ip_addresses'])) {
-                $vmIp = $data['ip_addresses'][0]['address']
-                    ?? ($data['ip_addresses'][0] ?? '');
+                if (isset($data['ip_addresses'][0]) && is_array($data['ip_addresses'][0])) {
+                    $vmIp = isset($data['ip_addresses'][0]['address'])
+                        && is_string($data['ip_addresses'][0]['address'])
+                        ? $data['ip_addresses'][0]['address']
+                        : '';
+                } elseif (isset($data['ip_addresses'][0]) && is_string($data['ip_addresses'][0])) {
+                    $vmIp = $data['ip_addresses'][0];
+                }
             }
             updateServiceField($serviceId, 'vm_id', $vmId ?? '');
             updateServiceField($serviceId, 'vm_ip', $vmIp);

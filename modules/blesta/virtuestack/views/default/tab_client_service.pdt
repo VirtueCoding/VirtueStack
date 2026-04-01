@@ -48,7 +48,7 @@ $status = $provisioning_status ?? 'pending';
         <h3><?php echo $this->_('Virtuestack.provisioning.error', true);?></h3>
         <?php if (!empty($provisioning_error)) : ?>
         <p style="color:#991b1b;margin-top:8px;">
-            <?php echo $this->Html->safe($provisioning_error);?>
+            <?php echo $this->_('Virtuestack.provisioning.error', true);?>
         </p>
         <?php endif; ?>
     </div>

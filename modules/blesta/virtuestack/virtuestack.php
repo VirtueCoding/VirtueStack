@@ -238,7 +238,7 @@ class Virtuestack extends \Module
      * @param array $vars Package configuration values
      * @return bool True if valid
      */
-    public function validatePackage(array $vars = null)
+    public function validatePackage(?array $vars = null)
     {
         require_once dirname(__FILE__) . DS . 'lib' . DS . 'VirtueStackHelper.php';
 
@@ -320,7 +320,7 @@ class Virtuestack extends \Module
      */
     public function addService(
         $package,
-        array $vars = null,
+        ?array $vars = null,
         $parent_package = null,
         $parent_service = null,
         $status = 'pending'
@@ -670,9 +670,9 @@ class Virtuestack extends \Module
     public function tabAdminService(
         $package,
         $service,
-        array $get = null,
-        array $post = null,
-        array $files = null
+        ?array $get = null,
+        ?array $post = null,
+        ?array $files = null
     ) {
         $this->view = new View('tab_admin_service', 'default');
         $this->view->base_uri = $this->base_uri;
@@ -756,9 +756,9 @@ class Virtuestack extends \Module
     public function tabClientService(
         $package,
         $service,
-        array $get = null,
-        array $post = null,
-        array $files = null
+        ?array $get = null,
+        ?array $post = null,
+        ?array $files = null
     ) {
         $this->view = new View('tab_client_service', 'default');
         $this->view->base_uri = $this->base_uri;
@@ -779,7 +779,11 @@ class Virtuestack extends \Module
         $this->view->set('vm_id', $vmId);
         $this->view->set('provisioning_status', $provStatus);
         $this->view->set('task_id', $taskId);
-        $this->view->set('provisioning_error', $provError);
+        $safeProvisioningError = !empty($provError)
+            ? Language::_('Virtuestack.provisioning.error', true)
+            : '';
+
+        $this->view->set('provisioning_error', $safeProvisioningError);
         $this->view->set('iframe_url', '');
         $this->view->set('error', '');
 
@@ -805,7 +809,10 @@ class Virtuestack extends \Module
                         $api->resetPassword($vmId);
                     }
                 } catch (Exception $e) {
-                    $this->view->set('error', $e->getMessage());
+                    $this->view->set(
+                        'error',
+                        'The VirtueStack portal is temporarily unavailable. Please try again later.'
+                    );
                 }
             }
 
@@ -828,7 +835,10 @@ class Virtuestack extends \Module
                     }
                 }
             } catch (Exception $e) {
-                $this->view->set('error', $e->getMessage());
+                $this->view->set(
+                    'error',
+                    'The VirtueStack portal is temporarily unavailable. Please try again later.'
+                );
             }
         }
 
@@ -848,9 +858,9 @@ class Virtuestack extends \Module
     public function tabClientConsole(
         $package,
         $service,
-        array $get = null,
-        array $post = null,
-        array $files = null
+        ?array $get = null,
+        ?array $post = null,
+        ?array $files = null
     ) {
         $this->view = new View('tab_client_console', 'default');
         $this->view->base_uri = $this->base_uri;
