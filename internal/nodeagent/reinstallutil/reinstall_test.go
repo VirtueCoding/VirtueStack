@@ -1,6 +1,10 @@
 package reinstallutil
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"testing"
+)
 
 func TestLookupSizingThenDelete(t *testing.T) {
 	t.Run("reads sizing before deleting", func(t *testing.T) {
@@ -29,7 +33,7 @@ func TestLookupSizingThenDelete(t *testing.T) {
 	t.Run("falls back to defaults when lookup fails", func(t *testing.T) {
 		sizing, err := LookupSizingThenDelete(
 			func() (Sizing, error) {
-				return Sizing{}, assertErr("lookup failed")
+				return Sizing{}, os.ErrNotExist
 			},
 			func() error {
 				return nil
@@ -40,6 +44,31 @@ func TestLookupSizingThenDelete(t *testing.T) {
 		}
 		if sizing != DefaultSizing {
 			t.Fatalf("sizing = %+v, want %+v", sizing, DefaultSizing)
+		}
+	})
+
+	t.Run("returns lookup error without deleting on unexpected lookup failure", func(t *testing.T) {
+		lookupErr := assertErr("lookup failed")
+		deleteCalled := false
+
+		sizing, err := LookupSizingThenDelete(
+			func() (Sizing, error) {
+				return Sizing{}, lookupErr
+			},
+			func() error {
+				deleteCalled = true
+				return nil
+			},
+		)
+
+		if !errors.Is(err, lookupErr) {
+			t.Fatalf("LookupSizingThenDelete() error = %v, want %v", err, lookupErr)
+		}
+		if deleteCalled {
+			t.Fatal("LookupSizingThenDelete() should not delete when lookup fails unexpectedly")
+		}
+		if sizing != (Sizing{}) {
+			t.Fatalf("sizing = %+v, want zero value", sizing)
 		}
 	})
 }

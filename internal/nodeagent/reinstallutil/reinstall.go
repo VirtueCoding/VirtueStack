@@ -1,5 +1,10 @@
 package reinstallutil
 
+import (
+	"errors"
+	"os"
+)
+
 type Sizing struct {
 	VCPU     int
 	MemoryMB int
@@ -22,10 +27,13 @@ func NormalizeSizing(sizing Sizing) Sizing {
 
 func LookupSizingThenDelete(lookup func() (Sizing, error), deleteFunc func() error) (Sizing, error) {
 	sizing, err := lookup()
-	if err != nil {
-		sizing = DefaultSizing
-	} else {
+	switch {
+	case err == nil:
 		sizing = NormalizeSizing(sizing)
+	case errors.Is(err, os.ErrNotExist):
+		sizing = DefaultSizing
+	default:
+		return Sizing{}, err
 	}
 	if err := deleteFunc(); err != nil {
 		return sizing, err

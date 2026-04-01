@@ -248,11 +248,63 @@ func validatePathWithin(path, allowedPrefix string) error {
 	if path == "" {
 		return fmt.Errorf("path must not be empty")
 	}
+	cleanedPrefix := filepath.Clean(allowedPrefix)
 	cleaned := filepath.Clean(path)
-	if !strings.HasPrefix(cleaned, allowedPrefix+"/") && cleaned != allowedPrefix {
+	if !pathWithin(cleaned, cleanedPrefix) {
 		return fmt.Errorf("path %q is outside the allowed directory %q", cleaned, allowedPrefix)
 	}
+	resolvedPrefix, err := filepath.EvalSymlinks(cleanedPrefix)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("resolving allowed directory %q: %w", allowedPrefix, err)
+		}
+		resolvedPrefix = cleanedPrefix
+	}
+	if err := validateSymlinkBoundary(cleaned, cleanedPrefix, resolvedPrefix); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateSymlinkBoundary(path, cleanedPrefix, resolvedPrefix string) error {
+	relPath, err := filepath.Rel(cleanedPrefix, path)
+	if err != nil {
+		return fmt.Errorf("computing relative path for %q: %w", path, err)
+	}
+	if relPath == "." {
+		return nil
+	}
+	currentPath := cleanedPrefix
+	for _, segment := range strings.Split(relPath, string(filepath.Separator)) {
+		currentPath = filepath.Join(currentPath, segment)
+		info, err := os.Lstat(currentPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("inspecting path %q: %w", currentPath, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+
+		resolvedPath, err := filepath.EvalSymlinks(currentPath)
+		if err != nil {
+			return fmt.Errorf("resolving path %q: %w", currentPath, err)
+		}
+		if !pathWithin(filepath.Clean(resolvedPath), resolvedPrefix) {
+			return fmt.Errorf("path %q resolves outside the allowed directory %q", path, cleanedPrefix)
+		}
+	}
+	return nil
+}
+
+func pathWithin(path, prefix string) bool {
+	relPath, err := filepath.Rel(prefix, path)
+	if err != nil {
+		return false
+	}
+	return relPath == "." || (relPath != ".." && !strings.HasPrefix(relPath, ".."+string(filepath.Separator)))
 }
 
 func validateVG(name string) error {

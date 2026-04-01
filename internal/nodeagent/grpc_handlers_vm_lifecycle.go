@@ -5,6 +5,7 @@ package nodeagent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/reinstallutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
+	sharedlibvirtutil "github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -150,6 +152,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		func() (reinstallutil.Sizing, error) {
 			existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
 			if lookupErr != nil {
+				if sharedlibvirtutil.IsLibvirtError(lookupErr, libvirt.ERR_NO_DOMAIN) {
+					return reinstallutil.Sizing{}, os.ErrNotExist
+				}
 				return reinstallutil.Sizing{}, lookupErr
 			}
 			defer func() {
@@ -159,6 +164,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			}()
 			info, infoErr := existingDomain.GetInfo()
 			if infoErr != nil {
+				if sharedlibvirtutil.IsLibvirtError(infoErr, libvirt.ERR_NO_DOMAIN) {
+					return reinstallutil.Sizing{}, os.ErrNotExist
+				}
 				return reinstallutil.Sizing{}, infoErr
 			}
 			return reinstallutil.NormalizeSizing(reinstallutil.Sizing{

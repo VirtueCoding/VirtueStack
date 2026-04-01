@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -152,6 +153,45 @@ func TestResolveReceiveTarget(t *testing.T) {
 			}
 			if got.CreateImageID != tt.wantCreateImageID {
 				t.Fatalf("ResolveReceiveTarget().CreateImageID = %q, want %q", got.CreateImageID, tt.wantCreateImageID)
+			}
+		})
+	}
+}
+
+func TestResolveReceiveTarget_RejectsSymlinkEscapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, storageRoot, outsideRoot string) string
+	}{
+		{
+			name: "rejects existing symlink target",
+			prepare: func(t *testing.T, storageRoot, outsideRoot string) string {
+				t.Helper()
+				targetPath := filepath.Join(storageRoot, "vm-1-disk0.qcow2")
+				requireNoError(t, os.Symlink(filepath.Join(outsideRoot, "escaped.qcow2"), targetPath))
+				return targetPath
+			},
+		},
+		{
+			name: "rejects symlinked parent directory",
+			prepare: func(t *testing.T, storageRoot, outsideRoot string) string {
+				t.Helper()
+				parentPath := filepath.Join(storageRoot, "vms")
+				requireNoError(t, os.Symlink(outsideRoot, parentPath))
+				return filepath.Join(parentPath, "vm-1-disk0.qcow2")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storageRoot := t.TempDir()
+			outsideRoot := t.TempDir()
+
+			targetPath := tt.prepare(t, storageRoot, outsideRoot)
+			_, err := ResolveReceiveTarget("qcow", targetPath, storageRoot, "", "", "", "")
+			if err == nil {
+				t.Fatal("ResolveReceiveTarget() expected error for symlink escape")
 			}
 		})
 	}
@@ -702,4 +742,11 @@ func (r *scriptedReader) Read(p []byte) (int, error) {
 	r.index++
 	n := copy(p, step.data)
 	return n, step.err
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
