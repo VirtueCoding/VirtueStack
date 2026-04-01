@@ -139,30 +139,6 @@ export const apiClient = {
   },
 };
 
-function getAccessTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|;\s*)vs_access_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function decodeJWTPayload(token: string): { exp?: number } | null {
-  try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(
-      base64.length + ((4 - (base64.length % 4)) % 4),
-      "="
-    );
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-let tokenValidUntil = 0;
-
 export interface ReauthResponse {
   reauth_token: string;
   expires_in: number;
@@ -190,7 +166,6 @@ export const adminAuthApi = {
       // Log for debugging but don't propagate to prevent UI from hanging.
       console.warn('Logout request failed (session may already be invalid):', err);
     }
-    tokenValidUntil = 0;
   },
 
   // me() fetches the current authenticated admin user's identity from the server.
@@ -218,34 +193,6 @@ export const adminAuthApi = {
   // header when performing destructive operations (DELETE nodes, VMs, etc.).
   async reauth(password: string): Promise<ReauthResponse> {
     return apiClient.post<ReauthResponse>("/admin/auth/reauth", { password });
-  },
-
-  async ensureValidToken(): Promise<boolean> {
-    const token = getAccessTokenFromCookie();
-
-    if (token) {
-      const payload = decodeJWTPayload(token);
-      if (payload && typeof payload.exp === "number") {
-        const now = Math.floor(Date.now() / 1000);
-        if (payload.exp - now >= 60) {
-          return true;
-        }
-      }
-    }
-
-    if (Date.now() < tokenValidUntil) {
-      return true;
-    }
-
-    try {
-      const tokens = await adminAuthApi.refreshToken();
-      tokenValidUntil =
-        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
-      return true;
-    } catch {
-      tokenValidUntil = 0;
-      return false;
-    }
   },
 };
 
