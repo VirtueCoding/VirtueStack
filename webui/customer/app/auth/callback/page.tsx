@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, Suspense } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@virtuestack/ui";
@@ -16,8 +16,14 @@ function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setAuthenticatedUser } = useAuth();
+  const [hasMounted, setHasMounted] = useState(false);
 
-  // Derive validation synchronously from URL params.
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
+  // Validate only URL parameters during render. Browser-only PKCE state is
+  // consumed after mount so SSR does not touch sessionStorage.
   const callbackInput = useMemo(() => {
     const errorParam = searchParams.get("error");
     if (errorParam) {
@@ -30,15 +36,8 @@ function OAuthCallbackContent() {
     if (!code || !state) {
       return { error: "Missing authorization code or state parameter." };
     }
-    const stored = retrieveOAuthState(state);
-    if (!stored) {
-      return { error: "OAuth state mismatch or expired. Please try again." };
-    }
     return {
-      provider: stored.provider,
       code,
-      codeVerifier: stored.codeVerifier,
-      redirectURI: stored.redirectURI,
       state,
     };
   }, [searchParams]);
@@ -50,15 +49,16 @@ function OAuthCallbackContent() {
     queryKey: ["oauth-callback", callbackInput],
     queryFn: async () => {
       if (hasError) throw new Error(callbackInput.error);
-      const input = callbackInput as {
-        provider: string; code: string; codeVerifier: string;
-        redirectURI: string; state: string;
-      };
+      const input = callbackInput as { code: string; state: string };
+      const stored = retrieveOAuthState(input.state);
+      if (!stored) {
+        throw new Error("OAuth state mismatch or expired. Please try again.");
+      }
 
-      await oauthApi.callback(input.provider, {
+      await oauthApi.callback(stored.provider, {
         code: input.code,
-        code_verifier: input.codeVerifier,
-        redirect_uri: input.redirectURI,
+        code_verifier: stored.codeVerifier,
+        redirect_uri: stored.redirectURI,
         state: input.state,
       });
 
@@ -71,7 +71,7 @@ function OAuthCallbackContent() {
       router.push("/vms");
       return true;
     },
-    enabled: !hasError,
+    enabled: hasMounted && !hasError,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -110,7 +110,7 @@ function OAuthCallbackContent() {
     );
   }
 
-  if (isLoading) {
+  if (!hasMounted || isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4 bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-blue-950">
         <Card className="w-full max-w-md shadow-xl">

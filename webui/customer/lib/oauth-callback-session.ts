@@ -1,27 +1,25 @@
+import type { CustomerUser } from "./auth-utils";
+
 export const OAUTH_PROFILE_LOAD_ERROR =
   "Unable to load your profile after authentication. Please log in again.";
 
-interface AuthenticatedUser {
-  id: string;
-  email: string;
-  role: string;
-}
-
-interface FinalizeOAuthSessionOptions<TUser extends AuthenticatedUser> {
+interface FinalizeOAuthSessionOptions<TUser extends CustomerUser> {
   loadUser: () => Promise<TUser>;
   setAuthenticatedUser: (user: TUser) => void;
   logout: () => Promise<void>;
 }
 
-export async function finalizeOAuthSession<TUser extends AuthenticatedUser>(
+export async function finalizeOAuthSession<TUser extends CustomerUser>(
   options: FinalizeOAuthSessionOptions<TUser>,
 ): Promise<TUser> {
+  let user: TUser;
   try {
-    const user = await options.loadUser();
-    options.setAuthenticatedUser(user);
-    return user;
-  } catch {
+    user = await options.loadUser();
+  } catch (error) {
     await options.logout();
-    throw new Error(OAUTH_PROFILE_LOAD_ERROR);
+    throw new Error(OAUTH_PROFILE_LOAD_ERROR, { cause: error });
   }
+
+  options.setAuthenticatedUser(user);
+  return user;
 }
