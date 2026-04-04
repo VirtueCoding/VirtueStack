@@ -77,10 +77,9 @@ func (r *NotificationPreferenceRepository) Update(ctx context.Context, prefs *mo
 		WHERE customer_id = $4
 		RETURNING ` + notificationPreferenceSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		prefs.EmailEnabled, prefs.TelegramEnabled, prefs.Events, prefs.CustomerID,
-	)
-	updated, err := scanNotificationPreference(row)
+	}, scanNotificationPreference)
 	if err != nil {
 		return fmt.Errorf("updating notification preferences: %w", err)
 	}
@@ -240,4 +239,3 @@ type NotificationEventFilter struct {
 	Status    *string `form:"status"`
 	models.PaginationParams
 }
-

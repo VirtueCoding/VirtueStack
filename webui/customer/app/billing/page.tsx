@@ -68,16 +68,10 @@ function TopUpSection() {
   const topUpMutation = useMutation({
     mutationFn: (amount: number) => {
       const gateway = selectedGateway || config?.gateways[0] || "stripe";
-      const returnURL =
-        gateway === "paypal"
-          ? `${window.location.origin}/billing/paypal-return`
-          : window.location.href;
       return billingApi.initiateTopUp({
         gateway,
         amount,
         currency: config?.currency || "USD",
-        return_url: returnURL,
-        cancel_url: window.location.href,
       });
     },
     onSuccess: (data) => {

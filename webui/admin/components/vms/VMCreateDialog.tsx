@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { Button } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@virtuestack/ui";
 import { Server, User, Package, FileCode, Lock, MapPin, Loader2 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 import { Badge } from "@virtuestack/ui";
@@ -100,39 +100,46 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
     resolver: zodResolver(createVMSchema),
     defaultValues,
   });
-
-  // Fetch lookup data when dialog opens
-  useEffect(() => {
-    if (open) {
-      form.reset(defaultValues);
-      setLoadingLookups(true);
-      Promise.all([
+  const customerId = useWatch({ control: form.control, name: "customer_id" });
+  const selectedPlanId = useWatch({ control: form.control, name: "plan_id" });
+  const templateId = useWatch({ control: form.control, name: "template_id" });
+  const locationId = useWatch({ control: form.control, name: "location_id" });
+  const nodeId = useWatch({ control: form.control, name: "node_id" });
+  const loadLookups = useCallback(async () => {
+    setLoadingLookups(true);
+    try {
+      const [customersResponse, plansData, templatesData, nodesResponse, backendsData] = await Promise.all([
         adminCustomersApi.getCustomers(),
         adminPlansApi.getPlans(),
         adminTemplatesApi.getTemplates(),
         adminNodesApi.getNodes(),
         adminStorageBackendsApi.getStorageBackends(),
-      ])
-        .then(([customersResponse, plansData, templatesData, nodesResponse, backendsData]) => {
-          setCustomers(customersResponse.data || []);
-          setPlans((plansData || []).filter(p => p.is_active));
-          setTemplates(templatesData || []);
-          setNodes((nodesResponse.data || []));
-          setStorageBackends(backendsData || []);
-        })
-        .catch(() => {
-          toast({
-            title: "Error",
-            description: "Failed to load required data.",
-            variant: "destructive",
-          });
-        })
-        .finally(() => setLoadingLookups(false));
+      ]);
+      setCustomers(customersResponse.data || []);
+      setPlans((plansData || []).filter((p) => p.is_active));
+      setTemplates(templatesData || []);
+      setNodes(nodesResponse.data || []);
+      setStorageBackends(backendsData || []);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to load required data.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingLookups(false);
     }
-  }, [open, form, toast]);
+  }, [toast]);
+
+  // Fetch lookup data when dialog opens
+  useEffect(() => {
+    if (open) {
+      form.reset(defaultValues);
+      void loadLookups();
+    }
+  }, [form, loadLookups, open]);
 
   // Filter nodes to those with a storage backend of the plan's type
-  const selectedPlanId = form.watch("plan_id");
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
 
   const filteredNodes = useMemo(() => {
@@ -215,7 +222,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                 Customer <span className="text-destructive">*</span>
               </Label>
               <Select
-                value={form.watch("customer_id")}
+                value={customerId}
                 onValueChange={(value) => form.setValue("customer_id", value)}
               >
                 <SelectTrigger>
@@ -242,7 +249,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                   Plan <span className="text-destructive">*</span>
                 </Label>
                 <Select
-                  value={form.watch("plan_id")}
+                  value={selectedPlanId}
                   onValueChange={(value) => form.setValue("plan_id", value)}
                 >
                   <SelectTrigger>
@@ -267,7 +274,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                   Template <span className="text-destructive">*</span>
                 </Label>
                 <Select
-                  value={form.watch("template_id")}
+                  value={templateId}
                   onValueChange={(value) => form.setValue("template_id", value)}
                 >
                   <SelectTrigger>
@@ -344,7 +351,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                   Location (Optional)
                 </Label>
                 <Select
-                  value={form.watch("location_id") || ""}
+                  value={locationId || ""}
                   onValueChange={(value) => form.setValue("location_id", value)}
                 >
                   <SelectTrigger>
@@ -367,7 +374,7 @@ export function VMCreateDialog({ open, onOpenChange, onCreate, isCreating }: VMC
                   Node (Optional)
                 </Label>
                 <Select
-                  value={form.watch("node_id") || ""}
+                  value={nodeId || ""}
                   onValueChange={(value) => form.setValue("node_id", value)}
                 >
                   <SelectTrigger>

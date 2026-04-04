@@ -1,4 +1,5 @@
-import { settingsApi } from "@/lib/api-client";
+import { settingsApi } from "./api-client";
+import { shouldTreatProfileErrorAsUnauthenticated } from "./auth-error";
 
 export interface CustomerUser {
   id: string;
@@ -20,24 +21,10 @@ export async function fetchCustomerProfile(): Promise<CustomerUser | null> {
       email: profile.email,
       role: "customer",
     };
-  } catch {
-    return null;
+  } catch (error) {
+    if (shouldTreatProfileErrorAsUnauthenticated(error)) {
+      return null;
+    }
+    throw error;
   }
-}
-
-/**
- * Fetches the customer profile after 2FA verification.
- * Profile fetch failure is treated as fatal — the caller should log the user
- * out and surface a clear error rather than constructing a fake user object.
- *
- * @throws If the profile fetch fails
- * @returns CustomerUser object with real profile data
- */
-export async function fetchCustomerProfileAfter2FA(): Promise<CustomerUser> {
-  const profile = await settingsApi.getProfile();
-  return {
-    id: profile.id,
-    email: profile.email,
-    role: "customer",
-  };
 }

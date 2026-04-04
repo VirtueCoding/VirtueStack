@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Network, Loader2, Edit2, Trash2, Globe, Save, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
@@ -32,7 +32,7 @@ export function VMRDNSTab({ vmId }: VMRDNSTabProps) {
   const [selectedIP, setSelectedIP] = useState<IPAddressRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const fetchIPs = async () => {
+  const fetchIPs = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await rdnsApi.listIPs(vmId);
@@ -46,11 +46,11 @@ export function VMRDNSTab({ vmId }: VMRDNSTabProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast, vmId]);
 
   useEffect(() => {
-    fetchIPs();
-  }, [vmId]);
+    void fetchIPs();
+  }, [fetchIPs]);
 
   const handleEdit = (ip: IPAddressRecord) => {
     setEditingIPId(ip.id);
@@ -91,7 +91,7 @@ export function VMRDNSTab({ vmId }: VMRDNSTabProps) {
         description: `PTR record for ${ip.address} has been updated to ${editHostname}`,
       });
       setEditingIPId(null);
-      fetchIPs();
+      void fetchIPs();
     } catch (err) {
       toast({
         title: "Error",
@@ -118,7 +118,7 @@ export function VMRDNSTab({ vmId }: VMRDNSTabProps) {
         description: `PTR record for ${selectedIP.address} has been removed`,
       });
       setDeleteDialogOpen(false);
-      fetchIPs();
+      void fetchIPs();
     } catch (err) {
       toast({
         title: "Error",

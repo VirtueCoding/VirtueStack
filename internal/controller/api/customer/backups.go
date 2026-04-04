@@ -156,6 +156,9 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	// Verify VM belongs to customer
 	vm, err := h.vmService.GetVM(c.Request.Context(), req.VMID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "backup.create", "vm", req.VMID, map[string]any{
+			"name": req.Name,
+		}, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -174,6 +177,9 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 	// Create backup with atomic limit check to prevent race conditions
 	backup, err := h.backupService.CreateBackupWithLimitCheck(c.Request.Context(), vm.ID, req.Name, planLimit)
 	if err != nil {
+		h.logFailedAudit(c, "backup.create", "vm", req.VMID, map[string]any{
+			"name": req.Name,
+		}, err)
 		if errors.Is(err, services.ErrBackupLimitExceeded) || strings.Contains(err.Error(), "limit exceeded") {
 			middleware.RespondWithError(c, http.StatusConflict, "BACKUP_LIMIT_EXCEEDED",
 				fmt.Sprintf("Backup limit reached for this VM (%d max). Delete existing backups first.", planLimit))
@@ -193,6 +199,11 @@ func (h *CustomerHandler) CreateBackup(c *gin.Context) {
 		"vm_id", req.VMID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "backup.create", "backup", backup.ID, map[string]any{
+		"vm_id": req.VMID,
+		"name":  req.Name,
+	}, true)
 
 	c.JSON(http.StatusAccepted, models.Response{Data: backup})
 }
@@ -296,6 +307,9 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 
 	// Delete backup
 	if err := h.backupService.DeleteBackup(c.Request.Context(), backupID); err != nil {
+		h.logFailedAudit(c, "backup.delete", "backup", backupID, map[string]any{
+			"vm_id": backup.VMID,
+		}, err)
 		h.logger.Error("failed to delete backup",
 			"backup_id", backupID,
 			"customer_id", customerID,
@@ -309,6 +323,10 @@ func (h *CustomerHandler) DeleteBackup(c *gin.Context) {
 		"backup_id", backupID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "backup.delete", "backup", backupID, map[string]any{
+		"vm_id": backup.VMID,
+	}, true)
 
 	c.Status(http.StatusNoContent)
 }
@@ -362,6 +380,9 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 
 	// Restore backup
 	if err := h.backupService.RestoreBackup(c.Request.Context(), backupID); err != nil {
+		h.logFailedAudit(c, "backup.restore", "backup", backupID, map[string]any{
+			"vm_id": backup.VMID,
+		}, err)
 		h.logger.Error("failed to restore backup",
 			"backup_id", backupID,
 			"customer_id", customerID,
@@ -376,6 +397,10 @@ func (h *CustomerHandler) RestoreBackup(c *gin.Context) {
 		"vm_id", backup.VMID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "backup.restore", "backup", backupID, map[string]any{
+		"vm_id": backup.VMID,
+	}, true)
 
 	c.JSON(http.StatusAccepted, models.Response{Data: gin.H{"message": "Backup restore initiated"}})
 }

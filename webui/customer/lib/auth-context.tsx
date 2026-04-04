@@ -6,9 +6,11 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "@virtuestack/ui";
 import {
   customerAuthApi,
   ApiClientError,
@@ -17,9 +19,20 @@ import {
 } from "./api-client";
 import {
   fetchCustomerProfile,
-  fetchCustomerProfileAfter2FA,
   type CustomerUser,
 } from "./auth-utils";
+import {
+  advanceAuthVersion,
+  applyAuthenticatedUserIfCurrent,
+  canApplyBootstrapResult,
+  getCancelled2FAState,
+  getProfileBootstrapErrorState,
+} from "./auth-bootstrap";
+import {
+  CustomerProfileLoadError,
+  CustomerSessionStateUnknownError,
+  finalizeAuthenticatedSession,
+} from "./session-finalizer";
 
 interface AuthState {
   user: CustomerUser | null;
@@ -33,6 +46,11 @@ interface AuthContextType extends AuthState {
   verify2FA: (request: Verify2FARequest) => Promise<void>;
   logout: () => Promise<void>;
   setAuthenticatedUser: (user: CustomerUser) => void;
+  getAuthVersion: () => number;
+  guardedSetAuthenticatedUser: (
+    expectedVersion: number,
+    user: CustomerUser,
+  ) => boolean;
   clearError: () => void;
   reset2FA: () => void;
   error: string | null;
@@ -72,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tempToken, setTempToken] = useState<string | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const authVersionRef = useRef(0);
 
   const persistState = useCallback(
     (user: CustomerUser | null, isAuthenticated: boolean) => {
@@ -92,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setAuthenticatedUser = useCallback(
     (user: CustomerUser) => {
+      authVersionRef.current = advanceAuthVersion(authVersionRef.current);
       setState({
         user,
         isAuthenticated: true,
@@ -106,19 +126,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistState]
   );
 
+  const getAuthVersion = useCallback(() => authVersionRef.current, []);
+
+  const guardedSetAuthenticatedUser = useCallback(
+    (expectedVersion: number, user: CustomerUser): boolean => {
+      return applyAuthenticatedUserIfCurrent(
+        user,
+        expectedVersion,
+        authVersionRef.current,
+        setAuthenticatedUser,
+      );
+    },
+    [setAuthenticatedUser]
+  );
+
+  const clearAuthenticatedState = useCallback(() => {
+    authVersionRef.current = advanceAuthVersion(authVersionRef.current);
+    setState({
+      user: null,
+      isAuthenticated: false,
+      isLoading: false,
+      requires2FA: false,
+    });
+    setTempToken(null);
+    setPendingEmail(null);
+    persistState(null, false);
+  }, [persistState]);
+
   const reset2FA = useCallback(() => {
-    setState((prev) => ({ ...prev, requires2FA: false }));
+    authVersionRef.current = advanceAuthVersion(authVersionRef.current);
+    setState((prev) => ({ ...prev, ...getCancelled2FAState() }));
     setTempToken(null);
     setPendingEmail(null);
     setError(null);
   }, []);
 
-  const initAuth = useCallback(async () => {
-    if (typeof window === "undefined") return;
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
 
-    const stored = loadStoredState();
-    if (stored) {
-      const user = await fetchCustomerProfile();
+    let isActive = true;
+    const bootstrapVersion = authVersionRef.current;
+
+    const initializeAuth = async () => {
+      const stored = loadStoredState();
+      let user: CustomerUser | null = null;
+
+      try {
+        user = await fetchCustomerProfile();
+      } catch {
+        if (
+          !isActive ||
+          !canApplyBootstrapResult(bootstrapVersion, authVersionRef.current)
+        ) {
+          return;
+        }
+
+        setError("Unable to verify your session right now. Please try again.");
+        setState(getProfileBootstrapErrorState(stored));
+        return;
+      }
+
+      if (
+        !isActive ||
+        !canApplyBootstrapResult(bootstrapVersion, authVersionRef.current)
+      ) {
+        return;
+      }
+
       if (user) {
         setState({
           user,
@@ -127,30 +203,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           requires2FA: false,
         });
         persistState(user, true);
-      } else {
-        sessionStorage.removeItem(AUTH_STATE_KEY);
-        setState((prev) => ({ ...prev, isLoading: false }));
+        return;
       }
-      return;
-    }
 
-    const user = await fetchCustomerProfile();
-    if (user) {
-      setState({
-        user,
-        isAuthenticated: true,
-        isLoading: false,
-        requires2FA: false,
-      });
-      persistState(user, true);
-    } else {
+      if (stored) {
+        sessionStorage.removeItem(AUTH_STATE_KEY);
+      }
       setState((prev) => ({ ...prev, isLoading: false }));
-    }
-  }, [persistState]);
+    };
 
-  useEffect(() => {
-    initAuth();
-  }, [initAuth]);
+    void initializeAuth();
+
+    return () => {
+      isActive = false;
+    };
+  }, [persistState]);
 
   const login = useCallback(
     async (credentials: LoginRequest) => {
@@ -161,15 +228,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const tokens = await customerAuthApi.login(credentials);
 
         if (tokens.requires_2fa) {
+          authVersionRef.current = advanceAuthVersion(authVersionRef.current);
           setState((prev) => ({ ...prev, isLoading: false, requires2FA: true }));
           setTempToken(tokens.temp_token || null);
           setPendingEmail(credentials.email);
           return;
         }
 
-        // Fetch the real profile to get the UUID rather than using email as ID.
-        const user = await fetchCustomerProfileAfter2FA();
-        setAuthenticatedUser(user);
+        await finalizeAuthenticatedSession({
+          user: tokens.user ?? null,
+          sessionCleanupToken: tokens.session_cleanup_token,
+          invalidateSession: customerAuthApi.invalidateSession,
+          setAuthenticatedUser,
+        });
         router.push("/vms");
       } catch (err) {
         let message = "Login failed. Please try again.";
@@ -179,63 +250,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             message = err.message;
           }
+        } else if (
+          err instanceof CustomerProfileLoadError ||
+          err instanceof CustomerSessionStateUnknownError
+        ) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          router.push("/login");
+          return;
+        } else if (err instanceof Error) {
+          message = err.message;
         }
         setError(message);
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, setAuthenticatedUser]
+    [clearAuthenticatedState, router, setAuthenticatedUser]
   );
 
   const verify2FA = useCallback(
     async (request: Verify2FARequest) => {
       setError(null);
       setState((prev) => ({ ...prev, isLoading: true }));
+      const verificationVersion = authVersionRef.current;
 
       if (!pendingEmail) {
         // This should never happen — if pendingEmail is missing the session is
         // corrupt. Log out and redirect to login instead of constructing a fake user.
         setError("Session expired. Please log in again.");
-        setState({
-          user: null,
-          isAuthenticated: false,
-          isLoading: false,
-          requires2FA: false,
-        });
-        setTempToken(null);
-        sessionStorage.removeItem(AUTH_STATE_KEY);
+        clearAuthenticatedState();
         router.push("/login");
         return;
       }
 
       try {
-        await customerAuthApi.verify2FA(request);
+        const tokens = await customerAuthApi.verify2FA(request);
 
-        // Fetch the real profile to get the UUID. Failure is fatal — do not
-        // construct a fake user object with the email as the id.
-        let user: CustomerUser;
-        try {
-          user = await fetchCustomerProfileAfter2FA();
-        } catch {
-          // Profile fetch failed after successful 2FA — log out and surface error.
-          setError("Unable to load your profile after verification. Please log in again.");
-          await customerAuthApi.logout();
-          setState({
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-            requires2FA: false,
-          });
-          setTempToken(null);
-          setPendingEmail(null);
-          sessionStorage.removeItem(AUTH_STATE_KEY);
+        const { didApplyAuthenticatedUser } = await finalizeAuthenticatedSession({
+          user: tokens.user ?? null,
+          sessionCleanupToken: tokens.session_cleanup_token,
+          invalidateSession: customerAuthApi.invalidateSession,
+          setAuthenticatedUser: (user) =>
+            guardedSetAuthenticatedUser(verificationVersion, user),
+        });
+        if (!didApplyAuthenticatedUser) {
+          return;
+        }
+        router.push("/vms");
+      } catch (err) {
+        if (err instanceof CustomerSessionStateUnknownError) {
+          clearAuthenticatedState();
+          setError(err.message);
           router.push("/login");
           return;
         }
-
-        setAuthenticatedUser(user);
-        router.push("/vms");
-      } catch (err) {
+        if (!canApplyBootstrapResult(verificationVersion, authVersionRef.current)) {
+          return;
+        }
         let message = "2FA verification failed. Please try again.";
         if (err instanceof ApiClientError) {
           if (err.code === "INVALID_2FA_CODE") {
@@ -243,35 +315,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             message = err.message;
           }
+        } else if (
+          err instanceof CustomerProfileLoadError ||
+          err instanceof CustomerSessionStateUnknownError
+        ) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          router.push("/login");
+          return;
+        } else if (err instanceof Error) {
+          message = err.message;
         }
         setError(message);
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, pendingEmail, setAuthenticatedUser]
+    [clearAuthenticatedState, guardedSetAuthenticatedUser, router, pendingEmail]
   );
 
   const logout = useCallback(async () => {
+    setError(null);
     setState((prev) => ({ ...prev, isLoading: true }));
 
     try {
       await customerAuthApi.logout();
-    } catch (err) {
-      // Logout errors are non-fatal — session may already be invalid.
-      // Log for debugging but always clear local state regardless.
-      console.warn("Logout request failed (session may already be invalid):", err);
-    } finally {
-      setState({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-        requires2FA: false,
-      });
-      setTempToken(null);
-      sessionStorage.removeItem(AUTH_STATE_KEY);
+      clearAuthenticatedState();
       router.push("/login");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to log out. Please try again.";
+      setError(message);
+      setState((prev) => ({ ...prev, isLoading: false }));
+      toast({
+        title: "Logout failed",
+        description: message,
+        variant: "destructive",
+      });
     }
-  }, [router]);
+  }, [clearAuthenticatedState, router]);
 
   const value: AuthContextType = {
     ...state,
@@ -279,6 +360,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     verify2FA,
     logout,
     setAuthenticatedUser,
+    getAuthVersion,
+    guardedSetAuthenticatedUser,
     error,
     clearError,
     reset2FA,

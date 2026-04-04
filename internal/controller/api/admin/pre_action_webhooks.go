@@ -8,7 +8,6 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // ListPreActionWebhooks handles GET /pre-action-webhooks.
@@ -72,10 +71,8 @@ func (h *AdminHandler) CreatePreActionWebhook(c *gin.Context) {
 
 // UpdatePreActionWebhook handles PUT /pre-action-webhooks/:id.
 func (h *AdminHandler) UpdatePreActionWebhook(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		middleware.RespondWithError(c, http.StatusBadRequest,
-			"INVALID_ID", "Pre-action webhook ID must be a valid UUID")
+	id, ok := validateUUIDParam(c, "id", "INVALID_ID", "Pre-action webhook ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
@@ -92,6 +89,9 @@ func (h *AdminHandler) UpdatePreActionWebhook(c *gin.Context) {
 
 	updated, err := h.preActionWebhookRepo.Update(c.Request.Context(), id, &req)
 	if err != nil {
+		if handleNotFoundError(c, err, "PRE_ACTION_WEBHOOK_NOT_FOUND", "Pre-action webhook not found") {
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError,
 			"PRE_ACTION_WEBHOOK_UPDATE_FAILED", "Failed to update pre-action webhook")
 		return
@@ -105,16 +105,19 @@ func (h *AdminHandler) UpdatePreActionWebhook(c *gin.Context) {
 
 // DeletePreActionWebhook handles DELETE /pre-action-webhooks/:id.
 func (h *AdminHandler) DeletePreActionWebhook(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		middleware.RespondWithError(c, http.StatusBadRequest,
-			"INVALID_ID", "Pre-action webhook ID must be a valid UUID")
+	id, ok := validateUUIDParam(c, "id", "INVALID_ID", "Pre-action webhook ID must be a valid UUID")
+	if !ok {
 		return
 	}
 
 	if err := h.preActionWebhookRepo.Delete(c.Request.Context(), id); err != nil {
-		middleware.RespondWithError(c, http.StatusNotFound,
-			"PRE_ACTION_WEBHOOK_NOT_FOUND", "Pre-action webhook not found")
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			middleware.RespondWithError(c, http.StatusNotFound,
+				"PRE_ACTION_WEBHOOK_NOT_FOUND", "Pre-action webhook not found")
+			return
+		}
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"PRE_ACTION_WEBHOOK_DELETE_FAILED", "Failed to delete pre-action webhook")
 		return
 	}
 

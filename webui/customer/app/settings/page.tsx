@@ -52,12 +52,6 @@ export default function SettingsPage() {
     queryFn: () => settingsApi.get2FAStatus(),
   });
 
-  const { data: backupCodesData } = useQuery({
-    queryKey: ["backup-codes"],
-    queryFn: () => settingsApi.getBackupCodes(),
-    enabled: twoFactorStatus?.enabled || false,
-  });
-
   return (
     <RequireAuth>
       <div className="container mx-auto py-8 px-4 md:px-6 lg:px-8">
@@ -104,7 +98,6 @@ export default function SettingsPage() {
           <TabsContent value="security" className="space-y-6">
             <SecurityTab
               twoFactorStatus={twoFactorStatus}
-              backupCodesData={backupCodesData}
               isLoading={twoFactorLoading}
             />
           </TabsContent>

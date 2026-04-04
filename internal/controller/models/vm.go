@@ -82,15 +82,15 @@ type VM struct {
 
 // VMCreateRequest holds the fields required to provision a new virtual machine.
 type VMCreateRequest struct {
-	CustomerID     string   `json:"customer_id" validate:"required,uuid"`
-	PlanID         string   `json:"plan_id" validate:"required,uuid"`
-	Hostname       string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
-	TemplateID     string   `json:"template_id" validate:"required,uuid"`
-	Password       string   `json:"password" validate:"required,min=12,max=128"`
-	SSHKeys        []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
-	LocationID     *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
-	ExternalServiceID *int  `json:"external_service_id,omitempty"`
-	IdempotencyKey string   `json:"-"` // From header
+	CustomerID        string   `json:"customer_id" validate:"required,uuid"`
+	PlanID            string   `json:"plan_id" validate:"required,uuid"`
+	Hostname          string   `json:"hostname" validate:"required,hostname_rfc1123,max=63"`
+	TemplateID        string   `json:"template_id" validate:"required,uuid"`
+	Password          string   `json:"password" validate:"required,min=12,max=128"`
+	SSHKeys           []string `json:"ssh_keys,omitempty" validate:"max=10,dive,max=4096"`
+	LocationID        *string  `json:"location_id,omitempty" validate:"omitempty,uuid"`
+	ExternalServiceID *int     `json:"external_service_id,omitempty"`
+	IdempotencyKey    string   `json:"-"` // From header
 }
 
 // VMListFilter holds query parameters for filtering and paginating VM list results.
@@ -107,11 +107,12 @@ type VMListFilter struct {
 // suitable for detailed API responses.
 type VMDetail struct {
 	VM
-	IPAddresses  []IPAddress    `json:"ip_addresses"`
-	IPv6Subnets  []VMIPv6Subnet `json:"ipv6_subnets,omitempty"`
-	NodeHostname *string        `json:"node_hostname,omitempty"`
-	PlanName     string         `json:"plan_name"`
-	TemplateName *string        `json:"template_name,omitempty"`
+	IPAddresses     []IPAddress    `json:"ip_addresses"`
+	IPv6Subnets     []VMIPv6Subnet `json:"ipv6_subnets,omitempty"`
+	NodeHostname    *string        `json:"node_hostname,omitempty"`
+	PlanName        string         `json:"plan_name"`
+	TemplateName    *string        `json:"template_name,omitempty"`
+	MaxISOSizeBytes int64          `json:"max_iso_size_bytes"`
 }
 
 // VMMetrics represents real-time resource utilization metrics for a VM.

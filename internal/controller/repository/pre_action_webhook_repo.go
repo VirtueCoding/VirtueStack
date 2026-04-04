@@ -12,12 +12,18 @@ import (
 
 // PreActionWebhookRepository handles database operations for pre-action webhooks.
 type PreActionWebhookRepository struct {
-	db DB
+	db            DB
+	encryptionKey string
 }
 
 // NewPreActionWebhookRepository creates a new PreActionWebhookRepository.
 func NewPreActionWebhookRepository(db DB) *PreActionWebhookRepository {
 	return &PreActionWebhookRepository{db: db}
+}
+
+// NewEncryptedPreActionWebhookRepository creates a repository that encrypts stored webhook secrets.
+func NewEncryptedPreActionWebhookRepository(db DB, encryptionKey string) *PreActionWebhookRepository {
+	return &PreActionWebhookRepository{db: db, encryptionKey: encryptionKey}
 }
 
 const preActionWebhookSelectCols = `
@@ -32,19 +38,36 @@ func scanPreActionWebhook(row pgx.Row) (models.PreActionWebhook, error) {
 	return w, err
 }
 
+func (r *PreActionWebhookRepository) decodeSecret(webhook *models.PreActionWebhook) error {
+	decrypted, err := decryptWebhookSecret(webhook.Secret, r.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("decoding pre-action webhook secret for %s: %w", webhook.ID, err)
+	}
+	webhook.Secret = decrypted
+	return nil
+}
+
 // Create inserts a new pre-action webhook.
 func (r *PreActionWebhookRepository) Create(ctx context.Context, webhook *models.PreActionWebhook) error {
+	storedSecret, err := encryptWebhookSecret(webhook.Secret, r.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("encoding pre-action webhook secret: %w", err)
+	}
+
 	const q = `
 		INSERT INTO pre_action_webhooks (name, url, secret, events, timeout_ms, fail_open, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + preActionWebhookSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		webhook.Name, webhook.URL, webhook.Secret, webhook.Events,
+		webhook.Name, webhook.URL, storedSecret, webhook.Events,
 		webhook.TimeoutMs, webhook.FailOpen, webhook.IsActive,
 	)
 	created, err := scanPreActionWebhook(row)
 	if err != nil {
+		return fmt.Errorf("creating pre-action webhook: %w", err)
+	}
+	if err := r.decodeSecret(&created); err != nil {
 		return fmt.Errorf("creating pre-action webhook: %w", err)
 	}
 	*webhook = created
@@ -60,6 +83,11 @@ func (r *PreActionWebhookRepository) List(ctx context.Context) ([]models.PreActi
 	if err != nil {
 		return nil, fmt.Errorf("listing pre-action webhooks: %w", err)
 	}
+	for i := range webhooks {
+		if err := r.decodeSecret(&webhooks[i]); err != nil {
+			return nil, fmt.Errorf("listing pre-action webhooks: %w", err)
+		}
+	}
 	return webhooks, nil
 }
 
@@ -72,14 +100,22 @@ func (r *PreActionWebhookRepository) ListActiveForEvent(ctx context.Context, eve
 	if err != nil {
 		return nil, fmt.Errorf("listing active pre-action webhooks for event %s: %w", eventType, err)
 	}
+	for i := range webhooks {
+		if err := r.decodeSecret(&webhooks[i]); err != nil {
+			return nil, fmt.Errorf("listing active pre-action webhooks for event %s: %w", eventType, err)
+		}
+	}
 	return webhooks, nil
 }
 
 // GetByID returns a pre-action webhook by ID.
 func (r *PreActionWebhookRepository) GetByID(ctx context.Context, id string) (*models.PreActionWebhook, error) {
 	const q = `SELECT ` + preActionWebhookSelectCols + ` FROM pre_action_webhooks WHERE id = $1`
-	w, err := scanPreActionWebhook(r.db.QueryRow(ctx, q, id))
+	w, err := ScanRow(ctx, r.db, q, []any{id}, scanPreActionWebhook)
 	if err != nil {
+		return nil, fmt.Errorf("getting pre-action webhook %s: %w", id, err)
+	}
+	if err := r.decodeSecret(&w); err != nil {
 		return nil, fmt.Errorf("getting pre-action webhook %s: %w", id, err)
 	}
 	return &w, nil
@@ -102,8 +138,12 @@ func (r *PreActionWebhookRepository) Update(ctx context.Context, id string, req 
 		idx++
 	}
 	if req.Secret != nil {
+		storedSecret, err := encryptWebhookSecret(*req.Secret, r.encryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("encoding pre-action webhook secret: %w", err)
+		}
 		sets = append(sets, fmt.Sprintf("secret = $%d", idx))
-		args = append(args, *req.Secret)
+		args = append(args, storedSecret)
 		idx++
 	}
 	if req.Events != nil {
@@ -138,8 +178,11 @@ func (r *PreActionWebhookRepository) Update(ctx context.Context, id string, req 
 		"UPDATE pre_action_webhooks SET %s WHERE id = $%d RETURNING %s",
 		strings.Join(sets, ", "), idx, preActionWebhookSelectCols,
 	)
-	w, err := scanPreActionWebhook(r.db.QueryRow(ctx, q, args...))
+	w, err := ScanRow(ctx, r.db, q, args, scanPreActionWebhook)
 	if err != nil {
+		return nil, fmt.Errorf("updating pre-action webhook %s: %w", id, err)
+	}
+	if err := r.decodeSecret(&w); err != nil {
 		return nil, fmt.Errorf("updating pre-action webhook %s: %w", id, err)
 	}
 	return &w, nil
@@ -153,7 +196,49 @@ func (r *PreActionWebhookRepository) Delete(ctx context.Context, id string) erro
 		return fmt.Errorf("deleting pre-action webhook %s: %w", id, err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("pre-action webhook %s not found", id)
+		return fmt.Errorf("deleting pre-action webhook %s: %w", id, ErrNoRowsAffected)
 	}
+	return nil
+}
+
+// EncryptPlaintextSecrets migrates legacy plaintext pre-action webhook secrets to encrypted storage.
+func (r *PreActionWebhookRepository) EncryptPlaintextSecrets(ctx context.Context) error {
+	if r.encryptionKey == "" {
+		return nil
+	}
+
+	const selectQ = `SELECT id, secret FROM pre_action_webhooks WHERE secret NOT LIKE $1`
+	rows, err := r.db.Query(ctx, selectQ, webhookSecretEncryptedPrefix+"%")
+	if err != nil {
+		return fmt.Errorf("querying legacy pre-action webhook secrets: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		var secret string
+		if err := rows.Scan(&id, &secret); err != nil {
+			return fmt.Errorf("scanning legacy pre-action webhook secret: %w", err)
+		}
+
+		encodedSecret, err := encryptWebhookSecret(secret, r.encryptionKey)
+		if err != nil {
+			return fmt.Errorf("encoding legacy pre-action webhook secret %s: %w", id, err)
+		}
+
+		const updateQ = `UPDATE pre_action_webhooks SET secret = $1, updated_at = NOW() WHERE id = $2`
+		tag, err := r.db.Exec(ctx, updateQ, encodedSecret, id)
+		if err != nil {
+			return fmt.Errorf("updating legacy pre-action webhook secret %s: %w", id, err)
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("updating legacy pre-action webhook secret %s: %w", id, ErrNoRowsAffected)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating legacy pre-action webhook secrets: %w", err)
+	}
+
 	return nil
 }

@@ -17,20 +17,23 @@ const MACPrefix = "52:54:00"
 
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
-	VMRepo             *repository.VMRepository
-	NodeRepo           *repository.NodeRepository
-	IPRepo             *repository.IPRepository
-	BackupRepo         *repository.BackupRepository
-	TaskRepo           *repository.TaskRepository
-	TemplateRepo       *repository.TemplateRepository
-	TemplateCacheRepo  *repository.TemplateCacheRepository
-	IPAMService        IPAMService
-	NodeClient         NodeAgentClient
-	DNSNameservers     []string
-	CephUser           string
-	CephSecretUUID     string
-	CephMonitors       []string
-	Logger             *slog.Logger
+	VMRepo            *repository.VMRepository
+	NodeRepo          *repository.NodeRepository
+	IPRepo            *repository.IPRepository
+	BackupRepo        *repository.BackupRepository
+	TaskRepo          *repository.TaskRepository
+	WebhookRepo       *repository.WebhookRepository
+	SystemWebhookRepo *repository.SystemWebhookRepository
+	TemplateRepo      *repository.TemplateRepository
+	TemplateCacheRepo *repository.TemplateCacheRepository
+	IPAMService       IPAMService
+	NodeClient        NodeAgentClient
+	DNSNameservers    []string
+	CephUser          string
+	CephSecretUUID    string
+	CephMonitors      []string
+	EncryptionKey     string
+	Logger            *slog.Logger
 }
 
 // IPAMService defines the interface for IP address management operations.
@@ -258,21 +261,22 @@ const (
 
 // VMMigratePayload represents the payload for vm.migrate tasks.
 type VMMigratePayload struct {
-	VMID                 string            `json:"vm_id"`
-	SourceNodeID         string            `json:"source_node_id"`
-	TargetNodeID         string            `json:"target_node_id"`
-	PreMigrationState    string            `json:"pre_migration_state,omitempty"`
-	SourceStorageBackend string            `json:"source_storage_backend,omitempty"`
-	TargetStorageBackend string            `json:"target_storage_backend,omitempty"`
-	SourceStoragePath    string            `json:"source_storage_path,omitempty"`
-	TargetStoragePath    string            `json:"target_storage_path,omitempty"`
-	SourceCephPool       string            `json:"source_ceph_pool,omitempty"`
-	TargetCephPool       string            `json:"target_ceph_pool,omitempty"`
+	VMID                   string `json:"vm_id"`
+	SourceNodeID           string `json:"source_node_id"`
+	TargetNodeID           string `json:"target_node_id"`
+	PreMigrationState      string `json:"pre_migration_state,omitempty"`
+	SourceStorageBackend   string `json:"source_storage_backend,omitempty"`
+	TargetStorageBackend   string `json:"target_storage_backend,omitempty"`
+	TargetStorageBackendID string `json:"target_storage_backend_id,omitempty"`
+	SourceStoragePath      string `json:"source_storage_path,omitempty"`
+	TargetStoragePath      string `json:"target_storage_path,omitempty"`
+	SourceCephPool         string `json:"source_ceph_pool,omitempty"`
+	TargetCephPool         string `json:"target_ceph_pool,omitempty"`
 	// LVM storage backend fields for migration
-	SourceLVMVolumeGroup string `json:"source_lvm_volume_group,omitempty"`
-	SourceLVMThinPool    string `json:"source_lvm_thin_pool,omitempty"`
-	TargetLVMVolumeGroup string `json:"target_lvm_volume_group,omitempty"`
-	TargetLVMThinPool    string `json:"target_lvm_thin_pool,omitempty"`
+	SourceLVMVolumeGroup string            `json:"source_lvm_volume_group,omitempty"`
+	SourceLVMThinPool    string            `json:"source_lvm_thin_pool,omitempty"`
+	TargetLVMVolumeGroup string            `json:"target_lvm_volume_group,omitempty"`
+	TargetLVMThinPool    string            `json:"target_lvm_thin_pool,omitempty"`
 	MigrationStrategy    MigrationStrategy `json:"migration_strategy"`
 	Live                 bool              `json:"live"`
 	SourceDiskPath       string            `json:"source_disk_path,omitempty"`

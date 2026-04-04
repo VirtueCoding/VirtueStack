@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -42,11 +43,13 @@ const (
 	defaultListenAddr     = ":8080"
 	defaultLogLevel       = "info"
 	defaultConsoleBaseURL = "https://console.virtuestack.io"
+	defaultMetricsAddr    = "127.0.0.1:9091"
 	defaultCephPool       = "vs-vms"
 	defaultCephUser       = "virtuestack"
 	defaultCephConf       = "/etc/ceph/ceph.conf"
 	defaultCloudInitPath  = "/var/lib/virtuestack/cloud-init"
 	defaultISOStoragePath = "/var/lib/virtuestack/iso"
+	defaultISOMaxSizeGB   = 10
 	defaultDNSNameservers = "8.8.8.8,8.8.4.4"
 	defaultStorageBackend = "ceph"
 	defaultStoragePath    = "/var/lib/virtuestack"
@@ -60,6 +63,14 @@ const (
 	DefaultTemplatesDir = "templates"
 	DefaultBackupsDir   = "backups"
 )
+
+// DefaultISOMaxSizeGB is the shared default maximum ISO size in GiB.
+const DefaultISOMaxSizeGB = defaultISOMaxSizeGB
+
+// DefaultISOMaxSizeBytes returns the shared default maximum ISO size in bytes.
+func DefaultISOMaxSizeBytes() int64 {
+	return int64(DefaultISOMaxSizeGB) * 1024 * 1024 * 1024
+}
 
 // NATSConfig holds NATS connection configuration.
 type NATSConfig struct {
@@ -100,6 +111,7 @@ type FileStorageConfig struct {
 	TemplateImportPaths []string `yaml:"template_import_paths" env:"TEMPLATE_IMPORT_PATHS"`
 	BackupRetentionDays int      `yaml:"backup_retention_days" env:"BACKUP_RETENTION_DAYS"`
 	MaxTemplateSizeGB   int      `yaml:"max_template_size_gb" env:"MAX_TEMPLATE_SIZE_GB"`
+	MaxISOSizeGB        int      `yaml:"max_iso_size_gb" env:"MAX_ISO_SIZE_GB"`
 	ISOStoragePath      string   `yaml:"iso_storage_path" env:"ISO_STORAGE_PATH"`
 }
 
@@ -195,12 +207,14 @@ type ControllerConfig struct {
 	DatabaseURL                   string   `yaml:"database_url" env:"DATABASE_URL"`
 	JWTSecret                     Secret   `yaml:"jwt_secret" env:"JWT_SECRET"`
 	EncryptionKey                 Secret   `yaml:"encryption_key" env:"ENCRYPTION_KEY"`
+	GuestOpHMACSecret             Secret   `yaml:"guest_op_hmac_secret" env:"GUEST_OP_HMAC_SECRET"`
 	ListenAddr                    string   `yaml:"listen_addr" env:"LISTEN_ADDR"`
 	MetricsAddr                   string   `yaml:"metrics_addr" env:"METRICS_ADDR"`
 	LogLevel                      string   `yaml:"log_level" env:"LOG_LEVEL"`
 	Environment                   string   `yaml:"environment" env:"APP_ENV"`
 	ConsoleBaseURL                string   `yaml:"console_base_url" env:"CONSOLE_BASE_URL"`
 	CORSOrigins                   []string `yaml:"cors_origins" env:"CORS_ORIGINS"`
+	TrustedProxies                []string `yaml:"trusted_proxies" env:"TRUSTED_PROXIES"`
 	DNSNameservers                []string `yaml:"dns_nameservers" env:"DNS_NAMESERVERS"`
 	CephUser                      string   `yaml:"ceph_user" env:"CEPH_USER"`
 	CephSecretUUID                string   `yaml:"ceph_secret_uuid" env:"CEPH_SECRET_UUID"`
@@ -273,6 +287,7 @@ func (c *ControllerConfig) HasPaymentGateway() bool {
 type NodeAgentConfig struct {
 	ControllerGRPCAddr string `yaml:"controller_grpc_addr" env:"CONTROLLER_GRPC_ADDR"`
 	NodeID             string `yaml:"node_id" env:"NODE_ID"`
+	ListenAddr         string `yaml:"listen_addr" env:"LISTEN_ADDR"`
 
 	// Libvirt configuration
 	LibvirtURI string `yaml:"libvirt_uri" env:"LIBVIRT_URI"`
@@ -309,6 +324,7 @@ type NodeAgentConfig struct {
 	DataDir        string `yaml:"data_dir" env:"DATA_DIR"`
 	CloudInitPath  string `yaml:"cloudinit_path" env:"CLOUDINIT_PATH"`
 	ISOStoragePath string `yaml:"iso_storage_path" env:"ISO_STORAGE_PATH"`
+	MaxISOSizeGB   int    `yaml:"max_iso_size_gb" env:"MAX_ISO_SIZE_GB"`
 
 	// Logging
 	LogLevel string `yaml:"log_level" env:"LOG_LEVEL"`
@@ -330,6 +346,16 @@ type NodeAgentConfig struct {
 	GuestOpHMACSecret Secret `yaml:"guest_op_hmac_secret" env:"GUEST_OP_HMAC_SECRET"`
 }
 
+// GRPCListenAddr returns the node agent gRPC listen address, falling back to
+// defaultAddr when no explicit listen address is configured.
+func (cfg *NodeAgentConfig) GRPCListenAddr(defaultAddr string) string {
+	if strings.TrimSpace(cfg.ListenAddr) != "" {
+		return cfg.ListenAddr
+	}
+
+	return defaultAddr
+}
+
 // LoadControllerConfig loads the controller configuration from environment variables
 // and optionally from a YAML file if VS_CONFIG_FILE is set.
 // Environment variables take precedence over YAML values.
@@ -337,9 +363,10 @@ type NodeAgentConfig struct {
 func LoadControllerConfig() (*ControllerConfig, error) {
 	cfg := &ControllerConfig{
 		ListenAddr:                    defaultListenAddr,
-		MetricsAddr:                   ":9091",
+		MetricsAddr:                   defaultMetricsAddr,
 		LogLevel:                      defaultLogLevel,
 		ConsoleBaseURL:                defaultConsoleBaseURL,
+		FileStorage:                   FileStorageConfig{MaxISOSizeGB: defaultISOMaxSizeGB},
 		DNSNameservers:                splitAndTrimCSV(defaultDNSNameservers),
 		CephUser:                      defaultCephUser,
 		AllowSelfRegistration:         false,
@@ -367,6 +394,7 @@ func LoadControllerConfig() (*ControllerConfig, error) {
 
 	// Override with environment variables
 	applyEnvOverrides(cfg)
+	normalizeControllerConfig(cfg)
 
 	// Validate required fields
 	if err := validateControllerConfig(cfg); err != nil {
@@ -404,8 +432,9 @@ func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 		CephConf:                    defaultCephConf,
 		CloudInitPath:               defaultCloudInitPath,
 		ISOStoragePath:              defaultISOStoragePath,
+		MaxISOSizeGB:                defaultISOMaxSizeGB,
 		LogLevel:                    defaultLogLevel,
-		MetricsAddr:                 ":9091",
+		MetricsAddr:                 defaultMetricsAddr,
 		HealthAddr:                  "127.0.0.1:8081",
 		LVMDataPercentThreshold:     defaultLVMDataPercentThreshold,
 		LVMMetadataPercentThreshold: defaultLVMMetadataPercentThreshold,
@@ -421,6 +450,7 @@ func LoadNodeAgentConfig() (*NodeAgentConfig, error) {
 
 	// Override with environment variables
 	applyEnvOverridesNodeAgent(cfg)
+	normalizeNodeAgentConfig(cfg)
 
 	// Validate required fields
 	if err := validateNodeAgentConfig(cfg); err != nil {
@@ -444,6 +474,31 @@ func loadYAMLFile[T *ControllerConfig | *NodeAgentConfig](filename string, cfg T
 	}
 
 	return nil
+}
+
+func normalizeControllerConfig(cfg *ControllerConfig) {
+	cfg.FileStorage.MaxISOSizeGB = normalizePositiveConfigInt(
+		"file_storage.max_iso_size_gb",
+		cfg.FileStorage.MaxISOSizeGB,
+		defaultISOMaxSizeGB,
+	)
+}
+
+func normalizeNodeAgentConfig(cfg *NodeAgentConfig) {
+	cfg.MaxISOSizeGB = normalizePositiveConfigInt(
+		"max_iso_size_gb",
+		cfg.MaxISOSizeGB,
+		defaultISOMaxSizeGB,
+	)
+}
+
+func normalizePositiveConfigInt(field string, value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+
+	slog.Warn("invalid config value, using default", "field", field, "value", value, "default", fallback)
+	return fallback
 }
 
 // applyEnvOverrides applies environment variable values to ControllerConfig.
@@ -472,6 +527,9 @@ func applyEnvOverridesCore(cfg *ControllerConfig) {
 	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
 		cfg.EncryptionKey = Secret(v)
 	}
+	if v := os.Getenv("GUEST_OP_HMAC_SECRET"); v != "" {
+		cfg.GuestOpHMACSecret = Secret(v)
+	}
 	if v := os.Getenv("LISTEN_ADDR"); v != "" {
 		cfg.ListenAddr = v
 	}
@@ -489,6 +547,9 @@ func applyEnvOverridesCore(cfg *ControllerConfig) {
 	}
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		cfg.CORSOrigins = splitAndTrimCSV(v)
+	}
+	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
+		cfg.TrustedProxies = splitAndTrimCSV(v)
 	}
 	if v := os.Getenv("DNS_NAMESERVERS"); v != "" {
 		cfg.DNSNameservers = splitAndTrimCSV(v)
@@ -597,6 +658,17 @@ func applyEnvOverridesStorage(cfg *ControllerConfig) {
 			cfg.FileStorage.MaxTemplateSizeGB = n
 		} else {
 			slog.Warn("invalid MAX_TEMPLATE_SIZE_GB value, ignoring", "value", v, "error", err)
+		}
+	}
+	if v := os.Getenv("MAX_ISO_SIZE_GB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n > 0 {
+				cfg.FileStorage.MaxISOSizeGB = n
+			} else {
+				slog.Warn("invalid MAX_ISO_SIZE_GB value, ignoring", "error", "must be > 0")
+			}
+		} else {
+			slog.Warn("invalid MAX_ISO_SIZE_GB value, ignoring", "error", "invalid integer")
 		}
 	}
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
@@ -746,6 +818,9 @@ func applyEnvOverridesNodeAgent(cfg *NodeAgentConfig) {
 	if v := os.Getenv("NODE_ID"); v != "" {
 		cfg.NodeID = v
 	}
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		cfg.ListenAddr = v
+	}
 	if v := os.Getenv("LIBVIRT_URI"); v != "" {
 		cfg.LibvirtURI = v
 	}
@@ -801,6 +876,17 @@ func applyEnvOverridesNodeAgentStorage(cfg *NodeAgentConfig) {
 	if v := os.Getenv("ISO_STORAGE_PATH"); v != "" {
 		cfg.ISOStoragePath = v
 	}
+	if v := os.Getenv("MAX_ISO_SIZE_GB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n > 0 {
+				cfg.MaxISOSizeGB = n
+			} else {
+				slog.Warn("invalid MAX_ISO_SIZE_GB value, ignoring", "error", "must be > 0")
+			}
+		} else {
+			slog.Warn("invalid MAX_ISO_SIZE_GB value, ignoring", "error", "invalid integer")
+		}
+	}
 	if v := os.Getenv("CEPH_POOL"); v != "" {
 		cfg.CephPool = v
 	}
@@ -854,11 +940,28 @@ func validateControllerConfig(cfg *ControllerConfig) error {
 	if cfg.NATS.AuthToken == natsDevToken {
 		slog.Warn("using default NATS_AUTH_TOKEN 'nats-dev-token'; set a strong token for production")
 	}
+	if err := validateGuestOpHMACSecret(cfg.GuestOpHMACSecret); err != nil {
+		return err
+	}
+	if err := validateTrustedProxies(cfg.TrustedProxies); err != nil {
+		return err
+	}
 
 	if strings.EqualFold(cfg.Environment, "production") {
 		if err := validateProductionConfig(cfg); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func validateGuestOpHMACSecret(secret Secret) error {
+	if secret == "" {
+		return fmt.Errorf("GUEST_OP_HMAC_SECRET is required")
+	}
+	if len(secret.Value()) < 32 {
+		return fmt.Errorf("GUEST_OP_HMAC_SECRET must be at least 32 bytes")
 	}
 
 	return nil
@@ -1073,6 +1176,10 @@ func validateNodeAgentConfig(cfg *NodeAgentConfig) error {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
 
+	if err := validateGuestOpHMACSecret(cfg.GuestOpHMACSecret); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1150,4 +1257,21 @@ func splitAndTrimCSV(input string) []string {
 		}
 	}
 	return values
+}
+
+func validateTrustedProxies(trustedProxies []string) error {
+	for _, trustedProxy := range trustedProxies {
+		if strings.Contains(trustedProxy, "/") {
+			if _, _, err := net.ParseCIDR(trustedProxy); err != nil {
+				return fmt.Errorf("invalid trusted proxy CIDR %q: %w", trustedProxy, err)
+			}
+			continue
+		}
+
+		if net.ParseIP(trustedProxy) == nil {
+			return fmt.Errorf("invalid trusted proxy IP %q", trustedProxy)
+		}
+	}
+
+	return nil
 }

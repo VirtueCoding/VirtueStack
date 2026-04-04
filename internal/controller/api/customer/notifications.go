@@ -1,11 +1,14 @@
 package customer
 
 import (
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/audit"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -18,6 +21,8 @@ type NotificationsHandler struct {
 	preferenceRepo *repository.NotificationPreferenceRepository
 	eventRepo      *repository.NotificationEventRepository
 	notifyService  *services.NotificationService
+	auditRepo      *repository.AuditRepository
+	logger         *slog.Logger
 }
 
 // NewNotificationsHandler creates a new NotificationsHandler.
@@ -25,11 +30,20 @@ func NewNotificationsHandler(
 	preferenceRepo *repository.NotificationPreferenceRepository,
 	eventRepo *repository.NotificationEventRepository,
 	notifyService *services.NotificationService,
+	auditRepo *repository.AuditRepository,
+	logger *slog.Logger,
 ) *NotificationsHandler {
+	handlerLogger := slog.Default()
+	if logger != nil {
+		handlerLogger = logger.With("component", "customer-notifications-handler")
+	}
+
 	return &NotificationsHandler{
 		preferenceRepo: preferenceRepo,
 		eventRepo:      eventRepo,
 		notifyService:  notifyService,
+		auditRepo:      auditRepo,
+		logger:         handlerLogger,
 	}
 }
 
@@ -71,7 +85,6 @@ func (h *NotificationsHandler) GetNotificationPreferences(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Security APIKeyAuth
 // @Param request body object true "Notification preference update request"
 // @Success 200 {object} models.Response
 // @Failure 400 {object} models.ErrorResponse
@@ -121,11 +134,68 @@ func (h *NotificationsHandler) UpdateNotificationPreferences(c *gin.Context) {
 
 	// Save changes
 	if err := h.preferenceRepo.Update(c.Request.Context(), prefs); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			if upsertErr := h.preferenceRepo.Upsert(c.Request.Context(), prefs); upsertErr != nil {
+				middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update notification preferences")
+				return
+			}
+			h.logAudit(c, "notification.preferences.update", "notification_preference", prefs.ID, map[string]any{
+				"email_enabled":    prefs.EmailEnabled,
+				"telegram_enabled": prefs.TelegramEnabled,
+				"events":           prefs.Events,
+			})
+			c.JSON(http.StatusOK, models.Response{Data: prefs.ToResponse()})
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update notification preferences")
 		return
 	}
 
+	h.logAudit(c, "notification.preferences.update", "notification_preference", prefs.ID, map[string]any{
+		"email_enabled":    prefs.EmailEnabled,
+		"telegram_enabled": prefs.TelegramEnabled,
+		"events":           prefs.Events,
+	})
+
 	c.JSON(http.StatusOK, models.Response{Data: prefs.ToResponse()})
+}
+
+func (h *NotificationsHandler) logAudit(c *gin.Context, action, resourceType, resourceID string, changes map[string]any) {
+	if h.auditRepo == nil {
+		return
+	}
+
+	customerID := middleware.GetUserID(c)
+	actorIP := c.ClientIP()
+	correlationID := middleware.GetCorrelationID(c)
+	maskedChanges := audit.MaskSensitiveFields(changes)
+	changesJSON, err := json.Marshal(maskedChanges)
+	if err != nil {
+		h.logger.Error("failed to marshal audit changes",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+		return
+	}
+
+	auditLog := &models.AuditLog{
+		ActorID:       &customerID,
+		ActorType:     models.AuditActorCustomer,
+		ActorIP:       &actorIP,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    &resourceID,
+		Changes:       changesJSON,
+		CorrelationID: &correlationID,
+		Success:       true,
+	}
+
+	if err := h.auditRepo.Append(c.Request.Context(), auditLog); err != nil {
+		h.logger.Error("failed to write audit log",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+	}
 }
 
 // ListNotificationEvents handles GET /notifications/events.
@@ -209,16 +279,18 @@ func (h *NotificationsHandler) GetAvailableEvents(c *gin.Context) {
 	})
 }
 
-// RegisterNotificationRoutes registers notification-related routes.
-func RegisterNotificationRoutes(router *gin.RouterGroup, handler *NotificationsHandler) {
+// registerNotificationReadRoutes registers notification read endpoints that support API keys.
+func registerNotificationReadRoutes(router *gin.RouterGroup, handler *NotificationsHandler) {
 	notifications := router.Group("/notifications")
 	{
-		// Preferences
 		notifications.GET("/preferences", handler.GetNotificationPreferences)
-		notifications.PUT("/preferences", handler.UpdateNotificationPreferences)
-
-		// Events
 		notifications.GET("/events", handler.ListNotificationEvents)
 		notifications.GET("/events/types", handler.GetAvailableEvents)
 	}
+}
+
+// registerNotificationMutationRoutes registers notification mutation endpoints that require JWT.
+func registerNotificationMutationRoutes(router *gin.RouterGroup, handler *NotificationsHandler) {
+	notifications := router.Group("/notifications")
+	notifications.PUT("/preferences", handler.UpdateNotificationPreferences)
 }

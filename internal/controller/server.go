@@ -108,6 +108,7 @@ type Server struct {
 	adminInAppNotifHandler    *admin.AdminInAppNotificationsHandler
 	sseHub                    *services.SSEHub
 	inAppNotifService         *services.InAppNotificationService
+	webhookScheduler          interface{ StartScheduler(context.Context) }
 	stripeWebhookHandler      *webhooks.StripeWebhookHandler
 	paypalProvider            *paypalPayments.Provider
 	paypalWebhookHandler      *webhooks.PayPalWebhookHandler
@@ -119,13 +120,13 @@ type Server struct {
 }
 
 // NewServer creates a new Controller server.
-func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetStreamContext, logger *slog.Logger) (*Server, error) {
+func NewServer(ctx context.Context, cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetStreamContext, logger *slog.Logger) (*Server, error) {
 	// Set Gin to release mode always
 	gin.SetMode(gin.ReleaseMode)
 
 	var redisClient *controllerredis.Client
 	if cfg.Redis.URL != "" {
-		client, err := controllerredis.NewClient(context.Background(), cfg.Redis.URL)
+		client, err := controllerredis.NewClient(ctx, cfg.Redis.URL)
 		if err != nil {
 			return nil, fmt.Errorf("initializing redis rate limit backend: %w", err)
 		}
@@ -165,7 +166,9 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 	router.Use(s.requestLogger())
 
 	// Setup routes
-	s.setupRoutes()
+	if err := s.setupRoutes(); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -186,7 +189,11 @@ func (s *Server) SetNATSConnection(conn *nats.Conn) {
 }
 
 // setupRoutes configures all HTTP routes.
-func (s *Server) setupRoutes() {
+func (s *Server) setupRoutes() error {
+	if err := s.router.SetTrustedProxies(s.config.TrustedProxies); err != nil {
+		return fmt.Errorf("configuring trusted proxies: %w", err)
+	}
+
 	// CORS configuration - use configured origins or defaults
 	allowOrigins := s.config.CORSOrigins
 	if len(allowOrigins) == 0 {
@@ -209,6 +216,7 @@ func (s *Server) setupRoutes() {
 	// Provisioning API (WHMCS) - requires API key authentication
 	// Note: Handlers are nil until InitializeServices is called
 	// Routes will be registered in RegisterAPIRoutes after services are initialized
+	return nil
 }
 
 // RegisterAPIRoutes registers all API routes after services are initialized.
@@ -332,7 +340,7 @@ func (s *Server) Start(ctx context.Context) error {
 			s.logger.Warn("failed to close HTTP listener after startup failure", "error", closeErr)
 		}
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		if shutdownErr := s.shutdownMetricsServer(shutdownCtx); shutdownErr != nil {
 			s.logger.Error("failed to stop metrics server after HTTP server startup failure", "error", shutdownErr)

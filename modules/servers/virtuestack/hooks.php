@@ -362,30 +362,6 @@ add_hook('ClientAreaFooterOutput', 1, function (array $vars) {
         }, 10000);
     }
     
-    // Handle console links
-    var consoleLinks = document.querySelectorAll('[data-vs-console]');
-    consoleLinks.forEach(function(link) {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            var type = this.getAttribute('data-vs-console');
-            var vmId = this.getAttribute('data-vs-vm-id');
-            openConsoleWindow(type, vmId);
-        });
-    });
-    
-    function openConsoleWindow(type, vmId) {
-        var width = 1024;
-        var height = 768;
-        var left = (screen.width - width) / 2;
-        var top = (screen.height - height) / 2;
-        var url = 'clientarea.php?action=productdetails&id=' + vmId + '&modop=custom&a=console&type=' + type;
-        
-        window.open(
-            url,
-            'vs-console-' + vmId,
-            'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=no'
-        );
-    }
 })();
 </script>
 HTML;
@@ -564,7 +540,6 @@ function handleProvisioningComplete(int $serviceId, array $task, ApiClient $clie
         sendProvisioningEmail($serviceId, [
             'vm_id' => $vmId,
             'ip_address' => $primaryIp ?? '',
-            'password' => $result['password'] ?? '',
         ]);
     } catch (\Exception $e) {
         logActivity("VirtueStack: Error fetching VM info for service {$serviceId}: " . $e->getMessage());
@@ -888,7 +863,6 @@ function sendProvisioningEmail(int $serviceId, array $vmData): void
             'product_name' => $service->product_name,
             'vm_id' => $vmData['vm_id'],
             'ip_address' => $vmData['ip_address'],
-            'password' => $vmData['password'],
             'hostname' => $service->domain,
         ];
 

@@ -16,7 +16,7 @@ import (
 
 type mockWorkerTaskRepo struct {
 	findStuckTasksFunc func(ctx context.Context, threshold time.Duration) ([]*models.Task, error)
-	resetTaskFunc      func(ctx context.Context, taskID string) error
+	retryTaskFunc      func(ctx context.Context, taskID string) error
 	setFailedFunc      func(ctx context.Context, id string, errorMessage string) error
 }
 
@@ -27,9 +27,9 @@ func (m *mockWorkerTaskRepo) FindStuckTasks(ctx context.Context, threshold time.
 	return nil, nil
 }
 
-func (m *mockWorkerTaskRepo) ResetTask(ctx context.Context, taskID string) error {
-	if m.resetTaskFunc != nil {
-		return m.resetTaskFunc(ctx, taskID)
+func (m *mockWorkerTaskRepo) RetryTask(ctx context.Context, taskID string) error {
+	if m.retryTaskFunc != nil {
+		return m.retryTaskFunc(ctx, taskID)
 	}
 	return nil
 }
@@ -46,9 +46,9 @@ func TestRecoverStuckTasks(t *testing.T) {
 		name            string
 		stuckTasks      []*models.Task
 		findErr         error
-		wantResetIDs    []string
+		wantRetryIDs    []string
 		wantFailedIDs   []string
-		resetErrTaskID  string
+		retryErrTaskID  string
 		failedErrTaskID string
 	}{
 		{
@@ -56,7 +56,7 @@ func TestRecoverStuckTasks(t *testing.T) {
 			stuckTasks: []*models.Task{
 				{ID: "task-1", Type: models.TaskTypeVMCreate, RetryCount: 1},
 			},
-			wantResetIDs: []string{"task-1"},
+			wantRetryIDs: []string{"task-1"},
 		},
 		{
 			name: "task at max retries is marked failed",
@@ -79,8 +79,8 @@ func TestRecoverStuckTasks(t *testing.T) {
 				{ID: "task-3", Type: models.TaskTypeVMCreate, RetryCount: 0},
 				{ID: "task-4", Type: models.TaskTypeVMCreate, RetryCount: 0},
 			},
-			resetErrTaskID: "task-3",
-			wantResetIDs:   []string{"task-4"},
+			retryErrTaskID: "task-3",
+			wantRetryIDs:   []string{"task-4"},
 		},
 		{
 			name: "set failed error continues processing",
@@ -95,18 +95,18 @@ func TestRecoverStuckTasks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetCalls := make([]string, 0)
+			retryCalls := make([]string, 0)
 			failedCalls := make([]string, 0)
 
 			repo := &mockWorkerTaskRepo{
 				findStuckTasksFunc: func(ctx context.Context, threshold time.Duration) ([]*models.Task, error) {
 					return tt.stuckTasks, tt.findErr
 				},
-				resetTaskFunc: func(ctx context.Context, taskID string) error {
-					if taskID == tt.resetErrTaskID {
-						return errors.New("reset failed")
+				retryTaskFunc: func(ctx context.Context, taskID string) error {
+					if taskID == tt.retryErrTaskID {
+						return errors.New("retry failed")
 					}
-					resetCalls = append(resetCalls, taskID)
+					retryCalls = append(retryCalls, taskID)
 					return nil
 				},
 				setFailedFunc: func(ctx context.Context, id string, errorMessage string) error {
@@ -126,16 +126,16 @@ func TestRecoverStuckTasks(t *testing.T) {
 
 			worker.recoverStuckTasks(context.Background(), 30*time.Minute)
 
-			wantReset := tt.wantResetIDs
-			if wantReset == nil {
-				wantReset = []string{}
+			wantRetry := tt.wantRetryIDs
+			if wantRetry == nil {
+				wantRetry = []string{}
 			}
 			wantFailed := tt.wantFailedIDs
 			if wantFailed == nil {
 				wantFailed = []string{}
 			}
 
-			assert.Equal(t, wantReset, resetCalls)
+			assert.Equal(t, wantRetry, retryCalls)
 			assert.Equal(t, wantFailed, failedCalls)
 		})
 	}

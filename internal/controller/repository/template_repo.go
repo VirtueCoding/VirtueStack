@@ -25,8 +25,8 @@ func NewTemplateRepository(db DB) *TemplateRepository {
 // TemplateListFilter holds filter options for listing templates.
 type TemplateListFilter struct {
 	models.PaginationParams
-	IsActive         *bool
-	OSFamily         *string
+	IsActive          *bool
+	OSFamily          *string
 	SupportsCloudInit *bool
 }
 
@@ -169,14 +169,13 @@ func (r *TemplateRepository) Update(ctx context.Context, template *models.Templa
 		WHERE id = $13
 		RETURNING ` + templateSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		template.Name, template.OSFamily, template.OSVersion,
 		template.RBDImage, template.RBDSnapshot, template.MinDiskGB,
 		template.SupportsCloudInit, template.IsActive, template.SortOrder,
 		template.Description, template.StorageBackend, template.FilePath,
 		template.ID,
-	)
-	updated, err := scanTemplate(row)
+	}, scanTemplate)
 	if err != nil {
 		return fmt.Errorf("updating template %s: %w", template.ID, err)
 	}

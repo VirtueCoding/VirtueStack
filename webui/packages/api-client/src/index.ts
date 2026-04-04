@@ -3,6 +3,8 @@ export interface AuthTokens {
   expires_in: number
   requires_2fa?: boolean
   temp_token?: string
+  session_id?: string
+  session_cleanup_token?: string
 }
 
 export interface LoginRequest {
@@ -29,10 +31,69 @@ export class ApiClientError extends Error {
   }
 }
 
+interface LogoutWithRefreshRecoveryOptions {
+  invalidateSession: () => Promise<void>
+  refreshSession: () => Promise<unknown>
+}
+
+function isUnauthorizedError(error: unknown): error is ApiClientError {
+  return error instanceof ApiClientError && error.status === 401
+}
+
+function isMissingRefreshSessionError(error: unknown): error is ApiClientError {
+  return error instanceof ApiClientError && (error.status === 400 || error.status === 401)
+}
+
+export async function logoutWithRefreshRecovery(
+  options: LogoutWithRefreshRecoveryOptions
+): Promise<void> {
+  try {
+    await options.invalidateSession()
+    return
+  } catch (error) {
+    if (!isUnauthorizedError(error)) {
+      throw error
+    }
+  }
+
+  try {
+    await options.refreshSession()
+  } catch (error) {
+    if (isMissingRefreshSessionError(error)) {
+      return
+    }
+    throw error
+  }
+
+  await options.invalidateSession()
+}
+
 export function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null
   const match = document.cookie.match(/csrf_token=([^;]+)/)
   return match ? decodeURIComponent(match[1]) : null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+export function parseUnreadCountEventData(raw: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) {
+      return null
+    }
+
+    const count = parsed["count"]
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      return null
+    }
+
+    return count
+  } catch {
+    return null
+  }
 }
 
 export async function fetchCsrfToken(apiBaseURL: string, csrfPath: string): Promise<void> {

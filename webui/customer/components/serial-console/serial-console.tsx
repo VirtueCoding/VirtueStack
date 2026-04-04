@@ -13,6 +13,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@virtuestack/ui";
+import {
+  getPostRebootFailureState,
+  getPostRebootSuccessState,
+} from "./reboot-state";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -209,14 +213,30 @@ export function SerialConsole({
     try {
       const { vmApi } = await import("@/lib/api-client");
       await vmApi.restartVM(vmId);
+      const nextState = getPostRebootSuccessState();
+      if (nextState.shouldDisconnect) {
+        handleDisconnect();
+      }
+      if (nextState.shouldReconnect) {
+        rebootTimeoutRef.current = setTimeout(() => {
+          setIsRebooting(false);
+          handleReconnect();
+        }, 3000);
+      }
     } catch {
       terminal.current?.writeln("\x1b[1;31m[ ERROR ] Failed to send reboot command via API\x1b[0m");
+      const nextState = getPostRebootFailureState();
+      setIsRebooting(nextState.shouldKeepRebooting);
+      if (nextState.shouldDisconnect) {
+        handleDisconnect();
+      }
+      if (nextState.shouldReconnect) {
+        rebootTimeoutRef.current = setTimeout(() => {
+          setIsRebooting(false);
+          handleReconnect();
+        }, 3000);
+      }
     }
-    handleDisconnect();
-    rebootTimeoutRef.current = setTimeout(() => {
-      setIsRebooting(false);
-      handleReconnect();
-    }, 3000);
   };
 
   const getStatusBadge = () => {

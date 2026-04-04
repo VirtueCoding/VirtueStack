@@ -60,7 +60,7 @@ type TaskHandler func(ctx context.Context, task *models.Task) error
 
 type workerTaskRepository interface {
 	FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error)
-	ResetTask(ctx context.Context, taskID string) error
+	RetryTask(ctx context.Context, taskID string) error
 	SetFailed(ctx context.Context, id string, errorMessage string) error
 }
 
@@ -205,7 +205,9 @@ func (w *Worker) Stop() {
 		w.cancel()
 	}
 	if w.eg != nil {
-		_ = w.eg.Wait()
+		if err := w.eg.Wait(); err != nil {
+			w.logger.Warn("task worker wait returned error during shutdown", "error", err)
+		}
 	}
 	w.logger.Info("task worker stopped")
 }
@@ -269,7 +271,9 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 		// Error is intentionally discarded: the task is already being failed and the
 		// handler context may be near expiry; the outer Ack() below ensures the message
 		// is removed from the queue regardless of this status-update outcome.
-		_ = w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &errMsg)
+		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &errMsg); updateErr != nil {
+			logger.Warn("failed to persist missing-handler task status", "error", updateErr)
+		}
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 		if err := msg.Ack(); err != nil {
@@ -396,11 +400,11 @@ func (w *Worker) recoverStuckTasks(ctx context.Context, stuckThreshold time.Dura
 			logger.Warn("stuck task marked failed after max retries")
 			continue
 		}
-		if resetErr := w.taskRepo.ResetTask(ctx, task.ID); resetErr != nil {
-			logger.Error("failed to reset stuck task", "error", resetErr)
+		if retryErr := w.taskRepo.RetryTask(ctx, task.ID); retryErr != nil {
+			logger.Error("failed to retry stuck task", "error", retryErr)
 			continue
 		}
-		logger.Warn("stuck task reset to pending for retry")
+		logger.Warn("stuck task reset to pending and retry_count incremented")
 	}
 }
 

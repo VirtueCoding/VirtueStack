@@ -24,7 +24,7 @@ func TestSetupRoutes_PublicEndpoints(t *testing.T) {
 		logger: testLogger(),
 	}
 
-	server.setupRoutes()
+	require.NoError(t, server.setupRoutes())
 
 	tests := []struct {
 		name       string
@@ -72,7 +72,7 @@ func TestStart_ReleasesMetricsListenerWhenHTTPServeFailsAfterMetricsStartup(t *t
 			return errors.New("simulated serve failure")
 		},
 	}
-	server.setupRoutes()
+	require.NoError(t, server.setupRoutes())
 
 	err := server.Start(context.Background())
 	require.Error(t, err)
@@ -131,7 +131,7 @@ func TestMetricsShutdownHandlesConcurrentStartFailureAndStop(t *testing.T) {
 			return errors.New("simulated serve failure")
 		},
 	}
-	server.setupRoutes()
+	require.NoError(t, server.setupRoutes())
 
 	startErrCh := make(chan error, 1)
 	go func() {
@@ -172,4 +172,56 @@ func reserveTCPAddress(t *testing.T) string {
 	addr := listener.Addr().String()
 	require.NoError(t, listener.Close())
 	return addr
+}
+
+func TestSetupRoutes_DoesNotTrustForwardedClientIPByDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := &Server{
+		config: &config.ControllerConfig{},
+		router: gin.New(),
+		logger: testLogger(),
+	}
+
+	require.NoError(t, server.setupRoutes())
+	server.router.GET("/client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.77")
+
+	server.router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "198.51.100.10", recorder.Body.String())
+}
+
+func TestSetupRoutes_UsesForwardedClientIPFromTrustedProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := &Server{
+		config: &config.ControllerConfig{
+			TrustedProxies: []string{"198.51.100.0/24"},
+		},
+		router: gin.New(),
+		logger: testLogger(),
+	}
+
+	require.NoError(t, server.setupRoutes())
+	server.router.GET("/client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.77")
+
+	server.router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "203.0.113.77", recorder.Body.String())
 }

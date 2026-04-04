@@ -39,6 +39,11 @@ func (s *Server) StartSchedulers(ctx context.Context) {
 		go s.taskWorker.StartStuckTaskScanner(ctx, 5*time.Minute, 30*time.Minute)
 	}
 
+	if s.webhookScheduler != nil {
+		s.logger.Info("starting webhook delivery scheduler")
+		go s.webhookScheduler.StartScheduler(ctx)
+	}
+
 	s.startMetricsCollector(ctx)
 
 	if s.bandwidthRepo != nil && s.nodeClient != nil {

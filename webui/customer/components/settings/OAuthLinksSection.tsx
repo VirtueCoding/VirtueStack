@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@virtuestack/ui";
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { oauthApi, type OAuthLink } from "@/lib/api-client";
 
 const OAUTH_GOOGLE_ENABLED =
@@ -49,6 +50,10 @@ export function OAuthLinksSection() {
   const linkedProviders = new Set(
     (links || []).map((l: OAuthLink) => l.provider)
   );
+  const googleAvailableToLink =
+    OAUTH_GOOGLE_ENABLED && !linkedProviders.has("google");
+  const githubAvailableToLink =
+    OAUTH_GITHUB_ENABLED && !linkedProviders.has("github");
 
   return (
     <Card>
@@ -97,6 +102,14 @@ export function OAuthLinksSection() {
               />
             )}
           </div>
+        )}
+        {(googleAvailableToLink || githubAvailableToLink) && (
+          <OAuthButtons
+            googleEnabled={googleAvailableToLink}
+            githubEnabled={githubAvailableToLink}
+            disabled={unlinkMutation.isPending}
+            mode="link"
+          />
         )}
 
         {unlinkMutation.isError && (
@@ -163,7 +176,7 @@ function ProviderRow({
         </Button>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Sign in with {label} to link
+          Use the link action below to connect {label}
         </p>
       )}
     </div>

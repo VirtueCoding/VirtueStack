@@ -12,6 +12,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	auditOverrideContextKey         = "audit_override"
+	auditMiddlewareActiveContextKey = "audit_middleware_active"
+)
+
 // AuditLogger is the function signature for persisting an AuditEntry.
 // Implementations should write the entry to the audit_logs table (or equivalent).
 type AuditLogger func(ctx context.Context, entry *AuditEntry) error
@@ -37,8 +42,8 @@ type AuditEntry struct {
 	// ResourceID is the unique identifier of the affected resource.
 	ResourceID string
 
-	// Changes holds before/after values for mutation operations.
-	Changes map[string]any
+	// Changes holds JSON-marshalable before/after values for mutation operations.
+	Changes any
 
 	// CorrelationID links this audit entry to the originating request.
 	CorrelationID string
@@ -48,6 +53,33 @@ type AuditEntry struct {
 
 	// ErrorMessage holds the error message when Success is false.
 	ErrorMessage string
+}
+
+// AuditOverride allows handlers to override the generic action/resource metadata
+// derived from the request path while still using the middleware's single final
+// audit write based on the actual response status.
+type AuditOverride struct {
+	ActorID      string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Changes      any
+}
+
+// SetAuditOverride stores handler-provided audit metadata for the current request.
+func SetAuditOverride(c *gin.Context, override *AuditOverride) {
+	c.Set(auditOverrideContextKey, override)
+}
+
+// HasAuditMiddleware reports whether the current request will be logged by the
+// mutating audit middleware after the handler completes.
+func HasAuditMiddleware(c *gin.Context) bool {
+	value, exists := c.Get(auditMiddlewareActiveContextKey)
+	if !exists {
+		return false
+	}
+	active, ok := value.(bool)
+	return ok && active
 }
 
 // Audit returns a Gin middleware that records mutating HTTP requests in the
@@ -60,6 +92,8 @@ func Audit(logger AuditLogger) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+
+		c.Set(auditMiddlewareActiveContextKey, true)
 
 		// Process the request first so we can capture the response status.
 		c.Next()
@@ -80,6 +114,23 @@ func Audit(logger AuditLogger) gin.HandlerFunc {
 			CorrelationID: GetCorrelationID(c),
 			Success:       success,
 		}
+		if override, ok := getAuditOverride(c); ok {
+			if override.ActorID != "" {
+				entry.ActorID = override.ActorID
+			}
+			if override.Action != "" {
+				entry.Action = override.Action
+			}
+			if override.ResourceType != "" {
+				entry.ResourceType = override.ResourceType
+			}
+			if override.ResourceID != "" {
+				entry.ResourceID = override.ResourceID
+			}
+			if override.Changes != nil {
+				entry.Changes = override.Changes
+			}
+		}
 
 		if !success {
 			if lastErr := c.Errors.Last(); lastErr != nil {
@@ -97,6 +148,18 @@ func Audit(logger AuditLogger) gin.HandlerFunc {
 			)
 		}
 	}
+}
+
+func getAuditOverride(c *gin.Context) (*AuditOverride, bool) {
+	value, exists := c.Get(auditOverrideContextKey)
+	if !exists {
+		return nil, false
+	}
+	override, ok := value.(*AuditOverride)
+	if !ok || override == nil {
+		return nil, false
+	}
+	return override, true
 }
 
 // ExtractResourceFromPath derives the resource type and resource ID from a
@@ -210,19 +273,34 @@ func splitPath(path string) []string {
 
 // resourceNouns maps plural path segments to their singular resource name.
 var resourceNouns = map[string]string{
-	"vms":          "vm",
-	"nodes":        "node",
-	"customers":    "customer",
-	"users":        "user",
-	"networks":     "network",
-	"volumes":      "volume",
-	"snapshots":    "snapshot",
-	"templates":    "template",
-	"api-keys":     "api_key",
-	"audit-logs":   "audit_log",
-	"roles":        "role",
-	"permissions":  "permission",
-	"provisioning": "provisioning",
+	"vms":                    "vm",
+	"nodes":                  "node",
+	"customers":              "customer",
+	"users":                  "user",
+	"networks":               "network",
+	"volumes":                "volume",
+	"snapshots":              "snapshot",
+	"templates":              "template",
+	"plans":                  "plan",
+	"settings":               "setting",
+	"backups":                "backup",
+	"backup-schedules":       "backup_schedule",
+	"admin-backup-schedules": "admin_backup_schedule",
+	"storage-backends":       "storage_backend",
+	"provisioning-keys":      "provisioning_key",
+	"system-webhooks":        "system_webhook",
+	"pre-action-webhooks":    "pre_action_webhook",
+	"ip-sets":                "ipset",
+	"notifications":          "notification",
+	"exchange-rates":         "exchange_rate",
+	"invoices":               "billing_invoice",
+	"billing":                "billing",
+	"api-keys":               "api_key",
+	"audit-logs":             "audit_log",
+	"roles":                  "role",
+	"permissions":            "permission",
+	"provisioning":           "provisioning",
+	"sso-tokens":             "sso_token",
 }
 
 // resourceNoun resolves a path segment to a singular resource noun.

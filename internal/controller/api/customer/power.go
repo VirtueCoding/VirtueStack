@@ -37,6 +37,7 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 
 	// Start VM with ownership verification (isAdmin=false)
 	if err := h.vmService.StartVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		h.logFailedAudit(c, "vm.start", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -56,6 +57,8 @@ func (h *CustomerHandler) StartVM(c *gin.Context) {
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "vm.start", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM started successfully"}})
 }
@@ -87,6 +90,7 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 
 	// Stop VM gracefully with ownership verification (isAdmin=false)
 	if err := h.vmService.StopVM(c.Request.Context(), vmID, customerID, false, false); err != nil {
+		h.logFailedAudit(c, "vm.stop", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -106,6 +110,8 @@ func (h *CustomerHandler) StopVM(c *gin.Context) {
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "vm.stop", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM stopped successfully"}})
 }
@@ -137,6 +143,7 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 
 	// Restart VM with ownership verification (isAdmin=false)
 	if err := h.vmService.RestartVM(c.Request.Context(), vmID, customerID, false); err != nil {
+		h.logFailedAudit(c, "vm.restart", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -156,6 +163,8 @@ func (h *CustomerHandler) RestartVM(c *gin.Context) {
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "vm.restart", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM restarted successfully"}})
 }
@@ -187,6 +196,7 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 
 	// Force stop VM with ownership verification (isAdmin=false)
 	if err := h.vmService.StopVM(c.Request.Context(), vmID, customerID, true, false); err != nil {
+		h.logFailedAudit(c, "vm.force_stop", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -206,6 +216,8 @@ func (h *CustomerHandler) ForceStopVM(c *gin.Context) {
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "vm.force_stop", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "VM force stopped successfully"}})
 }

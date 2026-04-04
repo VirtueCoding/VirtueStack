@@ -29,6 +29,9 @@ const (
 	// roleContextKey is the gin context key for the user role.
 	roleContextKey = "role"
 
+	// sessionIDContextKey is the gin context key for the authenticated session ID.
+	sessionIDContextKey = "session_id"
+
 	// apiKeyIDContextKey is the gin context key for an authenticated API key ID.
 	apiKeyIDContextKey = "api_key_id"
 
@@ -55,6 +58,12 @@ const (
 
 	// ReauthTokenDuration is the lifetime of a re-auth token.
 	ReauthTokenDuration = 15 * time.Minute
+
+	// sessionCleanupTokenPurposeValue is the purpose claim used on session cleanup tokens.
+	sessionCleanupTokenPurposeValue = "session_cleanup"
+
+	// sessionCleanupTokenDuration is the lifetime of a session cleanup token.
+	sessionCleanupTokenDuration = 5 * time.Minute
 )
 
 // AuthConfig holds JWT configuration for the VirtueStack Controller.
@@ -64,12 +73,21 @@ type AuthConfig struct {
 
 	// Issuer is the expected issuer claim. Should be "virtuestack".
 	Issuer string
+
+	// SessionValidator confirms that the access token's backing session is still
+	// live. When unset, JWT middleware performs signature and claim validation
+	// only. Returning ErrUnauthorized rejects the token; other errors are
+	// surfaced as internal server errors.
+	SessionValidator SessionValidator
 }
 
 // JWTClaims represents the claims embedded in a VirtueStack JWT.
 type JWTClaims struct {
 	// UserID is the subject identifier for the token owner.
 	UserID string `json:"sub"`
+
+	// SessionID identifies the server-side session row associated with the token.
+	SessionID string `json:"session_id,omitempty"`
 
 	// UserType distinguishes "customer" from "admin" users.
 	UserType string `json:"user_type"`
@@ -104,6 +122,9 @@ type CustomerAPIKeyInfo struct {
 // Returns an error if the key is not found, revoked, or expired.
 type CustomerAPIKeyValidator func(ctx context.Context, rawKey string) (CustomerAPIKeyInfo, error)
 
+// SessionValidator checks whether a session row is still valid for access-token use.
+type SessionValidator func(ctx context.Context, sessionID string) error
+
 // JWTAuth returns a Gin middleware that validates JWT tokens from HttpOnly cookies.
 // Falls back to Authorization header for API clients that don't use cookies.
 // On success it sets "user_id", "user_type", and "role" in gin.Context.
@@ -127,8 +148,12 @@ func JWTAuth(config AuthConfig) gin.HandlerFunc {
 			return
 		}
 
-		if claims.Purpose == tempTokenPurposeValue {
-			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "temp tokens are not accepted here")
+		if claims.Purpose != "" {
+			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "non-access tokens are not accepted here")
+			return
+		}
+
+		if err := validateAccessTokenSession(c, config, claims); err != nil {
 			return
 		}
 
@@ -160,7 +185,10 @@ func OptionalJWTAuth(config AuthConfig) gin.HandlerFunc {
 			return
 		}
 
-		if claims.Purpose != tempTokenPurposeValue {
+		if claims.Purpose == "" {
+			if err := validateOptionalAccessTokenSession(c, config, claims); err != nil {
+				return
+			}
 			setAuthContext(c, claims)
 		}
 
@@ -310,7 +338,10 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 		tokenString := GetAccessTokenFromCookie(c)
 		if tokenString != "" {
 			claims, err := parseAndValidateJWT(jwtConfig, tokenString)
-			if err == nil && claims.Purpose != tempTokenPurposeValue {
+			if err == nil && claims.Purpose == "" {
+				if sessionErr := validateAccessTokenSession(c, jwtConfig, claims); sessionErr != nil {
+					return
+				}
 				setAuthContext(c, claims)
 				c.Next()
 				return
@@ -375,8 +406,10 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 // GetPermissions extracts the permissions set by CustomerAPIKeyAuth from gin.Context.
 // Returns nil if not present (i.e., JWT auth was used instead).
 func GetPermissions(c *gin.Context) []string {
-	v, _ := c.Get(permissionsContextKey)
-	perms, _ := v.([]string)
+	perms, _, ok := getStringSliceContext(c, permissionsContextKey)
+	if !ok {
+		return nil
+	}
 	return perms
 }
 
@@ -384,8 +417,10 @@ func GetPermissions(c *gin.Context) []string {
 // Returns nil if not present or empty (i.e., JWT auth or API key with no VM restriction).
 // An empty/nil return means all VMs are accessible.
 func GetVMIDs(c *gin.Context) []string {
-	v, _ := c.Get(vmIDsContextKey)
-	vmIDs, _ := v.([]string)
+	vmIDs, _, ok := getStringSliceContext(c, vmIDsContextKey)
+	if !ok {
+		return nil
+	}
 	return vmIDs
 }
 
@@ -394,9 +429,15 @@ func GetVMIDs(c *gin.Context) []string {
 // For API key auth with empty vm_ids, returns true (key has access to all VMs).
 // For API key auth with vm_ids set, checks if the VM is in the allowed list.
 func IsVMAllowed(c *gin.Context, vmID string) bool {
-	vmIDs := GetVMIDs(c)
-	if len(vmIDs) == 0 {
+	vmIDs, present, ok := getStringSliceContext(c, vmIDsContextKey)
+	if !present {
 		// JWT auth or API key with no VM restriction
+		return true
+	}
+	if !ok {
+		return false
+	}
+	if len(vmIDs) == 0 {
 		return true
 	}
 	for _, id := range vmIDs {
@@ -465,10 +506,13 @@ func RequireVMScope() gin.HandlerFunc {
 // For JWT auth, returns true (JWT auth has full permissions).
 // For API key auth, checks if the permission is in the key's permission list.
 func HasPermission(c *gin.Context, permission string) bool {
-	perms := GetPermissions(c)
-	if perms == nil {
+	perms, present, ok := getStringSliceContext(c, permissionsContextKey)
+	if !present {
 		// JWT auth has full permissions
 		return true
+	}
+	if !ok {
+		return false
 	}
 	for _, p := range perms {
 		if p == permission {
@@ -502,12 +546,13 @@ func RequirePermission(permission string) gin.HandlerFunc {
 // to RS256 (asymmetric signing): the private key stays with the auth service
 // and the public key is distributed to verifying services. See:
 // https://pkg.go.dev/github.com/golang-jwt/jwt/v5#SigningMethodRSA
-func GenerateAccessToken(config AuthConfig, userID, userType, role string, duration time.Duration) (string, error) {
+func GenerateAccessToken(config AuthConfig, userID, userType, role, sessionID string, duration time.Duration) (string, error) {
 	now := time.Now()
 	claims := JWTClaims{
-		UserID:   userID,
-		UserType: userType,
-		Role:     role,
+		UserID:    userID,
+		SessionID: sessionID,
+		UserType:  userType,
+		Role:      role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			Issuer:    config.Issuer,
@@ -522,6 +567,35 @@ func GenerateAccessToken(config AuthConfig, userID, userType, role string, durat
 	signed, err := token.SignedString([]byte(config.JWTSecret))
 	if err != nil {
 		return "", fmt.Errorf("signing access token: %w", err)
+	}
+
+	return signed, nil
+}
+
+// GenerateSessionCleanupToken creates a short-lived token that authorizes
+// revocation of a specific authenticated session without relying on whichever
+// session cookie happens to be current when the cleanup request is sent.
+func GenerateSessionCleanupToken(config AuthConfig, userID, userType, role, sessionID string) (string, error) {
+	now := time.Now()
+	claims := JWTClaims{
+		UserID:    userID,
+		SessionID: sessionID,
+		UserType:  userType,
+		Role:      role,
+		Purpose:   sessionCleanupTokenPurposeValue,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			Issuer:    config.Issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(sessionCleanupTokenDuration)),
+			ID:        googleuuid.New().String(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(config.JWTSecret))
+	if err != nil {
+		return "", fmt.Errorf("signing session cleanup token: %w", err)
 	}
 
 	return signed, nil
@@ -621,6 +695,24 @@ func ValidateReauthToken(config AuthConfig, tokenString string) (*JWTClaims, err
 	return claims, nil
 }
 
+// ValidateSessionCleanupToken validates a session cleanup token and returns its claims.
+func ValidateSessionCleanupToken(config AuthConfig, tokenString string) (*JWTClaims, error) {
+	claims, err := parseAndValidateJWT(config, tokenString)
+	if err != nil {
+		return nil, fmt.Errorf("parsing session cleanup token: %w", err)
+	}
+
+	if claims.Purpose != sessionCleanupTokenPurposeValue {
+		return nil, fmt.Errorf("token is not a session cleanup token")
+	}
+
+	if claims.SessionID == "" {
+		return nil, fmt.Errorf("session cleanup token is missing session id")
+	}
+
+	return claims, nil
+}
+
 // ValidateJWT validates a JWT token and returns its claims.
 // This is the exported version of parseAndValidateJWT for use by services
 // that need to validate tokens outside of the middleware context (e.g., SSO exchange).
@@ -631,25 +723,25 @@ func ValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, error) {
 // GetUserID extracts the user_id set by JWTAuth from gin.Context.
 // Returns an empty string if not present.
 func GetUserID(c *gin.Context) string {
-	v, _ := c.Get(userIDContextKey)
-	s, _ := v.(string)
-	return s
+	return getStringContext(c, userIDContextKey)
 }
 
 // GetUserType extracts the user_type set by JWTAuth from gin.Context.
 // Returns an empty string if not present.
 func GetUserType(c *gin.Context) string {
-	v, _ := c.Get(userTypeContextKey)
-	s, _ := v.(string)
-	return s
+	return getStringContext(c, userTypeContextKey)
 }
 
 // GetRole extracts the role set by JWTAuth from gin.Context.
 // Returns an empty string if not present (e.g., for customer users).
 func GetRole(c *gin.Context) string {
-	v, _ := c.Get(roleContextKey)
-	s, _ := v.(string)
-	return s
+	return getStringContext(c, roleContextKey)
+}
+
+// GetSessionID extracts the session_id set by JWTAuth from gin.Context.
+// Returns an empty string if not present.
+func GetSessionID(c *gin.Context) string {
+	return getStringContext(c, sessionIDContextKey)
 }
 
 // ─── internal helpers ────────────────────────────────────────────────────────
@@ -680,11 +772,106 @@ func parseAndValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, err
 	return claims, nil
 }
 
+func getStringContext(c *gin.Context, key string) string {
+	if c == nil {
+		return ""
+	}
+	value, exists := c.Get(key)
+	if !exists {
+		return ""
+	}
+	result, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return result
+}
+
+func getStringSliceContext(c *gin.Context, key string) (values []string, exists, valid bool) {
+	if c == nil {
+		return nil, false, false
+	}
+	value, exists := c.Get(key)
+	if !exists {
+		return nil, false, false
+	}
+	values, ok := value.([]string)
+	if !ok {
+		return nil, true, false
+	}
+	return values, true, true
+}
+
+func validateAccessTokenSession(c *gin.Context, config AuthConfig, claims *JWTClaims) error {
+	if config.SessionValidator == nil {
+		return nil
+	}
+
+	if claims.SessionID == "" {
+		abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "token is invalid or expired")
+		return sharederrors.ErrUnauthorized
+	}
+
+	if err := config.SessionValidator(c.Request.Context(), claims.SessionID); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrUnauthorized) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			slog.Warn("jwt session validation failed",
+				"session_id", claims.SessionID,
+				"error", err,
+				"correlation_id", GetCorrelationID(c),
+			)
+			abortWithAuthError(c, http.StatusUnauthorized, "INVALID_TOKEN", "token is invalid or expired")
+			return err
+		}
+
+		slog.Error("jwt session validation errored",
+			"session_id", claims.SessionID,
+			"error", err,
+			"correlation_id", GetCorrelationID(c),
+		)
+		RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
+		return err
+	}
+
+	return nil
+}
+
+func validateOptionalAccessTokenSession(c *gin.Context, config AuthConfig, claims *JWTClaims) error {
+	if config.SessionValidator == nil {
+		return nil
+	}
+
+	if claims.SessionID == "" {
+		return sharederrors.ErrUnauthorized
+	}
+
+	if err := config.SessionValidator(c.Request.Context(), claims.SessionID); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrUnauthorized) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			slog.Warn("optional jwt session validation failed",
+				"session_id", claims.SessionID,
+				"error", err,
+				"correlation_id", GetCorrelationID(c),
+			)
+			return err
+		}
+
+		slog.Error("optional jwt session validation errored",
+			"session_id", claims.SessionID,
+			"error", err,
+			"correlation_id", GetCorrelationID(c),
+		)
+		RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
+		return err
+	}
+
+	return nil
+}
+
 // setAuthContext populates the gin context with user info from JWT claims.
 func setAuthContext(c *gin.Context, claims *JWTClaims) {
 	c.Set(userIDContextKey, claims.UserID)
 	c.Set(userTypeContextKey, claims.UserType)
 	c.Set(roleContextKey, claims.Role)
+	c.Set(sessionIDContextKey, claims.SessionID)
 }
 
 // hashAPIKey returns the hex-encoded SHA-256 hash of a raw API key.

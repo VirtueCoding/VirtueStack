@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
@@ -101,13 +102,14 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 	admin := router.Group("/admin")
 
 	auth := admin.Group("/auth")
-	auth.Use(middleware.LoginRateLimit())
 	{
-		auth.POST("/login", handler.Login)
-		auth.POST("/verify-2fa", handler.Verify2FA)
-		auth.POST("/refresh", handler.RefreshToken)
-		auth.POST("/logout", handler.Logout)
+		auth.GET("/csrf", middleware.CSRF(middleware.DefaultCSRFConfig()), handler.CSRF)
+		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
+		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
+		auth.POST("/refresh", middleware.LoginRateLimit(), handler.RefreshToken)
 	}
+
+	registerAdminLogoutRoutes(admin, handler)
 
 	// Protected auth endpoints - require valid JWT but not CSRF (read-only identity)
 	protectedAuth := admin.Group("/auth")
@@ -158,6 +160,12 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 		}
 		if entry.ErrorMessage != "" {
 			auditLog.ErrorMessage = &entry.ErrorMessage
+		}
+		if entry.Changes != nil {
+			data, err := json.Marshal(entry.Changes)
+			if err == nil {
+				auditLog.Changes = data
+			}
 		}
 		return handler.auditRepo.Append(ctx, auditLog)
 	}

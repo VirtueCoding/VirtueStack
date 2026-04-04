@@ -2,7 +2,10 @@
 package middleware
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sync"
@@ -33,19 +36,25 @@ func getValidator() *validator.Validate {
 // registerCustomValidations adds VirtueStack-specific validation tags.
 func registerCustomValidations(v *validator.Validate) {
 	// "uuid4" validates UUID v4 format.
-	_ = v.RegisterValidation("uuid4", func(fl validator.FieldLevel) bool {
+	if err := v.RegisterValidation("uuid4", func(fl validator.FieldLevel) bool {
 		return ValidateUUID(fl.Field().String()) == nil
-	})
+	}); err != nil {
+		panic(fmt.Sprintf("register uuid4 validation: %v", err))
+	}
 
 	// "hostname_rfc1123" validates hostnames per RFC 1123.
-	_ = v.RegisterValidation("hostname_rfc1123", func(fl validator.FieldLevel) bool {
+	if err := v.RegisterValidation("hostname_rfc1123", func(fl validator.FieldLevel) bool {
 		return ValidateHostname(fl.Field().String()) == nil
-	})
+	}); err != nil {
+		panic(fmt.Sprintf("register hostname_rfc1123 validation: %v", err))
+	}
 
 	// "slug" validates lowercase alphanumeric with hyphens (e.g., "standard-1", "pro-plan").
-	_ = v.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
+	if err := v.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
 		return slugRegex.MatchString(fl.Field().String())
-	})
+	}); err != nil {
+		panic(fmt.Sprintf("register slug validation: %v", err))
+	}
 }
 
 // BindAndValidate binds the request body into dst (must be a pointer to a struct)
@@ -54,20 +63,38 @@ func registerCustomValidations(v *validator.Validate) {
 // so the caller can forward them directly to the client.
 func BindAndValidate(c *gin.Context, dst any) error {
 	if err := c.ShouldBindJSON(dst); err != nil {
-		return &sharederrors.APIError{
-			Code:       "INVALID_REQUEST_BODY",
-			Message:    "request body could not be parsed as JSON",
-			HTTPStatus: http.StatusBadRequest,
-			Details: []sharederrors.ValidationDetail{
-				{Field: "body", Issue: err.Error()},
-			},
-		}
+		return invalidRequestBodyError(err)
 	}
 
 	if err := getValidator().Struct(dst); err != nil {
 		return buildValidationError(err)
 	}
 
+	return nil
+}
+
+// BindOptionalJSON binds dst from a JSON body when one is provided.
+// Empty or whitespace-only bodies are accepted, but malformed JSON returns
+// the same standardized parse error as BindAndValidate.
+func BindOptionalJSON(c *gin.Context, dst any) error {
+	if c.Request == nil || c.Request.Body == nil {
+		return nil
+	}
+
+	body, err := c.GetRawData()
+	if err != nil {
+		return invalidRequestBodyError(err)
+	}
+	restoreRequestBody(c, body)
+
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+
+	if err := json.Unmarshal(body, dst); err != nil {
+		return invalidRequestBodyError(err)
+	}
+	restoreRequestBody(c, body)
 	return nil
 }
 
@@ -158,6 +185,21 @@ func buildValidationError(err error) *sharederrors.APIError {
 		HTTPStatus: http.StatusBadRequest,
 		Details:    details,
 	}
+}
+
+func invalidRequestBodyError(err error) *sharederrors.APIError {
+	return &sharederrors.APIError{
+		Code:       "INVALID_REQUEST_BODY",
+		Message:    "request body could not be parsed as JSON",
+		HTTPStatus: http.StatusBadRequest,
+		Details: []sharederrors.ValidationDetail{
+			{Field: "body", Issue: err.Error()},
+		},
+	}
+}
+
+func restoreRequestBody(c *gin.Context, body []byte) {
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 }
 
 // fieldName returns the JSON-friendly field name from a validator.FieldError.

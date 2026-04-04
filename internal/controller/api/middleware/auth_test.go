@@ -10,6 +10,7 @@ import (
 
 	"fmt"
 
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
@@ -29,9 +30,32 @@ func testAuthConfig() AuthConfig {
 
 func testAccessToken(t *testing.T, config AuthConfig, userID, userType, role string, expiresIn time.Duration) string {
 	t.Helper()
-	token, err := GenerateAccessToken(config, userID, userType, role, expiresIn)
+	return testAccessTokenWithSessionID(t, config, userID, userType, role, "", expiresIn)
+}
+
+func testAccessTokenWithSessionID(
+	t *testing.T,
+	config AuthConfig,
+	userID, userType, role, sessionID string,
+	expiresIn time.Duration,
+) string {
+	t.Helper()
+	token, err := GenerateAccessToken(config, userID, userType, role, sessionID, expiresIn)
 	require.NoError(t, err)
 	return token
+}
+
+func TestGenerateAccessToken_PreservesSessionIDInJWTID(t *testing.T) {
+	config := testAuthConfig()
+	sessionID := "session-123"
+
+	token, err := GenerateAccessToken(config, "user-1", "customer", "", sessionID, 15*time.Minute)
+	require.NoError(t, err)
+
+	claims, err := ValidateJWT(config, token)
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, claims.SessionID)
+	assert.Equal(t, "user-1", claims.UserID)
 }
 
 func setupRouter(mws ...gin.HandlerFunc) *gin.Engine {
@@ -114,6 +138,17 @@ func TestJWTAuth(t *testing.T) {
 			setupRequest: func(t *testing.T, req *http.Request) {
 				t.Helper()
 				token, err := GenerateTempToken(config, "user-5", "admin")
+				require.NoError(t, err)
+				req.AddCookie(&http.Cookie{Name: AccessTokenCookieName, Value: token})
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_TOKEN",
+		},
+		{
+			name: "session cleanup token rejected",
+			setupRequest: func(t *testing.T, req *http.Request) {
+				t.Helper()
+				token, err := GenerateSessionCleanupToken(config, "user-6", "customer", "", "session-123")
 				require.NoError(t, err)
 				req.AddCookie(&http.Cookie{Name: AccessTokenCookieName, Value: token})
 			},
@@ -395,6 +430,142 @@ func TestOptionalJWTAuth(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+
+	t.Run("session cleanup token proceeds anonymously", func(t *testing.T) {
+		r := setupRouter(OptionalJWTAuth(config))
+		token, err := GenerateSessionCleanupToken(config, "user-cleanup", "customer", "", "session-cleanup")
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var body map[string]any
+		err = json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, "", body["user_id"])
+	})
+}
+
+func TestJWTAuth_RejectsRevokedSession(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(ctx context.Context, sessionID string) error {
+		if sessionID != "revoked-session" {
+			t.Fatalf("unexpected session id: %s", sessionID)
+		}
+		return sharederrors.ErrUnauthorized
+	}
+
+	r := setupRouter(JWTAuth(config))
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-revoked",
+		"customer",
+		"",
+		"revoked-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	var body ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "INVALID_TOKEN", body.Error.Code)
+}
+
+func TestJWTAuth_SessionValidationFailureReturnsInternalError(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(context.Context, string) error {
+		return fmt.Errorf("session store unavailable")
+	}
+
+	r := setupRouter(JWTAuth(config))
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-db-error",
+		"customer",
+		"",
+		"live-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var body ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "INTERNAL_ERROR", body.Error.Code)
+}
+
+func TestOptionalJWTAuth_RevokedSessionProceedsAnonymously(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(context.Context, string) error {
+		return sharederrors.ErrUnauthorized
+	}
+
+	r := setupRouter(OptionalJWTAuth(config))
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-revoked",
+		"customer",
+		"",
+		"revoked-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "", body["user_id"])
+}
+
+func TestOptionalJWTAuth_SessionValidationFailureReturnsInternalError(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(context.Context, string) error {
+		return fmt.Errorf("session store unavailable")
+	}
+
+	r := setupRouter(OptionalJWTAuth(config))
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-db-error",
+		"customer",
+		"",
+		"live-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var body ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "INTERNAL_ERROR", body.Error.Code)
 }
 
 func TestGenerateAndValidateAccessToken(t *testing.T) {
@@ -663,6 +834,18 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 			wantStatus:       http.StatusUnauthorized,
 			wantBodyContains: "INVALID_TOKEN",
 		},
+		{
+			name:         "session cleanup token rejected with INVALID_TOKEN, does not fall through to API key",
+			keyValidator: validKeyValidator,
+			setupRequest: func(t *testing.T, req *http.Request) {
+				token, err := GenerateSessionCleanupToken(config, "cleanup-user", "customer", "", "session-cleanup")
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("X-API-Key", "my-api-key")
+			},
+			wantStatus:       http.StatusUnauthorized,
+			wantBodyContains: "INVALID_TOKEN",
+		},
 	}
 
 	for _, tt := range tests {
@@ -701,6 +884,86 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 	}
 }
 
+func TestJWTOrCustomerAPIKeyAuth_RevokedJWTDoesNotFallThroughToAPIKey(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(context.Context, string) error {
+		return sharederrors.ErrUnauthorized
+	}
+
+	r := gin.New()
+	r.Use(JWTOrCustomerAPIKeyAuth(config, func(context.Context, string) (CustomerAPIKeyInfo, error) {
+		return CustomerAPIKeyInfo{
+			KeyID:      "key-1",
+			CustomerID: "customer-api",
+		}, nil
+	}))
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-revoked",
+		"customer",
+		"",
+		"revoked-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-API-Key", "valid-api-key")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	var body ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "INVALID_TOKEN", body.Error.Code)
+}
+
+func TestJWTOrCustomerAPIKeyAuth_SessionValidationFailureReturnsInternalError(t *testing.T) {
+	config := testAuthConfig()
+	config.SessionValidator = func(context.Context, string) error {
+		return fmt.Errorf("session store unavailable")
+	}
+
+	r := gin.New()
+	r.Use(JWTOrCustomerAPIKeyAuth(config, func(context.Context, string) (CustomerAPIKeyInfo, error) {
+		return CustomerAPIKeyInfo{
+			KeyID:      "key-1",
+			CustomerID: "customer-api",
+		}, nil
+	}))
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	token := testAccessTokenWithSessionID(
+		t,
+		config,
+		"user-db-error",
+		"customer",
+		"",
+		"live-session",
+		15*time.Minute,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-API-Key", "valid-api-key")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var body ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &body)
+	require.NoError(t, err)
+	assert.Equal(t, "INTERNAL_ERROR", body.Error.Code)
+}
+
 func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
 	t.Run("allows scoped vmId path parameter", func(t *testing.T) {
 		r := gin.New()
@@ -730,6 +993,24 @@ func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/ws/vm-2", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "VM_NOT_IN_SCOPE")
+	})
+
+	t.Run("rejects malformed vm scope context", func(t *testing.T) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set(vmIDsContextKey, "vm-1")
+			c.Next()
+		})
+		r.GET("/ws/:vmId", RequireVMScope(), func(c *gin.Context) {
+			c.Status(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/ws/vm-1", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -821,6 +1102,14 @@ func TestHasPermission(t *testing.T) {
 			permission: "vm:read",
 			wantResult: false,
 		},
+		{
+			name: "malformed permissions fail closed",
+			setupContext: func(c *gin.Context) {
+				c.Set(permissionsContextKey, "vm:read")
+			},
+			permission: "vm:read",
+			wantResult: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -879,6 +1168,17 @@ func TestRequirePermission(t *testing.T) {
 				c.Set(userIDContextKey, "customer-1")
 				c.Set(userTypeContextKey, "customer")
 				c.Set(permissionsContextKey, []string{"vm:read"})
+			},
+			permission:       "vm:write",
+			wantStatus:       http.StatusForbidden,
+			wantBodyContains: "INSUFFICIENT_PERMISSIONS",
+		},
+		{
+			name: "malformed permissions fail closed",
+			setupContext: func(c *gin.Context) {
+				c.Set(userIDContextKey, "customer-1")
+				c.Set(userTypeContextKey, "customer")
+				c.Set(permissionsContextKey, "vm:write")
 			},
 			permission:       "vm:write",
 			wantStatus:       http.StatusForbidden,

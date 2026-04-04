@@ -71,15 +71,6 @@ func (p *Provider) CreatePaymentSession(
 }
 
 func (p *Provider) buildOrderRequest(req payments.PaymentRequest) orderRequest {
-	returnURL := p.returnURL
-	cancelURL := p.cancelURL
-	if req.ReturnURL != "" {
-		returnURL = req.ReturnURL
-	}
-	if req.CancelURL != "" {
-		cancelURL = req.CancelURL
-	}
-
 	return orderRequest{
 		Intent: "CAPTURE",
 		PurchaseUnits: []purchaseUnit{{
@@ -94,8 +85,8 @@ func (p *Provider) buildOrderRequest(req payments.PaymentRequest) orderRequest {
 		PaymentSource: &paymentSource{
 			PayPal: &paypalSource{
 				ExperienceContext: &experienceContext{
-					ReturnURL: returnURL,
-					CancelURL: cancelURL,
+					ReturnURL: p.returnURL,
+					CancelURL: p.cancelURL,
 				},
 			},
 		},
@@ -116,7 +107,11 @@ func (p *Provider) executeCreateOrder(
 	if err != nil {
 		return nil, fmt.Errorf("paypal create order: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			p.logger.Debug("failed to close PayPal create-order response body", "error", closeErr)
+		}
+	}()
 
 	respBody, err := readLimitedBody(resp.Body)
 	if err != nil {
@@ -228,7 +223,11 @@ func (p *Provider) GetPaymentStatus(
 	if err != nil {
 		return nil, fmt.Errorf("paypal get order: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			p.logger.Debug("failed to close PayPal get-order response body", "error", closeErr)
+		}
+	}()
 
 	respBody, err := readLimitedBody(resp.Body)
 	if err != nil {
@@ -294,7 +293,11 @@ func (p *Provider) executeRefund(
 	if err != nil {
 		return nil, fmt.Errorf("paypal refund: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			p.logger.Debug("failed to close PayPal refund response body", "error", closeErr)
+		}
+	}()
 
 	return p.parseRefundResponse(resp, captureID, amountCents, currency)
 }
@@ -341,6 +344,12 @@ func (p *Provider) ValidateConfig() error {
 	if p.tokenClient.clientSecret == "" {
 		return fmt.Errorf("paypal client_secret is required")
 	}
+	if p.returnURL == "" {
+		return fmt.Errorf("paypal return_url is required")
+	}
+	if p.cancelURL == "" {
+		return fmt.Errorf("paypal cancel_url is required")
+	}
 	return nil
 }
 
@@ -362,7 +371,11 @@ func (p *Provider) CaptureOrder(
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("paypal capture order: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			p.logger.Debug("failed to close PayPal capture response body", "error", closeErr)
+		}
+	}()
 
 	result, parseErr := p.parseCaptureResponse(resp, orderID)
 	if parseErr != nil {

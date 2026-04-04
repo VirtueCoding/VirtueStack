@@ -199,7 +199,7 @@ func (s *TemplateService) GetByID(ctx context.Context, id string) (*models.Templ
 	template, err := s.templateRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("template not found: %s", id)
+			return nil, fmt.Errorf("template not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting template: %w", err)
 	}
@@ -267,7 +267,12 @@ func (s *TemplateService) Import(ctx context.Context, name, osFamily, osVersion,
 	}
 
 	if err := s.templateRepo.Create(ctx, template); err != nil {
-		_ = storage.DeleteTemplate(ctx, templateRef, snapshotRef)
+		if cleanupErr := storage.DeleteTemplate(ctx, templateRef, snapshotRef); cleanupErr != nil {
+			s.logger.Warn("failed to cleanup template after repository create failure",
+				"template_ref", templateRef,
+				"snapshot_ref", snapshotRef,
+				"error", cleanupErr)
+		}
 		return nil, fmt.Errorf("creating template record: %w", err)
 	}
 
@@ -292,12 +297,15 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 	template, err := s.templateRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("template not found: %s", id)
+			return fmt.Errorf("template not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting template: %w", err)
 	}
 
 	if err := s.templateRepo.Delete(ctx, id); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			return fmt.Errorf("template not found: %s: %w", id, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("deleting template: %w", err)
 	}
 
@@ -343,7 +351,7 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 	template, err := s.templateRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("template not found: %s", id)
+			return nil, fmt.Errorf("template not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting template: %w", err)
 	}
@@ -405,6 +413,9 @@ func (s *TemplateService) Update(ctx context.Context, id string, req *models.Tem
 	}
 
 	if err := s.templateRepo.Update(ctx, template); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, fmt.Errorf("template not found: %s: %w", id, sharederrors.ErrNotFound)
+		}
 		return nil, fmt.Errorf("updating template: %w", err)
 	}
 
@@ -430,11 +441,17 @@ func (s *TemplateService) BuildFromISO(ctx context.Context, req *models.Template
 	if err == nil && existing != nil {
 		return "", fmt.Errorf("%w: template with name %s already exists", sharederrors.ErrValidation, req.Name)
 	}
+	if err != nil && !sharederrors.Is(err, sharederrors.ErrNotFound) {
+		return "", fmt.Errorf("checking template name %s: %w", req.Name, err)
+	}
 
 	// Verify the target node exists and is online
 	node, err := s.nodeRepo.GetByID(ctx, req.NodeID)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", sharederrors.ErrNotFound, err)
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return "", fmt.Errorf("node %s not found: %w", req.NodeID, sharederrors.ErrNotFound)
+		}
+		return "", fmt.Errorf("getting node %s: %w", req.NodeID, err)
 	}
 	if node.Status != "online" {
 		return "", fmt.Errorf("%w: node %s is not online (status: %s)", sharederrors.ErrValidation, node.Hostname, node.Status)
@@ -488,7 +505,7 @@ func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID stri
 			sharederrors.ErrValidation)
 	}
 	if err := models.ValidateTemplateDistributionSourceURL(derefString(template.FilePath)); err != nil {
-		return "", fmt.Errorf("%w: %v", sharederrors.ErrValidation, err)
+		return "", fmt.Errorf("%w: %w", sharederrors.ErrValidation, err)
 	}
 
 	// Validate all nodes exist and are online (single bulk query instead of N+1)
@@ -503,7 +520,7 @@ func (s *TemplateService) DistributeToNodes(ctx context.Context, templateID stri
 		}
 		for _, id := range nodeIDs {
 			if !found[id] {
-				return "", fmt.Errorf("%w: node %s not found", sharederrors.ErrNotFound, id)
+				return "", sharederrors.NewAPIError("NODE_NOT_FOUND", "Node not found", 404)
 			}
 		}
 	}

@@ -93,12 +93,37 @@ func (h *CustomerHandler) OAuthCallback(c *gin.Context) {
 		return
 	}
 
+	resp := AuthResponse{
+		TokenType:           authTokens.TokenType,
+		ExpiresIn:           authTokens.ExpiresIn,
+		SessionID:           authTokens.SessionID,
+		SessionCleanupToken: authTokens.SessionCleanupToken,
+	}
+	customer, userErr := h.lookupAuthenticatedCustomer(c, authTokens.AccessToken)
+	if userErr != nil {
+		h.rollbackIssuedSession(c.Request.Context(), authTokens.SessionID,
+			"failed to roll back oauth session after customer lookup",
+			middleware.GetCorrelationID(c))
+		if sharederrors.Is(userErr, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
+		h.logger.Error("failed to load oauth auth response user",
+			"provider", provider,
+			"error", userErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"OAUTH_ERROR", "OAuth authentication failed")
+		return
+	}
+	resp.User = buildAuthenticatedCustomerResponse(customer)
+
 	middleware.SetAuthCookies(c, authTokens.AccessToken,
 		refreshToken, middleware.AccessTokenMaxAge,
 		middleware.RefreshTokenMaxAge,
-		"/api/v1/customer/auth/refresh")
+		customerRefreshCookiePath)
 
-	c.JSON(http.StatusOK, models.Response{Data: authTokens})
+	c.JSON(http.StatusOK, models.Response{Data: resp})
 }
 
 // ListOAuthLinks handles GET /account/oauth.
@@ -166,6 +191,10 @@ func (h *CustomerHandler) LinkOAuthAccount(c *gin.Context) {
 		return
 	}
 
+	h.logAudit(c, "oauth.link", "oauth_link", provider, map[string]any{
+		"provider": provider,
+	}, true)
+
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{"message": "OAuth account linked successfully"},
 	})
@@ -204,6 +233,10 @@ func (h *CustomerHandler) UnlinkOAuthAccount(c *gin.Context) {
 			"UNLINK_FAILED", "Failed to unlink OAuth account")
 		return
 	}
+
+	h.logAudit(c, "oauth.unlink", "oauth_link", provider, map[string]any{
+		"provider": provider,
+	}, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{"message": "OAuth account unlinked successfully"},

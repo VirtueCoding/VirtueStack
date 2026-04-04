@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/snapshotutil"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -32,14 +33,7 @@ func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 	// Get snapshot size
 	size, _ := h.server.storageBackend.GetImageSize(ctx, diskID)
 
-	return &nodeagentpb.Snapshot{
-		SnapshotId:      uuid.New().String(),
-		VmId:            req.GetVmId(),
-		Name:            req.GetName(),
-		RbdSnapshotName: snapName,
-		SizeBytes:       size,
-		CreatedAt:       timestamppb.Now(),
-	}, nil
+	return snapshotutil.NewSnapshotResponse(req.GetVmId(), req.GetName(), snapName, size), nil
 }
 
 // DeleteSnapshot removes a previously created disk snapshot.

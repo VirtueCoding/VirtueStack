@@ -180,8 +180,8 @@ func (r *WebhookRepository) ListActiveForEvent(ctx context.Context, event string
 	return webhooks, nil
 }
 
-// Update updates a webhook's URL, events, and active status.
-func (r *WebhookRepository) Update(ctx context.Context, id string, url *string, events []string, active *bool) error {
+// Update updates a webhook's URL, events, active status, and optional secret hash.
+func (r *WebhookRepository) Update(ctx context.Context, id string, url *string, events []string, active *bool, secretHash *string) error {
 	// Build dynamic update query
 	updates := []string{}
 	args := []any{}
@@ -202,6 +202,11 @@ func (r *WebhookRepository) Update(ctx context.Context, id string, url *string, 
 		args = append(args, *active)
 		idx++
 	}
+	if secretHash != nil {
+		updates = append(updates, fmt.Sprintf("secret_hash = $%d", idx))
+		args = append(args, *secretHash)
+		idx++
+	}
 
 	if len(updates) == 0 {
 		return nil // Nothing to update
@@ -216,19 +221,6 @@ func (r *WebhookRepository) Update(ctx context.Context, id string, url *string, 
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating webhook %s: %w", id, ErrNoRowsAffected)
-	}
-	return nil
-}
-
-// UpdateSecret updates the webhook's secret hash.
-func (r *WebhookRepository) UpdateSecret(ctx context.Context, id, secretHash string) error {
-	const q = `UPDATE webhooks SET secret_hash = $1 WHERE id = $2`
-	tag, err := r.db.Exec(ctx, q, secretHash, id)
-	if err != nil {
-		return fmt.Errorf("updating webhook %s secret: %w", id, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("updating webhook %s secret: %w", id, ErrNoRowsAffected)
 	}
 	return nil
 }
@@ -264,15 +256,14 @@ func (r *WebhookRepository) DeleteByCustomer(ctx context.Context, id, customerID
 // Auto-disables webhook if fail_count reaches WebhookMaxFailCount.
 func (r *WebhookRepository) UpdateDeliveryStatus(ctx context.Context, id string, success bool) error {
 	var (
-		tag  interface{ RowsAffected() int64 }
-		err  error
+		tag interface{ RowsAffected() int64 }
+		err error
 	)
 	if success {
 		const q = `
 			UPDATE webhooks
 			SET fail_count = 0,
-			    last_success_at = NOW(),
-			    active = TRUE
+			    last_success_at = NOW()
 			WHERE id = $1`
 		tag, err = r.db.Exec(ctx, q, id)
 	} else {
@@ -522,6 +513,62 @@ func (r *WebhookRepository) GetPendingDeliveries(ctx context.Context, limit int)
 	if err != nil {
 		return nil, fmt.Errorf("getting pending deliveries: %w", err)
 	}
+	return deliveries, nil
+}
+
+// ClaimDelivery atomically leases a due delivery so only one worker can process it.
+// A leased delivery is marked retrying and hidden from other processors until nextRetryAt.
+func (r *WebhookRepository) ClaimDelivery(ctx context.Context, id string, nextRetryAt time.Time) (*models.WebhookDelivery, error) {
+	const q = `
+		UPDATE webhook_deliveries
+		SET status = $2,
+		    next_retry_at = $3,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND status IN ('pending', 'retrying')
+		  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+		RETURNING ` + deliverySelectCols
+
+	delivery, err := ScanRow(ctx, r.db, q, []any{id, DeliveryStatusRetrying, nextRetryAt}, scanDelivery)
+	if err != nil {
+		return nil, fmt.Errorf("claiming delivery %s: %w", id, err)
+	}
+
+	return &delivery, nil
+}
+
+// ClaimPendingDeliveries atomically leases due deliveries so concurrent processors
+// cannot select and send the same row twice.
+func (r *WebhookRepository) ClaimPendingDeliveries(ctx context.Context, limit int, nextRetryAt time.Time) ([]models.WebhookDelivery, error) {
+	const q = `
+		WITH due AS (
+			SELECT id
+			FROM webhook_deliveries
+			WHERE status IN ('pending', 'retrying')
+			  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+			ORDER BY created_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE webhook_deliveries AS wd
+		SET status = $2,
+		    next_retry_at = $3,
+		    updated_at = NOW()
+		FROM due
+		WHERE wd.id = due.id
+		RETURNING
+			wd.id, wd.webhook_id, wd.event, wd.idempotency_key, wd.payload,
+			wd.status, wd.attempt_count, wd.max_attempts, wd.next_retry_at,
+			wd.response_status, wd.response_body, wd.error_message,
+			wd.delivered_at, wd.created_at, wd.updated_at`
+
+	deliveries, err := ScanRows(ctx, r.db, q, []any{limit, DeliveryStatusRetrying, nextRetryAt}, func(rows pgx.Rows) (models.WebhookDelivery, error) {
+		return scanDelivery(rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claiming pending deliveries: %w", err)
+	}
+
 	return deliveries, nil
 }
 

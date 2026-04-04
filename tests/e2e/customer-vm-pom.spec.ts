@@ -4,8 +4,8 @@
  * Uses the Page Object Model pattern for better maintainability.
  */
 
-import { test, expect } from '../fixtures';
-import { TEST_IDS, getFirstCustomerVMId } from '../utils/api';
+import { customerTest as test, expect } from './fixtures/index';
+import { TEST_IDS, getFirstCustomerVMId } from './utils/api';
 
 // ============================================
 // Customer Dashboard Tests

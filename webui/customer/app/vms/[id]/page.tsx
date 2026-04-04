@@ -502,7 +502,12 @@ export default function VMDetailPage() {
 
         {/* ISO Tab */}
         <TabsContent value="iso">
-          <VMISOTab vmId={vmId} vmStatus={vm.status} attachedISOId={vm.attached_iso} />
+          <VMISOTab
+            vmId={vmId}
+            vmStatus={vm.status}
+            attachedISOId={vm.attached_iso}
+            maxISOSizeBytes={vm.max_iso_size_bytes}
+          />
         </TabsContent>
 
         {/* Backups Tab */}

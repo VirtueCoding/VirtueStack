@@ -33,88 +33,91 @@ linters:
   # funlen and nestif are style preferences, disabled globally
   # - funlen
   # - nestif
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - "checkPrivateReceivers"
+        - name: var-naming
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: empty-block
 
-linters-settings:
-  revive:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+
+    gosec:
+      excludes:
+        - G104  # We use errcheck separately
+        - G101  # False positives for const names containing "password", "key", etc.
+        - G115  # Integer overflow - we use explicit conversions safely
+        - G204  # Subprocess with variable - IPMI commands need dynamic args
+        - G304  # File inclusion - we use trusted paths from config
+        - G306  # WriteFile permissions - appropriate for our use case
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    funlen:
+      lines: 40
+      statements: 40
+
+    nestif:
+      min-complexity: 3
+  exclusions:
     rules:
-      - name: exported
-        arguments:
-          - "checkPrivateReceivers"
-      - name: var-naming
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: increment-decrement
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: empty-block
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-
-  gosec:
-    excludes:
-      - G104  # We use errcheck separately
-      - G101  # False positives for const names containing "password", "key", etc.
-      - G115  # Integer overflow - we use explicit conversions safely
-      - G204  # Subprocess with variable - IPMI commands need dynamic args
-      - G304  # File inclusion - we use trusted paths from config
-      - G306  # WriteFile permissions - appropriate for our use case
-
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-
-  govet:
-    enable-all: true
-
-  exhaustive:
-    default-signifies-exhaustive: true
-
-  funlen:
-    lines: 40
-    statements: 40
-
-  nestif:
-    min-complexity: 3
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - forcetypeassert
+          - funlen
+          - nestif
+          - revive
+          - gocritic
+          - noctx
+      - path: proto/
+        linters:
+          - all
+      - path: webui/.*/node_modules/
+        linters:
+          - all
+      - path: tests/
+        linters:
+          - errcheck
+          - forcetypeassert
+          - errorlint
+          - funlen
+          - gocritic
+          - gosec
 
 issues:
   # This repository still has substantial historical lint debt. Gate new or touched
-  # code in CI instead of blocking every run on legacy findings across the tree.
+  # lines in CI instead of blocking every run on legacy findings across the tree.
   new: true
-  whole-files: true
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
-        - forcetypeassert
-        - funlen
-        - nestif
-        - revive
-        - gocritic
-    - path: proto/
-      linters:
-        - all
-    - path: webui/.*/node_modules/
-      linters:
-        - all
-    - path: tests/
-      linters:
-        - errcheck
-        - forcetypeassert
-        - errorlint
-        - funlen
-        - gocritic
-        - gosec
+  whole-files: false
   max-issues-per-linter: 0
   max-same-issues: 0

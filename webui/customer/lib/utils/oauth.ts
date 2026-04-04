@@ -40,12 +40,16 @@ function base64URLEncode(buffer: Uint8Array): string {
 
 const OAUTH_STORAGE_KEY = "oauth_pkce_state";
 
-interface OAuthStoredState {
+export type OAuthFlowMode = "login" | "link";
+
+export interface OAuthStoredState {
   codeVerifier: string;
   state: string;
   provider: string;
   redirectURI: string;
   timestamp: number;
+  mode?: OAuthFlowMode;
+  returnTo?: string;
 }
 
 /** Persist PKCE state before redirecting to the OAuth provider. */

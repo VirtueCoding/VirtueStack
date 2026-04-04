@@ -11,6 +11,8 @@ import (
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // evacuationConcurrencyLimit is the maximum number of VMs migrated in parallel
@@ -116,36 +118,29 @@ func (c *NodeAgentGRPCClient) EvacuateNode(ctx context.Context, nodeID string) e
 	}
 
 	// Wait for all goroutines; errors are intentionally non-fatal per VM.
-	_ = eg.Wait()
+	if err := eg.Wait(); err != nil {
+		c.logger.Warn("node evacuation worker group returned error", "node_id", nodeID, "error", err)
+	}
 
 	c.logger.Info("node evacuation completed", "node_id", nodeID)
 	return nil
 }
 
 func (c *NodeAgentGRPCClient) MigrateVM(ctx context.Context, sourceNodeID, targetNodeID, vmID string, opts *tasks.MigrateVMOptions) error {
-	// Get source node details for connection
-	sourceNode, err := c.nodeRepo.GetByID(ctx, sourceNodeID)
+	sourceNode, targetNode, err := c.loadMigrationNodes(ctx, sourceNodeID, targetNodeID)
 	if err != nil {
-		return fmt.Errorf("getting source node %s: %w", sourceNodeID, err)
+		return err
 	}
-
-	// Get connection to source node
 	conn, err := c.connPool.GetConnection(ctx, sourceNodeID, sourceNode.GRPCAddress)
 	if err != nil {
 		return fmt.Errorf("connecting to source node %s: %w", sourceNodeID, err)
-	}
-
-	// Get target node details for address
-	targetNode, err := c.nodeRepo.GetByID(ctx, targetNodeID)
-	if err != nil {
-		return fmt.Errorf("getting target node %s: %w", targetNodeID, err)
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	resp, err := client.MigrateVM(ctx, &nodeagentpb.MigrateVMRequest{
 		VmId:                   vmID,
 		DestinationNodeAddress: targetNode.GRPCAddress,
-		Live:                   opts != nil && opts.TargetNodeAddress != "",
+		Live:                   true,
 	})
 	if err != nil {
 		return fmt.Errorf("migrating VM: %w", err)
@@ -222,45 +217,156 @@ func (c *NodeAgentGRPCClient) PostMigrateSetup(ctx context.Context, nodeID, vmID
 }
 
 func (c *NodeAgentGRPCClient) TransferDisk(ctx context.Context, opts *tasks.DiskTransferOptions) error {
-	sourceNode, err := c.nodeRepo.GetByID(ctx, opts.SourceNodeID)
+	sourceNode, targetNode, err := c.loadMigrationNodes(ctx, opts.SourceNodeID, opts.TargetNodeID)
 	if err != nil {
-		return fmt.Errorf("getting source node %s: %w", opts.SourceNodeID, err)
+		return err
 	}
+	relayCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	targetNode, err := c.nodeRepo.GetByID(ctx, opts.TargetNodeID)
-	if err != nil {
-		return fmt.Errorf("getting target node %s: %w", opts.TargetNodeID, err)
-	}
-
-	conn, err := c.connPool.GetConnection(ctx, opts.SourceNodeID, sourceNode.GRPCAddress)
+	sourceConn, err := c.connPool.GetConnection(relayCtx, opts.SourceNodeID, sourceNode.GRPCAddress)
 	if err != nil {
 		return fmt.Errorf("connecting to source node %s: %w", opts.SourceNodeID, err)
 	}
 
-	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	stream, err := client.TransferDisk(ctx, &nodeagentpb.TransferDiskRequest{
-		SourceDiskPath:    opts.SourceDiskPath,
-		TargetNodeAddress: targetNode.GRPCAddress,
-		TargetDiskPath:    opts.TargetDiskPath,
-		SnapshotName:      opts.SnapshotName,
-		Compress:          opts.Compress,
-		StorageBackend:    opts.SourceStorageBackend,
-	})
+	targetConn, err := c.connPool.GetConnection(relayCtx, opts.TargetNodeID, targetNode.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to target node %s: %w", opts.TargetNodeID, err)
+	}
+
+	sourceClient := nodeagentpb.NewNodeAgentServiceClient(sourceConn)
+	targetClient := nodeagentpb.NewNodeAgentServiceClient(targetConn)
+	transferStream, err := sourceClient.TransferDisk(relayCtx, buildTransferDiskRequest(opts, targetNode.GRPCAddress))
 	if err != nil {
 		return fmt.Errorf("initiating disk transfer: %w", err)
 	}
 
+	receiveStream, err := targetClient.ReceiveDisk(relayCtx)
+	if err != nil {
+		return fmt.Errorf("initiating disk receive: %w", err)
+	}
+
+	return transferDiskChunks(cancel, transferStream, receiveStream)
+}
+
+func (c *NodeAgentGRPCClient) loadMigrationNodes(ctx context.Context, sourceNodeID, targetNodeID string) (sourceNode, targetNode *models.Node, err error) {
+	sourceNode, err = c.nodeRepo.GetByID(ctx, sourceNodeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting source node %s: %w", sourceNodeID, err)
+	}
+	targetNode, err = c.nodeRepo.GetByID(ctx, targetNodeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting target node %s: %w", targetNodeID, err)
+	}
+	return sourceNode, targetNode, nil
+}
+
+func buildTransferDiskRequest(opts *tasks.DiskTransferOptions, targetAddress string) *nodeagentpb.TransferDiskRequest {
+	return &nodeagentpb.TransferDiskRequest{
+		SourceDiskPath:       opts.SourceDiskPath,
+		TargetNodeAddress:    targetAddress,
+		TargetDiskPath:       opts.TargetDiskPath,
+		SnapshotName:         opts.SnapshotName,
+		Compress:             opts.Compress,
+		StorageBackend:       opts.SourceStorageBackend,
+		DiskSizeGb:           int32(opts.DiskSizeGB),
+		SourceLvmVolumeGroup: opts.SourceLVMVolumeGroup,
+		SourceLvmThinPool:    opts.SourceLVMThinPool,
+		TargetLvmVolumeGroup: opts.TargetLVMVolumeGroup,
+		TargetLvmThinPool:    opts.TargetLVMThinPool,
+		IsDeltaSync:          opts.IsDeltaSync,
+	}
+}
+
+func relayDiskChunks(source nodeagentpb.NodeAgentService_TransferDiskClient, target nodeagentpb.NodeAgentService_ReceiveDiskClient) error {
 	for {
-		_, err := stream.Recv()
+		chunk, err := source.Recv()
 		if errors.Is(err, io.EOF) {
-			break
+			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("receiving disk transfer: %w", err)
 		}
+		if err := target.Send(chunk); err != nil {
+			return fmt.Errorf("forwarding disk chunk: %w", err)
+		}
+	}
+}
+
+func transferDiskChunks(
+	cancel context.CancelFunc,
+	source nodeagentpb.NodeAgentService_TransferDiskClient,
+	target nodeagentpb.NodeAgentService_ReceiveDiskClient,
+) error {
+	receiveResultCh := make(chan error, 1)
+	go func() {
+		receiveResultCh <- awaitDiskReceive(target)
+	}()
+
+	relayResultCh := make(chan error, 1)
+	go func() {
+		relayResultCh <- relayDiskChunks(source, target)
+	}()
+
+	var relayErr error
+	var receiveErr error
+	relayDone := false
+	receiveDone := false
+
+	for !relayDone || !receiveDone {
+		select {
+		case err := <-receiveResultCh:
+			receiveDone = true
+			receiveErr = err
+			if err != nil {
+				cancel()
+			}
+		case err := <-relayResultCh:
+			relayDone = true
+			if err != nil {
+				relayErr = err
+				cancel()
+				continue
+			}
+			if err := target.CloseSend(); err != nil {
+				relayErr = fmt.Errorf("closing disk receive stream: %w", err)
+				cancel()
+			}
+		}
 	}
 
+	return selectDiskTransferError(relayErr, receiveErr)
+}
+
+func awaitDiskReceive(stream nodeagentpb.NodeAgentService_ReceiveDiskClient) error {
+	resp := new(nodeagentpb.ReceiveDiskResponse)
+	if err := stream.RecvMsg(resp); err != nil {
+		return fmt.Errorf("completing disk receive: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("disk receive failed: %s", resp.GetErrorMessage())
+	}
 	return nil
+}
+
+func selectDiskTransferError(relayErr, receiveErr error) error {
+	if shouldPreferReceiveError(receiveErr) {
+		return receiveErr
+	}
+	if relayErr != nil {
+		return relayErr
+	}
+	return receiveErr
+}
+
+func shouldPreferReceiveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return status.Code(err) != codes.Canceled
 }
 
 func (c *NodeAgentGRPCClient) PrepareMigratedVM(ctx context.Context, targetNodeID, vmID, diskPath string, vm *models.VM) error {

@@ -712,6 +712,20 @@ function virtuestack_AdminCustomButtonArray(): array
 }
 
 /**
+ * Client area custom actions that may be invoked without auto-rendered buttons.
+ *
+ * @return array Allowed client action names
+ */
+function virtuestack_ClientAreaAllowedFunctions(): array
+{
+    return [
+        'startVM',
+        'stopVM',
+        'restartVM',
+    ];
+}
+
+/**
  * Start VM button action.
  *
  * @param array $params WHMCS module parameters

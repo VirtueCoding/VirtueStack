@@ -21,6 +21,19 @@ type CustomerService struct {
 	logger       *slog.Logger
 }
 
+func classifyCustomerAuditActor(actorID, customerID string) (actorType string, resolvedActorID *string) {
+	switch actorID {
+	case "provisioning":
+		return models.AuditActorProvisioning, nil
+	case "self-registration":
+		return models.AuditActorCustomer, &customerID
+	case customerID:
+		return models.AuditActorCustomer, &customerID
+	default:
+		return models.AuditActorAdmin, &actorID
+	}
+}
+
 // NewCustomerService creates a new CustomerService with the given dependencies.
 func NewCustomerService(customerRepo *repository.CustomerRepository, auditRepo *repository.AuditRepository, logger *slog.Logger) *CustomerService {
 	return &CustomerService{
@@ -36,7 +49,7 @@ func (s *CustomerService) GetByID(ctx context.Context, id string) (*models.Custo
 	customer, err := s.customerRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("customer not found: %s", id)
+			return nil, fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting customer: %w", err)
 	}
@@ -61,7 +74,7 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 	existing, err := s.customerRepo.GetByID(ctx, customer.ID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("customer not found: %s", customer.ID)
+			return fmt.Errorf("customer not found: %s: %w", customer.ID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting customer: %w", err)
 	}
@@ -86,13 +99,18 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 
 	// Update customer in repository
 	if err := s.customerRepo.Update(ctx, customer); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			// Log failed audit
+			s.logAudit(ctx, actorID, customer.ID, actorIP, "customer.update", customer.ID, changes, false, err.Error())
+			return fmt.Errorf("customer not found: %s: %w", customer.ID, sharederrors.ErrNotFound)
+		}
 		// Log failed audit
-		s.logAudit(ctx, actorID, actorIP, "customer.update", customer.ID, changes, false, err.Error())
+		s.logAudit(ctx, actorID, customer.ID, actorIP, "customer.update", customer.ID, changes, false, err.Error())
 		return fmt.Errorf("updating customer: %w", err)
 	}
 
 	// Log successful audit
-	s.logAudit(ctx, actorID, actorIP, "customer.update", customer.ID, changes, true, "")
+	s.logAudit(ctx, actorID, customer.ID, actorIP, "customer.update", customer.ID, changes, true, "")
 
 	s.logger.Info("customer updated",
 		"customer_id", customer.ID,
@@ -103,18 +121,22 @@ func (s *CustomerService) Update(ctx context.Context, actorID, actorIP string, c
 }
 
 // logAudit creates an audit log entry for customer operations.
-func (s *CustomerService) logAudit(ctx context.Context, actorID, actorIP, action, resourceID string, changes map[string]any, success bool, errMsg string) {
-	// json.Marshal error intentionally ignored: input is map[string]any with only
-	// string values; marshalling cannot fail for this type.
-	changesJSON, _ := json.Marshal(changes)
+func (s *CustomerService) logAudit(ctx context.Context, actorID, customerID, actorIP, action, resourceID string, changes map[string]any, success bool, errMsg string) {
+	actorType, auditActorID := classifyCustomerAuditActor(actorID, customerID)
+
+	changesJSON, marshalErr := json.Marshal(changes)
+	if marshalErr != nil {
+		s.logger.Warn("failed to marshal customer audit changes", "error", marshalErr, "action", action, "resource_id", resourceID)
+		changesJSON = nil
+	}
 	errMsgPtr := (*string)(nil)
 	if errMsg != "" {
 		errMsgPtr = &errMsg
 	}
 
 	audit := &models.AuditLog{
-		ActorID:      &actorID,
-		ActorType:    models.AuditActorAdmin,
+		ActorID:      auditActorID,
+		ActorType:    actorType,
 		ActorIP:      &actorIP,
 		Action:       action,
 		ResourceType: "customer",
@@ -140,7 +162,7 @@ func (s *CustomerService) Suspend(ctx context.Context, id string) error {
 	customer, err := s.customerRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("customer not found: %s", id)
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting customer: %w", err)
 	}
@@ -155,6 +177,9 @@ func (s *CustomerService) Suspend(ctx context.Context, id string) error {
 
 	// Update status to suspended
 	if err := s.customerRepo.UpdateStatus(ctx, id, models.CustomerStatusSuspended); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("suspending customer: %w", err)
 	}
 
@@ -172,7 +197,7 @@ func (s *CustomerService) Unsuspend(ctx context.Context, id string) error {
 	customer, err := s.customerRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("customer not found: %s", id)
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting customer: %w", err)
 	}
@@ -183,6 +208,9 @@ func (s *CustomerService) Unsuspend(ctx context.Context, id string) error {
 
 	// Update status to active
 	if err := s.customerRepo.UpdateStatus(ctx, id, models.CustomerStatusActive); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("unsuspending customer: %w", err)
 	}
 
@@ -201,13 +229,16 @@ func (s *CustomerService) Delete(ctx context.Context, id string) error {
 	customer, err := s.customerRepo.GetByID(ctx, id)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("customer not found: %s", id)
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting customer: %w", err)
 	}
 
 	// Soft delete the customer
 	if err := s.customerRepo.SoftDelete(ctx, id); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			return fmt.Errorf("customer not found: %s: %w", id, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("deleting customer: %w", err)
 	}
 
@@ -224,7 +255,7 @@ func (s *CustomerService) GetByEmail(ctx context.Context, email string) (*models
 	customer, err := s.customerRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("customer not found with email: %s", email)
+			return nil, fmt.Errorf("customer not found with email: %s: %w", email, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting customer by email: %w", err)
 	}
@@ -244,7 +275,7 @@ func (s *CustomerService) Create(ctx context.Context, actorID, actorIP string, c
 		"email": customer.Email,
 		"name":  customer.Name,
 	}
-	s.logAudit(ctx, actorID, actorIP, "customer.create", customer.ID, changes, true, "")
+	s.logAudit(ctx, actorID, customer.ID, actorIP, "customer.create", customer.ID, changes, true, "")
 
 	s.logger.Info("customer created",
 		"customer_id", customer.ID,
@@ -296,11 +327,11 @@ func (s *CustomerService) UpdateProfile(ctx context.Context, customerID, actorIP
 
 	updated, err := s.customerRepo.UpdateProfile(ctx, customerID, repoParams)
 	if err != nil {
-		s.logAudit(ctx, customerID, actorIP, "customer.profile.update", customerID, changes, false, err.Error())
+		s.logAudit(ctx, customerID, customerID, actorIP, "customer.profile.update", customerID, changes, false, err.Error())
 		return nil, fmt.Errorf("updating profile: %w", err)
 	}
 
-	s.logAudit(ctx, customerID, actorIP, "customer.profile.update", customerID, changes, true, "")
+	s.logAudit(ctx, customerID, customerID, actorIP, "customer.profile.update", customerID, changes, true, "")
 
 	s.logger.Info("customer profile updated",
 		"customer_id", customerID,

@@ -3,12 +3,15 @@ package paypal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,6 +109,29 @@ func TestCreatePaymentSession_MissingApprovalLink(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing approval link")
+}
+
+func TestBuildOrderRequest_PrefersConfiguredRedirects(t *testing.T) {
+	p := &Provider{
+		returnURL: "https://panel.example.test/billing/paypal-return",
+		cancelURL: "https://panel.example.test/billing",
+	}
+
+	orderReq := p.buildOrderRequest(payments.PaymentRequest{
+		CustomerID:  "cust_1",
+		AmountCents: 1000,
+		Currency:    "usd",
+		Description: "Credit Top-Up",
+		ReturnURL:   "https://evil.example.test/approved",
+		CancelURL:   "https://evil.example.test/cancelled",
+		Metadata:    map[string]string{"payment_id": "pay_1"},
+	})
+
+	require.NotNil(t, orderReq.PaymentSource)
+	require.NotNil(t, orderReq.PaymentSource.PayPal)
+	require.NotNil(t, orderReq.PaymentSource.PayPal.ExperienceContext)
+	assert.Equal(t, "https://panel.example.test/billing/paypal-return", orderReq.PaymentSource.PayPal.ExperienceContext.ReturnURL)
+	assert.Equal(t, "https://panel.example.test/billing", orderReq.PaymentSource.PayPal.ExperienceContext.CancelURL)
 }
 
 func TestCaptureOrder_Success(t *testing.T) {
@@ -211,14 +237,18 @@ func TestRefundPayment_Success(t *testing.T) {
 
 func TestValidateConfig(t *testing.T) {
 	tests := []struct {
-		name    string
-		id      string
-		secret  string
-		wantErr bool
+		name      string
+		id        string
+		secret    string
+		returnURL string
+		cancelURL string
+		wantErr   bool
 	}{
-		{"valid", "id", "secret", false},
-		{"missing id", "", "secret", true},
-		{"missing secret", "id", "", true},
+		{"valid", "id", "secret", "https://panel.example.test/billing/paypal-return", "https://panel.example.test/billing", false},
+		{"missing id", "", "secret", "https://panel.example.test/billing/paypal-return", "https://panel.example.test/billing", true},
+		{"missing secret", "id", "", "https://panel.example.test/billing/paypal-return", "https://panel.example.test/billing", true},
+		{"missing return url", "id", "secret", "", "https://panel.example.test/billing", true},
+		{"missing cancel url", "id", "secret", "https://panel.example.test/billing/paypal-return", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,6 +257,8 @@ func TestValidateConfig(t *testing.T) {
 					clientID:     tt.id,
 					clientSecret: tt.secret,
 				},
+				returnURL: tt.returnURL,
+				cancelURL: tt.cancelURL,
 			}
 			err := p.ValidateConfig()
 			if tt.wantErr {
@@ -271,6 +303,8 @@ func TestDecimalToCents(t *testing.T) {
 		{"one cent", "0.01", 1, false},
 		{"large amount", "9999.99", 999999, false},
 		{"invalid", "abc", 0, true},
+		{"invalid fractional digits", "10.a", 0, true},
+		{"invalid extra precision digits", "10.5a", 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,6 +375,7 @@ func TestVerifyWebhookSignature_Failure(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "verification failed")
+	assert.ErrorIs(t, err, sharederrors.ErrValidation)
 }
 
 func TestVerifyWebhookSignature_APIError(t *testing.T) {
@@ -355,6 +390,22 @@ func TestVerifyWebhookSignature_APIError(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 500")
+	assert.False(t, errors.Is(err, sharederrors.ErrValidation))
+}
+
+func TestVerifyWebhookSignature_RateLimitIsRetryable(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte("rate limited"))
+	})
+
+	p := newTestProviderWithWebhookID(t, handler, "webhook-123")
+	err := p.VerifyWebhookSignature(
+		context.Background(), http.Header{}, []byte(`{}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status 429")
+	assert.False(t, errors.Is(err, sharederrors.ErrValidation))
 }
 
 func TestParseWebhookEvent(t *testing.T) {
@@ -482,6 +533,7 @@ func TestHandleWebhook_InvalidJSON(t *testing.T) {
 	_, err := p.HandleWebhook(context.Background(), []byte(`{bad`), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse paypal webhook event")
+	assert.ErrorIs(t, err, sharederrors.ErrValidation)
 }
 
 func TestMapPayPalStatus(t *testing.T) {

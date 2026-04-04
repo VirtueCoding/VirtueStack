@@ -48,6 +48,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// Get VM with ownership verification (isAdmin=false)
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -63,12 +64,14 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 
 	// Check if VM is running (console requires running VM)
 	if vm.Status != models.VMStatusRunning {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, fmt.Errorf("VM must be running to access console"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, fmt.Errorf("VM has no node assigned"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
@@ -78,6 +81,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// to generate a ticket for the VNC websocket proxy
 	token, err := generateConsoleToken(vm.ID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, err)
 		h.logger.Error("failed to generate console token",
 			"vm_id", vmID,
 			"customer_id", customerID,
@@ -101,6 +105,8 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 		"customer_id", customerID,
 		"node_id", *vm.NodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "console.vnc_token.issue", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: ConsoleTokenResponse{
@@ -138,6 +144,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	// Get VM with ownership verification (isAdmin=false)
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -153,12 +160,14 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 
 	// Check if VM is running
 	if vm.Status != models.VMStatusRunning {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, fmt.Errorf("VM must be running to access serial console"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access serial console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, fmt.Errorf("VM has no node assigned"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
@@ -166,6 +175,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	// Generate serial console token
 	token, err := generateConsoleToken(vm.ID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, err)
 		h.logger.Error("failed to generate serial console token",
 			"vm_id", vmID,
 			"customer_id", customerID,
@@ -188,6 +198,8 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 		"customer_id", customerID,
 		"node_id", *vm.NodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "console.serial_token.issue", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: ConsoleTokenResponse{

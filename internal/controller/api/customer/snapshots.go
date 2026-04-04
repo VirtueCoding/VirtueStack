@@ -142,6 +142,9 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	// Verify VM belongs to customer
 	vm, err := h.vmService.GetVM(c.Request.Context(), req.VMID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "snapshot.create", "vm", req.VMID, map[string]any{
+			"name": req.Name,
+		}, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -153,6 +156,9 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 	// Create snapshot asynchronously - quota is enforced atomically in the service layer
 	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "snapshot.create", "vm", req.VMID, map[string]any{
+			"name": req.Name,
+		}, err)
 		// F-106: Use errors.Is/As against the sentinel error type instead of
 		// strings.Contains(err.Error(), ...) to avoid fragile string matching.
 		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
@@ -181,6 +187,12 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		"customer_id", customerID,
 		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "snapshot.create", "snapshot", snapshot.ID, map[string]any{
+		"vm_id":   req.VMID,
+		"name":    req.Name,
+		"task_id": taskID,
+	}, true)
 
 	c.JSON(http.StatusAccepted, SnapshotResponse{
 		Snapshot: snapshot,
@@ -238,6 +250,9 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 	// Delete snapshot asynchronously
 	taskID, err := h.backupService.DeleteSnapshotAsync(c.Request.Context(), snapshotID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "snapshot.delete", "snapshot", snapshotID, map[string]any{
+			"vm_id": snapshot.VMID,
+		}, err)
 		h.logger.Error("failed to delete snapshot",
 			"snapshot_id", snapshotID,
 			"customer_id", customerID,
@@ -252,6 +267,11 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 		"customer_id", customerID,
 		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "snapshot.delete", "snapshot", snapshotID, map[string]any{
+		"vm_id":   snapshot.VMID,
+		"task_id": taskID,
+	}, true)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message":     "Snapshot deletion initiated",
@@ -310,6 +330,9 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 	// Restore snapshot asynchronously
 	taskID, err := h.backupService.RevertSnapshotAsync(c.Request.Context(), snapshotID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "snapshot.restore", "snapshot", snapshotID, map[string]any{
+			"vm_id": snapshot.VMID,
+		}, err)
 		h.logger.Error("failed to restore snapshot",
 			"snapshot_id", snapshotID,
 			"vm_id", snapshot.VMID,
@@ -326,6 +349,11 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 		"customer_id", customerID,
 		"task_id", taskID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "snapshot.restore", "snapshot", snapshotID, map[string]any{
+		"vm_id":   snapshot.VMID,
+		"task_id": taskID,
+	}, true)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message":     "Snapshot restore initiated",

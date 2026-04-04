@@ -31,7 +31,6 @@
         </p>
         
         <script type="text/javascript">
-            // Auto-refresh every 5 seconds while provisioning
             setTimeout(function() {
                 location.reload();
             }, 5000);
@@ -79,7 +78,6 @@
     </div>
 
 {else}
-    {* Main VM Management Interface *}
     {if $iframe_url}
     <div class="virtuestack-webui-container">
         <div class="webui-header">
@@ -131,20 +129,18 @@
             </iframe>
         </div>
         
-        {* Console Quick Links *}
         <div class="console-links">
             <div class="btn-group" role="group">
                 {if $console_url}
-                <a href="{$console_url|escape:'htmlall'}" target="_blank" class="btn btn-default btn-sm">
-                    <i class="fas fa-desktop"></i> VNC Console
+                <a href="{$console_url|escape:'htmlall'}" target="_blank" rel="noopener noreferrer" class="btn btn-default btn-sm">
+                    <i class="fas fa-desktop"></i> Open VNC Console
                 </a>
                 {/if}
-                <a href="#" onclick="openConsole('vnc')" class="btn btn-default btn-sm">
-                    <i class="fas fa-tv"></i> Open VNC
+                {if $webui_url}
+                <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&dosinglesignon=1" class="btn btn-default btn-sm">
+                    <i class="fas fa-external-link-alt"></i> Open Control Panel
                 </a>
-                <a href="#" onclick="openConsole('serial')" class="btn btn-default btn-sm">
-                    <i class="fas fa-terminal"></i> Serial Console
-                </a>
+                {/if}
             </div>
         </div>
     </div>
@@ -206,7 +202,6 @@
             }
         }
         
-        /* Dark mode support */
         @media (prefers-color-scheme: dark) {
             .webui-header {
                 background: #2a2a2a;
@@ -220,20 +215,7 @@
         }
     </style>
     
-    <script type="text/javascript">
-        function openConsole(type) {
-            var iframe = document.getElementById('virtuestack-webui-frame');
-            if (iframe && iframe.contentWindow) {
-                iframe.contentWindow.postMessage({
-                    action: 'openConsole',
-                    type: type
-                }, document.location.origin);
-            }
-        }
-    </script>
-    
     {else}
-    {* Fallback if no iframe URL available *}
     <div class="virtuestack-details">
         <div class="panel panel-default">
             <div class="panel-heading">
@@ -268,7 +250,7 @@
                 </table>
                 
                 <p class="text-muted">
-                    <i class="fas fa-info-circle"></i> 
+                    <i class="fas fa-info-circle"></i>
                     The management panel is not available. Please contact support for assistance.
                 </p>
             </div>
@@ -277,7 +259,6 @@
     {/if}
 {/if}
 
-{* Additional VM Information Card *}
 {if $vm_id && $status neq 'provisioning' && $status neq 'error'}
 <div class="virtuestack-info-card" style="margin-top: 20px;">
     <div class="panel panel-info">
@@ -288,17 +269,35 @@
             <div class="row">
                 <div class="col-md-6">
                     <h4>Console Access</h4>
-                    <p>Access your VPS directly through the web-based console.</p>
+                    <p>Use the secure VirtueStack console or control panel links below for SSO access.</p>
                     <p>
-                        <form method="POST" action="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=custom&a=openConsole&type=vnc" style="display:inline;">
-                            <input type="hidden" name="token" value="{$token}">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-desktop"></i> Open VNC Console
-                            </button>
-                        </form>
+                        {if $console_url}
+                        <a href="{$console_url|escape:'htmlall'}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+                            <i class="fas fa-desktop"></i> Open VNC Console
+                        </a>
+                        {/if}
+                        {if $webui_url}
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&dosinglesignon=1" class="btn btn-default">
+                            <i class="fas fa-external-link-alt"></i> Open Control Panel
+                        </a>
+                        {/if}
                     </p>
                 </div>
                 <div class="col-md-6">
+                    <h4>Password Management</h4>
+                    <p>For security, root passwords are not sent by email. Use Change Password from this service page to generate a new password when needed.</p>
+                    <p>
+                        <a href="clientarea.php?action=productdetails&id={$service_id|escape:'htmlall'}&modop=changepw" class="btn btn-warning">
+                            <i class="fas fa-key"></i> Change Password
+                        </a>
+                    </p>
+                </div>
+            </div>
+
+            <hr>
+
+            <div class="row">
+                <div class="col-md-12">
                     <h4>Power Control</h4>
                     <p>Control the power state of your virtual server.</p>
                     <div class="btn-group">

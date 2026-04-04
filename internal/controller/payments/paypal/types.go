@@ -3,7 +3,10 @@ package paypal
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // --- PayPal API types ---
@@ -111,7 +114,11 @@ func decimalToCents(s string) (int64, error) {
 
 	frac := int64(0)
 	if len(parts) == 2 {
-		frac = parseFractionalCents(parts[1])
+		var err error
+		frac, err = parseFractionalCents(parts[1])
+		if err != nil {
+			return 0, fmt.Errorf("parse fractional part %q: %w", parts[1], err)
+		}
 	}
 	if whole < 0 || strings.HasPrefix(strings.TrimSpace(s), "-") {
 		return whole*100 - frac, nil
@@ -119,19 +126,29 @@ func decimalToCents(s string) (int64, error) {
 	return whole*100 + frac, nil
 }
 
-func parseFractionalCents(fracStr string) int64 {
-	switch len(fracStr) {
-	case 0:
-		return 0
-	case 1:
-		var frac int64
-		fmt.Sscanf(fracStr, "%d", &frac)
-		return frac * 10
-	default:
-		var frac int64
-		fmt.Sscanf(fracStr[:2], "%d", &frac)
-		return frac
+func parseFractionalCents(fracStr string) (int64, error) {
+	if fracStr == "" {
+		return 0, nil
 	}
+	if len(fracStr) > 2 {
+		return 0, fmt.Errorf("too many fractional digits")
+	}
+
+	for _, r := range fracStr {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("invalid fractional digit %q", r)
+		}
+	}
+
+	if len(fracStr) == 1 {
+		fracStr += "0"
+	}
+
+	frac, err := strconv.ParseInt(fracStr, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return frac, nil
 }
 
 func findApprovalURL(links []orderLink) string {
@@ -162,7 +179,10 @@ func extractAmount(resource *WebhookResource) (int64, string, error) {
 	}
 	cents, err := decimalToCents(resource.Amount.Value)
 	if err != nil {
-		return 0, "", fmt.Errorf("parse capture amount: %w", err)
+		return 0, "", sharederrors.NewValidationError(
+			"amount",
+			fmt.Sprintf("invalid PayPal capture amount: %v", err),
+		)
 	}
 	return cents, resource.Amount.CurrencyCode, nil
 }
@@ -207,7 +227,10 @@ type relatedIDs struct {
 func ParseWebhookEvent(body []byte) (*WebhookEvent, error) {
 	var event WebhookEvent
 	if err := json.Unmarshal(body, &event); err != nil {
-		return nil, fmt.Errorf("parse webhook event: %w", err)
+		return nil, sharederrors.NewValidationError(
+			"payload",
+			fmt.Sprintf("invalid PayPal webhook event: %v", err),
+		)
 	}
 	return &event, nil
 }
@@ -216,7 +239,10 @@ func ParseWebhookEvent(body []byte) (*WebhookEvent, error) {
 func ParseWebhookResource(raw json.RawMessage) (*WebhookResource, error) {
 	var res WebhookResource
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return nil, fmt.Errorf("parse webhook resource: %w", err)
+		return nil, sharederrors.NewValidationError(
+			"payload",
+			fmt.Sprintf("invalid PayPal webhook resource: %v", err),
+		)
 	}
 	return &res, nil
 }

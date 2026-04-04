@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bell, Mail, MessageCircle, Loader2, Save } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
@@ -38,14 +38,7 @@ export function NotificationsTab({ initialPreferences }: NotificationsTabProps) 
   const [isSaving, setIsSaving] = useState(false);
   const [availableEvents, setAvailableEvents] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!initialPreferences) {
-      fetchPreferences();
-    }
-    fetchEventTypes();
-  }, []);
-
-  const fetchPreferences = async () => {
+  const fetchPreferences = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await notificationApi.getPreferences();
@@ -59,9 +52,9 @@ export function NotificationsTab({ initialPreferences }: NotificationsTabProps) 
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast]);
 
-  const fetchEventTypes = async () => {
+  const fetchEventTypes = useCallback(async () => {
     try {
       const data = await notificationApi.getEventTypes();
       setAvailableEvents(data.events || []);
@@ -69,7 +62,17 @@ export function NotificationsTab({ initialPreferences }: NotificationsTabProps) 
       // If we can't get event types, use defaults
       setAvailableEvents(Object.keys(EVENT_TYPE_LABELS));
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (initialPreferences) {
+      setPreferences(initialPreferences);
+      setIsLoading(false);
+    } else {
+      void fetchPreferences();
+    }
+    void fetchEventTypes();
+  }, [fetchEventTypes, fetchPreferences, initialPreferences]);
 
   const handleToggleEmail = async (enabled: boolean) => {
     if (!preferences) return;

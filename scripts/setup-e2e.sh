@@ -18,6 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DOCKER_COMPOSE=(docker compose --env-file .env.test -f docker-compose.yml -f docker-compose.test.yml)
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,6 +64,11 @@ generate_random_string() {
     openssl rand -base64 "$length" | tr -d '\n' | head -c "$length"
 }
 
+generate_random_hex() {
+    local bytes=${1:-32}
+    openssl rand -hex "$bytes" | tr -d '\n'
+}
+
 check_dependencies() {
     log_info "Checking dependencies..."
 
@@ -100,17 +106,20 @@ setup_env_file() {
 
 # PostgreSQL
 POSTGRES_USER=virtuestack
-POSTGRES_PASSWORD=virtuestack_test_password
+POSTGRES_PASSWORD=$(generate_random_string 32)
 POSTGRES_DB=virtuestack
 
 # NATS
-NATS_AUTH_TOKEN=virtuestack_nats_test_token
+NATS_AUTH_TOKEN=$(generate_random_string 32)
 
 # JWT Configuration (32+ character secret)
 JWT_SECRET=$(generate_random_string 64)
 
-# Encryption Key (32 bytes, base64 encoded)
-ENCRYPTION_KEY=$(generate_random_string 32)
+# Encryption Key (32 bytes, 64 hex characters)
+ENCRYPTION_KEY=$(generate_random_hex 32)
+
+# Guest operation HMAC secret (shared across controller and node agent)
+GUEST_OP_HMAC_SECRET=$(generate_random_string 48)
 
 # Logging
 LOG_LEVEL=debug
@@ -503,16 +512,11 @@ start_docker_services() {
 
     cd "$PROJECT_ROOT"
 
-    # Copy test env to .env for docker-compose
-    if [ -f .env.test ]; then
-        cp .env.test .env
-    fi
-
     # Build images
-    docker compose build
+    "${DOCKER_COMPOSE[@]}" build
 
     # Start services
-    docker compose up -d
+    "${DOCKER_COMPOSE[@]}" up -d
 
     # Wait for services to be healthy
     log_info "Waiting for services to be healthy..."
@@ -520,7 +524,7 @@ start_docker_services() {
 
     # Check PostgreSQL
     for i in {1..30}; do
-        if docker compose exec -T postgres pg_isready -U virtuestack -d virtuestack 2>/dev/null; then
+        if "${DOCKER_COMPOSE[@]}" exec -T postgres pg_isready -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" 2>/dev/null; then
             log_success "PostgreSQL is ready"
             break
         fi
@@ -529,7 +533,7 @@ start_docker_services() {
 
     # Check NATS
     for i in {1..30}; do
-        if docker compose exec -T nats wget --spider -q http://localhost:8222/healthz 2>/dev/null; then
+        if "${DOCKER_COMPOSE[@]}" exec -T nats wget --spider -q http://localhost:8222/healthz 2>/dev/null; then
             log_success "NATS is ready"
             break
         fi
@@ -547,12 +551,17 @@ start_docker_services() {
 
     # Run migrations
     log_info "Running database migrations..."
-    docker compose exec -T controller migrate -path /migrations -database "postgresql://virtuestack:virtuestack_test_password@postgres:5432/virtuestack?sslmode=disable" up
+    docker run --rm --network virtuestack-test-network \
+        --env-file "${PROJECT_ROOT}/.env.test" \
+        -v "${PROJECT_ROOT}/migrations:/migrations:ro" \
+        migrate/migrate:v4.19.0 \
+        -path /migrations \
+        -database "postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable" up
 
     # Seed test data
     log_info "Seeding test data..."
-    docker compose exec -T postgres psql -U virtuestack -d virtuestack -f /docker-entrypoint-initdb.d/../migrations/test_seed.sql 2>/dev/null || \
-        docker compose exec -T postgres psql -U virtuestack -d virtuestack < "${PROJECT_ROOT}/migrations/test_seed.sql"
+    "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" -f /docker-entrypoint-initdb.d/../migrations/test_seed.sql 2>/dev/null || \
+        "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" < "${PROJECT_ROOT}/migrations/test_seed.sql"
 
     log_success "All services started and healthy"
 }
@@ -561,7 +570,7 @@ stop_docker_services() {
     log_info "Stopping Docker services..."
 
     cd "$PROJECT_ROOT"
-    docker compose down -v
+    "${DOCKER_COMPOSE[@]}" down -v
 
     log_success "Docker services stopped"
 }
@@ -638,7 +647,7 @@ main() {
             ;;
         --seed-only)
             create_seed_sql
-            docker compose exec -T postgres psql -U virtuestack -d virtuestack < "${PROJECT_ROOT}/migrations/test_seed.sql"
+            "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" < "${PROJECT_ROOT}/migrations/test_seed.sql"
             log_success "Test data seeded"
             ;;
         setup|*)

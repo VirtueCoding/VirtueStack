@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -29,6 +30,11 @@ const bytesPerGiB int64 = 1024 * 1024 * 1024
 type ReceiveTarget struct {
 	OpenPath      string
 	CreateImageID string
+}
+
+type PreparedVMDisk struct {
+	DiskPath    string
+	LVMDiskPath string
 }
 
 type ReceiveTracker struct {
@@ -62,10 +68,22 @@ func ResolveLVMSourcePath(sourceDiskPath, snapshotName, requestedVG, configuredV
 }
 
 func ResolveQCOWSourcePath(sourceDiskPath, storagePath string) (string, error) {
-	if err := validatePathWithin(sourceDiskPath, storagePath); err != nil {
+	if err := ValidatePathWithin(sourceDiskPath, storagePath); err != nil {
 		return "", err
 	}
 	return filepath.Clean(sourceDiskPath), nil
+}
+
+func ResolveQCOWVMDiskPath(storagePath, vmID string) string {
+	return filepath.Join(storagePath, "vms", fmt.Sprintf("%s-disk0.qcow2", vmID))
+}
+
+func ValidateSnapshotName(snapshotName string) error {
+	if snapshotName == "" {
+		return nil
+	}
+
+	return validateLV(snapshotName)
 }
 
 func ResolveReceiveTarget(storageBackend, targetPath, storagePath, configuredVG, configuredThinPool, requestedVG, requestedThinPool string) (ReceiveTarget, error) {
@@ -95,10 +113,29 @@ func ResolveReceiveTarget(storageBackend, targetPath, storagePath, configuredVG,
 			CreateImageID: lv,
 		}, nil
 	default:
-		if err := validatePathWithin(targetPath, storagePath); err != nil {
+		if err := ValidatePathWithin(targetPath, storagePath); err != nil {
 			return ReceiveTarget{}, err
 		}
 		return ReceiveTarget{OpenPath: filepath.Clean(targetPath)}, nil
+	}
+}
+
+func ResolvePreparedVMDisk(storageBackend, diskPath, storagePath, configuredVG string) (PreparedVMDisk, error) {
+	switch storageBackend {
+	case "lvm":
+		resolvedPath, err := ResolveLVMSourcePath(diskPath, "", "", configuredVG)
+		if err != nil {
+			return PreparedVMDisk{}, err
+		}
+		return PreparedVMDisk{LVMDiskPath: resolvedPath}, nil
+	case "qcow":
+		resolvedPath, err := ResolveQCOWSourcePath(diskPath, storagePath)
+		if err != nil {
+			return PreparedVMDisk{}, err
+		}
+		return PreparedVMDisk{DiskPath: resolvedPath}, nil
+	default:
+		return PreparedVMDisk{}, nil
 	}
 }
 
@@ -202,6 +239,42 @@ func OpenLVMReceiveTarget(
 	return file, rollback, nil
 }
 
+func OpenFileReceiveTarget(openPath string) (*os.File, func() error, func() error, error) {
+	targetDir := filepath.Dir(openPath)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return nil, nil, nil, fmt.Errorf("%w: creating target directory: %w", ErrOpenTarget, err)
+	}
+
+	file, err := os.CreateTemp(targetDir, filepath.Base(openPath)+".receive-*")
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w: creating staged target file: %w", ErrOpenTarget, err)
+	}
+	stagedPath := file.Name()
+
+	rollback := func() error {
+		if err := os.Remove(stagedPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+
+	commit := func() error {
+		if err := os.Rename(stagedPath, openPath); err != nil {
+			if cleanupErr := rollback(); cleanupErr != nil {
+				return errors.Join(err, cleanupErr)
+			}
+			return err
+		}
+		return nil
+	}
+
+	return file, commit, rollback, nil
+}
+
+func DetachedTimeoutContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
 func StreamProcessOutput(
 	reader io.Reader,
 	totalSize int64,
@@ -251,13 +324,19 @@ func StreamProcessOutput(
 	}
 }
 
-func validatePathWithin(path, allowedPrefix string) error {
+// ValidatePathWithin ensures path stays within allowedPrefix even when symlinks
+// and ".." traversal are involved. Missing final path components are allowed so
+// callers can validate new files before creating them.
+func ValidatePathWithin(path, allowedPrefix string) error {
 	if path == "" {
 		return fmt.Errorf("path must not be empty")
 	}
 	cleanedPrefix := filepath.Clean(allowedPrefix)
 	cleaned := filepath.Clean(path)
 	if !pathWithin(cleaned, cleanedPrefix) {
+		return fmt.Errorf("path %q is outside the allowed directory %q", cleaned, allowedPrefix)
+	}
+	if !rawPathWithin(path, cleanedPrefix) {
 		return fmt.Errorf("path %q is outside the allowed directory %q", cleaned, allowedPrefix)
 	}
 	resolvedPrefix, err := filepath.EvalSymlinks(cleanedPrefix)
@@ -267,27 +346,36 @@ func validatePathWithin(path, allowedPrefix string) error {
 		}
 		resolvedPrefix = cleanedPrefix
 	}
-	if err := validateSymlinkBoundary(cleaned, cleanedPrefix, resolvedPrefix); err != nil {
+	if err := validateSymlinkBoundary(path, cleanedPrefix, resolvedPrefix); err != nil {
 		return err
 	}
 	return nil
 }
 
 func validateSymlinkBoundary(path, cleanedPrefix, resolvedPrefix string) error {
-	relPath, err := filepath.Rel(cleanedPrefix, path)
-	if err != nil {
-		return fmt.Errorf("computing relative path for %q: %w", path, err)
-	}
-	if relPath == "." {
+	relPath := strings.TrimPrefix(path, cleanedPrefix)
+	if relPath == "" {
 		return nil
 	}
-	currentPath := cleanedPrefix
+	relPath = strings.TrimPrefix(relPath, string(filepath.Separator))
+	currentPath := resolvedPrefix
 	for _, segment := range strings.Split(relPath, string(filepath.Separator)) {
+		switch segment {
+		case "", ".":
+			continue
+		case "..":
+			currentPath = filepath.Dir(currentPath)
+			if !pathWithin(filepath.Clean(currentPath), resolvedPrefix) {
+				return fmt.Errorf("path %q resolves outside the allowed directory %q", filepath.Clean(path), cleanedPrefix)
+			}
+			continue
+		}
+
 		currentPath = filepath.Join(currentPath, segment)
 		info, err := os.Lstat(currentPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil
+				continue
 			}
 			return fmt.Errorf("inspecting path %q: %w", currentPath, err)
 		}
@@ -302,8 +390,19 @@ func validateSymlinkBoundary(path, cleanedPrefix, resolvedPrefix string) error {
 		if !pathWithin(filepath.Clean(resolvedPath), resolvedPrefix) {
 			return fmt.Errorf("path %q resolves outside the allowed directory %q", path, cleanedPrefix)
 		}
+		currentPath = resolvedPath
 	}
 	return nil
+}
+
+func rawPathWithin(path, prefix string) bool {
+	if path == prefix {
+		return true
+	}
+	if prefix == string(filepath.Separator) {
+		return strings.HasPrefix(path, prefix)
+	}
+	return strings.HasPrefix(path, prefix+string(filepath.Separator))
 }
 
 func pathWithin(path, prefix string) bool {

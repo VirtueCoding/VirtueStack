@@ -38,21 +38,22 @@ type IPAllocator interface {
 // It handles VM creation, start/stop, resize, reinstall, and deletion,
 // coordinating between the database, node agents, and async task system.
 type VMService struct {
-	vmRepo               *repository.VMRepository
-	nodeRepo             *repository.NodeRepository
-	ipRepo               *repository.IPRepository
-	planRepo             *repository.PlanRepository
-	templateRepo         *repository.TemplateRepository
-	taskRepo             *repository.TaskRepository
-	taskPublisher        TaskPublisher
-	nodeAgent            NodeAgentClient
-	ipamService          IPAllocator
-	storageBackendSvc    StorageBackendGetter
-	preActionWebhookSvc  PreActionChecker
-	billingHooks         BillingHookResolver
-	customerRepo         *repository.CustomerRepository
-	encryptionKey        string // For encrypting root passwords
-	logger               *slog.Logger
+	vmRepo              *repository.VMRepository
+	nodeRepo            *repository.NodeRepository
+	ipRepo              *repository.IPRepository
+	planRepo            *repository.PlanRepository
+	templateRepo        *repository.TemplateRepository
+	taskRepo            *repository.TaskRepository
+	taskPublisher       TaskPublisher
+	nodeAgent           NodeAgentClient
+	ipamService         IPAllocator
+	storageBackendSvc   StorageBackendGetter
+	preActionWebhookSvc PreActionChecker
+	billingHooks        BillingHookResolver
+	customerRepo        *repository.CustomerRepository
+	maxISOSizeBytes     int64
+	encryptionKey       string // For encrypting root passwords
+	logger              *slog.Logger
 }
 
 // StorageBackendGetter defines the interface for getting storage backends for a node.
@@ -87,6 +88,7 @@ type VMServiceConfig struct {
 	PreActionWebhookSvc PreActionChecker
 	BillingHooks        BillingHookResolver
 	CustomerRepo        *repository.CustomerRepository
+	MaxISOSizeBytes     int64
 	EncryptionKey       string
 	Logger              *slog.Logger
 }
@@ -107,6 +109,7 @@ func NewVMService(cfg VMServiceConfig) *VMService {
 		preActionWebhookSvc: cfg.PreActionWebhookSvc,
 		billingHooks:        cfg.BillingHooks,
 		customerRepo:        cfg.CustomerRepo,
+		maxISOSizeBytes:     cfg.MaxISOSizeBytes,
 		encryptionKey:       cfg.EncryptionKey,
 		logger:              cfg.Logger.With("component", "vm-service"),
 	}
@@ -826,7 +829,8 @@ func (s *VMService) GetVMDetail(ctx context.Context, vmID, customerID string, is
 	}
 
 	detail := &models.VMDetail{
-		VM: *vm,
+		VM:              *vm,
+		MaxISOSizeBytes: s.maxISOSizeBytes,
 	}
 
 	// Get IP addresses
@@ -920,7 +924,7 @@ func (s *VMService) getVMAndVerifyOwnership(ctx context.Context, vmID, customerI
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("VM not found: %s", vmID)
+			return nil, fmt.Errorf("VM not found: %s: %w", vmID, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting VM: %w", err)
 	}
@@ -932,7 +936,7 @@ func (s *VMService) getVMAndVerifyOwnership(ctx context.Context, vmID, customerI
 
 	// Check if VM is deleted
 	if vm.IsDeleted() {
-		return nil, fmt.Errorf("VM has been deleted")
+		return nil, fmt.Errorf("VM has been deleted: %w", sharederrors.ErrNotFound)
 	}
 
 	return vm, nil
@@ -956,10 +960,31 @@ type DefaultTaskPublisher struct {
 	logger   *slog.Logger
 }
 
+// TaskQueue publishes task messages to the async worker queue.
+type TaskQueue interface {
+	PublishTask(ctx context.Context, task *models.Task) error
+}
+
+// WorkerTaskPublisher persists task records and publishes them to the async worker.
+type WorkerTaskPublisher struct {
+	taskRepo *repository.TaskRepository
+	queue    TaskQueue
+	logger   *slog.Logger
+}
+
 // NewDefaultTaskPublisher creates a new DefaultTaskPublisher.
 func NewDefaultTaskPublisher(taskRepo *repository.TaskRepository, logger *slog.Logger) *DefaultTaskPublisher {
 	return &DefaultTaskPublisher{
 		taskRepo: taskRepo,
+		logger:   logger.With("component", "task-publisher"),
+	}
+}
+
+// NewWorkerTaskPublisher creates a task publisher backed by the async worker queue.
+func NewWorkerTaskPublisher(taskRepo *repository.TaskRepository, queue TaskQueue, logger *slog.Logger) *WorkerTaskPublisher {
+	return &WorkerTaskPublisher{
+		taskRepo: taskRepo,
+		queue:    queue,
 		logger:   logger.With("component", "task-publisher"),
 	}
 }
@@ -988,4 +1013,42 @@ func (p *DefaultTaskPublisher) PublishTask(ctx context.Context, taskType string,
 
 	p.logger.Info("task published", "task_id", taskID, "type", taskType)
 	return taskID, nil
+}
+
+// PublishTask creates a task record in the database and enqueues it for processing.
+func (p *WorkerTaskPublisher) PublishTask(ctx context.Context, taskType string, payload map[string]any) (string, error) {
+	taskID := uuid.New().String()
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshaling task payload: %w", err)
+	}
+
+	task := &models.Task{
+		ID:        taskID,
+		Type:      taskType,
+		Status:    models.TaskStatusPending,
+		Payload:   payloadJSON,
+		Progress:  0,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := p.taskRepo.Create(ctx, task); err != nil {
+		return "", fmt.Errorf("creating task: %w", err)
+	}
+
+	if err := p.queue.PublishTask(ctx, task); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if deleteErr := p.taskRepo.Delete(cleanupCtx, task.ID); deleteErr != nil {
+			p.logger.Error("failed to delete task after publish failure",
+				"task_id", task.ID,
+				"task_type", task.Type,
+				"error", deleteErr)
+		}
+		return "", fmt.Errorf("publishing task: %w", err)
+	}
+
+	p.logger.Info("task published", "task_id", task.ID, "type", taskType)
+	return task.ID, nil
 }

@@ -134,7 +134,11 @@ func markMigrationComplete(ctx context.Context, deps *HandlerDeps, taskID string
 		VMID: payload.VMID, SourceNodeID: payload.SourceNodeID,
 		TargetNodeID: payload.TargetNodeID, Status: "already_migrated",
 	}
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		logger.Warn("failed to marshal idempotent migration result", "task_id", taskID, "error", err)
+		return
+	}
 	if err := deps.TaskRepo.SetCompleted(ctx, taskID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed for idempotent completion", "error", err)
 	}
@@ -176,8 +180,14 @@ func finalizeMigration(mc *MigrationContext) error {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
-	if err := mc.Deps.VMRepo.UpdateNodeAssignment(mc.Ctx, mc.Payload.VMID, mc.Payload.TargetNodeID); err != nil {
-		return fmt.Errorf("updating VM %s node assignment: %w", mc.Payload.VMID, err)
+	if err := mc.Deps.VMRepo.UpdatePlacement(
+		mc.Ctx,
+		mc.Payload.VMID,
+		mc.Payload.TargetNodeID,
+		migrationTargetStorageBackendID(&mc.Payload),
+		migrationTargetDiskPath(&mc.Payload),
+	); err != nil {
+		return fmt.Errorf("updating VM %s placement: %w", mc.Payload.VMID, err)
 	}
 
 	if err := mc.Deps.VMRepo.TransitionStatus(mc.Ctx, mc.Payload.VMID, models.VMStatusMigrating, models.VMStatusRunning); err != nil {
@@ -198,7 +208,11 @@ func finalizeMigration(mc *MigrationContext) error {
 		MigrationStrategy:    string(mc.Payload.MigrationStrategy),
 		SourceStorageBackend: mc.Payload.SourceStorageBackend, TargetStorageBackend: mc.Payload.TargetStorageBackend,
 	}
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		mc.Logger.Warn("failed to marshal migration result", "task_id", mc.Task.ID, "error", err)
+		return nil
+	}
 	if err := mc.Deps.TaskRepo.SetCompleted(mc.Ctx, mc.Task.ID, resultJSON); err != nil {
 		mc.Logger.Warn("failed to set task completed", "error", err)
 	}
@@ -206,6 +220,20 @@ func finalizeMigration(mc *MigrationContext) error {
 	mc.Logger.Info("vm.migrate task completed successfully", "vm_id", mc.Payload.VMID,
 		"source_node", mc.Payload.SourceNodeID, "target_node", mc.Payload.TargetNodeID)
 	return nil
+}
+
+func migrationTargetStorageBackendID(payload *VMMigratePayload) *string {
+	if payload.TargetStorageBackendID == "" {
+		return nil
+	}
+	return &payload.TargetStorageBackendID
+}
+
+func migrationTargetDiskPath(payload *VMMigratePayload) *string {
+	if payload.TargetStorageBackend != models.StorageBackendQcow || payload.TargetDiskPath == "" {
+		return nil
+	}
+	return &payload.TargetDiskPath
 }
 
 // executeLiveSharedStorageMigration performs live migration with shared Ceph storage.
@@ -293,7 +321,12 @@ func executeLiveDiskCopyMigration(mc *MigrationContext) error {
 	}
 	defer func() {
 		// Cleanup snapshot after migration
-		_ = mc.Deps.NodeClient.DeleteSnapshot(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID, snapshotName)
+		if err := mc.Deps.NodeClient.DeleteSnapshot(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID, snapshotName); err != nil {
+			mc.Logger.Warn("failed to cleanup QCOW migration snapshot",
+				"vm_id", mc.Payload.VMID,
+				"snapshot_name", snapshotName,
+				"error", err)
+		}
 	}()
 
 	// Step 2: Transfer disk to target node
@@ -510,7 +543,12 @@ func executeLiveLVMMigration(mc *MigrationContext) error {
 		return fmt.Errorf("creating LVM migration snapshot: %w", err)
 	}
 	defer func() {
-		_ = mc.Deps.NodeClient.DeleteSnapshot(mc.Ctx, mc.Payload.SourceNodeID, vmID, snapshotName)
+		if err := mc.Deps.NodeClient.DeleteSnapshot(mc.Ctx, mc.Payload.SourceNodeID, vmID, snapshotName); err != nil {
+			mc.Logger.Warn("failed to cleanup LVM migration snapshot",
+				"vm_id", vmID,
+				"snapshot_name", snapshotName,
+				"error", err)
+		}
 	}()
 
 	// Step 2: Transfer base disk
@@ -533,7 +571,9 @@ func executeLiveLVMMigration(mc *MigrationContext) error {
 		DiskSizeGB:           mc.Payload.DiskSizeGB,
 		Compress:             true,
 		ProgressCallback: func(progress int) {
-			_ = mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+			if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress)); err != nil {
+				mc.Logger.Warn("failed to update LVM migration transfer progress", "task_id", mc.Task.ID, "error", err)
+			}
 		},
 	}
 
@@ -608,7 +648,9 @@ func executeColdLVMMigration(mc *MigrationContext) error {
 		DiskSizeGB:           mc.Payload.DiskSizeGB,
 		Compress:             true,
 		ProgressCallback: func(progress int) {
-			_ = mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress))
+			if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 30+progress/2, fmt.Sprintf("Disk transfer: %d%%", progress)); err != nil {
+				mc.Logger.Warn("failed to update cold LVM migration transfer progress", "task_id", mc.Task.ID, "error", err)
+			}
 		},
 	}
 

@@ -16,10 +16,10 @@ import (
 // adminVerify2FARateLimit enforces F-075: after adminVerify2FAMaxAttempts failed
 // attempts for a given jti (temp-token ID), the jti is permanently exhausted.
 var (
-	adminVerify2FARateLimitMu      sync.Mutex
-	adminVerify2FARateLimitMap     = make(map[string]*adminRateLimitEntry)
-	adminVerify2FAMaxAttempts      = 5
-	adminVerify2FARateLimitWindow  = 15 * time.Minute
+	adminVerify2FARateLimitMu     sync.Mutex
+	adminVerify2FARateLimitMap    = make(map[string]*adminRateLimitEntry)
+	adminVerify2FAMaxAttempts     = 5
+	adminVerify2FARateLimitWindow = 15 * time.Minute
 )
 
 type adminRateLimitEntry struct {
@@ -34,6 +34,7 @@ func checkAdminVerify2FARateLimit(jti string) bool {
 	adminVerify2FARateLimitMu.Lock()
 	defer adminVerify2FARateLimitMu.Unlock()
 	now := time.Now()
+	pruneExpiredAdminVerify2FAEntries(now)
 	entry, exists := adminVerify2FARateLimitMap[jti]
 	if !exists {
 		adminVerify2FARateLimitMap[jti] = &adminRateLimitEntry{attempts: 1, firstTry: now}
@@ -54,12 +55,28 @@ func checkAdminVerify2FARateLimit(jti string) bool {
 	return true
 }
 
-// recordAdminVerify2FASuccess removes the rate-limit entry for a successfully
-// verified jti so the temp token cannot be reused.
+func pruneExpiredAdminVerify2FAEntries(now time.Time) {
+	for jti, entry := range adminVerify2FARateLimitMap {
+		if now.Sub(entry.firstTry) > adminVerify2FARateLimitWindow {
+			delete(adminVerify2FARateLimitMap, jti)
+		}
+	}
+}
+
+// recordAdminVerify2FASuccess permanently exhausts a successfully verified jti
+// so the stateless temp token becomes single-use until it naturally expires.
 func recordAdminVerify2FASuccess(jti string) {
 	adminVerify2FARateLimitMu.Lock()
 	defer adminVerify2FARateLimitMu.Unlock()
-	delete(adminVerify2FARateLimitMap, jti)
+	entry, exists := adminVerify2FARateLimitMap[jti]
+	if !exists {
+		entry = &adminRateLimitEntry{firstTry: time.Now()}
+		adminVerify2FARateLimitMap[jti] = entry
+	}
+	entry.exhausted = true
+	if entry.attempts == 0 {
+		entry.attempts = adminVerify2FAMaxAttempts
+	}
 }
 
 type LoginRequest struct {
@@ -73,13 +90,33 @@ type Verify2FARequest struct {
 }
 
 type AuthResponse struct {
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in,omitempty"`
-	Requires2FA bool   `json:"requires_2fa,omitempty"`
-	TempToken   string `json:"temp_token,omitempty"`
+	TokenType           string      `json:"token_type"`
+	ExpiresIn           int         `json:"expires_in,omitempty"`
+	Requires2FA         bool        `json:"requires_2fa,omitempty"`
+	TempToken           string      `json:"temp_token,omitempty"`
+	SessionID           string      `json:"session_id,omitempty"`
+	SessionCleanupToken string      `json:"session_cleanup_token,omitempty"`
+	User                *MeResponse `json:"user,omitempty"`
+}
+
+// LogoutRequest carries the cleanup token used to revoke the current admin session.
+type LogoutRequest struct {
+	SessionCleanupToken string `json:"session_cleanup_token"`
 }
 
 const adminRefreshCookiePath = "/api/v1/admin/auth/refresh"
+
+// CSRF handles GET /admin/auth/csrf - returns the CSRF token in the response header.
+// The CSRF middleware sets the cookie before this handler runs.
+// @Tags Admin
+// @Summary Get CSRF token
+// @Description Issues CSRF cookie/token pair for admin frontend authentication flows.
+// @Produce json
+// @Success 200 {object} models.Response
+// @Router /api/v1/admin/auth/csrf [get]
+func (h *AdminHandler) CSRF(c *gin.Context) {
+	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "CSRF token set"}})
+}
 
 // @Tags Admin
 // @Summary Admin login
@@ -199,13 +236,53 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 		recordAdminVerify2FASuccess(claims.ID)
 	}
 
-	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
-		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
+	claims, claimsErr := middleware.ValidateTempToken(h.authConfig, req.TempToken)
+	if claimsErr != nil {
+		if tokens.SessionID != "" {
+			if logoutErr := h.authService.Logout(c.Request.Context(), tokens.SessionID); logoutErr != nil {
+				h.logger.Warn("failed to roll back admin session after temp token reload failure",
+					"session_id", tokens.SessionID,
+					"error", logoutErr,
+					"correlation_id", middleware.GetCorrelationID(c))
+			}
+		}
+		h.logger.Error("failed to reload temp token after admin 2FA verification",
+			"error", claimsErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
+		return
+	}
+
+	admin, adminErr := h.authService.GetAdminByID(c.Request.Context(), claims.UserID)
+	if adminErr != nil {
+		if tokens.SessionID != "" {
+			if logoutErr := h.authService.Logout(c.Request.Context(), tokens.SessionID); logoutErr != nil {
+				h.logger.Warn("failed to roll back admin session after user lookup failure",
+					"session_id", tokens.SessionID,
+					"error", logoutErr,
+					"correlation_id", middleware.GetCorrelationID(c))
+			}
+		}
+		if handleNotFoundError(c, adminErr, "NOT_FOUND", "admin not found") {
+			return
+		}
+		h.logger.Error("failed to load admin auth response user",
+			"error", adminErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
+		return
+	}
 
 	resp := AuthResponse{
-		TokenType: tokens.TokenType,
-		ExpiresIn: tokens.ExpiresIn,
+		TokenType:           tokens.TokenType,
+		ExpiresIn:           tokens.ExpiresIn,
+		SessionID:           tokens.SessionID,
+		SessionCleanupToken: tokens.SessionCleanupToken,
+		User:                buildMeResponse(admin),
 	}
+
+	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
 
 	h.logger.Info("admin 2FA verification successful",
 		"correlation_id", middleware.GetCorrelationID(c))
@@ -215,10 +292,8 @@ func (h *AdminHandler) Verify2FA(c *gin.Context) {
 
 // @Tags Admin
 // @Summary Refresh admin token
-// @Description Refreshes admin access token using a valid refresh token.
-// @Accept json
+// @Description Refreshes admin access token using the HttpOnly refresh_token cookie.
 // @Produce json
-// @Param request body object true "Refresh token request"
 // @Success 200 {object} models.Response
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -270,23 +345,38 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 // @Failure 401 {object} models.ErrorResponse
 // @Router /api/v1/admin/auth/logout [post]
 func (h *AdminHandler) Logout(c *gin.Context) {
-	refreshToken := middleware.GetRefreshTokenFromCookie(c)
-
-	if refreshToken != "" {
-		userID := middleware.GetUserID(c)
-		if logoutErr := h.authService.LogoutAll(c.Request.Context(), userID, "admin"); logoutErr != nil {
-			h.logger.Warn("failed to invalidate admin sessions on logout",
-				"user_id", userID,
-				"error", logoutErr,
-				"correlation_id", middleware.GetCorrelationID(c))
-		} else {
-			h.logger.Info("admin logged out",
-				"user_id", userID,
-				"correlation_id", middleware.GetCorrelationID(c))
+	var req LogoutRequest
+	if err := middleware.BindOptionalJSON(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
 		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", "request body could not be parsed as JSON")
+		return
 	}
 
-	middleware.ClearAuthCookies(c, adminRefreshCookiePath)
+	targetSessionID, currentSessionID, authErr := resolveAdminLogoutSession(c, h.authConfig, req.SessionCleanupToken)
+	if authErr != nil {
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+		return
+	}
+
+	if logoutErr := h.authService.Logout(c.Request.Context(), targetSessionID); logoutErr != nil {
+		h.logger.Warn("failed to invalidate admin session on logout",
+			"session_id", targetSessionID,
+			"error", logoutErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		h.logLogoutAuditEvent(c, targetSessionID, req.SessionCleanupToken, false, logoutErr.Error())
+		middleware.RespondWithError(c, http.StatusInternalServerError, "LOGOUT_FAILED", "Failed to log out")
+		return
+	}
+
+	h.logLogoutAuditEvent(c, targetSessionID, req.SessionCleanupToken, true, "")
+
+	if shouldClearLogoutCookies(req.SessionCleanupToken, targetSessionID, currentSessionID) {
+		middleware.ClearAuthCookies(c, adminRefreshCookiePath)
+	}
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
 
@@ -331,6 +421,9 @@ func (h *AdminHandler) Me(c *gin.Context) {
 
 	admin, err := h.authService.GetAdminByID(c.Request.Context(), userID)
 	if err != nil {
+		if handleNotFoundError(c, err, "NOT_FOUND", "admin not found") {
+			return
+		}
 		h.logger.Warn("failed to get admin for /me endpoint",
 			"user_id", userID,
 			"error", err,
@@ -355,6 +448,107 @@ func (h *AdminHandler) Me(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+func buildMeResponse(admin *models.Admin) *MeResponse {
+	permissions := admin.Permissions
+	if len(permissions) == 0 {
+		permissions = models.GetDefaultPermissions(admin.Role)
+	}
+
+	return &MeResponse{
+		ID:          admin.ID,
+		Email:       admin.Email,
+		Role:        admin.Role,
+		Permissions: models.PermissionsToStrings(permissions),
+	}
+}
+
+func resolveAdminLogoutSession(c *gin.Context, authConfig middleware.AuthConfig, sessionCleanupToken string) (targetSessionID, currentSessionID string, err error) {
+	currentSessionID = resolveCurrentAdminSessionID(c, authConfig)
+
+	if sessionCleanupToken != "" {
+		claims, err := middleware.ValidateSessionCleanupToken(authConfig, sessionCleanupToken)
+		if err != nil {
+			return "", currentSessionID, err
+		}
+		if claims.UserType != "admin" {
+			return "", currentSessionID, errors.New("invalid cleanup token user type")
+		}
+		return claims.SessionID, currentSessionID, nil
+	}
+
+	if currentSessionID == "" {
+		return "", "", errors.New("missing session id")
+	}
+
+	return currentSessionID, currentSessionID, nil
+}
+
+func (h *AdminHandler) logLogoutAuditEvent(c *gin.Context, targetSessionID, sessionCleanupToken string, success bool, errorMessage string) {
+	if h.auditRepo == nil {
+		return
+	}
+
+	actorID := resolveAdminLogoutActorID(c, h.authConfig, sessionCleanupToken)
+	h.appendAuditLog(c, &adminAuditLogEntry{
+		actorID:      actorID,
+		action:       "session.logout",
+		resourceType: "session",
+		resourceID:   targetSessionID,
+		success:      success,
+		errorMessage: errorMessage,
+	})
+}
+
+func resolveAdminLogoutActorID(c *gin.Context, authConfig middleware.AuthConfig, sessionCleanupToken string) string {
+	if sessionCleanupToken != "" {
+		claims, err := middleware.ValidateSessionCleanupToken(authConfig, sessionCleanupToken)
+		if err == nil && claims.UserType == "admin" {
+			return claims.UserID
+		}
+	}
+
+	accessToken := middleware.GetAccessTokenFromCookie(c)
+	if accessToken == "" {
+		return ""
+	}
+
+	claims, err := middleware.ValidateJWT(authConfig, accessToken)
+	if err != nil || claims.Purpose != "" || claims.UserType != "admin" {
+		return ""
+	}
+
+	return claims.UserID
+}
+
+func resolveCurrentAdminSessionID(c *gin.Context, authConfig middleware.AuthConfig) string {
+	accessToken := middleware.GetAccessTokenFromCookie(c)
+	if accessToken == "" {
+		return ""
+	}
+
+	claims, err := middleware.ValidateJWT(authConfig, accessToken)
+	if err != nil {
+		return ""
+	}
+	if claims.Purpose != "" || claims.UserType != "admin" {
+		return ""
+	}
+
+	return claims.SessionID
+}
+
+func shouldClearLogoutCookies(sessionCleanupToken, targetSessionID, currentSessionID string) bool {
+	if sessionCleanupToken == "" {
+		return true
+	}
+
+	if currentSessionID == "" {
+		return false
+	}
+
+	return targetSessionID == currentSessionID
 }
 
 // Reauth handles POST /api/v1/admin/auth/reauth.
@@ -392,6 +586,9 @@ func (h *AdminHandler) Reauth(c *gin.Context) {
 	// Verify the admin's password
 	admin, err := h.authService.GetAdminByID(c.Request.Context(), userID)
 	if err != nil {
+		if handleNotFoundError(c, err, "NOT_FOUND", "admin not found") {
+			return
+		}
 		h.logger.Warn("failed to get admin for reauth",
 			"admin_id", userID,
 			"error", err,

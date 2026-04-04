@@ -1,14 +1,17 @@
 package customer
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // GetBillingBalance handles GET /customer/billing/balance.
@@ -85,6 +88,7 @@ func (h *CustomerHandler) GetBillingUsage(c *gin.Context) {
 func (h *CustomerHandler) InitiateTopUp(c *gin.Context) {
 	var req models.TopUpRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		respondBindingError(c, err, "Invalid request")
 		return
 	}
 
@@ -94,10 +98,11 @@ func (h *CustomerHandler) InitiateTopUp(c *gin.Context) {
 	}
 
 	email := h.getCustomerEmail(c, customerID)
+	returnURL, cancelURL := h.billingRedirectURLs(req.Gateway)
 	sess, paymentID, topUpErr := h.paymentService.InitiateTopUp(
 		c.Request.Context(),
 		customerID, email, req.Amount, req.Currency,
-		req.Gateway, req.ReturnURL, req.CancelURL,
+		req.Gateway, returnURL, cancelURL,
 	)
 	if topUpErr != nil {
 		h.logger.Error("failed to initiate top-up",
@@ -113,6 +118,26 @@ func (h *CustomerHandler) InitiateTopUp(c *gin.Context) {
 		PaymentID:  paymentID,
 		PaymentURL: sess.PaymentURL,
 	}})
+}
+
+func (h *CustomerHandler) billingRedirectURLs(gateway string) (returnURL, cancelURL string) {
+	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
+	cancelURL = baseURL + "/billing"
+	if gateway == models.PaymentGatewayPayPal {
+		return baseURL + "/billing/paypal-return", cancelURL
+	}
+
+	return cancelURL, cancelURL
+}
+
+func respondBindingError(c *gin.Context, err error, fallbackMessage string) {
+	var apiErr *sharederrors.APIError
+	if errors.As(err, &apiErr) {
+		middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+		return
+	}
+
+	middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", fallbackMessage)
 }
 
 func (h *CustomerHandler) validateTopUp(c *gin.Context, amount int64) error {

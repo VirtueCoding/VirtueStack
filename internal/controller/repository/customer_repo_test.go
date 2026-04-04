@@ -10,6 +10,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockCustomerDB implements the DB interface for testing.
@@ -57,7 +59,6 @@ func (m *mockTx) Conn() *pgx.Conn {
 	return nil
 }
 
-
 func (m *mockTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	return 0, nil
 }
@@ -86,6 +87,11 @@ func (m *mockTx) ExecParams(ctx context.Context, sql string, arguments []any, oi
 type mockCustomerRow struct {
 	customer models.Customer
 	err      error
+}
+
+type mockSessionRow struct {
+	session models.Session
+	err     error
 }
 
 func (m mockCustomerRow) Scan(dest ...any) error {
@@ -144,6 +150,146 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 		}
 		if updatedAt, ok := dest[14].(*time.Time); ok {
 			*updatedAt = c.UpdatedAt
+		}
+	}
+	return nil
+}
+
+func (m mockSessionRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(dest) >= 9 {
+		if id, ok := dest[0].(*string); ok {
+			*id = m.session.ID
+		}
+		if userID, ok := dest[1].(*string); ok {
+			*userID = m.session.UserID
+		}
+		if userType, ok := dest[2].(*string); ok {
+			*userType = m.session.UserType
+		}
+		if refreshHash, ok := dest[3].(*string); ok {
+			*refreshHash = m.session.RefreshTokenHash
+		}
+		if ipAddress, ok := dest[4].(**string); ok {
+			*ipAddress = m.session.IPAddress
+		}
+		if userAgent, ok := dest[5].(**string); ok {
+			*userAgent = m.session.UserAgent
+		}
+		if expiresAt, ok := dest[6].(*time.Time); ok {
+			*expiresAt = m.session.ExpiresAt
+		}
+		if lastReauthAt, ok := dest[7].(**time.Time); ok {
+			*lastReauthAt = m.session.LastReauthAt
+		}
+		if createdAt, ok := dest[8].(*time.Time); ok {
+			*createdAt = m.session.CreatedAt
+		}
+	}
+	return nil
+}
+
+func TestRotateSession(t *testing.T) {
+	now := time.Now().UTC()
+	ipAddress := "127.0.0.1"
+	userAgent := "unit-test"
+
+	tests := []struct {
+		name        string
+		queryRowErr error
+		wantErr     bool
+		errCheck    func(t *testing.T, err error)
+	}{
+		{
+			name: "rotates session atomically",
+		},
+		{
+			name:        "returns no rows affected when session already consumed",
+			queryRowErr: pgx.ErrNoRows,
+			wantErr:     true,
+			errCheck: func(t *testing.T, err error) {
+				t.Helper()
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrNoRowsAffected)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldSession := models.Session{
+				ID:               "old-session-id",
+				UserID:           "customer-123",
+				UserType:         "customer",
+				RefreshTokenHash: "old-refresh-hash",
+				IPAddress:        &ipAddress,
+				UserAgent:        &userAgent,
+				ExpiresAt:        now.Add(time.Hour),
+				CreatedAt:        now,
+			}
+			newSession := &models.Session{
+				ID:               "new-session-id",
+				UserID:           "customer-123",
+				UserType:         "customer",
+				RefreshTokenHash: "new-refresh-hash",
+				IPAddress:        &ipAddress,
+				UserAgent:        &userAgent,
+				ExpiresAt:        now.Add(2 * time.Hour),
+			}
+
+			callCount := 0
+			db := &mockCustomerDB{
+				queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+					callCount++
+					switch callCount {
+					case 1:
+						if tt.queryRowErr != nil {
+							return mockSessionRow{err: tt.queryRowErr}
+						}
+						return mockSessionRow{session: oldSession}
+					case 2:
+						return mockGenericRow{values: []any{now.Add(time.Minute)}}
+					default:
+						return mockGenericRow{err: errors.New("unexpected QueryRow call")}
+					}
+				},
+			}
+
+			repo := NewCustomerRepository(db)
+			rotatedSession, err := repo.RotateSession(context.Background(), oldSession.RefreshTokenHash, newSession)
+			if tt.wantErr {
+				tt.errCheck(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, rotatedSession)
+			assert.Equal(t, oldSession.ID, rotatedSession.ID)
+			assert.Equal(t, now.Add(time.Minute), newSession.CreatedAt)
+		})
+	}
+}
+
+type mockGenericRow struct {
+	values []any
+	err    error
+}
+
+func (m mockGenericRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(dest) != len(m.values) {
+		return errors.New("unexpected scan destination count")
+	}
+	for i, value := range m.values {
+		switch d := dest[i].(type) {
+		case *time.Time:
+			*d = value.(time.Time)
+		default:
+			return errors.New("unexpected scan destination type")
 		}
 	}
 	return nil
@@ -298,7 +444,6 @@ func TestCustomerUpdate(t *testing.T) {
 		})
 	}
 }
-
 
 func TestCustomerUpdateProfile(t *testing.T) {
 	now := time.Now()

@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
@@ -45,7 +44,7 @@ func (h *grpcHandler) CreateDiskSnapshot(ctx context.Context, req *nodeagentpb.C
 		// For QCOW, use internal snapshot
 		diskPath := req.GetDiskPath()
 		if diskPath == "" {
-			diskPath = fmt.Sprintf("%s/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+			diskPath = transferutil.ResolveQCOWVMDiskPath(h.server.config.StoragePath, req.GetVmId())
 		}
 		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
@@ -100,7 +99,7 @@ func (h *grpcHandler) DeleteDiskSnapshot(ctx context.Context, req *nodeagentpb.D
 	case "qcow":
 		diskPath := req.GetDiskPath()
 		if diskPath == "" {
-			diskPath = fmt.Sprintf("%s/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
+			diskPath = transferutil.ResolveQCOWVMDiskPath(h.server.config.StoragePath, req.GetVmId())
 		}
 		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
@@ -160,6 +159,9 @@ func (h *grpcHandler) TransferDisk(req *nodeagentpb.TransferDiskRequest, stream 
 
 	// Get disk info
 	snapshotName := req.GetSnapshotName()
+	if err := transferutil.ValidateSnapshotName(snapshotName); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid snapshot_name: %v", err)
+	}
 
 	// For QCOW with snapshot, export the snapshot
 	if h.server.storageType == storage.StorageTypeQCOW && snapshotName != "" {
@@ -398,13 +400,23 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	if err := tracker.Accept(firstMsg.GetOffset(), len(firstMsg.GetData())); err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid initial chunk: %v", err)
 	}
-	file, rollback, err := h.openReceiveTarget(stream.Context(), firstMsg, receiveTarget)
+	file, commit, rollback, err := h.openReceiveTarget(stream.Context(), firstMsg, receiveTarget)
 	if err != nil {
 		return err
 	}
 	success := false
-	defer func() {
+	closeTarget := func() error {
+		if file == nil {
+			return nil
+		}
 		if err := file.Close(); err != nil {
+			return err
+		}
+		file = nil
+		return nil
+	}
+	defer func() {
+		if err := closeTarget(); err != nil {
 			logger.Debug("failed to close target disk file", "error", err)
 		}
 		if success || rollback == nil {
@@ -463,6 +475,14 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	if err := tracker.Finalize(); err != nil {
 		return status.Errorf(codes.DataLoss, "incomplete disk transfer: %v", err)
 	}
+	if err := closeTarget(); err != nil {
+		return status.Errorf(codes.Internal, "closing target disk file: %v", err)
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			return status.Errorf(codes.Internal, "committing target disk file: %v", err)
+		}
+	}
 
 	logger.Info("disk receive completed", "bytes_received", bytesReceived)
 	success = true
@@ -474,16 +494,16 @@ func (h *grpcHandler) ReceiveDisk(stream nodeagentpb.NodeAgentService_ReceiveDis
 	})
 }
 
-func (h *grpcHandler) openReceiveTarget(ctx context.Context, firstMsg *nodeagentpb.DiskChunk, target transferutil.ReceiveTarget) (*os.File, func() error, error) {
+func (h *grpcHandler) openReceiveTarget(ctx context.Context, firstMsg *nodeagentpb.DiskChunk, target transferutil.ReceiveTarget) (*os.File, func() error, func() error, error) {
 	if firstMsg.GetStorageBackend() == "lvm" {
 		if target.CreateImageID == "" {
-			return nil, nil, status.Error(codes.InvalidArgument, "target LVM identifier is required")
+			return nil, nil, nil, status.Error(codes.InvalidArgument, "target LVM identifier is required")
 		}
 		if firstMsg.GetDiskSizeGb() <= 0 {
-			return nil, nil, status.Error(codes.InvalidArgument, "disk_size_gb is required for lvm transfers")
+			return nil, nil, nil, status.Error(codes.InvalidArgument, "disk_size_gb is required for lvm transfers")
 		}
 		if err := transferutil.ValidateLVMImageCapacity(firstMsg.GetTotal(), int64(firstMsg.GetDiskSizeGb())); err != nil {
-			return nil, nil, status.Errorf(codes.InvalidArgument, "%v", err)
+			return nil, nil, nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
 		file, rollback, err := transferutil.OpenLVMReceiveTarget(
 			ctx,
@@ -500,22 +520,18 @@ func (h *grpcHandler) openReceiveTarget(ctx context.Context, firstMsg *nodeagent
 		)
 		if err != nil {
 			if errors.Is(err, transferutil.ErrCreateImage) {
-				return nil, nil, status.Errorf(codes.Internal, "creating target LVM image: %v", err)
+				return nil, nil, nil, status.Errorf(codes.Internal, "creating target LVM image: %v", err)
 			}
-			return nil, nil, status.Errorf(codes.Internal, "opening target LVM device: %v", err)
+			return nil, nil, nil, status.Errorf(codes.Internal, "opening target LVM device: %v", err)
 		}
-		return file, rollback, nil
+		return file, func() error { return nil }, rollback, nil
 	}
 
-	targetDir := filepath.Dir(target.OpenPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return nil, nil, status.Errorf(codes.Internal, "creating target directory: %v", err)
-	}
-	file, err := os.Create(target.OpenPath)
+	file, commit, rollback, err := transferutil.OpenFileReceiveTarget(target.OpenPath)
 	if err != nil {
-		return nil, nil, status.Errorf(codes.Internal, "creating target file: %v", err)
+		return nil, nil, nil, status.Errorf(codes.Internal, "opening target file: %v", err)
 	}
-	return file, nil, nil
+	return file, commit, rollback, nil
 }
 
 // PrepareMigratedVM creates a VM definition on this node using a transferred disk.
@@ -527,9 +543,6 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 	if req.GetDiskPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "disk_path is required")
 	}
-	if err := validatePath(req.GetDiskPath(), h.server.config.StoragePath); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
-	}
 
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "prepare-migrated-vm")
 	logger.Info("preparing migrated VM", "disk_path", req.GetDiskPath())
@@ -540,6 +553,16 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 		storageBackend = string(h.server.storageType)
 	}
 
+	resolvedDisk, err := transferutil.ResolvePreparedVMDisk(
+		storageBackend,
+		req.GetDiskPath(),
+		h.server.config.StoragePath,
+		h.server.config.LVMVolumeGroup,
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
+	}
+
 	// Build domain config from the request
 	cfg := &vm.DomainConfig{
 		VMID:           req.GetVmId(),
@@ -547,7 +570,8 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 		VCPU:           int(req.GetVcpu()),
 		MemoryMB:       int(req.GetMemoryMb()),
 		StorageBackend: storageBackend,
-		DiskPath:       req.GetDiskPath(),
+		DiskPath:       resolvedDisk.DiskPath,
+		LVMDiskPath:    resolvedDisk.LVMDiskPath,
 		MACAddress:     req.GetMacAddress(),
 		IPv4Address:    req.GetIpv4Address(),
 		IPv6Address:    req.GetIpv6Address(),
@@ -556,7 +580,7 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 
 	// For QCOW, the disk is already transferred
 	if storageBackend == "qcow" {
-		cfg.DiskPath = req.GetDiskPath()
+		cfg.DiskPath = resolvedDisk.DiskPath
 	} else {
 		// For Ceph, set the pool info
 		cfg.CephPool = req.GetCephPool()

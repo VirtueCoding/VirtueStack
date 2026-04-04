@@ -204,7 +204,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"vm_id", vmID,
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid VM ID format"})
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_VM_ID", "VM ID must be a valid UUID")
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"vm_id", vmID,
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing token"})
+		middleware.RespondWithError(c, http.StatusUnauthorized, "MISSING_TOKEN", "console token is required")
 		return
 	}
 
@@ -224,7 +224,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"vm_id", vmID,
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return
 	}
 
@@ -235,7 +235,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"vm_id", vmID,
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+		middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_TOKEN", "console token is invalid or expired")
 		return
 	}
 
@@ -243,7 +243,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 		h.logger.Warn("WebSocket connection limit exceeded",
 			"client_ip", clientIP,
 			"correlation_id", correlationID)
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many connections from this IP"})
+		middleware.RespondWithError(c, http.StatusTooManyRequests, "TOO_MANY_CONNECTIONS", "Too many connections from this IP")
 		return
 	}
 	defer releaseConnection(clientIP)
@@ -276,7 +276,7 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 			"node_id", nodeID,
 			"error", err,
 			"correlation_id", correlationID)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Node agent unavailable"})
+		middleware.RespondWithError(c, http.StatusServiceUnavailable, "NODE_AGENT_UNAVAILABLE", "Node agent unavailable")
 		return
 	}
 
@@ -563,7 +563,6 @@ func (h *CustomerHandler) readFromStream(ctx context.Context, cancel context.Can
 		}
 	}
 }
-
 
 func checkConnectionLimit(ip string) bool {
 	wsConnectionMu.Lock()

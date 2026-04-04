@@ -69,6 +69,31 @@ func TestMaskSensitiveFields(t *testing.T) {
 			},
 		},
 		{
+			name: "nested arrays",
+			input: map[string]any{
+				"steps": []any{
+					map[string]any{
+						"name":   "first",
+						"secret": "top-secret",
+					},
+					map[string]any{
+						"token": "abc123",
+					},
+				},
+			},
+			expected: map[string]any{
+				"steps": []any{
+					map[string]any{
+						"name":   "first",
+						"secret": "[REDACTED]",
+					},
+					map[string]any{
+						"token": "[REDACTED]",
+					},
+				},
+			},
+		},
+		{
 			name: "case insensitive matching",
 			input: map[string]any{
 				"PASSWORD": "secret",
@@ -86,6 +111,17 @@ func TestMaskSensitiveFields(t *testing.T) {
 			},
 			expected: map[string]any{
 				"root_password_encrypted": "[REDACTED]",
+			},
+		},
+		{
+			name: "url fields are sanitized",
+			input: map[string]any{
+				"url":          "https://user:pass@example.com/webhook/path?token=abc#frag",
+				"callback_url": "https://api.example.com:8443/callback?signature=123",
+			},
+			expected: map[string]any{
+				"url":          "https://example.com",
+				"callback_url": "https://api.example.com:8443",
 			},
 		},
 		{
@@ -140,9 +176,48 @@ func compareMaps(t *testing.T, expected, actual map[string]any) {
 				return
 			}
 			compareMaps(t, e, a)
+		case []any:
+			a, ok := actualVal.([]any)
+			if !ok {
+				t.Errorf("key %q: expected []any, got %T", key, actualVal)
+				return
+			}
+			compareSlices(t, e, a)
 		default:
 			if expectedVal != actualVal {
 				t.Errorf("key %q: expected %v, got %v", key, expectedVal, actualVal)
+			}
+		}
+	}
+}
+
+func compareSlices(t *testing.T, expected, actual []any) {
+	if len(expected) != len(actual) {
+		t.Errorf("slice length mismatch: expected %d, got %d", len(expected), len(actual))
+		return
+	}
+
+	for i, expectedVal := range expected {
+		actualVal := actual[i]
+
+		switch e := expectedVal.(type) {
+		case map[string]any:
+			a, ok := actualVal.(map[string]any)
+			if !ok {
+				t.Errorf("index %d: expected map[string]any, got %T", i, actualVal)
+				return
+			}
+			compareMaps(t, e, a)
+		case []any:
+			a, ok := actualVal.([]any)
+			if !ok {
+				t.Errorf("index %d: expected []any, got %T", i, actualVal)
+				return
+			}
+			compareSlices(t, e, a)
+		default:
+			if expectedVal != actualVal {
+				t.Errorf("index %d: expected %v, got %v", i, expectedVal, actualVal)
 			}
 		}
 	}

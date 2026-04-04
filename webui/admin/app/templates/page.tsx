@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
 import { Badge } from "@virtuestack/ui";
@@ -124,11 +124,7 @@ export default function TemplatesPage() {
   const [cacheStatusLoading, setCacheStatusLoading] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadTemplates();
-  }, []);
-
-  async function loadTemplates() {
+  const loadTemplates = useCallback(async () => {
     try {
       setLoading(true);
       const data = await adminTemplatesApi.getTemplates();
@@ -143,7 +139,11 @@ export default function TemplatesPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    void loadTemplates();
+  }, [loadTemplates]);
 
   const filteredTemplates = templates.filter((template) =>
     template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

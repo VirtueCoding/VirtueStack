@@ -59,17 +59,16 @@ func TestVMLifecycle(t *testing.T) {
 
 		// List VMs for customer
 		custID := TestCustomerID
-		vms, total, err := suite.VMRepo.List(ctx, models.VMListFilter{
+		vms, hasMore, _, err := suite.VMRepo.List(ctx, models.VMListFilter{
 			CustomerID: &custID,
 			PaginationParams: models.PaginationParams{
-				Page:    1,
 				PerPage: 10,
 			},
 		})
 
 		require.NoError(t, err, "Listing VMs should succeed")
-		assert.GreaterOrEqual(t, total, 3, "Should have at least 3 VMs")
 		assert.GreaterOrEqual(t, len(vms), 3, "Should return at least 3 VMs")
+		assert.False(t, hasMore, "Listing should fit within the requested page size")
 	})
 
 	t.Run("UpdateVMStatus", func(t *testing.T) {

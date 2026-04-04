@@ -184,6 +184,11 @@ func (h *CustomerHandler) CreateAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
+		h.logFailedAudit(c, "api_key.create", "api_key", keyID, map[string]any{
+			"name":        req.Name,
+			"permissions": req.Permissions,
+			"vm_ids":      vmIDs,
+		}, err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create API key")
 		return
 	}
@@ -262,6 +267,9 @@ func (h *CustomerHandler) RotateAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
+		h.logFailedAudit(c, "api_key.rotate", "api_key", keyID, map[string]any{
+			"name": existingKey.Name,
+		}, err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rotate API key")
 		return
 	}
@@ -327,6 +335,9 @@ func (h *CustomerHandler) DeleteAPIKey(c *gin.Context) {
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", correlationID)
+		h.logFailedAudit(c, "api_key.revoke", "api_key", keyID, map[string]any{
+			"name": existingKey.Name,
+		}, err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
 		return
 	}
@@ -440,7 +451,14 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 
 	// Mask sensitive fields before logging
 	maskedChanges := audit.MaskSensitiveFields(changes)
-	changesJSON, _ := json.Marshal(maskedChanges)
+	changesJSON, err := json.Marshal(maskedChanges)
+	if err != nil {
+		h.logger.Error("failed to marshal audit changes",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+		changesJSON = []byte(`{}`)
+	}
 
 	auditLog := &models.AuditLog{
 		ActorID:       &customerID,
@@ -459,6 +477,54 @@ func (h *CustomerHandler) logAudit(c *gin.Context, action, resourceType, resourc
 			"action", action,
 			"resource_id", resourceID,
 			"error", err)
+	}
+}
+
+func (h *CustomerHandler) logFailedAudit(
+	c *gin.Context,
+	action string,
+	resourceType string,
+	resourceID string,
+	changes map[string]any,
+	err error,
+) {
+	if h.auditRepo == nil || err == nil {
+		return
+	}
+
+	customerID := middleware.GetUserID(c)
+	actorIP := c.ClientIP()
+	correlationID := middleware.GetCorrelationID(c)
+	errorMessage := err.Error()
+
+	maskedChanges := audit.MaskSensitiveFields(changes)
+	changesJSON, marshalErr := json.Marshal(maskedChanges)
+	if marshalErr != nil {
+		h.logger.Error("failed to marshal audit changes",
+			"action", action,
+			"resource_id", resourceID,
+			"error", marshalErr)
+		changesJSON = []byte(`{}`)
+	}
+
+	auditLog := &models.AuditLog{
+		ActorID:       &customerID,
+		ActorType:     models.AuditActorCustomer,
+		ActorIP:       &actorIP,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    &resourceID,
+		Changes:       changesJSON,
+		CorrelationID: &correlationID,
+		Success:       false,
+		ErrorMessage:  &errorMessage,
+	}
+
+	if appendErr := h.auditRepo.Append(c.Request.Context(), auditLog); appendErr != nil {
+		h.logger.Error("failed to write audit log",
+			"action", action,
+			"resource_id", resourceID,
+			"error", appendErr)
 	}
 }
 

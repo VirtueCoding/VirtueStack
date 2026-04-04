@@ -12,6 +12,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
@@ -385,4 +386,66 @@ func TestUpdateExchangeRate_InvalidCurrency(t *testing.T) {
 	errorObj, ok := resp["error"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "INVALID_CURRENCY", errorObj["code"])
+}
+
+func TestBillingMutationHandlers_ValidationFailureReturnsErrorResponse(t *testing.T) {
+	validCustomerID := "550e8400-e29b-41d4-a716-446655440000"
+	validPaymentID := "550e8400-e29b-41d4-a716-446655440001"
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		setup  func(*gin.Engine, *AdminHandler)
+	}{
+		{
+			name:   "credit adjustment",
+			method: http.MethodPost,
+			path:   "/billing/credit?customer_id=" + validCustomerID,
+			setup: func(router *gin.Engine, handler *AdminHandler) {
+				router.POST("/billing/credit", handler.AdminCreditAdjustment)
+			},
+		},
+		{
+			name:   "exchange rate update",
+			method: http.MethodPut,
+			path:   "/exchange-rates/USD",
+			setup: func(router *gin.Engine, handler *AdminHandler) {
+				router.PUT("/exchange-rates/:currency", handler.UpdateExchangeRate)
+			},
+		},
+		{
+			name:   "refund payment",
+			method: http.MethodPost,
+			path:   "/billing/refund/" + validPaymentID,
+			setup: func(router *gin.Engine, handler *AdminHandler) {
+				router.POST("/billing/refund/:paymentId", handler.RefundPayment)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := setupAdminTestRouter()
+			handler := &AdminHandler{
+				logger: testAdminLogger(),
+			}
+			tt.setup(router, handler)
+
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+			errorObj, ok := resp["error"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "VALIDATION_ERROR", errorObj["code"])
+		})
+	}
 }

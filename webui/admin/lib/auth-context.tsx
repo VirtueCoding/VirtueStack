@@ -6,9 +6,11 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "@virtuestack/ui";
 import {
   adminAuthApi,
   ApiClientError,
@@ -16,6 +18,17 @@ import {
   type LoginRequest,
   type Verify2FARequest,
 } from "./api-client";
+import {
+  AdminProfileLoadError,
+  AdminSessionStateUnknownError,
+  finalizeAuthenticatedSession,
+} from "./session-finalizer";
+import {
+  advanceAuthVersion,
+  applyAuthenticatedUserIfCurrent,
+  canApplyBootstrapResult,
+  getCancelled2FAState,
+} from "./auth-bootstrap";
 
 interface AuthState {
   user: AdminUser | null;
@@ -47,8 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     requires2FA: false,
   });
   const [tempToken, setTempToken] = useState<string | null>(null);
-  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const authVersionRef = useRef(0);
 
   const persistState = useCallback(
     (user: AdminUser | null, isAuthenticated: boolean) => {
@@ -67,45 +80,100 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearError = useCallback(() => setError(null), []);
 
-  const reset2FA = useCallback(() => {
-    setState((prev) => ({ ...prev, requires2FA: false }));
-    setTempToken(null);
-    setPendingEmail(null);
-    setError(null);
-  }, []);
-
-  const initAuth = useCallback(async () => {
-    if (typeof window === "undefined") return;
-
-    try {
-      // Fetch the current user's identity from the server using the lightweight
-      // GET /admin/auth/me endpoint. This validates the session and returns
-      // authoritative user data (id, email, role) without heavy queries.
-      // A 401/403 response means no valid session exists.
-      const serverUser = await adminAuthApi.me();
-      if (!serverUser) {
-        sessionStorage.removeItem(AUTH_STATE_KEY);
-        setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
-        return;
-      }
+  const setAuthenticatedUser = useCallback(
+    (user: AdminUser) => {
+      authVersionRef.current = advanceAuthVersion(authVersionRef.current);
       setState({
-        user: serverUser,
+        user,
         isAuthenticated: true,
         isLoading: false,
         requires2FA: false,
       });
-      sessionStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ user: serverUser, isAuthenticated: true }));
-    } catch {
-      // Network error or unexpected failure — clear stored state so we don't
-      // grant access based on unvalidated cached data.
-      sessionStorage.removeItem(AUTH_STATE_KEY);
-      setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
-    }
+      setTempToken(null);
+      setError(null);
+      persistState(user, true);
+    },
+    [persistState]
+  );
+
+  const clearAuthenticatedState = useCallback(() => {
+    authVersionRef.current = advanceAuthVersion(authVersionRef.current);
+    setState({
+      user: null,
+      isAuthenticated: false,
+      isLoading: false,
+      requires2FA: false,
+    });
+    setTempToken(null);
+    persistState(null, false);
+  }, [persistState]);
+
+  const reset2FA = useCallback(() => {
+    authVersionRef.current = advanceAuthVersion(authVersionRef.current);
+    setState((prev) => ({ ...prev, ...getCancelled2FAState() }));
+    setTempToken(null);
+    setError(null);
   }, []);
 
   useEffect(() => {
-    initAuth();
-  }, [initAuth]);
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let isActive = true;
+    const bootstrapVersion = authVersionRef.current;
+
+    const initializeAuth = async () => {
+      try {
+        // Fetch the current user's identity from the server using the lightweight
+        // GET /admin/auth/me endpoint. This validates the session and returns
+        // authoritative user data (id, email, role) without heavy queries.
+        // A 401/403 response means no valid session exists.
+        const serverUser = await adminAuthApi.me();
+        if (
+          !isActive ||
+          !canApplyBootstrapResult(bootstrapVersion, authVersionRef.current)
+        ) {
+          return;
+        }
+
+        if (!serverUser) {
+          sessionStorage.removeItem(AUTH_STATE_KEY);
+          setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
+          return;
+        }
+
+        setState({
+          user: serverUser,
+          isAuthenticated: true,
+          isLoading: false,
+          requires2FA: false,
+        });
+        sessionStorage.setItem(
+          AUTH_STATE_KEY,
+          JSON.stringify({ user: serverUser, isAuthenticated: true }),
+        );
+      } catch {
+        if (
+          !isActive ||
+          !canApplyBootstrapResult(bootstrapVersion, authVersionRef.current)
+        ) {
+          return;
+        }
+
+        // Network error or unexpected failure — clear stored state so we don't
+        // grant access based on unvalidated cached data.
+        sessionStorage.removeItem(AUTH_STATE_KEY);
+        setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
+      }
+    };
+
+    void initializeAuth();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const login = useCallback(
     async (credentials: LoginRequest) => {
@@ -116,29 +184,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const tokens = await adminAuthApi.login(credentials);
 
         if (tokens.requires_2fa) {
+          authVersionRef.current = advanceAuthVersion(authVersionRef.current);
           setState((prev) => ({ ...prev, isLoading: false, requires2FA: true }));
           setTempToken(tokens.temp_token || null);
-          setPendingEmail(credentials.email);
           return;
         }
 
-        // Fetch the real user identity from the server instead of constructing
-        // a hardcoded object. This ensures role and permissions are authoritative.
-        const serverUser = await adminAuthApi.me();
-        const user: AdminUser = serverUser ?? {
-          id: credentials.email,
-          email: credentials.email,
-          role: "admin",
-        };
-        setState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
+        await finalizeAuthenticatedSession({
+          user: tokens.user ?? null,
+          sessionCleanupToken: tokens.session_cleanup_token,
+          invalidateSession: adminAuthApi.invalidateSession,
+          setAuthenticatedUser,
         });
-        setTempToken(null);
-        setPendingEmail(null);
-        persistState(user, true);
         router.push("/");
       } catch (err) {
         let message = "Login failed. Please try again.";
@@ -148,39 +205,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             message = err.message;
           }
+        } else if (err instanceof AdminProfileLoadError) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          return;
+        } else if (err instanceof AdminSessionStateUnknownError) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          return;
+        } else if (err instanceof Error) {
+          message = err.message;
         }
         setError(message);
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, persistState]
+    [clearAuthenticatedState, router, setAuthenticatedUser]
   );
 
   const verify2FA = useCallback(
     async (request: Verify2FARequest) => {
       setError(null);
       setState((prev) => ({ ...prev, isLoading: true }));
+      const verificationVersion = authVersionRef.current;
 
       try {
-        await adminAuthApi.verify2FA(request);
-        // Fetch the real user identity from the server to populate role and permissions.
-        const serverUser = await adminAuthApi.me();
-        const user: AdminUser = serverUser ?? {
-          id: pendingEmail || "",
-          email: pendingEmail || "",
-          role: "admin",
-        };
-        setState({
-          user,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
+        const tokens = await adminAuthApi.verify2FA(request);
+
+        const { didApplyAuthenticatedUser } = await finalizeAuthenticatedSession({
+          user: tokens.user ?? null,
+          sessionCleanupToken: tokens.session_cleanup_token,
+          invalidateSession: adminAuthApi.invalidateSession,
+          setAuthenticatedUser: (user) => {
+            return applyAuthenticatedUserIfCurrent(
+              user,
+              verificationVersion,
+              authVersionRef.current,
+              setAuthenticatedUser,
+            );
+          },
         });
-        setTempToken(null);
-        setPendingEmail(null);
-        persistState(user, true);
+        if (!didApplyAuthenticatedUser) {
+          return;
+        }
         router.push("/");
       } catch (err) {
+        if (err instanceof AdminSessionStateUnknownError) {
+          clearAuthenticatedState();
+          setError(err.message);
+          return;
+        }
+        if (!canApplyBootstrapResult(verificationVersion, authVersionRef.current)) {
+          return;
+        }
         let message = "2FA verification failed. Please try again.";
         if (err instanceof ApiClientError) {
           if (err.code === "INVALID_2FA_CODE") {
@@ -188,35 +267,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             message = err.message;
           }
+        } else if (err instanceof AdminProfileLoadError) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          return;
+        } else if (err instanceof AdminSessionStateUnknownError) {
+          message = err.message;
+          clearAuthenticatedState();
+          setError(message);
+          return;
+        } else if (err instanceof Error) {
+          message = err.message;
         }
         setError(message);
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [router, persistState, pendingEmail]
+    [clearAuthenticatedState, router, setAuthenticatedUser]
   );
 
   const logout = useCallback(async () => {
+    setError(null);
     setState((prev) => ({ ...prev, isLoading: true }));
 
     try {
       await adminAuthApi.logout();
-    } catch (err) {
-      // Logout errors are non-fatal — session may already be invalid.
-      // Log for debugging but don't propagate to prevent UI from hanging.
-      console.warn('Logout request failed (session may already be invalid):', err);
-    } finally {
-      setState({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-        requires2FA: false,
-      });
-      setTempToken(null);
-      sessionStorage.removeItem(AUTH_STATE_KEY);
+      clearAuthenticatedState();
       router.push("/login");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to log out. Please try again.";
+      setError(message);
+      setState((prev) => ({ ...prev, isLoading: false }));
+      toast({
+        title: "Logout failed",
+        description: message,
+        variant: "destructive",
+      });
     }
-  }, [router]);
+  }, [clearAuthenticatedState, router]);
 
   const value: AuthContextType = {
     ...state,

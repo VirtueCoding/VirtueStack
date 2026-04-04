@@ -224,6 +224,57 @@ func TestBindAndValidate(t *testing.T) {
 	})
 }
 
+func TestBindOptionalJSON(t *testing.T) {
+	type testReq struct {
+		Name string `json:"name"`
+	}
+
+	t.Run("empty body is allowed", func(t *testing.T) {
+		w, c := createTestContext("POST", "/test", "")
+		_ = w
+
+		var req testReq
+		err := BindOptionalJSON(c, &req)
+		require.NoError(t, err)
+		assert.Empty(t, req.Name)
+	})
+
+	t.Run("whitespace body is allowed", func(t *testing.T) {
+		w, c := createTestContext("POST", "/test", " \n\t ")
+		_ = w
+
+		var req testReq
+		err := BindOptionalJSON(c, &req)
+		require.NoError(t, err)
+		assert.Empty(t, req.Name)
+	})
+
+	t.Run("malformed JSON returns parse error", func(t *testing.T) {
+		w, c := createTestContext("POST", "/test", `{"name":`)
+		_ = w
+
+		err := BindOptionalJSON(c, &testReq{})
+		require.Error(t, err)
+		var apiErr *sharederrors.APIError
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, "INVALID_REQUEST_BODY", apiErr.Code)
+	})
+
+	t.Run("valid JSON binds and preserves body for reread", func(t *testing.T) {
+		w, c := createTestContext("POST", "/test", `{"name":"John"}`)
+		_ = w
+
+		var req testReq
+		err := BindOptionalJSON(c, &req)
+		require.NoError(t, err)
+		assert.Equal(t, "John", req.Name)
+
+		raw, readErr := c.GetRawData()
+		require.NoError(t, readErr)
+		assert.JSONEq(t, `{"name":"John"}`, string(raw))
+	})
+}
+
 func TestSlugRegex(t *testing.T) {
 	tests := []struct {
 		name  string

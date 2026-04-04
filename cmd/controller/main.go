@@ -143,7 +143,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		return nil, nil, fmt.Errorf("creating task worker: %w", err)
 	}
 
-	server, err := controller.NewServer(cfg.ControllerConfig, infra.dbPool, infra.js, logger)
+	server, err := controller.NewServer(ctx, cfg.ControllerConfig, infra.dbPool, infra.js, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating server: %w", err)
 	}
@@ -156,7 +156,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	server.SetTaskWorker(worker)
 	server.SetNATSConnection(infra.nc)
 
-	if err := server.InitializeServices(); err != nil {
+	if err := server.InitializeServices(ctx); err != nil {
 		return nil, nil, fmt.Errorf("initializing services: %w", err)
 	}
 
@@ -166,6 +166,8 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		IPRepo:            repository.NewIPRepository(infra.dbPool),
 		BackupRepo:        repository.NewBackupRepository(infra.dbPool),
 		TaskRepo:          repository.NewTaskRepository(infra.dbPool),
+		WebhookRepo:       repository.NewWebhookRepository(infra.dbPool),
+		SystemWebhookRepo: repository.NewSystemWebhookRepository(infra.dbPool),
 		TemplateRepo:      repository.NewTemplateRepository(infra.dbPool),
 		TemplateCacheRepo: repository.NewTemplateCacheRepository(infra.dbPool),
 		IPAMService:       server.GetIPAMService(),
@@ -173,11 +175,12 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 			Monitors:   cfg.CephMonitors,
 			User:       cfg.CephUser,
 			SecretUUID: cfg.CephSecretUUID,
-		}, logger),
+		}, cfg.GuestOpHMACSecret.Value(), logger),
 		DNSNameservers: cfg.DNSNameservers,
 		CephUser:       cfg.CephUser,
 		CephSecretUUID: cfg.CephSecretUUID,
 		CephMonitors:   cfg.CephMonitors,
+		EncryptionKey:  cfg.EncryptionKey.Value(),
 		Logger:         logger,
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)

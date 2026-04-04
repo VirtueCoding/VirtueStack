@@ -37,7 +37,7 @@ func (h *grpcHandler) CreateLVMBackup(ctx context.Context, req *nodeagentpb.Crea
 
 	// Validate backup file path to prevent traversal attacks
 	backupDir := filepath.Dir(req.GetBackupFilePath())
-	if err := validatePath(backupDir, h.server.config.StoragePath); err != nil {
+	if err := validatePath(req.GetBackupFilePath(), h.server.config.StoragePath); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid backup_file_path: %v", err)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 )
 
@@ -39,10 +40,8 @@ func (s *SystemEventService) PublishSystemEvent(ctx context.Context, eventType s
 
 	for _, wh := range webhooks {
 		if s.taskPublisher != nil {
-			if _, err := s.taskPublisher.PublishTask(ctx, "webhook.deliver", map[string]any{
+			if _, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSystemWebhookDeliver, map[string]any{
 				"system_webhook_id": wh.ID,
-				"url":               wh.URL,
-				"secret":            wh.Secret,
 				"event":             eventType,
 				"payload":           payload,
 			}); err != nil {

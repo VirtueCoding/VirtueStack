@@ -179,8 +179,13 @@ func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
 
+	tokenCtx, err := c.guestOpContext(ctx, vmID)
+	if err != nil {
+		return 0, err
+	}
+
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	resp, err := client.GuestFreezeFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	resp, err := client.GuestFreezeFilesystems(tokenCtx, &nodeagentpb.VMIdentifier{VmId: vmID})
 	if err != nil {
 		return 0, fmt.Errorf("calling GuestFreezeFilesystems: %w", err)
 	}
@@ -201,8 +206,13 @@ func (c *NodeAgentGRPCClient) GuestThawFilesystems(ctx context.Context, nodeID, 
 		return 0, fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
 
+	tokenCtx, err := c.guestOpContext(ctx, vmID)
+	if err != nil {
+		return 0, err
+	}
+
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	resp, err := client.GuestThawFilesystems(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	resp, err := client.GuestThawFilesystems(tokenCtx, &nodeagentpb.VMIdentifier{VmId: vmID})
 	if err != nil {
 		return 0, fmt.Errorf("calling GuestThawFilesystems: %w", err)
 	}

@@ -8,12 +8,12 @@ import (
 
 // Permission constants for customer API key authorization.
 const (
-	PermissionVMRead       = "vm:read"
-	PermissionVMWrite      = "vm:write"
-	PermissionVMPower      = "vm:power"
-	PermissionBackupRead   = "backup:read"
-	PermissionBackupWrite  = "backup:write"
-	PermissionSnapshotRead = "snapshot:read"
+	PermissionVMRead        = "vm:read"
+	PermissionVMWrite       = "vm:write"
+	PermissionVMPower       = "vm:power"
+	PermissionBackupRead    = "backup:read"
+	PermissionBackupWrite   = "backup:write"
+	PermissionSnapshotRead  = "snapshot:read"
 	PermissionSnapshotWrite = "snapshot:write"
 )
 
@@ -40,7 +40,8 @@ type BillingRoutesConfig struct {
 //   - JWT authentication: Full access to all endpoints
 //   - API key authentication: Limited to granted permissions (vm:read, vm:write, etc.)
 //
-// Account management endpoints (profile, 2FA, webhooks, API keys) require JWT authentication.
+// Account management endpoints (profile, 2FA, webhooks, API keys, notification mutations)
+// require JWT authentication.
 // CSRF protection is applied only for JWT-authenticated requests; API key requests are exempt.
 func RegisterCustomerRoutes(
 	router *gin.RouterGroup,
@@ -55,6 +56,7 @@ func RegisterCustomerRoutes(
 
 	oauthEnabled := billingCfg.OAuthGoogleEnabled || billingCfg.OAuthGitHubEnabled
 	registerAuthRoutes(customer, handler, allowSelfRegistration, oauthEnabled)
+	registerLogoutRoutes(customer, handler)
 
 	// Account management routes - JWT only, no API key access
 	// These handle sensitive account-level operations that should require browser session.
@@ -97,11 +99,12 @@ func RegisterCustomerRoutes(
 	protected.GET("/ws/serial/:vmId", middleware.RequireVMScope(), handler.HandleSerialWebSocket)
 
 	if notifyHandler != nil {
-		RegisterNotificationRoutes(protected, notifyHandler)
+		registerNotificationReadRoutes(protected, notifyHandler)
+		registerNotificationMutationRoutes(accountGroup, notifyHandler)
 	}
 
 	if inAppNotifHandler != nil {
-		registerInAppNotificationRoutes(customer, protected, inAppNotifHandler, handler.authConfig)
+		registerInAppNotificationRoutes(customer, protected, accountGroup, inAppNotifHandler, handler.authConfig)
 	}
 
 	// Conditional billing routes
@@ -146,7 +149,6 @@ func registerAuthRoutes(customer *gin.RouterGroup, handler *CustomerHandler, all
 
 // registerAccountRoutes registers account management endpoints (JWT-only, no API key).
 func registerAccountRoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
-	protected.POST("/auth/logout", handler.Logout)
 	protected.PUT("/password", middleware.PasswordChangeRateLimit(), handler.ChangePassword)
 	protected.GET("/profile", handler.GetProfile)
 	protected.PUT("/profile", handler.UpdateProfile)
@@ -306,26 +308,28 @@ func register2FARoutes(protected *gin.RouterGroup, handler *CustomerHandler) {
 		twofa.POST("/enable", handler.Enable2FA)
 		twofa.POST("/disable", handler.Disable2FA)
 		twofa.GET("/status", handler.Get2FAStatus)
-		twofa.GET("/backup-codes", handler.GetBackupCodes)
 		twofa.POST("/backup-codes/regenerate", handler.RegenerateBackupCodes)
 	}
 }
 
 // registerInAppNotificationRoutes registers in-app notification routes.
-// SSE stream requires JWT only (no API key). REST endpoints use the protected group.
+// Read endpoints support API keys; mutation endpoints and SSE require JWT only.
 func registerInAppNotificationRoutes(
 	customer *gin.RouterGroup,
 	protected *gin.RouterGroup,
+	accountGroup *gin.RouterGroup,
 	handler *InAppNotificationsHandler,
 	authCfg middleware.AuthConfig,
 ) {
 	notifs := protected.Group("/notifications")
 	{
 		notifs.GET("", handler.ListNotifications)
-		notifs.POST("/:id/read", handler.MarkAsRead)
-		notifs.POST("/read-all", handler.MarkAllAsRead)
 		notifs.GET("/unread-count", handler.GetUnreadCount)
 	}
+
+	mutationGroup := accountGroup.Group("/notifications")
+	mutationGroup.POST("/:id/read", handler.MarkAsRead)
+	mutationGroup.POST("/read-all", handler.MarkAllAsRead)
 
 	// SSE stream is JWT-only — separate from the protected group which may use API keys
 	sseGroup := customer.Group("/notifications")

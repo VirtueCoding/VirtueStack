@@ -166,7 +166,7 @@ DELETE /webhooks/:id
 PUT    /webhooks/:id
 
 POST   /2fa/initiate, /2fa/enable, /2fa/disable
-GET    /2fa/status, /2fa/backup-codes
+GET    /2fa/status
 POST   /2fa/backup-codes/regenerate
 
 GET    /notifications/preferences

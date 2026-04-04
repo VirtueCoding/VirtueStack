@@ -142,12 +142,11 @@ func (r *AdminBackupScheduleRepository) Update(ctx context.Context, schedule *mo
 		WHERE id = $11
 		RETURNING ` + adminBackupScheduleSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		schedule.Name, schedule.Description, schedule.Frequency, schedule.RetentionCount,
 		schedule.TargetAll, schedule.TargetPlanIDs, schedule.TargetNodeIDs, schedule.TargetCustomerIDs,
 		schedule.Active, schedule.NextRunAt, schedule.ID,
-	)
-	updated, err := scanAdminBackupSchedule(row)
+	}, scanAdminBackupSchedule)
 	if err != nil {
 		return fmt.Errorf("updating admin backup schedule %s: %w", schedule.ID, err)
 	}

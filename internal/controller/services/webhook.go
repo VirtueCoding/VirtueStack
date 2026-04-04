@@ -37,6 +37,11 @@ type WebhookService struct {
 	skipURLValidation bool // For testing only
 }
 
+const (
+	webhookSchedulerInterval  = 30 * time.Second
+	webhookSchedulerBatchSize = 100
+)
+
 // NewWebhookService creates a new WebhookService with the given dependencies.
 func NewWebhookService(
 	webhookRepo *repository.WebhookRepository,
@@ -53,6 +58,40 @@ func NewWebhookService(
 		// service (e.g. the verification ping in Register) are subject to the
 		// same IP-range enforcement as async task deliveries.
 		httpClient: tasks.DefaultHTTPClient(),
+	}
+}
+
+// StartScheduler runs the customer webhook recovery loop. It processes due pending
+// and retrying deliveries so publish failures or expired leases are retried.
+func (s *WebhookService) StartScheduler(ctx context.Context) {
+	s.logger.Info("webhook delivery scheduler started")
+
+	ticker := time.NewTicker(webhookSchedulerInterval)
+	defer ticker.Stop()
+
+	s.runSchedulerTick(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("webhook delivery scheduler stopped", "reason", ctx.Err())
+			return
+		case <-ticker.C:
+			s.runSchedulerTick(ctx)
+		}
+	}
+}
+
+func (s *WebhookService) runSchedulerTick(ctx context.Context) {
+	deps := &tasks.WebhookDeliveryDeps{
+		WebhookRepo:   s.webhookRepo,
+		HTTPClient:    s.httpClient,
+		Logger:        s.logger,
+		EncryptionKey: s.encryptionKey,
+	}
+
+	if err := tasks.ProcessPendingDeliveries(ctx, deps, webhookSchedulerBatchSize); err != nil {
+		s.logger.Warn("webhook delivery scheduler tick failed", "error", err)
 	}
 }
 
@@ -79,14 +118,14 @@ func (s *WebhookService) SetSkipURLValidation(skip bool) {
 
 // Valid webhook events that can be subscribed to.
 var ValidWebhookEvents = map[string]bool{
-	"vm.created":       true,
-	"vm.deleted":       true,
-	"vm.started":       true,
-	"vm.stopped":       true,
-	"vm.reinstalled":   true,
-	"vm.migrated":      true,
-	"backup.completed": true,
-	"backup.failed":    true,
+	"vm.created":          true,
+	"vm.deleted":          true,
+	"vm.started":          true,
+	"vm.stopped":          true,
+	"vm.reinstalled":      true,
+	"vm.migrated":         true,
+	"backup.completed":    true,
+	"backup.failed":       true,
 	"snapshot.created":    true,
 	"bandwidth.threshold": true,
 }
@@ -195,9 +234,11 @@ func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (
 		return nil, fmt.Errorf("creating webhook: %w", err)
 	}
 
-	parsedURL, _ := url.Parse(req.URL)
+	parsedURL, parseErr := url.Parse(req.URL)
 	safeURL := ""
-	if parsedURL != nil {
+	if parseErr != nil {
+		s.logger.Warn("failed to parse webhook URL for audit log", "url", req.URL, "error", parseErr)
+	} else if parsedURL != nil {
 		safeURL = parsedURL.Scheme + "://" + parsedURL.Host
 	}
 	s.logger.Info("webhook created",
@@ -231,6 +272,9 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 		return nil, ErrWebhookNotFound
 	}
 
+	var encryptedSecret string
+	var secretHash *string
+
 	// Validate URL if provided
 	if req.URL != nil {
 		if err := s.validateWebhookURL(ctx, *req.URL); err != nil {
@@ -247,12 +291,7 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 		}
 	}
 
-	// Update webhook
-	if err := s.webhookRepo.Update(ctx, id, req.URL, req.Events, req.Active); err != nil {
-		return nil, fmt.Errorf("updating webhook: %w", err)
-	}
-
-	// Update secret if provided
+	// Validate and prepare secret before any database mutation so updates remain atomic.
 	if req.Secret != nil {
 		if len(*req.Secret) < 16 {
 			return nil, ErrSecretTooShort
@@ -260,13 +299,17 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 		if len(*req.Secret) > 128 {
 			return nil, ErrSecretTooLong
 		}
-		encryptedSecret, err := s.encryptSecret(*req.Secret)
+		encryptedSecret, err = s.encryptSecret(*req.Secret)
 		if err != nil {
 			return nil, fmt.Errorf("encrypting secret: %w", err)
 		}
-		if err := s.webhookRepo.UpdateSecret(ctx, id, encryptedSecret); err != nil {
-			return nil, fmt.Errorf("updating webhook secret: %w", err)
-		}
+		secretHash = &encryptedSecret
+	}
+
+	// Update webhook and optional secret in a single repository write to keep the
+	// mutation atomic from the caller's perspective.
+	if err := s.webhookRepo.Update(ctx, id, req.URL, req.Events, req.Active, secretHash); err != nil {
+		return nil, fmt.Errorf("updating webhook: %w", err)
 	}
 
 	// Return updated webhook
@@ -401,7 +444,7 @@ func (s *WebhookService) queueDelivery(ctx context.Context, webhook *models.Cust
 
 	// Publish task for async delivery
 	if s.taskPublisher != nil {
-		taskID, err := s.taskPublisher.PublishTask(ctx, "webhook.deliver", map[string]any{
+		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeWebhookDeliver, map[string]any{
 			"delivery_id": delivery.ID,
 			"webhook_id":  webhook.ID,
 		})
@@ -572,7 +615,10 @@ func (s *WebhookService) Register(ctx context.Context, webhook *models.CustomerW
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Data:      json.RawMessage(`{"message":"webhook verification ping"}`),
 	}
-	body, _ := json.Marshal(testPayload)
+	body, err := json.Marshal(testPayload)
+	if err != nil {
+		return "", fmt.Errorf("marshal webhook verification payload: %w", err)
+	}
 	sig := GenerateSignature(secret, body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewReader(body))
@@ -698,7 +744,7 @@ func (s *WebhookService) RetryDelivery(ctx context.Context, deliveryID string) e
 	}
 
 	if s.taskPublisher != nil {
-		if _, err := s.taskPublisher.PublishTask(ctx, "webhook.deliver", map[string]any{
+		if _, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeWebhookDeliver, map[string]any{
 			"delivery_id": deliveryID,
 			"webhook_id":  delivery.WebhookID,
 		}); err != nil {
@@ -761,7 +807,7 @@ func (s *WebhookService) RotateSecret(ctx context.Context, webhookID string) (st
 		return "", fmt.Errorf("encrypting secret: %w", err)
 	}
 
-	if err := s.webhookRepo.UpdateSecret(ctx, webhookID, encrypted); err != nil {
+	if err := s.webhookRepo.Update(ctx, webhookID, nil, nil, nil, &encrypted); err != nil {
 		return "", fmt.Errorf("updating webhook secret: %w", err)
 	}
 

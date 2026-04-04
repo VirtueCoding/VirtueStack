@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/notifications"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -108,40 +109,41 @@ func (s *consoleTokenStore) Validate(token, vmID, customerID string) bool {
 }
 
 type CustomerHandler struct {
-	vmService            *services.VMService
-	backupService        *services.BackupService
-	authService          *services.AuthService
-	templateService      *services.TemplateService
-	webhookService       *services.WebhookService
-	customerService      *services.CustomerService
-	billingLedgerService *services.BillingLedgerService
-	paymentService       *services.PaymentService
-	oauthService         *services.OAuthService
-	vmRepo               *repository.VMRepository
-	nodeRepo             *repository.NodeRepository
-	backupRepo           *repository.BackupRepository
-	templateRepo         *repository.TemplateRepository
-	customerRepo         *repository.CustomerRepository
-	apiKeyRepo           *repository.CustomerAPIKeyRepository
-	auditRepo            *repository.AuditRepository
-	bandwidthRepo        *repository.BandwidthRepository
-	ipRepo               *repository.IPRepository
-	planRepo             *repository.PlanRepository
-	isoUploadRepo        *repository.ISOUploadRepository
-	ssoTokenRepo         *repository.SSOTokenRepository
-	taskRepo             *repository.TaskRepository
-	rdnsService          *services.RDNSService
-	invoiceService       *services.BillingInvoiceService
-	nodeAgent            nodeAgentConnPool
-	authConfig           middleware.AuthConfig
-	encryptionKey        string
-	consoleBaseURL       string
-	isoStoragePath       string
-	tokenStore           *consoleTokenStore
-	emailProvider        emailSender
-	passwordResetBaseURL string
+	vmService                     *services.VMService
+	backupService                 *services.BackupService
+	authService                   *services.AuthService
+	templateService               *services.TemplateService
+	webhookService                *services.WebhookService
+	customerService               *services.CustomerService
+	billingLedgerService          *services.BillingLedgerService
+	paymentService                *services.PaymentService
+	oauthService                  oauthService
+	vmRepo                        *repository.VMRepository
+	nodeRepo                      *repository.NodeRepository
+	backupRepo                    *repository.BackupRepository
+	templateRepo                  *repository.TemplateRepository
+	customerRepo                  customerAccountRepo
+	apiKeyRepo                    *repository.CustomerAPIKeyRepository
+	auditRepo                     *repository.AuditRepository
+	bandwidthRepo                 *repository.BandwidthRepository
+	ipRepo                        *repository.IPRepository
+	planRepo                      *repository.PlanRepository
+	isoUploadRepo                 *repository.ISOUploadRepository
+	ssoTokenRepo                  *repository.SSOTokenRepository
+	taskRepo                      *repository.TaskRepository
+	rdnsService                   *services.RDNSService
+	invoiceService                *services.BillingInvoiceService
+	nodeAgent                     nodeAgentConnPool
+	authConfig                    middleware.AuthConfig
+	encryptionKey                 string
+	consoleBaseURL                string
+	isoStoragePath                string
+	maxISOSizeBytes               int64
+	tokenStore                    *consoleTokenStore
+	emailProvider                 emailSender
+	passwordResetBaseURL          string
 	registrationEmailVerification bool
-	logger               *slog.Logger
+	logger                        *slog.Logger
 }
 
 type nodeAgentConnPool interface {
@@ -154,80 +156,101 @@ type emailSender interface {
 	IsEnabled() bool
 }
 
+type oauthService interface {
+	GetAuthorizationURL(provider, codeChallenge, state, redirectURI string) (string, error)
+	HandleCallback(ctx context.Context, provider, code, codeVerifier, redirectURI, ipAddress, userAgent string) (*models.AuthTokens, string, error)
+	GetLinkedAccounts(ctx context.Context, customerID string) ([]*models.OAuthLink, error)
+	LinkAccount(ctx context.Context, customerID, provider, code, codeVerifier, redirectURI string) error
+	UnlinkAccount(ctx context.Context, customerID, provider string) error
+}
+
+type customerAccountRepo interface {
+	GetByID(ctx context.Context, id string) (*models.Customer, error)
+	GetByEmail(ctx context.Context, email string) (*models.Customer, error)
+	UpdateStatus(ctx context.Context, id, status string) error
+}
+
 // CustomerHandlerConfig holds all dependencies required to construct a CustomerHandler.
 type CustomerHandlerConfig struct {
-	VMService            *services.VMService
-	BackupService        *services.BackupService
-	AuthService          *services.AuthService
-	TemplateService      *services.TemplateService
-	WebhookService       *services.WebhookService
-	CustomerService      *services.CustomerService
-	BillingLedgerService *services.BillingLedgerService
-	PaymentService       *services.PaymentService
-	OAuthService         *services.OAuthService
-	VMRepo               *repository.VMRepository
-	NodeRepo             *repository.NodeRepository
-	BackupRepo           *repository.BackupRepository
-	TemplateRepo         *repository.TemplateRepository
-	CustomerRepo         *repository.CustomerRepository
-	APIKeyRepo           *repository.CustomerAPIKeyRepository
-	AuditRepo            *repository.AuditRepository
-	BandwidthRepo        *repository.BandwidthRepository
-	IPRepo               *repository.IPRepository
-	PlanRepo             *repository.PlanRepository
-	ISOUploadRepo        *repository.ISOUploadRepository
-	SSOTokenRepo         *repository.SSOTokenRepository
-	TaskRepo             *repository.TaskRepository
-	RDNSService          *services.RDNSService
-	InvoiceService       *services.BillingInvoiceService
-	NodeAgent            nodeAgentConnPool
-	JWTSecret            string
-	Issuer               string
-	EncryptionKey        string
-	ConsoleBaseURL       string
-	ISOStoragePath       string
-	EmailProvider        emailSender
-	PasswordResetBaseURL string
+	VMService                     *services.VMService
+	BackupService                 *services.BackupService
+	AuthService                   *services.AuthService
+	TemplateService               *services.TemplateService
+	WebhookService                *services.WebhookService
+	CustomerService               *services.CustomerService
+	BillingLedgerService          *services.BillingLedgerService
+	PaymentService                *services.PaymentService
+	OAuthService                  oauthService
+	VMRepo                        *repository.VMRepository
+	NodeRepo                      *repository.NodeRepository
+	BackupRepo                    *repository.BackupRepository
+	TemplateRepo                  *repository.TemplateRepository
+	CustomerRepo                  customerAccountRepo
+	APIKeyRepo                    *repository.CustomerAPIKeyRepository
+	AuditRepo                     *repository.AuditRepository
+	BandwidthRepo                 *repository.BandwidthRepository
+	IPRepo                        *repository.IPRepository
+	PlanRepo                      *repository.PlanRepository
+	ISOUploadRepo                 *repository.ISOUploadRepository
+	SSOTokenRepo                  *repository.SSOTokenRepository
+	TaskRepo                      *repository.TaskRepository
+	RDNSService                   *services.RDNSService
+	InvoiceService                *services.BillingInvoiceService
+	NodeAgent                     nodeAgentConnPool
+	JWTSecret                     string
+	Issuer                        string
+	EncryptionKey                 string
+	ConsoleBaseURL                string
+	ISOStoragePath                string
+	MaxISOSizeBytes               int64
+	EmailProvider                 emailSender
+	PasswordResetBaseURL          string
 	RegistrationEmailVerification bool
-	Logger               *slog.Logger
+	Logger                        *slog.Logger
 }
 
 func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
+	authConfig := middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer}
+	if cfg.AuthService != nil {
+		authConfig.SessionValidator = cfg.AuthService.ValidateAccessSession
+	}
+
 	return &CustomerHandler{
-		vmService:            cfg.VMService,
-		backupService:        cfg.BackupService,
-		authService:          cfg.AuthService,
-		templateService:      cfg.TemplateService,
-		webhookService:       cfg.WebhookService,
-		customerService:      cfg.CustomerService,
-		billingLedgerService: cfg.BillingLedgerService,
-		paymentService:       cfg.PaymentService,
-		oauthService:         cfg.OAuthService,
-		vmRepo:               cfg.VMRepo,
-		nodeRepo:             cfg.NodeRepo,
-		backupRepo:           cfg.BackupRepo,
-		templateRepo:         cfg.TemplateRepo,
-		customerRepo:         cfg.CustomerRepo,
-		apiKeyRepo:           cfg.APIKeyRepo,
-		auditRepo:            cfg.AuditRepo,
-		bandwidthRepo:        cfg.BandwidthRepo,
-		ipRepo:               cfg.IPRepo,
-		planRepo:             cfg.PlanRepo,
-		isoUploadRepo:        cfg.ISOUploadRepo,
-		ssoTokenRepo:         cfg.SSOTokenRepo,
-		taskRepo:             cfg.TaskRepo,
-		rdnsService:          cfg.RDNSService,
-		invoiceService:       cfg.InvoiceService,
-		nodeAgent:            cfg.NodeAgent,
-		authConfig:           middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
-		encryptionKey:        cfg.EncryptionKey,
-		consoleBaseURL:       cfg.ConsoleBaseURL,
-		isoStoragePath:       cfg.ISOStoragePath,
-		tokenStore:           newConsoleTokenStore(),
-		emailProvider:        cfg.EmailProvider,
-		passwordResetBaseURL: cfg.PasswordResetBaseURL,
+		vmService:                     cfg.VMService,
+		backupService:                 cfg.BackupService,
+		authService:                   cfg.AuthService,
+		templateService:               cfg.TemplateService,
+		webhookService:                cfg.WebhookService,
+		customerService:               cfg.CustomerService,
+		billingLedgerService:          cfg.BillingLedgerService,
+		paymentService:                cfg.PaymentService,
+		oauthService:                  cfg.OAuthService,
+		vmRepo:                        cfg.VMRepo,
+		nodeRepo:                      cfg.NodeRepo,
+		backupRepo:                    cfg.BackupRepo,
+		templateRepo:                  cfg.TemplateRepo,
+		customerRepo:                  cfg.CustomerRepo,
+		apiKeyRepo:                    cfg.APIKeyRepo,
+		auditRepo:                     cfg.AuditRepo,
+		bandwidthRepo:                 cfg.BandwidthRepo,
+		ipRepo:                        cfg.IPRepo,
+		planRepo:                      cfg.PlanRepo,
+		isoUploadRepo:                 cfg.ISOUploadRepo,
+		ssoTokenRepo:                  cfg.SSOTokenRepo,
+		taskRepo:                      cfg.TaskRepo,
+		rdnsService:                   cfg.RDNSService,
+		invoiceService:                cfg.InvoiceService,
+		nodeAgent:                     cfg.NodeAgent,
+		authConfig:                    authConfig,
+		encryptionKey:                 cfg.EncryptionKey,
+		consoleBaseURL:                cfg.ConsoleBaseURL,
+		isoStoragePath:                cfg.ISOStoragePath,
+		maxISOSizeBytes:               cfg.MaxISOSizeBytes,
+		tokenStore:                    newConsoleTokenStore(),
+		emailProvider:                 cfg.EmailProvider,
+		passwordResetBaseURL:          cfg.PasswordResetBaseURL,
 		registrationEmailVerification: cfg.RegistrationEmailVerification,
-		logger:               cfg.Logger.With("component", "customer-handler"),
+		logger:                        cfg.Logger.With("component", "customer-handler"),
 	}
 }
 

@@ -247,6 +247,9 @@ func (h *AdminHandler) UpdateNode(c *gin.Context) {
 	applyNodeUpdates(node, req)
 
 	if err := h.nodeService.UpdateNode(c.Request.Context(), node); err != nil {
+		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
+			return
+		}
 		h.logger.Error("failed to update node",
 			"node_id", nodeID,
 			"error", err,

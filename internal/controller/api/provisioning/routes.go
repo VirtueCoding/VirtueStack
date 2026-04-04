@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -13,23 +15,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const provisioningKeyLastUsedUpdateTimeout = 5 * time.Second
+
 // APIKeyValidatorFunc creates an APIKeyValidator function using the repository.
 // This function is used by the APIKeyAuth middleware to validate provisioning API keys.
 // On successful validation it also updates the key's last_used_at timestamp
-// asynchronously so the hot path is not blocked by the write.
+// in the background using a detached request-derived context. The metadata update is best-effort and will be
+// logged if it fails without rejecting an otherwise valid API key.
 func APIKeyValidatorFunc(apiKeyRepo *repository.ProvisioningKeyRepository) middleware.APIKeyValidator {
 	return func(ctx context.Context, keyHash string) (string, []string, error) {
 		key, err := apiKeyRepo.GetByHash(ctx, keyHash)
 		if err != nil {
 			return "", nil, err
 		}
-		// Fire-and-forget: update last_used_at so operators can detect stale or
-		// compromised keys. Use a detached context so the caller is not delayed.
-		go func() {
-			_ = apiKeyRepo.UpdateLastUsed(context.Background(), key.ID)
-		}()
+		recordProvisioningKeyLastUsedAsync(ctx, apiKeyRepo, key.ID)
 		return key.ID, key.AllowedIPs, nil
 	}
+}
+
+func recordProvisioningKeyLastUsedAsync(ctx context.Context, apiKeyRepo *repository.ProvisioningKeyRepository, keyID string) {
+	if apiKeyRepo == nil || keyID == "" {
+		return
+	}
+
+	updateCtx := context.WithoutCancel(ctx)
+	go func() {
+		timeoutCtx, cancel := context.WithTimeout(updateCtx, provisioningKeyLastUsedUpdateTimeout)
+		defer cancel()
+
+		if err := apiKeyRepo.UpdateLastUsed(timeoutCtx, keyID); err != nil {
+			slog.Warn("failed to update provisioning key last used",
+				"key_id", keyID,
+				"error", err,
+			)
+		}
+	}()
 }
 
 // HashAPIKey computes the SHA-256 hash of an API key.

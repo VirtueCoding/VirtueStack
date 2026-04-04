@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -58,11 +59,10 @@ type Disable2FAFormData = z.infer<typeof disable2FASchema>;
 
 interface SecurityTabProps {
   twoFactorStatus: { enabled: boolean } | null | undefined;
-  backupCodesData: { backup_codes: string[] } | null | undefined;
   isLoading: boolean;
 }
 
-export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: SecurityTabProps) {
+export function SecurityTab({ twoFactorStatus, isLoading }: SecurityTabProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { createMutationOnError } = useMutationToast();
@@ -128,7 +128,6 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
       setBackupCodes(data.backup_codes);
       setQrDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["2fa-status"] });
-      queryClient.invalidateQueries({ queryKey: ["backup-codes"] });
       setBackupCodesDialogOpen(true);
       totpForm.reset();
       toast({
@@ -168,7 +167,6 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
     mutationFn: settingsApi.regenerateBackupCodes,
     onSuccess: (data) => {
       setBackupCodes(data.backup_codes);
-      queryClient.invalidateQueries({ queryKey: ["backup-codes"] });
       setBackupCodesDialogOpen(true);
       toast({
         title: "Success",
@@ -204,7 +202,7 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
   };
 
   const downloadBackupCodes = () => {
-    const codes = backupCodes.length > 0 ? backupCodes : backupCodesData?.backup_codes || [];
+    const codes = backupCodes;
     const content = codes.join("\n");
     const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -342,15 +340,10 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
                   <Check className="h-5 w-5 text-green-500" />
                   <span className="font-medium">2FA is enabled</span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBackupCodesDialogOpen(true)}
-                >
-                  <Eye className="mr-2 h-4 w-4" />
-                  View Backup Codes
-                </Button>
               </div>
+              <p className="text-sm text-muted-foreground">
+                Backup codes are shown only when you enable or regenerate them. Regenerate to receive a new set.
+              </p>
             </div>
           )}
         </CardContent>
@@ -366,10 +359,6 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
           </CardHeader>
           <CardContent>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setBackupCodesDialogOpen(true)}>
-                <Eye className="mr-2 h-4 w-4" />
-                View Codes
-              </Button>
               <Button variant="outline" onClick={() => regenerateBackupCodesMutation.mutate()}>
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Regenerate
@@ -390,7 +379,14 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
           </DialogHeader>
           <div className="flex flex-col items-center space-y-4 py-4">
             {qrCodeUrl && qrCodeUrl.startsWith("data:image/") ? (
-              <img src={qrCodeUrl} alt="2FA QR Code" className="rounded-lg border" />
+              <Image
+                src={qrCodeUrl}
+                alt="2FA QR Code"
+                width={192}
+                height={192}
+                className="rounded-lg border"
+                unoptimized
+              />
             ) : (
               <div className="h-48 w-48 bg-muted rounded-lg flex items-center justify-center">
                 <QrCode className="h-24 w-24 text-muted-foreground" />
@@ -438,7 +434,7 @@ export function SecurityTab({ twoFactorStatus, backupCodesData, isLoading }: Sec
           </DialogHeader>
           <div className="py-4">
             <div className="grid grid-cols-2 gap-2 rounded-lg border bg-muted p-4">
-              {(backupCodes.length > 0 ? backupCodes : backupCodesData?.backup_codes || []).map((code) => (
+              {backupCodes.map((code) => (
                 <code key={code} className="text-center font-mono text-sm py-1">
                   {code}
                 </code>

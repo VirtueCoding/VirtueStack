@@ -158,12 +158,14 @@ func (m *mockNodeAgentClient) PingNode(ctx context.Context, nodeID string) error
 func (m *mockNodeAgentClient) EvacuateNode(ctx context.Context, nodeID string) error {
 	return nil
 }
-func (m *mockNodeAgentClient) StartVM(ctx context.Context, nodeID, vmID string) error { return m.startErr }
+func (m *mockNodeAgentClient) StartVM(ctx context.Context, nodeID, vmID string) error {
+	return m.startErr
+}
 func (m *mockNodeAgentClient) StopVM(ctx context.Context, nodeID, vmID string, timeoutSeconds int) error {
 	return m.stopErr
 }
 func (m *mockNodeAgentClient) ForceStopVM(ctx context.Context, nodeID, vmID string) error { return nil }
-func (m *mockNodeAgentClient) DeleteVM(ctx context.Context, nodeID, vmID string) error     { return nil }
+func (m *mockNodeAgentClient) DeleteVM(ctx context.Context, nodeID, vmID string) error    { return nil }
 func (m *mockNodeAgentClient) ResizeVM(ctx context.Context, nodeID, vmID string, vcpu, memoryMB, diskGB int) error {
 	return nil
 }
@@ -173,7 +175,9 @@ func (m *mockNodeAgentClient) GetVMMetrics(ctx context.Context, nodeID, vmID str
 func (m *mockNodeAgentClient) GetVMStatus(ctx context.Context, nodeID, vmID string) (string, error) {
 	return "", nil
 }
-func (m *mockNodeAgentClient) AbortMigration(ctx context.Context, nodeID, vmID string) error { return nil }
+func (m *mockNodeAgentClient) AbortMigration(ctx context.Context, nodeID, vmID string) error {
+	return nil
+}
 func (m *mockNodeAgentClient) MigrateVM(ctx context.Context, sourceNodeID, targetNodeID, vmID string, opts *tasks.MigrateVMOptions) error {
 	return nil
 }
@@ -244,13 +248,13 @@ func TestVMService_SelectNodeForVM(t *testing.T) {
 
 func TestVMService_CreateVMValidationErrors(t *testing.T) {
 	tests := []struct {
-		name         string
-		planRow      []any
-		planErr      error
-		templateRow  []any
-		templateErr  error
-		req          *models.VMCreateRequest
-		errContains  string
+		name        string
+		planRow     []any
+		planErr     error
+		templateRow []any
+		templateErr error
+		req         *models.VMCreateRequest
+		errContains string
 	}{
 		{
 			name:        "invalid plan ID returns validation error",
@@ -263,8 +267,8 @@ func TestVMService_CreateVMValidationErrors(t *testing.T) {
 			errContains: "plan not found",
 		},
 		{
-			name: "invalid template ID returns validation error",
-			planRow: planRow("plan-1", true, 40),
+			name:        "invalid template ID returns validation error",
+			planRow:     planRow("plan-1", true, 40),
 			templateErr: pgx.ErrNoRows,
 			req: &models.VMCreateRequest{
 				PlanID:     "plan-1",
@@ -404,6 +408,33 @@ func TestVMService_PowerAndDeleteConflictPaths(t *testing.T) {
 	}
 }
 
+func TestVMService_GetVMDetailIncludesISOMaxSizeBytes(t *testing.T) {
+	db := &fakeDB{
+		queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			switch {
+			case strings.Contains(sql, "FROM vms WHERE id = $1 AND deleted_at IS NULL"):
+				return &fakeRow{values: vmRow("vm-1", "customer-1", nil, models.VMStatusRunning, nil)}
+			case strings.Contains(sql, "FROM plans WHERE id = $1"):
+				return &fakeRow{values: planRow("plan-1", true, 40)}
+			default:
+				return &fakeRow{scanErr: pgx.ErrNoRows}
+			}
+		},
+	}
+
+	svc := NewVMService(VMServiceConfig{
+		VMRepo:          repository.NewVMRepository(db),
+		PlanRepo:        repository.NewPlanRepository(db),
+		MaxISOSizeBytes: 5 * 1024 * 1024 * 1024,
+		Logger:          testVMServiceLogger(),
+	})
+
+	detail, err := svc.GetVMDetail(context.Background(), "vm-1", "customer-1", false)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.Equal(t, int64(5*1024*1024*1024), detail.MaxISOSizeBytes)
+}
+
 func planRow(id string, isActive bool, diskGB int) []any {
 	now := time.Now().UTC()
 	pm := int64(1000)
@@ -439,7 +470,7 @@ func vmRow(id, customerID string, nodeID *string, status string, deletedAt *time
 		"52:54:00:12:34:56", nil, nil,
 		nil, nil, nil,
 		now, now, deletedAt,
-		models.StorageBackendCeph, nil, nil, nil,
+		models.StorageBackendCeph, nil, nil, nil, nil,
 	}
 }
 

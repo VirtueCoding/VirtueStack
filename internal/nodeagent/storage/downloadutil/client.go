@@ -2,9 +2,14 @@ package downloadutil
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -39,4 +44,35 @@ func NewHTTPClient(dialContext func(context.Context, string, string) (net.Conn, 
 			return nil
 		},
 	}
+}
+
+func VerifyFileIntegrity(path string, expectedSize int64, expectedChecksum string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+	if expectedSize > 0 && info.Size() != expectedSize {
+		return fmt.Errorf("size mismatch: got %d want %d", info.Size(), expectedSize)
+	}
+	if expectedChecksum == "" {
+		return nil
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("hash file: %w", err)
+	}
+
+	actualChecksum := hex.EncodeToString(hash.Sum(nil))
+	if actualChecksum != strings.ToLower(expectedChecksum) {
+		return fmt.Errorf("checksum mismatch: got %s want %s", actualChecksum, strings.ToLower(expectedChecksum))
+	}
+
+	return nil
 }

@@ -1,7 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -314,6 +318,522 @@ func TestValidateBillingConfig_NativeWithoutGatewaysWarns(t *testing.T) {
 	err := validateBillingConfig(cfg)
 	if err != nil {
 		t.Errorf("expected no error for native without gateways, got: %v", err)
+	}
+}
+
+func TestLoadControllerConfig_ISOMaxSizeGB(t *testing.T) {
+	tests := []struct {
+		name        string
+		envValue    string
+		wantMaxSize int
+	}{
+		{
+			name:        "defaults to 10 GiB",
+			envValue:    "",
+			wantMaxSize: 10,
+		},
+		{
+			name:        "accepts env override",
+			envValue:    "5",
+			wantMaxSize: 5,
+		},
+		{
+			name:        "rejects non-positive override",
+			envValue:    "0",
+			wantMaxSize: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+			t.Setenv("NATS_URL", "nats://localhost:4222")
+			t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+			t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("VS_CONFIG_FILE", "")
+			t.Setenv("METRICS_ADDR", "")
+			t.Setenv("BILLING_WHMCS_ENABLED", "true")
+			t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+			t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("g", 32))
+			t.Setenv("MAX_ISO_SIZE_GB", tt.envValue)
+
+			cfg, err := LoadControllerConfig()
+			if err != nil {
+				t.Fatalf("LoadControllerConfig returned error: %v", err)
+			}
+
+			if cfg.FileStorage.MaxISOSizeGB != tt.wantMaxSize {
+				t.Fatalf("expected controller ISO max size %d GiB, got %d", tt.wantMaxSize, cfg.FileStorage.MaxISOSizeGB)
+			}
+		})
+	}
+}
+
+func TestLoadNodeAgentConfig_ISOMaxSizeGB(t *testing.T) {
+	tests := []struct {
+		name        string
+		envValue    string
+		wantMaxSize int
+	}{
+		{
+			name:        "defaults to 10 GiB",
+			envValue:    "",
+			wantMaxSize: 10,
+		},
+		{
+			name:        "accepts env override",
+			envValue:    "6",
+			wantMaxSize: 6,
+		},
+		{
+			name:        "rejects non-positive override",
+			envValue:    "-1",
+			wantMaxSize: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+			t.Setenv("NODE_ID", "node-test")
+			t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+			t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+			t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+			t.Setenv("VS_CONFIG_FILE", "")
+			t.Setenv("METRICS_ADDR", "")
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("h", 32))
+			t.Setenv("MAX_ISO_SIZE_GB", tt.envValue)
+
+			cfg, err := LoadNodeAgentConfig()
+			if err != nil {
+				t.Fatalf("LoadNodeAgentConfig returned error: %v", err)
+			}
+
+			if cfg.MaxISOSizeGB != tt.wantMaxSize {
+				t.Fatalf("expected node-agent ISO max size %d GiB, got %d", tt.wantMaxSize, cfg.MaxISOSizeGB)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_InvalidISOMaxSizeDoesNotLogRawValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		envValue   string
+		wantAbsent string
+		load       func(t *testing.T) error
+	}{
+		{
+			name:       "controller parse error omits raw env value",
+			envValue:   "abc\nforged=true",
+			wantAbsent: "forged=true",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+				t.Setenv("NATS_URL", "nats://localhost:4222")
+				t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+				t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+				t.Setenv("APP_ENV", "development")
+				t.Setenv("VS_CONFIG_FILE", "")
+				t.Setenv("METRICS_ADDR", "")
+				t.Setenv("BILLING_WHMCS_ENABLED", "true")
+				t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+				t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("g", 32))
+				t.Setenv("MAX_ISO_SIZE_GB", "abc\nforged=true")
+				_, err := LoadControllerConfig()
+				return err
+			},
+		},
+		{
+			name:       "controller non-positive omits raw env value",
+			envValue:   "-987654321000",
+			wantAbsent: "987654321000",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+				t.Setenv("NATS_URL", "nats://localhost:4222")
+				t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+				t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+				t.Setenv("APP_ENV", "development")
+				t.Setenv("VS_CONFIG_FILE", "")
+				t.Setenv("METRICS_ADDR", "")
+				t.Setenv("BILLING_WHMCS_ENABLED", "true")
+				t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+				t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("g", 32))
+				t.Setenv("MAX_ISO_SIZE_GB", "-987654321000")
+				_, err := LoadControllerConfig()
+				return err
+			},
+		},
+		{
+			name:       "node agent parse error omits raw env value",
+			envValue:   "abc\nforged=true",
+			wantAbsent: "forged=true",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+				t.Setenv("NODE_ID", "node-test")
+				t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+				t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+				t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+				t.Setenv("VS_CONFIG_FILE", "")
+				t.Setenv("METRICS_ADDR", "")
+				t.Setenv("APP_ENV", "development")
+				t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("h", 32))
+				t.Setenv("MAX_ISO_SIZE_GB", "abc\nforged=true")
+				_, err := LoadNodeAgentConfig()
+				return err
+			},
+		},
+		{
+			name:       "node agent non-positive omits raw env value",
+			envValue:   "-987654321000",
+			wantAbsent: "987654321000",
+			load: func(t *testing.T) error {
+				t.Helper()
+				t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+				t.Setenv("NODE_ID", "node-test")
+				t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+				t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+				t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+				t.Setenv("VS_CONFIG_FILE", "")
+				t.Setenv("METRICS_ADDR", "")
+				t.Setenv("APP_ENV", "development")
+				t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("h", 32))
+				t.Setenv("MAX_ISO_SIZE_GB", "-987654321000")
+				_, err := LoadNodeAgentConfig()
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+			t.Cleanup(func() {
+				slog.SetDefault(previous)
+			})
+
+			if err := tt.load(t); err != nil {
+				t.Fatalf("load config returned error: %v", err)
+			}
+
+			logOutput := logBuf.String()
+			if !strings.Contains(logOutput, "invalid MAX_ISO_SIZE_GB value, ignoring") {
+				t.Fatalf("expected invalid MAX_ISO_SIZE_GB warning, got %q", logOutput)
+			}
+			if strings.Contains(logOutput, tt.wantAbsent) {
+				t.Fatalf("log output leaked raw env value %q: %q", tt.wantAbsent, logOutput)
+			}
+		})
+	}
+}
+
+func TestLoadControllerConfig_YAMLInvalidISOMaxSizeFallsBackToDefault(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "controller.yaml")
+	if err := os.WriteFile(configPath, []byte("file_storage:\n  max_iso_size_gb: 0\n"), 0600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+	t.Setenv("NATS_URL", "nats://localhost:4222")
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("VS_CONFIG_FILE", configPath)
+	t.Setenv("METRICS_ADDR", "")
+	t.Setenv("BILLING_WHMCS_ENABLED", "true")
+	t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+	t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("g", 32))
+	t.Setenv("MAX_ISO_SIZE_GB", "")
+
+	cfg, err := LoadControllerConfig()
+	if err != nil {
+		t.Fatalf("LoadControllerConfig returned error: %v", err)
+	}
+
+	if cfg.FileStorage.MaxISOSizeGB != 10 {
+		t.Fatalf("expected controller YAML ISO max size to fall back to 10 GiB, got %d", cfg.FileStorage.MaxISOSizeGB)
+	}
+}
+
+func TestLoadControllerConfig_TrustedProxies(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+	t.Setenv("NATS_URL", "nats://localhost:4222")
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("VS_CONFIG_FILE", "")
+	t.Setenv("METRICS_ADDR", "")
+	t.Setenv("BILLING_WHMCS_ENABLED", "true")
+	t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+	t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("g", 32))
+	t.Setenv("TRUSTED_PROXIES", "198.51.100.0/24,2001:db8::/32")
+
+	cfg, err := LoadControllerConfig()
+	if err != nil {
+		t.Fatalf("LoadControllerConfig returned error: %v", err)
+	}
+
+	want := []string{"198.51.100.0/24", "2001:db8::/32"}
+	if len(cfg.TrustedProxies) != len(want) {
+		t.Fatalf("expected trusted proxies %v, got %v", want, cfg.TrustedProxies)
+	}
+	for i := range want {
+		if cfg.TrustedProxies[i] != want[i] {
+			t.Fatalf("expected trusted proxies %v, got %v", want, cfg.TrustedProxies)
+		}
+	}
+}
+
+func TestLoadNodeAgentConfig_YAMLInvalidISOMaxSizeFallsBackToDefault(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "nodeagent.yaml")
+	if err := os.WriteFile(configPath, []byte("max_iso_size_gb: -1\n"), 0600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+	t.Setenv("NODE_ID", "node-test")
+	t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+	t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+	t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+	t.Setenv("VS_CONFIG_FILE", configPath)
+	t.Setenv("METRICS_ADDR", "")
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("h", 32))
+	t.Setenv("MAX_ISO_SIZE_GB", "")
+
+	cfg, err := LoadNodeAgentConfig()
+	if err != nil {
+		t.Fatalf("LoadNodeAgentConfig returned error: %v", err)
+	}
+
+	if cfg.MaxISOSizeGB != 10 {
+		t.Fatalf("expected node-agent YAML ISO max size to fall back to 10 GiB, got %d", cfg.MaxISOSizeGB)
+	}
+}
+
+func TestLoadControllerConfig_GuestOpHMACSecretValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		secret    string
+		wantErr   string
+		wantValue string
+	}{
+		{
+			name:    "empty secret rejected",
+			secret:  "",
+			wantErr: "GUEST_OP_HMAC_SECRET is required",
+		},
+		{
+			name:      "32 byte secret accepted",
+			secret:    strings.Repeat("g", 32),
+			wantValue: strings.Repeat("g", 32),
+		},
+		{
+			name:    "short secret rejected",
+			secret:  strings.Repeat("g", 31),
+			wantErr: "GUEST_OP_HMAC_SECRET must be at least 32 bytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+			t.Setenv("NATS_URL", "nats://localhost:4222")
+			t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+			t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("VS_CONFIG_FILE", "")
+			t.Setenv("METRICS_ADDR", "")
+			t.Setenv("BILLING_WHMCS_ENABLED", "true")
+			t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+			t.Setenv("GUEST_OP_HMAC_SECRET", tt.secret)
+
+			cfg, err := LoadControllerConfig()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadControllerConfig returned error: %v", err)
+			}
+			if cfg.GuestOpHMACSecret.Value() != tt.wantValue {
+				t.Fatalf("expected guest op HMAC secret %q, got %q", tt.wantValue, cfg.GuestOpHMACSecret.Value())
+			}
+		})
+	}
+}
+
+func TestLoadNodeAgentConfig_GuestOpHMACSecretValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		secret    string
+		wantErr   string
+		wantValue string
+	}{
+		{
+			name:    "empty secret rejected",
+			secret:  "",
+			wantErr: "GUEST_OP_HMAC_SECRET is required",
+		},
+		{
+			name:      "32 byte secret accepted",
+			secret:    strings.Repeat("h", 32),
+			wantValue: strings.Repeat("h", 32),
+		},
+		{
+			name:    "short secret rejected",
+			secret:  strings.Repeat("h", 31),
+			wantErr: "GUEST_OP_HMAC_SECRET must be at least 32 bytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+			t.Setenv("NODE_ID", "node-test")
+			t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+			t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+			t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+			t.Setenv("VS_CONFIG_FILE", "")
+			t.Setenv("METRICS_ADDR", "")
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("GUEST_OP_HMAC_SECRET", tt.secret)
+
+			cfg, err := LoadNodeAgentConfig()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadNodeAgentConfig returned error: %v", err)
+			}
+			if cfg.GuestOpHMACSecret.Value() != tt.wantValue {
+				t.Fatalf("expected guest op HMAC secret %q, got %q", tt.wantValue, cfg.GuestOpHMACSecret.Value())
+			}
+		})
+	}
+}
+
+func TestLoadConfig_MetricsDefaultsBindLoopback(t *testing.T) {
+	t.Run("controller defaults to loopback metrics", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/virtuestack?sslmode=disable")
+		t.Setenv("NATS_URL", "nats://localhost:4222")
+		t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+		t.Setenv("ENCRYPTION_KEY", strings.Repeat("b", 64))
+		t.Setenv("APP_ENV", "development")
+		t.Setenv("VS_CONFIG_FILE", "")
+		t.Setenv("METRICS_ADDR", "")
+		t.Setenv("BILLING_WHMCS_ENABLED", "true")
+		t.Setenv("BILLING_WHMCS_PRIMARY", "true")
+		t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("c", 32))
+
+		cfg, err := LoadControllerConfig()
+		if err != nil {
+			t.Fatalf("LoadControllerConfig returned error: %v", err)
+		}
+		if cfg.MetricsAddr != "127.0.0.1:9091" {
+			t.Fatalf("expected controller metrics addr %q, got %q", "127.0.0.1:9091", cfg.MetricsAddr)
+		}
+	})
+
+	t.Run("node agent defaults to loopback metrics", func(t *testing.T) {
+		t.Setenv("CONTROLLER_GRPC_ADDR", "127.0.0.1:50051")
+		t.Setenv("NODE_ID", "node-test")
+		t.Setenv("TLS_CERT_FILE", "/tmp/node.crt")
+		t.Setenv("TLS_KEY_FILE", "/tmp/node.key")
+		t.Setenv("TLS_CA_FILE", "/tmp/ca.crt")
+		t.Setenv("VS_CONFIG_FILE", "")
+		t.Setenv("METRICS_ADDR", "")
+		t.Setenv("APP_ENV", "development")
+		t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("d", 32))
+
+		cfg, err := LoadNodeAgentConfig()
+		if err != nil {
+			t.Fatalf("LoadNodeAgentConfig returned error: %v", err)
+		}
+		if cfg.MetricsAddr != "127.0.0.1:9091" {
+			t.Fatalf("expected node-agent metrics addr %q, got %q", "127.0.0.1:9091", cfg.MetricsAddr)
+		}
+	})
+}
+
+func TestNodeAgentConfig_GRPCListenAddr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		listenAddr  string
+		defaultAddr string
+		want        string
+	}{
+		{
+			name:        "uses explicit listen address",
+			listenAddr:  "127.0.0.1:50052",
+			defaultAddr: ":50052",
+			want:        "127.0.0.1:50052",
+		},
+		{
+			name:        "falls back when empty",
+			defaultAddr: ":50052",
+			want:        ":50052",
+		},
+		{
+			name:        "falls back when whitespace",
+			listenAddr:  "   ",
+			defaultAddr: ":50052",
+			want:        ":50052",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &NodeAgentConfig{ListenAddr: tt.listenAddr}
+			if got := cfg.GRPCListenAddr(tt.defaultAddr); got != tt.want {
+				t.Fatalf("GRPCListenAddr() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadNodeAgentConfig_ListenAddrOverride(t *testing.T) {
+	t.Setenv("CONTROLLER_GRPC_ADDR", "controller.internal:50051")
+	t.Setenv("NODE_ID", "node-test")
+	t.Setenv("TLS_CERT_FILE", "node.crt")
+	t.Setenv("TLS_KEY_FILE", "node.key")
+	t.Setenv("TLS_CA_FILE", "ca.crt")
+	t.Setenv("VS_CONFIG_FILE", "")
+	t.Setenv("METRICS_ADDR", "")
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("GUEST_OP_HMAC_SECRET", strings.Repeat("x", 32))
+	t.Setenv("LISTEN_ADDR", "127.0.0.1:50052")
+
+	cfg, err := LoadNodeAgentConfig()
+	if err != nil {
+		t.Fatalf("LoadNodeAgentConfig returned error: %v", err)
+	}
+	if cfg.ListenAddr != "127.0.0.1:50052" {
+		t.Fatalf("expected listen addr %q, got %q", "127.0.0.1:50052", cfg.ListenAddr)
+	}
+	if cfg.ControllerGRPCAddr != "controller.internal:50051" {
+		t.Fatalf("expected controller addr to remain %q, got %q", "controller.internal:50051", cfg.ControllerGRPCAddr)
 	}
 }
 

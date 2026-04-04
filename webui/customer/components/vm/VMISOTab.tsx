@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { HardDrive, Upload, Trash2, Link, Unlink, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
@@ -8,6 +8,7 @@ import { Badge } from "@virtuestack/ui";
 import { useToast } from "@virtuestack/ui";
 import { isoApi, ISORecord, ApiClientError } from "@/lib/api-client";
 import { ISOUpload } from "@/components/file-upload/iso-upload";
+import { getISOUploadDescription } from "@/lib/iso-limit";
 import { formatBytes } from "@/lib/vm-utils";
 import {
   Dialog,
@@ -22,9 +23,10 @@ interface VMISOTabProps {
   vmId: string;
   vmStatus: string;
   attachedISOId?: string | null;
+  maxISOSizeBytes?: number;
 }
 
-export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
+export function VMISOTab({ vmId, vmStatus, attachedISOId, maxISOSizeBytes }: VMISOTabProps) {
   const { toast } = useToast();
   const [isos, setISOs] = useState<ISORecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,7 +36,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
   const [isAttaching, setIsAttaching] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const fetchISOs = async () => {
+  const fetchISOs = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await isoApi.listISOs(vmId);
@@ -48,18 +50,18 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast, vmId]);
 
   useEffect(() => {
-    fetchISOs();
-  }, [vmId]);
+    void fetchISOs();
+  }, [fetchISOs]);
 
   const handleUploadComplete = (_isoId: string, fileName: string) => {
     toast({
       title: "ISO Uploaded",
       description: `${fileName} has been uploaded successfully.`,
     });
-    fetchISOs();
+    void fetchISOs();
   };
 
   const handleAttach = async (iso: ISORecord) => {
@@ -77,7 +79,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
         description: `${selectedISO.file_name} has been attached to the VM.`,
       });
       setAttachDialogOpen(false);
-      fetchISOs();
+      void fetchISOs();
     } catch (err) {
       toast({
         title: "Error",
@@ -96,7 +98,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
         title: "ISO Detached",
         description: `${iso.file_name} has been detached from the VM.`,
       });
-      fetchISOs();
+      void fetchISOs();
     } catch (err) {
       toast({
         title: "Error",
@@ -121,7 +123,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
         description: `${selectedISO.file_name} has been deleted.`,
       });
       setDeleteDialogOpen(false);
-      fetchISOs();
+      void fetchISOs();
     } catch (err) {
       toast({
         title: "Error",
@@ -153,11 +155,11 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
               Upload ISO
             </CardTitle>
             <CardDescription>
-              Upload an ISO image to attach to this VM. Maximum file size is 10 GB.
+              {getISOUploadDescription(maxISOSizeBytes)}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ISOUpload vmId={vmId} onUploadComplete={handleUploadComplete} />
+            <ISOUpload vmId={vmId} maxISOSizeBytes={maxISOSizeBytes} onUploadComplete={handleUploadComplete} />
           </CardContent>
         </Card>
 

@@ -13,6 +13,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
@@ -102,7 +103,7 @@ func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.Pr
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Webhook-Secret", wh.Secret)
+	req.Header.Set("X-Webhook-Signature", crypto.GenerateHMACSignature(wh.Secret, body))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -113,7 +114,11 @@ func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.Pr
 		}
 		return fmt.Errorf("pre-action webhook %q is unreachable and configured as fail-closed: %w", wh.Name, sharederrors.ErrForbidden)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.logger.Debug("failed to close pre-action webhook response body", "webhook_id", wh.ID, "error", closeErr)
+		}
+	}()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {

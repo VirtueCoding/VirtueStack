@@ -749,10 +749,7 @@ const docTemplate = `{
         },
         "/api/v1/admin/auth/refresh": {
             "post": {
-                "description": "Refreshes admin access token using a valid refresh token.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Refreshes admin access token using the HttpOnly refresh_token cookie.",
                 "produces": [
                     "application/json"
                 ],
@@ -760,17 +757,6 @@ const docTemplate = `{
                     "Admin"
                 ],
                 "summary": "Refresh admin token",
-                "parameters": [
-                    {
-                        "description": "Refresh token request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -4991,49 +4977,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/customer/2fa/backup-codes": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Manages customer two-factor authentication settings.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Customer"
-                ],
-                "summary": "Get backup codes",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.Response"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/customer/2fa/backup-codes/regenerate": {
             "post": {
                 "security": [
@@ -5614,10 +5557,7 @@ const docTemplate = `{
         },
         "/api/v1/customer/auth/refresh": {
             "post": {
-                "description": "Refreshes customer access token using refresh token.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Refreshes customer access token using the HttpOnly refresh_token cookie.",
                 "produces": [
                     "application/json"
                 ],
@@ -5625,17 +5565,6 @@ const docTemplate = `{
                     "Customer"
                 ],
                 "summary": "Refresh customer token",
-                "parameters": [
-                    {
-                        "description": "Refresh token request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -6231,9 +6160,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "BearerAuth": []
-                    },
-                    {
-                        "APIKeyAuth": []
                     }
                 ],
                 "description": "Updates notification preferences for the authenticated customer.",
@@ -8722,7 +8648,7 @@ const docTemplate = `{
                         "APIKeyAuth": []
                     }
                 ],
-                "description": "Returns VM by WHMCS service identifier.",
+                "description": "Returns VM by external billing service identifier.",
                 "produces": [
                     "application/json"
                 ],
@@ -8733,7 +8659,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "WHMCS service ID",
+                        "description": "External billing service ID",
                         "name": "service_id",
                         "in": "path",
                         "required": true
@@ -9507,20 +9433,11 @@ const docTemplate = `{
                 "next_cursor": {
                     "type": "string"
                 },
-                "page": {
-                    "type": "integer"
-                },
                 "per_page": {
                     "type": "integer"
                 },
                 "prev_cursor": {
                     "type": "string"
-                },
-                "total": {
-                    "type": "integer"
-                },
-                "total_pages": {
-                    "type": "integer"
                 }
             }
         },

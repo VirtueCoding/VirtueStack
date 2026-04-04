@@ -21,7 +21,32 @@
     "afterFiles": [],
     "fallback": []
   },
-  "dynamicRoutes": [],
+  "dynamicRoutes": [
+    {
+      "page": "/customers/[id]",
+      "regex": "^/customers/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/customers/(?<nxtPid>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/customers/[id]/audit-logs",
+      "regex": "^/customers/([^/]+?)/audit\\-logs(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/customers/(?<nxtPid>[^/]+?)/audit\\-logs(?:/)?$"
+    },
+    {
+      "page": "/customers/[id]/vms",
+      "regex": "^/customers/([^/]+?)/vms(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/customers/(?<nxtPid>[^/]+?)/vms(?:/)?$"
+    }
+  ],
   "staticRoutes": [
     {
       "page": "/",
@@ -54,6 +79,18 @@
       "namedRegex": "^/backup\\-schedules(?:/)?$"
     },
     {
+      "page": "/backups",
+      "regex": "^/backups(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/backups(?:/)?$"
+    },
+    {
+      "page": "/billing",
+      "regex": "^/billing(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/billing(?:/)?$"
+    },
+    {
       "page": "/customers",
       "regex": "^/customers(?:/)?$",
       "routeKeys": {},
@@ -70,6 +107,12 @@
       "regex": "^/failover\\-requests(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/failover\\-requests(?:/)?$"
+    },
+    {
+      "page": "/invoices",
+      "regex": "^/invoices(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/invoices(?:/)?$"
     },
     {
       "page": "/ip-sets",

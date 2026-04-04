@@ -307,15 +307,15 @@ func (r *TaskRepository) FindStuckTasks(ctx context.Context, threshold time.Dura
 	return result, nil
 }
 
-// ResetTask resets a task to pending state for retry.
-func (r *TaskRepository) ResetTask(ctx context.Context, taskID string) error {
-	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW() WHERE id = $1`
+// RetryTask resets a stuck task to pending state and consumes one retry attempt.
+func (r *TaskRepository) RetryTask(ctx context.Context, taskID string) error {
+	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW(), retry_count = retry_count + 1 WHERE id = $1`
 	tag, err := r.db.Exec(ctx, q, taskID)
 	if err != nil {
-		return fmt.Errorf("resetting task %s: %w", taskID, err)
+		return fmt.Errorf("retrying task %s: %w", taskID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("resetting task %s: %w", taskID, ErrNoRowsAffected)
+		return fmt.Errorf("retrying task %s: %w", taskID, ErrNoRowsAffected)
 	}
 	return nil
 }

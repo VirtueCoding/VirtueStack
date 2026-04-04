@@ -25,16 +25,10 @@ definitions:
         type: boolean
       next_cursor:
         type: string
-      page:
-        type: integer
       per_page:
         type: integer
       prev_cursor:
         type: string
-      total:
-        type: integer
-      total_pages:
-        type: integer
     type: object
   models.Response:
     properties:
@@ -516,16 +510,7 @@ paths:
       - Admin
   /api/v1/admin/auth/refresh:
     post:
-      consumes:
-      - application/json
-      description: Refreshes admin access token using a valid refresh token.
-      parameters:
-      - description: Refresh token request
-        in: body
-        name: request
-        required: true
-        schema:
-          type: object
+      description: Refreshes admin access token using the HttpOnly refresh_token cookie.
       produces:
       - application/json
       responses:
@@ -3229,33 +3214,6 @@ paths:
       summary: Migrate VM
       tags:
       - Admin
-  /api/v1/customer/2fa/backup-codes:
-    get:
-      description: Manages customer two-factor authentication settings.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get backup codes
-      tags:
-      - Customer
   /api/v1/customer/2fa/backup-codes/regenerate:
     post:
       description: Manages customer two-factor authentication settings.
@@ -3626,16 +3584,8 @@ paths:
       - Customer
   /api/v1/customer/auth/refresh:
     post:
-      consumes:
-      - application/json
-      description: Refreshes customer access token using refresh token.
-      parameters:
-      - description: Refresh token request
-        in: body
-        name: request
-        required: true
-        schema:
-          type: object
+      description: Refreshes customer access token using the HttpOnly refresh_token
+        cookie.
       produces:
       - application/json
       responses:
@@ -4041,7 +3991,6 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
       security:
       - BearerAuth: []
-      - APIKeyAuth: []
       summary: Update notification preferences
       tags:
       - Customer
@@ -6025,9 +5974,9 @@ paths:
       - Provisioning
   /api/v1/provisioning/vms/by-service/{service_id}:
     get:
-      description: Returns VM by WHMCS service identifier.
+      description: Returns VM by external billing service identifier.
       parameters:
-      - description: WHMCS service ID
+      - description: External billing service ID
         in: path
         name: service_id
         required: true

@@ -47,6 +47,17 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 	worker.RegisterHandler(models.TaskTypeTemplateDistribute, func(ctx context.Context, task *models.Task) error {
 		return handleTemplateDistribute(ctx, task, deps)
 	})
+	RegisterWebhookDeliveryHandler(worker, &WebhookDeliveryDeps{
+		WebhookRepo:   deps.WebhookRepo,
+		HTTPClient:    DefaultHTTPClient(),
+		Logger:        deps.Logger,
+		EncryptionKey: deps.EncryptionKey,
+	})
+	RegisterSystemWebhookDeliveryHandler(worker, &SystemWebhookDeliveryDeps{
+		SystemWebhookRepo: deps.SystemWebhookRepo,
+		HTTPClient:        DefaultHTTPClient(),
+		Logger:            deps.Logger,
+	})
 
 	deps.Logger.Info("all task handlers registered",
 		"handlers", []string{
@@ -62,5 +73,7 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 			models.TaskTypeSnapshotDelete,
 			models.TaskTypeTemplateBuild,
 			models.TaskTypeTemplateDistribute,
+			models.TaskTypeWebhookDeliver,
+			models.TaskTypeSystemWebhookDeliver,
 		})
 }

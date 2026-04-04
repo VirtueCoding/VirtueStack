@@ -2389,6 +2389,7 @@ Every component maps to the 19 Quality Gates from `CODING_STANDARD.md`:
 | `NATS_URL` | Yes | NATS server URL | `nats://nats:4222` |
 | `JWT_SECRET` | Yes | HMAC secret for JWT signing (min 32 bytes) | `(random 64-char hex)` |
 | `ENCRYPTION_KEY` | Yes | AES-256 key for encrypting secrets at rest | `(random 64-char hex)` |
+| `GUEST_OP_HMAC_SECRET` | No | Shared HMAC secret for guest-agent operations; if set, must be at least 32 bytes and match the node agent | `(random 32+ char secret)` |
 | `PDNS_MYSQL_DSN` | No | PowerDNS MySQL connection | `pdns:pass@tcp(pdns-db:3306)/powerdns` |
 | `PDNS_API_URL` | No | PowerDNS HTTP API URL (alternative to MySQL) | `http://pdns:8081` |
 | `PDNS_API_KEY` | No | PowerDNS API key | `changeme` |

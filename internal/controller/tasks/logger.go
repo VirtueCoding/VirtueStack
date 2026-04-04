@@ -20,15 +20,16 @@ func taskLogger(base *slog.Logger, task *models.Task) *slog.Logger {
 
 func addTaskPayloadFields(logger **slog.Logger, task *models.Task) {
 	fields := map[string][]string{
-		"vm_id":          {"vm_id", "vmId"},
-		"node_id":        {"node_id", "nodeId"},
-		"template_id":    {"template_id", "templateId"},
-		"snapshot_id":    {"snapshot_id", "snapshotId"},
-		"backup_id":      {"backup_id", "backupId"},
-		"delivery_id":    {"delivery_id", "deliveryId"},
-		"webhook_id":     {"webhook_id", "webhookId"},
-		"source_node_id": {"source_node_id", "sourceNodeId"},
-		"target_node_id": {"target_node_id", "targetNodeId"},
+		"vm_id":             {"vm_id", "vmId"},
+		"node_id":           {"node_id", "nodeId"},
+		"template_id":       {"template_id", "templateId"},
+		"snapshot_id":       {"snapshot_id", "snapshotId"},
+		"backup_id":         {"backup_id", "backupId"},
+		"delivery_id":       {"delivery_id", "deliveryId"},
+		"webhook_id":        {"webhook_id", "webhookId"},
+		"system_webhook_id": {"system_webhook_id", "systemWebhookId"},
+		"source_node_id":    {"source_node_id", "sourceNodeId"},
+		"target_node_id":    {"target_node_id", "targetNodeId"},
 	}
 
 	for field, keys := range fields {

@@ -1,15 +1,26 @@
 package customer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,17 +41,64 @@ func (m *mockAPIKeyRepoForRoutes) GetByHash(ctx context.Context, keyHash string)
 	return nil, nil
 }
 
+type customerNotificationRouteTestDB struct {
+	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
+	execFunc     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func (db *customerNotificationRouteTestDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if db.queryRowFunc != nil {
+		return db.queryRowFunc(ctx, sql, args...)
+	}
+	return customerNotificationRouteTestRow{err: pgx.ErrNoRows}
+}
+
+func (db *customerNotificationRouteTestDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (db *customerNotificationRouteTestDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if db.execFunc != nil {
+		return db.execFunc(ctx, sql, args...)
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func (db *customerNotificationRouteTestDB) Begin(context.Context) (pgx.Tx, error) {
+	return nil, nil
+}
+
+type customerNotificationRouteTestRow struct {
+	values []any
+	err    error
+}
+
+func (row customerNotificationRouteTestRow) Scan(dest ...any) error {
+	if row.err != nil {
+		return row.err
+	}
+	if len(dest) != len(row.values) {
+		return fmt.Errorf("unexpected scan destination count: got %d want %d", len(dest), len(row.values))
+	}
+	for i, value := range row.values {
+		if err := assignNotificationScanValue(dest[i], value); err != nil {
+			return fmt.Errorf("scanning column %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 // TestAPISubsetPermissionEnforcement tests that API keys with specific permissions
 // can only access matching endpoints.
 func TestAPISubsetPermissionEnforcement(t *testing.T) {
 	tests := []struct {
-		name            string
-		permissions     []string
-		endpoint        string
-		method          string
-		setupMockRepo   func() *mockAPIKeyRepoForRoutes
-		wantStatus      int
-		description     string
+		name          string
+		permissions   []string
+		endpoint      string
+		method        string
+		setupMockRepo func() *mockAPIKeyRepoForRoutes
+		wantStatus    int
+		description   string
 	}{
 		{
 			name:        "vm:read can list VMs",
@@ -317,6 +375,59 @@ func TestAPIKeyCannotAccessAccountManagement(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCannotMutateNotificationRoutes(t *testing.T) {
+	router, rawAPIKey := newNotificationRouteTestRouter(t)
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "API key can still read notification preferences",
+			method:     http.MethodGet,
+			path:       "/api/v1/customer/notifications/preferences",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "API key cannot update notification preferences",
+			method:     http.MethodPut,
+			path:       "/api/v1/customer/notifications/preferences",
+			body:       `{"email_enabled":false}`,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "API key cannot mark notification as read",
+			method:     http.MethodPost,
+			path:       "/api/v1/customer/notifications/notif-1/read",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "API key cannot mark all notifications as read",
+			method:     http.MethodPost,
+			path:       "/api/v1/customer/notifications/read-all",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+			req.Header.Set("X-API-Key", rawAPIKey)
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			assert.Equal(t, tt.wantStatus, recorder.Code)
+		})
+	}
+}
+
 // TestCustomerIsolation verifies that GetUserID returns the correct customer ID
 // for both JWT and API key authentication.
 func TestCustomerIsolation(t *testing.T) {
@@ -363,6 +474,113 @@ func TestCustomerIsolation(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 		// Response body would contain "customer-apikey-456"
 	})
+}
+
+func newNotificationRouteTestRouter(t *testing.T) (*gin.Engine, string) {
+	t.Helper()
+
+	const (
+		rawAPIKey     = "vs_test_notification_key"
+		encryptionKey = "test-encryption-key"
+	)
+
+	now := time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC)
+	expectedHash := sharedcrypto.GenerateHMACSignature(encryptionKey, []byte(rawAPIKey))
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+	logger := testAuthHandlerLogger()
+
+	db := &customerNotificationRouteTestDB{
+		queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+			switch {
+			case strings.Contains(sql, "FROM customer_api_keys WHERE key_hash = $1 AND revoked_at IS NULL"):
+				if len(args) != 1 || args[0] != expectedHash {
+					return customerNotificationRouteTestRow{err: pgx.ErrNoRows}
+				}
+				return customerNotificationRouteTestRow{values: []any{
+					"key-1",
+					"customer-1",
+					"notifications-test-key",
+					expectedHash,
+					[]string{},
+					[]string{},
+					[]string{PermissionVMRead},
+					nil,
+					now,
+					nil,
+					nil,
+				}}
+			case strings.Contains(sql, "FROM notification_preferences WHERE customer_id = $1"):
+				return customerNotificationRouteTestRow{values: []any{
+					"pref-1",
+					"customer-1",
+					true,
+					false,
+					[]string{"vm.created"},
+					now,
+					now,
+				}}
+			case strings.Contains(sql, "UPDATE notification_preferences SET"):
+				return customerNotificationRouteTestRow{values: []any{
+					"pref-1",
+					"customer-1",
+					false,
+					false,
+					[]string{"vm.created"},
+					now,
+					now,
+				}}
+			case strings.Contains(sql, "SELECT COUNT(*) FROM notifications WHERE customer_id = $1 AND NOT read"):
+				return customerNotificationRouteTestRow{values: []any{0}}
+			default:
+				return customerNotificationRouteTestRow{err: fmt.Errorf("unexpected query: %s", sql)}
+			}
+		},
+		execFunc: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+			switch {
+			case strings.Contains(sql, "UPDATE notifications SET read = TRUE WHERE id = $1 AND customer_id = $2"):
+				return pgconn.NewCommandTag("UPDATE 1"), nil
+			case strings.Contains(sql, "UPDATE notifications SET read = TRUE WHERE customer_id = $1 AND NOT read"):
+				return pgconn.NewCommandTag("UPDATE 5"), nil
+			default:
+				return pgconn.CommandTag{}, fmt.Errorf("unexpected exec: %s", sql)
+			}
+		},
+	}
+
+	apiKeyRepo := repository.NewCustomerAPIKeyRepository(db)
+	notifyHandler := NewNotificationsHandler(
+		repository.NewNotificationPreferenceRepository(db),
+		repository.NewNotificationEventRepository(db),
+		nil,
+		nil,
+		logger,
+	)
+	sseHub := services.NewSSEHub(logger)
+	inAppHandler := NewInAppNotificationsHandler(
+		services.NewInAppNotificationService(services.InAppNotificationServiceConfig{
+			Repo:   repository.NewInAppNotificationRepository(db),
+			Hub:    sseHub,
+			Logger: logger,
+		}),
+		sseHub,
+		authConfig,
+		logger,
+		nil,
+	)
+	handler := &CustomerHandler{
+		authConfig:    authConfig,
+		encryptionKey: encryptionKey,
+		logger:        logger,
+	}
+
+	router := gin.New()
+	api := router.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, notifyHandler, inAppHandler, apiKeyRepo, false, BillingRoutesConfig{})
+
+	return router, rawAPIKey
 }
 
 // TestJWTHasFullPermissions verifies that JWT-authenticated requests
@@ -481,4 +699,219 @@ func TestRegisterAuthRoutes_SelfRegistrationToggle(t *testing.T) {
 			assert.Equal(t, tt.wantVerify, hasVerify)
 		})
 	}
+}
+
+func TestRegisterCustomerRoutes_LogoutAllowsCleanupTokenWithoutCurrentJWT(t *testing.T) {
+	logger := testAuthHandlerLogger()
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+	deleteErr := errors.New("delete session failed")
+	authService := services.NewAuthService(
+		&logoutCustomerRepoStub{deleteSessionErr: deleteErr},
+		nil,
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	cleanupToken, err := middleware.GenerateSessionCleanupToken(
+		authConfig,
+		"customer-123",
+		"customer",
+		"",
+		"session-123",
+	)
+	require.NoError(t, err)
+
+	handler := &CustomerHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+
+	r := gin.New()
+	api := r.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	body, err := json.Marshal(LogoutRequest{SessionCleanupToken: cleanupToken})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer/auth/logout", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+
+	errorBody, ok := response["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "LOGOUT_FAILED", errorBody["code"])
+}
+
+func TestRegisterCustomerRoutes_LogoutRejectsMalformedJSON(t *testing.T) {
+	logger := testAuthHandlerLogger()
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+
+	handler := &CustomerHandler{
+		authConfig: authConfig,
+		logger:     logger,
+	}
+
+	r := gin.New()
+	api := r.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer/auth/logout", bytes.NewBufferString(`{"session_cleanup_token":`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+
+	errorBody, ok := response["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "INVALID_REQUEST_BODY", errorBody["code"])
+}
+
+func TestRegisterCustomerRoutes_LogoutStillRequiresCSRFFromCurrentSession(t *testing.T) {
+	logger := testAuthHandlerLogger()
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+	authService := services.NewAuthService(
+		&logoutCustomerRepoStub{deleteSessionErr: errors.New("delete session failed")},
+		nil,
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	handler := &CustomerHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+
+	r := gin.New()
+	api := r.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	accessToken, err := middleware.GenerateAccessToken(
+		authConfig,
+		"customer-123",
+		"customer",
+		"",
+		"session-123",
+		15*time.Minute,
+	)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer/auth/logout", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: middleware.AccessTokenCookieName, Value: accessToken})
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+
+	errorBody, ok := response["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "CSRF_COOKIE_MISSING", errorBody["code"])
+}
+
+func TestRegisterCustomerRoutes_LogoutRejectsNonCustomerCleanupToken(t *testing.T) {
+	logger := testAuthHandlerLogger()
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+	authService := services.NewAuthService(
+		&logoutCustomerRepoStub{deleteSessionErr: errors.New("delete session failed")},
+		nil,
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	cleanupToken, err := middleware.GenerateSessionCleanupToken(
+		authConfig,
+		"admin-123",
+		"admin",
+		"admin",
+		"admin-session-123",
+	)
+	require.NoError(t, err)
+
+	handler := &CustomerHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+
+	r := gin.New()
+	api := r.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	body, err := json.Marshal(LogoutRequest{SessionCleanupToken: cleanupToken})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer/auth/logout", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+
+	errorBody, ok := response["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "UNAUTHORIZED", errorBody["code"])
+}
+
+func TestRegisterCustomerRoutes_DoesNotExposeLegacyBackupCodesFetch(t *testing.T) {
+	handler := &CustomerHandler{
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret",
+			Issuer:    "virtuestack",
+		},
+		logger: testAuthHandlerLogger(),
+	}
+
+	r := gin.New()
+	api := r.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	routes := r.Routes()
+	hasLegacyBackupCodesFetch := slices.ContainsFunc(routes, func(route gin.RouteInfo) bool {
+		return route.Method == http.MethodGet && route.Path == "/api/v1/customer/2fa/backup-codes"
+	})
+
+	assert.False(t, hasLegacyBackupCodesFetch)
 }

@@ -96,7 +96,9 @@ services:
       NATS_URL: nats://${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env}@nats:4222
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GUEST_OP_HMAC_SECRET: ${GUEST_OP_HMAC_SECRET:?GUEST_OP_HMAC_SECRET must be set in .env}
       LISTEN_ADDR: :8080
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.20.0.0/24}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:

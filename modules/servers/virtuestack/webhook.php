@@ -286,10 +286,9 @@ function handleVMCreated(string $taskId, string $vmId, int $serviceId, array $re
     }
 
     // Store password if provided
-    $password = $result['password'] ?? '';
-    if (!empty($password)) {
+    if (!empty($result['password'])) {
         try {
-            $encryptedPassword = encryptPassword($password);
+            $encryptedPassword = encryptPassword($result['password']);
             updateServiceField($serviceId, 'vm_password', $encryptedPassword);
         } catch (\RuntimeException $e) {
             logWebhook('error', "Failed to encrypt password for service {$serviceId}: " . $e->getMessage());
@@ -313,7 +312,6 @@ function handleVMCreated(string $taskId, string $vmId, int $serviceId, array $re
     sendWelcomeEmail($serviceId, [
         'vm_id' => $vmId,
         'ip_address' => $primaryIp ?? '',
-        'password' => $password,
     ]);
 }
 
@@ -523,7 +521,6 @@ function sendWelcomeEmail(int $serviceId, array $vmData): void
             'product_name' => $service->product_name,
             'vm_id' => $vmData['vm_id'] ?? '',
             'ip_address' => $vmData['ip_address'] ?? '',
-            'password' => $vmData['password'] ?? '',
             'hostname' => $service->domain ?? '',
         ];
 

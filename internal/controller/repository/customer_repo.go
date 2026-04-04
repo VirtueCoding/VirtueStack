@@ -3,11 +3,11 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
-	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -480,6 +480,59 @@ func (r *CustomerRepository) DeleteSession(ctx context.Context, id string) error
 		return fmt.Errorf("deleting session %s: %w", id, ErrNoRowsAffected)
 	}
 	return nil
+}
+
+// RotateSession atomically consumes a refresh-token session and inserts its replacement.
+// Returns ErrNoRowsAffected when the current refresh token has already been consumed.
+func (r *CustomerRepository) RotateSession(
+	ctx context.Context,
+	currentRefreshTokenHash string,
+	newSession *models.Session,
+) (*models.Session, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning session rotation transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is a best-effort safety net after commit or early return.
+
+	const deleteQ = `
+		DELETE FROM sessions
+		WHERE id = (
+			SELECT id
+			FROM sessions
+			WHERE refresh_token_hash = $1
+			FOR UPDATE
+		)
+		RETURNING id, user_id, user_type, refresh_token_hash,
+		          ip_address::text, user_agent, expires_at, last_reauth_at, created_at`
+
+	currentSession, err := ScanRow(ctx, tx, deleteQ, []any{currentRefreshTokenHash}, scanSession)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			return nil, ErrNoRowsAffected
+		}
+		return nil, fmt.Errorf("deleting current refresh session: %w", err)
+	}
+
+	const insertQ = `
+		INSERT INTO sessions (
+			id, user_id, user_type, refresh_token_hash,
+			ip_address, user_agent, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING created_at`
+
+	if err := tx.QueryRow(ctx, insertQ,
+		newSession.ID, newSession.UserID, newSession.UserType, newSession.RefreshTokenHash,
+		newSession.IPAddress, newSession.UserAgent, newSession.ExpiresAt,
+	).Scan(&newSession.CreatedAt); err != nil {
+		return nil, fmt.Errorf("creating rotated session: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing session rotation: %w", err)
+	}
+
+	return &currentSession, nil
 }
 
 // DeleteExpiredSessions removes all sessions that have expired.

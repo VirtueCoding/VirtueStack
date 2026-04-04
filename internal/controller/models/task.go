@@ -73,6 +73,10 @@ const (
 	TaskTypeTemplateBuild = "template.build_from_iso"
 	// TaskTypeTemplateDistribute distributes a template to specified nodes.
 	TaskTypeTemplateDistribute = "template.distribute"
+	// TaskTypeWebhookDeliver delivers a customer webhook event.
+	TaskTypeWebhookDeliver = "webhook.deliver"
+	// TaskTypeSystemWebhookDeliver delivers a system webhook event.
+	TaskTypeSystemWebhookDeliver = "system_webhook.deliver"
 )
 
 // Task represents an async operation tracked in the database and NATS JetStream.

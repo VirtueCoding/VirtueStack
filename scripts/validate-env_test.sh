@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="/home/runner/work/VirtueStack/VirtueStack"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SCRIPT_PATH="${REPO_ROOT}/scripts/validate-env.sh"
 
 run_missing_vars_test() {

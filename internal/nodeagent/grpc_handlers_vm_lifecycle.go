@@ -11,6 +11,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/guest"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/reinstallutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/transferutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	sharedlibvirtutil "github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
@@ -221,7 +222,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 				}
 			}()
 			agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
-			if err := agent.SetUserPassword(ctx, "root", req.GetRootPasswordHash()); err != nil {
+			passwordCtx, cancel := transferutil.DetachedTimeoutContext(ctx, guest.DefaultTimeout)
+			defer cancel()
+			if err := agent.SetUserPassword(passwordCtx, "root", req.GetRootPasswordHash()); err != nil {
 				logger.Error("failed to set root password via guest agent", "error", err)
 			} else {
 				logger.Info("root password set via guest agent", "vm_id", req.GetVmId())

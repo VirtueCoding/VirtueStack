@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { parseUnreadCountEventData } from "@virtuestack/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { inAppNotificationApi } from "@/lib/api-client";
 
@@ -21,7 +22,7 @@ export function useNotifications(): UseNotificationsResult {
   const { isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
 
-  const connect = useCallback(() => {
+  const connect = useCallback(function connect() {
     if (eventSourceRef.current) return;
 
     const url = `${API_BASE_URL}/admin/notifications/stream`;
@@ -29,8 +30,10 @@ export function useNotifications(): UseNotificationsResult {
     eventSourceRef.current = es;
 
     es.addEventListener("unread_count", (e: MessageEvent) => {
-      const data = JSON.parse(e.data) as { count: number };
-      setUnreadCount(data.count);
+      const count = parseUnreadCountEventData(e.data);
+      if (count !== null) {
+        setUnreadCount(count);
+      }
     });
 
     es.addEventListener("notification", () => {
@@ -38,8 +41,10 @@ export function useNotifications(): UseNotificationsResult {
     });
 
     es.addEventListener("unread_count_changed", (e: MessageEvent) => {
-      const data = JSON.parse(e.data) as { count: number };
-      setUnreadCount(data.count);
+      const count = parseUnreadCountEventData(e.data);
+      if (count !== null) {
+        setUnreadCount(count);
+      }
     });
 
     es.onopen = () => {

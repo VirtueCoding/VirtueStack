@@ -789,6 +789,7 @@ The E2E seed script creates predictable test data:
 | NATS_URL | Yes | - | NATS server URL with auth token |
 | JWT_SECRET | Yes | - | HMAC secret for JWT signing (32+ chars) |
 | ENCRYPTION_KEY | Yes | - | AES-256 key for secret encryption |
+| GUEST_OP_HMAC_SECRET | Yes | - | Shared HMAC secret for guest-agent operations; must be at least 32 chars and match the node agent |
 | LISTEN_ADDR | No | :8080 | HTTP listen address |
 | LOG_LEVEL | No | info | Logging level (debug/info/warn/error) |
 | SMTP_HOST | No | - | SMTP server hostname |
@@ -821,6 +822,7 @@ The E2E seed script creates predictable test data:
 | TLS_CERT_FILE | Yes | - | mTLS client certificate |
 | TLS_KEY_FILE | Yes | - | mTLS client key |
 | TLS_CA_FILE | Yes | - | CA certificate |
+| GUEST_OP_HMAC_SECRET | Yes | - | Shared HMAC secret for guest-agent operations; must be at least 32 chars and match the controller |
 | LOG_LEVEL | No | info | Logging level |
 
 *Both `LVM_VOLUME_GROUP` and `LVM_THIN_POOL` are required when `STORAGE_BACKEND=lvm`. The thin pool must be pre-existing within the volume group.

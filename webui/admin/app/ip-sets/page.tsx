@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
@@ -42,7 +42,7 @@ export default function IPSetsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
-  const fetchIPSets = async () => {
+  const fetchIPSets = useCallback(async () => {
     try {
       const data = await adminIPSetsApi.getIPSets();
       setIPSets((data || []).map((ipSet) => ({
@@ -63,11 +63,11 @@ export default function IPSetsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
-    fetchIPSets();
-  }, []);
+    void fetchIPSets();
+  }, [fetchIPSets]);
 
   const handleCreate = async (data: CreateIPSetFormData) => {
     setIsCreating(true);

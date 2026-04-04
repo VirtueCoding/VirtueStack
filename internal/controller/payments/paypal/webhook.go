@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // PayPal webhook signature header names.
@@ -93,13 +95,27 @@ func (p *Provider) executeVerify(
 	if err != nil {
 		return fmt.Errorf("paypal verify webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			p.logger.Debug("failed to close PayPal verify response body", "error", closeErr)
+		}
+	}()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
 		return fmt.Errorf("read verify response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusBadRequest {
+			return sharederrors.NewValidationError(
+				"signature",
+				fmt.Sprintf(
+					"PayPal webhook verification request failed (status %d): %s",
+					resp.StatusCode,
+					string(respBody),
+				),
+			)
+		}
 		return fmt.Errorf(
 			"paypal verify webhook failed (status %d): %s",
 			resp.StatusCode, string(respBody),
@@ -111,9 +127,12 @@ func (p *Provider) executeVerify(
 		return fmt.Errorf("decode verify response: %w", err)
 	}
 	if verifyResp.VerificationStatus != "SUCCESS" {
-		return fmt.Errorf(
-			"paypal webhook verification failed: %s",
-			verifyResp.VerificationStatus,
+		return sharederrors.NewValidationError(
+			"signature",
+			fmt.Sprintf(
+				"PayPal webhook verification failed: %s",
+				verifyResp.VerificationStatus,
+			),
 		)
 	}
 

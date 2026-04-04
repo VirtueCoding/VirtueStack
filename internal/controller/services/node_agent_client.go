@@ -9,8 +9,10 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // CephConfig holds Ceph cluster connection parameters for the controller.
@@ -23,12 +25,13 @@ type CephConfig struct {
 // NodeAgentGRPCClient implements NodeAgentClient interface with gRPC communication
 // and caching for metrics to reduce load on node agents.
 type NodeAgentGRPCClient struct {
-	nodeRepo *repository.NodeRepository
-	vmRepo   *repository.VMRepository
-	connPool GRPCConnectionPool
-	cache    *metricsCache
-	cephCfg  *CephConfig
-	logger   *slog.Logger
+	nodeRepo          *repository.NodeRepository
+	vmRepo            *repository.VMRepository
+	connPool          GRPCConnectionPool
+	cache             *metricsCache
+	cephCfg           *CephConfig
+	logger            *slog.Logger
+	guestOpHMACSecret string
 }
 
 // GRPCConnectionPool defines the interface for managing gRPC connections to nodes.
@@ -85,12 +88,14 @@ func NewNodeAgentGRPCClient(
 	vmRepo *repository.VMRepository,
 	connPool GRPCConnectionPool,
 	cephCfg *CephConfig,
+	guestOpHMACSecret string,
 	logger *slog.Logger,
 ) *NodeAgentGRPCClient {
 	return &NodeAgentGRPCClient{
-		nodeRepo: nodeRepo,
-		vmRepo:   vmRepo,
-		connPool: connPool,
+		nodeRepo:          nodeRepo,
+		vmRepo:            vmRepo,
+		connPool:          connPool,
+		guestOpHMACSecret: guestOpHMACSecret,
 		cache: &metricsCache{
 			data: make(map[string]*cachedMetrics),
 			ttl:  5 * time.Second,
@@ -98,6 +103,15 @@ func NewNodeAgentGRPCClient(
 		cephCfg: cephCfg,
 		logger:  logger.With("component", "node-agent-client"),
 	}
+}
+
+func (c *NodeAgentGRPCClient) guestOpContext(ctx context.Context, vmID string) (context.Context, error) {
+	token, err := sharedcrypto.GenerateGuestOpToken(c.guestOpHMACSecret, vmID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	return metadata.AppendToOutgoingContext(ctx, "x-guest-op-token", token), nil
 }
 
 // GetNodeMetrics retrieves real-time metrics from a node with 5-second caching.

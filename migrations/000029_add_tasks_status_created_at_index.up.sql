@@ -1,8 +1,11 @@
--- Add composite index on tasks(status, created_at DESC) to speed up ORDER BY queries
--- that filter by status (e.g. fetching pending or running tasks sorted by creation time).
+-- Migration 000029 previously attempted to create this index with
+-- CREATE INDEX CONCURRENTLY, which is incompatible with golang-migrate's
+-- transaction-managed execution and caused fresh installs to fail.
 --
--- Note: CREATE INDEX CONCURRENTLY cannot run inside a transaction block, so this file
--- has no BEGIN/COMMIT. See migration 000031 for detailed discussion.
+-- Keep the canonical index in the normal migration chain using a
+-- transaction-safe CREATE INDEX statement. Operators that need a
+-- concurrent rebuild on an already-populated production table should
+-- perform that as a manual maintenance step outside golang-migrate.
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tasks_status_created_at
+CREATE INDEX IF NOT EXISTS idx_tasks_status_created_at
     ON tasks(status, created_at DESC);

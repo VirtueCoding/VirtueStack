@@ -167,14 +167,13 @@ func (r *StorageBackendRepository) Update(ctx context.Context, sb *models.Storag
 		WHERE id = $11
 		RETURNING ` + storageBackendSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		sb.Name,
 		sb.CephPool, sb.CephUser, sb.CephMonitors, sb.CephKeyringPath,
 		sb.StoragePath, sb.LVMVolumeGroup, sb.LVMThinPool,
 		sb.LVMDataPercentThreshold, sb.LVMMetadataPercentThreshold,
 		sb.ID,
-	)
-	updated, err := scanStorageBackend(row)
+	}, scanStorageBackend)
 	if err != nil {
 		return fmt.Errorf("updating storage backend %s: %w", sb.ID, err)
 	}

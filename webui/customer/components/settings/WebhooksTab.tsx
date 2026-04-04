@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
@@ -75,6 +75,7 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
       secret: "",
     },
   });
+  const selectedEvents = useWatch({ control: webhookForm.control, name: "events" });
 
   useEffect(() => {
     if (editingWebhook) {
@@ -354,7 +355,7 @@ export function WebhooksTab({ webhooks, isLoading }: WebhooksTabProps) {
                 </SelectContent>
               </Select>
               <div className="flex flex-wrap gap-1 mt-2">
-                {webhookForm.watch("events")?.map((event) => (
+                {selectedEvents?.map((event) => (
                   <Badge key={event} variant="secondary" className="cursor-pointer" onClick={() => {
                     const current = webhookForm.getValues("events") || [];
                     webhookForm.setValue("events", current.filter(e => e !== event), { shouldValidate: true });

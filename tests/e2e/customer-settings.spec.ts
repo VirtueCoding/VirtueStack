@@ -210,10 +210,6 @@ class Customer2FASetupPage {
     await this.page.click('button:has-text("Regenerate"), [data-testid="regenerate-backup-codes-btn"]');
   }
 
-  async viewBackupCodes() {
-    await this.page.click('button:has-text("View Backup Codes"), a:has-text("Backup Codes")');
-  }
-
   async getStatus() {
     return this.page.locator('[data-testid="2fa-status"]').textContent();
   }
@@ -698,15 +694,13 @@ test.describe('Customer 2FA Management', () => {
     }
   });
 
-  test('should view backup codes', async ({ page }) => {
+  test('should explain that backup codes must be regenerated after setup', async ({ page }) => {
     await twoFAPage.goto();
 
     const status = await twoFAPage.getStatus();
 
     if (status?.toLowerCase().includes('enabled')) {
-      await twoFAPage.viewBackupCodes();
-
-      await expect(page.locator('[data-testid="backup-code"]')).toBeVisible();
+      await expect(page.locator('text=/Regenerate to receive a new set/i')).toBeVisible();
     }
   });
 
@@ -718,24 +712,10 @@ test.describe('Customer 2FA Management', () => {
     const status = await twoFAPage.getStatus();
 
     if (status?.toLowerCase().includes('enabled')) {
-      await twoFAPage.viewBackupCodes();
-
-      const oldCodes = await twoFAPage.getBackupCodes();
-
       await twoFAPage.clickRegenerateBackupCodes();
 
-      // May need to confirm
-      const confirmBtn = page.locator('button:has-text("Confirm")');
-      if (await confirmBtn.isVisible()) {
-        const validCode = generateTOTP(process.env.CUSTOMER_TOTP_SECRET!);
-        await page.fill('input[name="totp_code"]', validCode);
-        await confirmBtn.click();
-      }
-
       const newCodes = await twoFAPage.getBackupCodes();
-
-      // New codes should be different
-      expect(newCodes).not.toEqual(oldCodes);
+      expect(newCodes.length).toBeGreaterThan(0);
     }
   });
 });

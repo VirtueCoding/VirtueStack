@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 import { Toaster } from '@virtuestack/ui';
+import { AdminShell } from '@/components/admin-shell';
 
 const geistSans = Geist({
   variable: '--font-sans',
@@ -27,7 +28,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}>
-        <Providers>{children}</Providers>
+        <Providers>
+          <AdminShell>{children}</AdminShell>
+        </Providers>
         <Toaster />
       </body>
     </html>

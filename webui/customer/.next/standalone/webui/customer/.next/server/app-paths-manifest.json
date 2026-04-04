@@ -1,7 +1,11 @@
 {
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/auth/callback/page": "app/auth/callback/page.js",
+  "/billing/page": "app/billing/page.js",
+  "/billing/paypal-return/page": "app/billing/paypal-return/page.js",
   "/forgot-password/page": "app/forgot-password/page.js",
+  "/invoices/page": "app/invoices/page.js",
   "/login/page": "app/login/page.js",
   "/page": "app/page.js",
   "/reset-password/page": "app/reset-password/page.js",

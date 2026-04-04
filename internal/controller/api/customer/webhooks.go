@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/audit"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
@@ -198,9 +199,15 @@ func (h *CustomerHandler) CreateWebhook(c *gin.Context) {
 	h.logger.Info("webhook created",
 		"webhook_id", webhook.ID,
 		"customer_id", customerID,
-		"url", req.URL,
+		"url", audit.SanitizeURLForAudit(req.URL),
 		"events", req.Events,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "webhook.create", "webhook", webhook.ID, map[string]any{
+		"url":    req.URL,
+		"events": req.Events,
+		"secret": req.Secret,
+	}, true)
 
 	c.JSON(http.StatusCreated, models.Response{Data: toWebhookResponse(webhook)})
 }
@@ -331,6 +338,21 @@ func (h *CustomerHandler) UpdateWebhook(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
 
+	changes := map[string]any{}
+	if req.URL != nil {
+		changes["url"] = *req.URL
+	}
+	if req.Events != nil {
+		changes["events"] = req.Events
+	}
+	if req.IsActive != nil {
+		changes["is_active"] = *req.IsActive
+	}
+	if req.Secret != nil {
+		changes["secret"] = *req.Secret
+	}
+	h.logAudit(c, "webhook.update", "webhook", webhookID, changes, true)
+
 	c.JSON(http.StatusOK, models.Response{Data: toWebhookResponse(webhook)})
 }
 
@@ -376,6 +398,8 @@ func (h *CustomerHandler) DeleteWebhook(c *gin.Context) {
 		"webhook_id", webhookID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "webhook.delete", "webhook", webhookID, nil, true)
 
 	c.Status(http.StatusNoContent)
 }
@@ -496,6 +520,8 @@ func (h *CustomerHandler) TestWebhook(c *gin.Context) {
 		"webhook_id", webhookID,
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "webhook.test", "webhook", webhookID, nil, true)
 
 	// Return success - the actual delivery happens asynchronously
 	c.JSON(http.StatusOK, TestWebhookResponse{

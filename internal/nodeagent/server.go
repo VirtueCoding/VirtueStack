@@ -20,6 +20,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/network"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage/downloadutil"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/transferutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
@@ -90,14 +92,11 @@ func NewServer(cfg *config.NodeAgentConfig, logger *slog.Logger) (*Server, error
 	}
 
 	// Determine listen address
-	listenAddr := DefaultListenAddr
-	if cfg.ControllerGRPCAddr != "" {
-		listenAddr = cfg.ControllerGRPCAddr
-	}
+	listenAddr := cfg.GRPCListenAddr(DefaultListenAddr)
 
 	metricsAddr := cfg.MetricsAddr
 	if metricsAddr == "" {
-		metricsAddr = ":9091"
+		metricsAddr = "127.0.0.1:9091"
 	}
 
 	healthAddr := cfg.HealthAddr
@@ -630,17 +629,17 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 	lvmDataPercent, lvmMetadataPercent := h.server.getLVMMetrics(ctx)
 
 	return &nodeagentpb.NodeHealthResponse{
-		NodeId:            h.server.config.NodeID,
-		Healthy:           true,
-		CpuPercent:        cpuPercent,
-		MemoryPercent:     memoryPercent,
-		DiskPercent:       diskPercent,
-		VmCount:           resources.VMCount,
-		LoadAverage:       resources.LoadAverage[:],
-		UptimeSeconds:     resources.UptimeSeconds,
-		LibvirtConnected:  h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:     h.server.isStorageConnected(),
-		LvmDataPercent:    lvmDataPercent,
+		NodeId:             h.server.config.NodeID,
+		Healthy:            true,
+		CpuPercent:         cpuPercent,
+		MemoryPercent:      memoryPercent,
+		DiskPercent:        diskPercent,
+		VmCount:            resources.VMCount,
+		LoadAverage:        resources.LoadAverage[:],
+		UptimeSeconds:      resources.UptimeSeconds,
+		LibvirtConnected:   h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
+		CephConnected:      h.server.isStorageConnected(),
+		LvmDataPercent:     lvmDataPercent,
 		LvmMetadataPercent: lvmMetadataPercent,
 	}, nil
 }
@@ -977,7 +976,7 @@ func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb
 		"os_family", req.OsFamily,
 		"storage_backend", req.StorageBackend)
 
-	builder := storage.NewTemplateBuilder(h.server.logger)
+	builder := storage.NewTemplateBuilder(h.server.logger, int64(h.server.config.MaxISOSizeGB)*1024*1024*1024)
 
 	diskSizeGB := int(req.DiskSizeGb)
 	if diskSizeGB == 0 {
@@ -1127,9 +1126,12 @@ func (h *grpcHandler) downloadAndImportTemplate(ctx context.Context, req *nodeag
 	defer os.RemoveAll(tmpDir)
 
 	tmpFile := filepath.Join(tmpDir, ref+".qcow2")
-	builder := storage.NewTemplateBuilder(h.server.logger)
+	builder := storage.NewTemplateBuilder(h.server.logger, int64(h.server.config.MaxISOSizeGB)*1024*1024*1024)
 	if err := builder.DownloadFile(ctx, req.SourceUrl, tmpFile); err != nil {
 		return "", 0, fmt.Errorf("downloading template from %s: %w", req.SourceUrl, err)
+	}
+	if err := downloadutil.VerifyFileIntegrity(tmpFile, req.ExpectedSizeBytes, req.ChecksumSha256); err != nil {
+		return "", 0, fmt.Errorf("verifying downloaded template: %w", err)
 	}
 
 	meta := storage.TemplateMeta{}
@@ -1153,7 +1155,6 @@ func (h *grpcHandler) resolveTemplatePath(ref, storageBackend string) string {
 	}
 }
 
-
 // mapError maps internal errors to safe gRPC status codes.
 // The original error is logged server-side and only a generic message is
 // returned to the caller to prevent leaking internal details such as file
@@ -1168,14 +1169,7 @@ func (h *grpcHandler) mapError(err error, operation string) error {
 // disk or ISO paths that arrive from the controller over gRPC.
 // allowedPrefix must end without a trailing slash.
 func validatePath(path, allowedPrefix string) error {
-	if path == "" {
-		return fmt.Errorf("path must not be empty")
-	}
-	cleaned := filepath.Clean(path)
-	if !strings.HasPrefix(cleaned, allowedPrefix+"/") && cleaned != allowedPrefix {
-		return fmt.Errorf("path %q is outside the allowed directory %q", cleaned, allowedPrefix)
-	}
-	return nil
+	return transferutil.ValidatePathWithin(path, allowedPrefix)
 }
 
 // mapStatusToProto maps a string status to the proto VMStatus enum.

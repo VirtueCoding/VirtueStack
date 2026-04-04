@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
+	"github.com/skip2/go-qrcode"
 )
 
 // Initiate2FARequest represents an empty request body for initiating 2FA setup.
@@ -19,13 +21,13 @@ type Initiate2FARequest struct{}
 // Backup codes are intentionally omitted here; they are returned only after
 // 2FA is successfully enabled via Enable2FA (F-066).
 type Initiate2FAResponse struct {
-	Secret string `json:"secret"`
-	QRURL  string `json:"qr_url"`
+	Secret    string `json:"secret"`
+	QRCodeURL string `json:"qr_code_url"`
 }
 
 // Enable2FARequest contains the TOTP verification code to enable 2FA.
 type Enable2FARequest struct {
-	Code string `json:"code" validate:"required,len=6,numeric"`
+	TOTPCode string `json:"totp_code" validate:"required,len=6,numeric"`
 }
 
 // Enable2FAResponse confirms whether 2FA was successfully enabled and includes
@@ -51,14 +53,9 @@ type Get2FAStatusResponse struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
-// GetBackupCodesResponse contains the backup codes for 2FA recovery.
-type GetBackupCodesResponse struct {
-	Codes []string `json:"codes"`
-}
-
 // RegenerateBackupCodesResponse contains newly generated backup codes.
 type RegenerateBackupCodesResponse struct {
-	Codes []string `json:"codes"`
+	BackupCodes []string `json:"backup_codes"`
 }
 
 // rateLimitEntry tracks 2FA verification attempts for rate limiting.
@@ -108,6 +105,11 @@ func checkVerify2FARateLimit(jti string) bool {
 	defer twoFARateLimitMu.Unlock()
 
 	now := time.Now()
+	for key, entry := range twoFARateLimitMap {
+		if now.Sub(entry.firstTry) > twoFARateLimitWindow {
+			delete(twoFARateLimitMap, key)
+		}
+	}
 	entry, exists := twoFARateLimitMap["jti:"+jti]
 
 	if !exists {
@@ -137,11 +139,18 @@ func checkVerify2FARateLimit(jti string) bool {
 	return true
 }
 
-// recordVerify2FASuccess clears the rate-limit entry for a successfully verified jti.
+// recordVerify2FASuccess permanently exhausts a successfully verified jti
+// so the temp token cannot be replayed after login succeeds.
 func recordVerify2FASuccess(jti string) {
 	twoFARateLimitMu.Lock()
 	defer twoFARateLimitMu.Unlock()
-	delete(twoFARateLimitMap, "jti:"+jti)
+	entry, exists := twoFARateLimitMap["jti:"+jti]
+	if !exists {
+		entry = &rateLimitEntry{firstTry: time.Now()}
+		twoFARateLimitMap["jti:"+jti] = entry
+	}
+	entry.attempts = twoFARateLimitMax
+	entry.exhausted = true
 }
 
 // check2FARateLimit returns false if the identifier has exceeded the rate limit.
@@ -172,6 +181,15 @@ func cleanup2FARateLimit(identifier string) {
 	delete(twoFARateLimitMap, identifier)
 }
 
+func buildQRCodeDataURL(content string) (string, error) {
+	png, err := qrcode.Encode(content, qrcode.Medium, 256)
+	if err != nil {
+		return "", err
+	}
+
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
+}
+
 // Initiate2FA handles POST /2fa/initiate - generates a new TOTP secret and QR code.
 // Returns the secret, QR URL, and backup codes for the user to set up their authenticator app.
 // @Tags Customer
@@ -189,6 +207,10 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 	customer, err := h.customerRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 		h.logger.Error("failed to get customer for 2FA initiation", "user_id", userID, "error", err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "GET_CUSTOMER_FAILED", "Internal server error")
 		return
@@ -209,11 +231,18 @@ func (h *CustomerHandler) Initiate2FA(c *gin.Context) {
 
 	h.logger.Info("2FA setup initiated", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
 
+	qrCodeURL, err := buildQRCodeDataURL(result.QRURL)
+	if err != nil {
+		h.logger.Error("failed to generate 2FA QR code", "user_id", userID, "error", err)
+		middleware.RespondWithError(c, http.StatusInternalServerError, "INITIATION_FAILED", "Internal server error")
+		return
+	}
+
 	// F-066: Do not return backup codes during initiation.
 	// Codes are returned only after 2FA is successfully enabled via Enable2FA.
 	c.JSON(http.StatusOK, models.Response{Data: Initiate2FAResponse{
-		Secret: result.Secret,
-		QRURL:  result.QRURL,
+		Secret:    result.Secret,
+		QRCodeURL: qrCodeURL,
 	}})
 }
 
@@ -251,9 +280,10 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 		return
 	}
 
-	err := h.authService.Enable2FA(c.Request.Context(), userID, req.Code)
+	backupCodes, err := h.authService.Enable2FA(c.Request.Context(), userID, req.TOTPCode)
 	if err != nil {
 		h.logger.Warn("2FA enable failed", "user_id", userID, "error", err)
+		h.logFailedAudit(c, "2fa.enable", "2fa", userID, nil, err)
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_CODE", "Invalid TOTP code")
@@ -269,6 +299,10 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_INITIATED", "Please initiate 2FA setup first")
 			return
 		}
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 
 		middleware.RespondWithError(c, http.StatusInternalServerError, "ENABLE_FAILED", "Internal server error")
 		return
@@ -277,16 +311,9 @@ func (h *CustomerHandler) Enable2FA(c *gin.Context) {
 	// F-150: Clear rate limit by userID alone on success.
 	cleanup2FARateLimit(userID)
 
-	// F-066: Return backup codes here, after 2FA is successfully enabled.
-	// Codes were generated and stored during Initiate2FA but not exposed then.
-	backupCodes, _, err := h.authService.GetBackupCodes(c.Request.Context(), userID)
-	if err != nil {
-		h.logger.Error("failed to retrieve backup codes after enabling 2FA", "user_id", userID, "error", err)
-		// 2FA is enabled; failure to retrieve backup codes is non-fatal.
-		backupCodes = nil
-	}
-
 	h.logger.Info("2FA enabled", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "2fa.enable", "2fa", userID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: Enable2FAResponse{
 		Enabled:     true,
@@ -324,6 +351,7 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 	err := h.authService.Disable2FA(c.Request.Context(), userID, req.Password)
 	if err != nil {
 		h.logger.Warn("2FA disable failed", "user_id", userID, "error", err)
+		h.logFailedAudit(c, "2fa.disable", "2fa", userID, nil, err)
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_PASSWORD", "Invalid password")
@@ -334,12 +362,18 @@ func (h *CustomerHandler) Disable2FA(c *gin.Context) {
 			middleware.RespondWithError(c, http.StatusBadRequest, "NOT_ENABLED", "2FA is not enabled for this account")
 			return
 		}
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 
 		middleware.RespondWithError(c, http.StatusInternalServerError, "DISABLE_FAILED", "Internal server error")
 		return
 	}
 
 	h.logger.Info("2FA disabled", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "2fa.disable", "2fa", userID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: Disable2FAResponse{Enabled: false}})
 }
@@ -360,6 +394,10 @@ func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 		h.logger.Error("2FA status check failed", "user_id", userID, "error", err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
@@ -367,54 +405,6 @@ func (h *CustomerHandler) Get2FAStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.Response{Data: Get2FAStatusResponse{
 		Enabled: enabled,
-	}})
-}
-
-// GetBackupCodes handles GET /2fa/backup-codes - returns backup codes (only available once).
-// @Tags Customer
-// @Summary Get backup codes
-// @Description Manages customer two-factor authentication settings.
-// @Produce json
-// @Security BearerAuth
-// @Success 200 {object} models.Response
-// @Failure 400 {object} models.ErrorResponse
-// @Failure 401 {object} models.ErrorResponse
-// @Failure 403 {object} models.ErrorResponse
-// @Router /api/v1/customer/2fa/backup-codes [get]
-func (h *CustomerHandler) GetBackupCodes(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-
-	// Check if 2FA is enabled first
-	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
-	if err != nil {
-		h.logger.Error("failed to get 2FA status for backup codes", "user_id", userID, "error", err)
-		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
-		return
-	}
-
-	if !enabled {
-		middleware.RespondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
-		return
-	}
-
-	// Get backup codes
-	codes, alreadyShown, err := h.authService.GetBackupCodes(c.Request.Context(), userID)
-	if err != nil {
-		h.logger.Error("failed to get backup codes", "user_id", userID, "error", err)
-		middleware.RespondWithError(c, http.StatusInternalServerError, "GET_BACKUP_CODES_FAILED", "Internal server error")
-		return
-	}
-
-	// If codes have already been shown once, return error
-	if alreadyShown {
-		middleware.RespondWithError(c, http.StatusBadRequest, "BACKUP_CODES_ALREADY_SHOWN", "Backup codes have already been displayed. Please regenerate to see new codes.")
-		return
-	}
-
-	h.logger.Info("backup codes retrieved", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
-
-	c.JSON(http.StatusOK, models.Response{Data: GetBackupCodesResponse{
-		Codes: codes,
 	}})
 }
 
@@ -442,6 +432,10 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	// Check if 2FA is enabled first
 	enabled, _, err := h.authService.Get2FAStatus(c.Request.Context(), userID)
 	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 		h.logger.Error("failed to get 2FA status for backup codes regeneration", "user_id", userID, "error", err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "STATUS_FAILED", "Internal server error")
 		return
@@ -455,6 +449,14 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 	// Regenerate backup codes
 	codes, err := h.authService.RegenerateBackupCodes(c.Request.Context(), userID)
 	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
+		if errors.Is(err, sharederrors.ErrTwoFANotEnabled) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "2FA_NOT_ENABLED", "2FA is not enabled for this account")
+			return
+		}
 		h.logger.Error("failed to regenerate backup codes", "user_id", userID, "error", err)
 		middleware.RespondWithError(c, http.StatusInternalServerError, "REGENERATE_BACKUP_CODES_FAILED", "Internal server error")
 		return
@@ -462,7 +464,9 @@ func (h *CustomerHandler) RegenerateBackupCodes(c *gin.Context) {
 
 	h.logger.Info("backup codes regenerated", "user_id", userID, "correlation_id", middleware.GetCorrelationID(c))
 
+	h.logAudit(c, "2fa.backup_codes.regenerate", "2fa", userID, nil, true)
+
 	c.JSON(http.StatusOK, models.Response{Data: RegenerateBackupCodesResponse{
-		Codes: codes,
+		BackupCodes: codes,
 	}})
 }

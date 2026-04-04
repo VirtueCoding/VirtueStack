@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/payments"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -64,6 +67,112 @@ func billingRouter(userID string) *gin.Engine {
 		c.Next()
 	})
 	return router
+}
+
+type topUpPaymentProviderStub struct {
+	name              string
+	createSessionFunc func(ctx context.Context, req payments.PaymentRequest) (*payments.PaymentSession, error)
+}
+
+func (s *topUpPaymentProviderStub) Name() string { return s.name }
+
+func (s *topUpPaymentProviderStub) CreatePaymentSession(
+	ctx context.Context, req payments.PaymentRequest,
+) (*payments.PaymentSession, error) {
+	if s.createSessionFunc != nil {
+		return s.createSessionFunc(ctx, req)
+	}
+	return &payments.PaymentSession{
+		ID:               "sess_1",
+		GatewaySessionID: "gw_1",
+		PaymentURL:       "https://pay.example.test/checkout",
+	}, nil
+}
+
+func (*topUpPaymentProviderStub) HandleWebhook(
+	context.Context, []byte, string,
+) (*payments.WebhookEvent, error) {
+	return nil, nil
+}
+
+func (*topUpPaymentProviderStub) GetPaymentStatus(
+	context.Context, string,
+) (*payments.PaymentStatus, error) {
+	return nil, nil
+}
+
+func (*topUpPaymentProviderStub) RefundPayment(
+	context.Context, string, int64, string,
+) (*payments.RefundResult, error) {
+	return nil, nil
+}
+
+func (*topUpPaymentProviderStub) ValidateConfig() error { return nil }
+
+type topUpPaymentRepoStub struct{}
+
+func (*topUpPaymentRepoStub) Create(_ context.Context, payment *models.BillingPayment) error {
+	payment.ID = "pay_test_1"
+	return nil
+}
+
+func (*topUpPaymentRepoStub) GetByID(context.Context, string) (*models.BillingPayment, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*topUpPaymentRepoStub) GetByGatewayPaymentID(
+	context.Context, string, string,
+) (*models.BillingPayment, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*topUpPaymentRepoStub) UpdateStatus(context.Context, string, string, *string) error {
+	return nil
+}
+
+func (*topUpPaymentRepoStub) ListByCustomer(
+	context.Context, string, models.PaginationParams,
+) ([]models.BillingPayment, bool, string, error) {
+	return nil, false, "", nil
+}
+
+func (*topUpPaymentRepoStub) ListAll(
+	context.Context, repository.BillingPaymentListFilter,
+) ([]models.BillingPayment, bool, string, error) {
+	return nil, false, "", nil
+}
+
+type topUpCustomerRepoStub struct {
+	customer *models.Customer
+}
+
+func (s *topUpCustomerRepoStub) GetByID(context.Context, string) (*models.Customer, error) {
+	if s.customer == nil {
+		return nil, errors.New("customer not found")
+	}
+	return s.customer, nil
+}
+
+func (*topUpCustomerRepoStub) GetByEmail(context.Context, string) (*models.Customer, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*topUpCustomerRepoStub) UpdateStatus(context.Context, string, string) error {
+	return nil
+}
+
+func newTopUpPaymentService(t *testing.T, provider *topUpPaymentProviderStub) *services.PaymentService {
+	t.Helper()
+
+	reg := payments.NewPaymentRegistry()
+	require.NoError(t, reg.Register(provider.name, provider))
+
+	return services.NewPaymentService(services.PaymentServiceConfig{
+		PaymentRegistry: reg,
+		LedgerService:   newTestBillingService(&mockBillingTxRepo{}),
+		PaymentRepo:     &topUpPaymentRepoStub{},
+		Logger:          testAuthHandlerLogger(),
+	})
 }
 
 // --- customer billing handler tests ---
@@ -227,4 +336,180 @@ func TestGetBillingUsage_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(8750), data["balance"])
 	assert.Equal(t, "USD", data["currency"])
+}
+
+func TestInitiateTopUp_ValidationFailureReturnsErrorResponse(t *testing.T) {
+	const testCustomerID = "550e8400-e29b-41d4-a716-446655440000"
+
+	providerCalled := false
+	paymentService := newTopUpPaymentService(t, &topUpPaymentProviderStub{
+		name: "stripe",
+		createSessionFunc: func(_ context.Context, _ payments.PaymentRequest) (*payments.PaymentSession, error) {
+			providerCalled = true
+			return &payments.PaymentSession{
+				ID:               "sess_invalid",
+				GatewaySessionID: "gw_invalid",
+				PaymentURL:       "https://pay.example.test/invalid",
+			}, nil
+		},
+	})
+
+	handler := &CustomerHandler{
+		billingLedgerService: newTestBillingService(&mockBillingTxRepo{}),
+		paymentService:       paymentService,
+		customerRepo: &topUpCustomerRepoStub{
+			customer: &models.Customer{Email: "crypto@example.test"},
+		},
+		consoleBaseURL: "https://portal.example.test",
+		logger:         testAuthHandlerLogger(),
+	}
+
+	router := billingRouter(testCustomerID)
+	router.POST("/billing/top-up", handler.InitiateTopUp)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/billing/top-up",
+		bytes.NewBufferString(`{"gateway":"stripe","amount":1000}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.False(t, providerCalled)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	errorObj, ok := resp["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "VALIDATION_ERROR", errorObj["code"])
+}
+
+func TestInitiateTopUp_AcceptsCryptoGatewayWithoutClientRedirects(t *testing.T) {
+	const testCustomerID = "550e8400-e29b-41d4-a716-446655440000"
+
+	providerCalled := false
+	var gotReq payments.PaymentRequest
+	paymentService := newTopUpPaymentService(t, &topUpPaymentProviderStub{
+		name: "crypto",
+		createSessionFunc: func(_ context.Context, req payments.PaymentRequest) (*payments.PaymentSession, error) {
+			providerCalled = true
+			gotReq = req
+			return &payments.PaymentSession{
+				ID:               "sess_crypto",
+				GatewaySessionID: "gw_crypto",
+				PaymentURL:       "https://pay.example.test/crypto",
+			}, nil
+		},
+	})
+
+	handler := &CustomerHandler{
+		billingLedgerService: newTestBillingService(&mockBillingTxRepo{}),
+		paymentService:       paymentService,
+		customerRepo: &topUpCustomerRepoStub{
+			customer: &models.Customer{Email: "crypto@example.test"},
+		},
+		consoleBaseURL: "https://portal.example.test",
+		logger:         testAuthHandlerLogger(),
+	}
+
+	router := billingRouter(testCustomerID)
+	router.POST("/billing/top-up", handler.InitiateTopUp)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/billing/top-up",
+		bytes.NewBufferString(`{"gateway":"crypto","amount":1000,"currency":"USD"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, providerCalled)
+	assert.Equal(t, "crypto@example.test", gotReq.CustomerEmail)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	data, ok := resp["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://pay.example.test/crypto", data["payment_url"])
+}
+
+func TestInitiateTopUp_DerivesTrustedPayPalRedirects(t *testing.T) {
+	const testCustomerID = "550e8400-e29b-41d4-a716-446655440000"
+
+	var gotReq payments.PaymentRequest
+	paymentService := newTopUpPaymentService(t, &topUpPaymentProviderStub{
+		name: "paypal",
+		createSessionFunc: func(_ context.Context, req payments.PaymentRequest) (*payments.PaymentSession, error) {
+			gotReq = req
+			return &payments.PaymentSession{
+				ID:               "sess_paypal",
+				GatewaySessionID: "gw_paypal",
+				PaymentURL:       "https://pay.example.test/paypal",
+			}, nil
+		},
+	})
+
+	handler := &CustomerHandler{
+		billingLedgerService: newTestBillingService(&mockBillingTxRepo{}),
+		paymentService:       paymentService,
+		customerRepo: &topUpCustomerRepoStub{
+			customer: &models.Customer{Email: "paypal@example.test"},
+		},
+		consoleBaseURL: "https://portal.example.test",
+		logger:         testAuthHandlerLogger(),
+	}
+
+	router := billingRouter(testCustomerID)
+	router.POST("/billing/top-up", handler.InitiateTopUp)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/billing/top-up",
+		bytes.NewBufferString(`{"gateway":"paypal","amount":1000,"currency":"USD","return_url":"https://evil.example.test/approved","cancel_url":"https://evil.example.test/cancelled"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "https://portal.example.test/billing/paypal-return", gotReq.ReturnURL)
+	assert.Equal(t, "https://portal.example.test/billing", gotReq.CancelURL)
+}
+
+func TestCapturePayPalPayment_ValidationFailureReturnsErrorResponse(t *testing.T) {
+	const testCustomerID = "550e8400-e29b-41d4-a716-446655440000"
+
+	handler := &CustomerHandler{
+		logger: testAuthHandlerLogger(),
+	}
+
+	router := billingRouter(testCustomerID)
+	router.POST("/billing/payments/paypal/capture", handler.CapturePayPalPayment)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/billing/payments/paypal/capture",
+		bytes.NewBufferString(`{}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	errorObj, ok := resp["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "VALIDATION_ERROR", errorObj["code"])
 }

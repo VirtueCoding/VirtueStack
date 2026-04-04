@@ -12,8 +12,12 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -29,6 +33,20 @@ const (
 
 	// HexKeyLength is the expected length of a hex-encoded 256-bit key (64 characters).
 	HexKeyLength = 64
+)
+
+var (
+	// ErrGuestOpSecretRequired indicates guest-operation token generation or verification
+	// was attempted without the shared HMAC secret being configured.
+	ErrGuestOpSecretRequired = errors.New("guest operation HMAC secret is required")
+	// ErrGuestOpTokenMalformed indicates the token is not in the expected "<ts>:<sig>" format.
+	ErrGuestOpTokenMalformed = errors.New("malformed guest operation token")
+	// ErrGuestOpTokenTimestampMalformed indicates the token timestamp is not a valid integer.
+	ErrGuestOpTokenTimestampMalformed = errors.New("malformed guest operation token timestamp")
+	// ErrGuestOpTokenExpired indicates the token age exceeds the allowed verification window.
+	ErrGuestOpTokenExpired = errors.New("guest operation token expired")
+	// ErrGuestOpTokenSignatureInvalid indicates the token signature does not match the expected HMAC.
+	ErrGuestOpTokenSignatureInvalid = errors.New("guest operation token signature invalid")
 )
 
 // Encrypt encrypts plaintext using AES-256-GCM.
@@ -270,4 +288,55 @@ func GenerateHMACSignature(secret string, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// GenerateGuestOpToken generates the guest-operation HMAC token used for sensitive
+// node-agent guest RPCs. The token format is "<unix-timestamp>:<hex-hmac>" where
+// the HMAC covers "<vmID>:<unix-timestamp>".
+func GenerateGuestOpToken(secret, vmID string, now time.Time) (string, error) {
+	if secret == "" {
+		return "", ErrGuestOpSecretRequired
+	}
+
+	ts := now.Unix()
+	message := fmt.Sprintf("%s:%d", vmID, ts)
+	signature := GenerateHMACSignature(secret, []byte(message))
+	return fmt.Sprintf("%d:%s", ts, signature), nil
+}
+
+// VerifyGuestOpToken verifies a guest-operation HMAC token against the shared
+// secret, expected VM ID, current time, and maximum allowed age.
+func VerifyGuestOpToken(secret, vmID, token string, now time.Time, maxAge time.Duration) error {
+	if secret == "" {
+		return ErrGuestOpSecretRequired
+	}
+
+	parts := strings.SplitN(token, ":", 2)
+	if len(parts) != 2 {
+		return ErrGuestOpTokenMalformed
+	}
+
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return ErrGuestOpTokenTimestampMalformed
+	}
+
+	tokenTime := time.Unix(ts, 0)
+	age := now.Sub(tokenTime)
+	if age < 0 {
+		age = -age
+	}
+	if age > maxAge {
+		return ErrGuestOpTokenExpired
+	}
+
+	expected, err := GenerateGuestOpToken(secret, vmID, tokenTime)
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		return ErrGuestOpTokenSignatureInvalid
+	}
+
+	return nil
 }

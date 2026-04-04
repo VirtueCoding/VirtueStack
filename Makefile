@@ -6,6 +6,7 @@ BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
 # Go commands
+MODULE_PATH := github.com/AbuGosok/VirtueStack
 GOCMD := go
 GOBUILD := $(GOCMD) build $(LDFLAGS)
 GOTEST := $(GOCMD) test
@@ -13,6 +14,7 @@ GOVET := $(GOCMD) vet
 GOMOD := $(GOCMD) mod
 
 TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -Ev '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$|tests/integration$$)')
+LINT_PACKAGES := $(shell $(GOCMD) list ./... | grep -Ev '^$(MODULE_PATH)/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$)' | sed 's#^$(MODULE_PATH)#.#')
 INTEGRATION_TEST_PACKAGES := ./tests/integration
 NATIVE_TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -E '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$)')
 
@@ -61,7 +63,12 @@ swagger:
 
 ## lint: Run golangci-lint
 lint:
-	golangci-lint run ./...
+	@if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libvirt rados rbd; then \
+		golangci-lint run ./...; \
+	else \
+		echo "Native lint deps missing; linting non-native packages only"; \
+		golangci-lint run $(LINT_PACKAGES); \
+	fi
 
 ## vet: Run go vet
 vet:

@@ -8,10 +8,12 @@ import { Progress } from "@/components/ui/progress"
 import { Card, CardContent } from "@virtuestack/ui"
 import { cn } from "@/lib/utils"
 import { isoApi, ApiClientError } from "@/lib/api-client"
+import { getISOUploadHint, validateISOUploadFile } from "@/lib/iso-limit"
 import { formatBytes } from "@/lib/vm-utils"
 
 interface ISOUploadProps {
   vmId: string
+  maxISOSizeBytes?: number
   onUploadComplete?: (isoId: string, fileName: string) => void
 }
 
@@ -22,7 +24,7 @@ interface UploadedFile {
   size: number
 }
 
-export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
+export function ISOUpload({ vmId, maxISOSizeBytes, onUploadComplete }: ISOUploadProps) {
   const [uploadState, setUploadState] = useState<UploadState>("idle")
   const [progress, setProgress] = useState(0)
   const [file, setFile] = useState<UploadedFile | null>(null)
@@ -30,16 +32,10 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
 
-  const MAX_ISO_SIZE_BYTES = 10 * 1024 * 1024 * 1024
-
   const validateFile = (file: File): boolean => {
-    if (!file.name.toLowerCase().endsWith(".iso")) {
-      setErrorMessage("Only .iso files are allowed")
-      setUploadState("error")
-      return false
-    }
-    if (file.size > MAX_ISO_SIZE_BYTES) {
-      setErrorMessage("File size exceeds the 10 GB limit")
+    const validationError = validateISOUploadFile(file, maxISOSizeBytes)
+    if (validationError) {
+      setErrorMessage(validationError)
       setUploadState("error")
       return false
     }
@@ -255,7 +251,7 @@ export function ISOUpload({ vmId, onUploadComplete }: ISOUploadProps) {
           </p>
         </div>
         <p className="text-xs text-muted-foreground max-w-[200px]">
-          Only .iso files are accepted (max 10 GB)
+          {getISOUploadHint(maxISOSizeBytes)}
         </p>
       </div>
     )
