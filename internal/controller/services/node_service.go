@@ -157,7 +157,7 @@ func (s *NodeService) UpdateHeartbeat(ctx context.Context, nodeID string, hb *mo
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
@@ -199,17 +199,17 @@ func (s *NodeService) DrainNode(ctx context.Context, nodeID string) error {
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
 
 	// Check if node can be drained
 	if node.Status == models.NodeStatusDraining {
-		return fmt.Errorf("node %s is already draining", nodeID)
+		return fmt.Errorf("node %s is already draining: %w", nodeID, sharederrors.ErrConflict)
 	}
 	if node.Status == models.NodeStatusFailed {
-		return fmt.Errorf("node %s is in failed state, cannot drain", nodeID)
+		return fmt.Errorf("node %s is in failed state, cannot drain: %w", nodeID, sharederrors.ErrConflict)
 	}
 
 	// Update status to draining
@@ -228,13 +228,14 @@ func (s *NodeService) UndrainNode(ctx context.Context, nodeID string) error {
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
 
 	if node.Status != models.NodeStatusDraining {
-		return fmt.Errorf("node %s is not in draining state (current: %s)", nodeID, node.Status)
+		return fmt.Errorf("node %s is not in draining state (current: %s): %w",
+			nodeID, node.Status, sharederrors.ErrConflict)
 	}
 
 	if err := s.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusOnline); err != nil {
@@ -258,7 +259,7 @@ func (s *NodeService) FailoverNode(ctx context.Context, nodeID string) error {
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
@@ -432,9 +433,11 @@ func (s *NodeService) logAudit(ctx context.Context, action, resourceID string, d
 		return
 	}
 
-	// json.Marshal error intentionally ignored: input is map[string]interface{} with
-	// only primitive values; marshalling cannot fail for this type.
-	changesJSON, _ := json.Marshal(details)
+	changesJSON, marshalErr := json.Marshal(details)
+	if marshalErr != nil {
+		s.logger.Warn("failed to marshal node audit changes", "error", marshalErr, "action", action, "resource_id", resourceID)
+		changesJSON = nil
+	}
 	errMsgPtr := (*string)(nil)
 	if errMsg != "" {
 		errMsgPtr = &errMsg
@@ -583,7 +586,7 @@ func (s *NodeService) GetNode(ctx context.Context, nodeID string) (*models.Node,
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return nil, fmt.Errorf("node not found: %s", nodeID)
+			return nil, fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting node: %w", err)
 	}
@@ -602,7 +605,7 @@ func (s *NodeService) SetNodeOnline(ctx context.Context, nodeID string) error {
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
@@ -627,7 +630,7 @@ func (s *NodeService) DeleteNode(ctx context.Context, nodeID string) error {
 	node, err := s.nodeRepo.GetByID(ctx, nodeID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return fmt.Errorf("node not found: %s", nodeID)
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
 		}
 		return fmt.Errorf("getting node: %w", err)
 	}
@@ -643,6 +646,9 @@ func (s *NodeService) DeleteNode(ctx context.Context, nodeID string) error {
 
 	// Delete the node
 	if err := s.nodeRepo.Delete(ctx, nodeID); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			return fmt.Errorf("node not found: %s: %w", nodeID, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("deleting node: %w", err)
 	}
 
@@ -671,6 +677,9 @@ func (s *NodeService) UpdateNode(ctx context.Context, node *models.Node) error {
 	}
 
 	if err := s.nodeRepo.Update(ctx, node); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return fmt.Errorf("node not found: %s: %w", node.ID, sharederrors.ErrNotFound)
+		}
 		return fmt.Errorf("updating node: %w", err)
 	}
 

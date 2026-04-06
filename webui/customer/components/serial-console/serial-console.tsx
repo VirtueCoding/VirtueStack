@@ -13,13 +13,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@virtuestack/ui";
+import {
+  getPostRebootFailureState,
+  getPostRebootSuccessState,
+} from "./reboot-state";
 
 import "@xterm/xterm/css/xterm.css";
 
 interface SerialConsoleProps {
   vmId: string;
   vmName: string;
-  token?: string;
 }
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -27,7 +30,6 @@ type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 export function SerialConsole({
   vmId,
   vmName,
-  token,
 }: SerialConsoleProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -49,9 +51,8 @@ export function SerialConsole({
       ? 'ws:'
       : 'wss:';
     const host = window.location.host;
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}${tokenParam}`;
-  }, [vmId, token]);
+    return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}`;
+  }, [vmId]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -168,7 +169,7 @@ export function SerialConsole({
       }
       term.dispose();
     };
-  }, [vmId, vmName, token, getWsUrl, reconnectKey, isConnected]);
+  }, [vmId, vmName, getWsUrl, reconnectKey, isConnected]);
 
   const handleConnect = () => {
     setIsConnected(true);
@@ -209,14 +210,30 @@ export function SerialConsole({
     try {
       const { vmApi } = await import("@/lib/api-client");
       await vmApi.restartVM(vmId);
+      const nextState = getPostRebootSuccessState();
+      if (nextState.shouldDisconnect) {
+        handleDisconnect();
+      }
+      if (nextState.shouldReconnect) {
+        rebootTimeoutRef.current = setTimeout(() => {
+          setIsRebooting(false);
+          handleReconnect();
+        }, 3000);
+      }
     } catch {
       terminal.current?.writeln("\x1b[1;31m[ ERROR ] Failed to send reboot command via API\x1b[0m");
+      const nextState = getPostRebootFailureState();
+      setIsRebooting(nextState.shouldKeepRebooting);
+      if (nextState.shouldDisconnect) {
+        handleDisconnect();
+      }
+      if (nextState.shouldReconnect) {
+        rebootTimeoutRef.current = setTimeout(() => {
+          setIsRebooting(false);
+          handleReconnect();
+        }, 3000);
+      }
     }
-    handleDisconnect();
-    rebootTimeoutRef.current = setTimeout(() => {
-      setIsRebooting(false);
-      handleReconnect();
-    }, 3000);
   };
 
   const getStatusBadge = () => {

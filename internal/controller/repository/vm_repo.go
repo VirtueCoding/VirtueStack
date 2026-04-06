@@ -36,7 +36,7 @@ func scanVM(row pgx.Row) (models.VM, error) {
 		&vm.RootPasswordEncrypted, &vm.ExternalServiceID,
 		&vm.AttachedISO,
 		&vm.CreatedAt, &vm.UpdatedAt, &vm.DeletedAt,
-		&vm.StorageBackend, &vm.DiskPath, &vm.CephPool, &vm.RBDImage,
+		&vm.StorageBackend, &vm.DiskPath, &vm.CephPool, &vm.RBDImage, &vm.StorageBackendID,
 	)
 	return vm, err
 }
@@ -50,7 +50,7 @@ const vmSelectCols = `
 	root_password_encrypted, external_service_id,
 	attached_iso,
 	created_at, updated_at, deleted_at,
-	storage_backend, disk_path, ceph_pool, rbd_image`
+	storage_backend, disk_path, ceph_pool, rbd_image, storage_backend_id`
 
 // Create inserts a new VM record into the database.
 // The VM's ID, CreatedAt, and UpdatedAt are populated by the database.
@@ -61,8 +61,8 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 			vcpu, memory_mb, disk_gb, port_speed_mbps, bandwidth_limit_gb,
 			mac_address, template_id, libvirt_domain_name,
 			root_password_encrypted, external_service_id,
-			storage_backend, disk_path
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			storage_backend, disk_path, storage_backend_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		RETURNING ` + vmSelectCols
 
 	row := r.db.QueryRow(ctx, q,
@@ -70,7 +70,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *models.VM) error {
 		vm.VCPU, vm.MemoryMB, vm.DiskGB, vm.PortSpeedMbps, vm.BandwidthLimitGB,
 		vm.MACAddress, vm.TemplateID, vm.LibvirtDomainName,
 		vm.RootPasswordEncrypted, vm.ExternalServiceID,
-		vm.StorageBackend, vm.DiskPath,
+		vm.StorageBackend, vm.DiskPath, vm.StorageBackendID,
 	)
 	created, err := scanVM(row)
 	if err != nil {
@@ -202,6 +202,36 @@ func (r *VMRepository) UpdateNodeAssignment(ctx context.Context, vmID, nodeID st
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("updating VM %s node assignment: %w", vmID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
+// UpdatePlacement updates the node assignment and storage placement metadata for a VM.
+func (r *VMRepository) UpdatePlacement(ctx context.Context, vmID, nodeID string, storageBackendID, diskPath *string) error {
+	const q = `
+		UPDATE vms
+		SET node_id = $1,
+		    storage_backend_id = COALESCE($2, storage_backend_id),
+		    disk_path = $3,
+		    updated_at = NOW()
+		WHERE id = $4 AND deleted_at IS NULL`
+
+	var backendIDArg any
+	if storageBackendID != nil && *storageBackendID != "" {
+		backendIDArg = *storageBackendID
+	}
+
+	var diskPathArg any
+	if diskPath != nil {
+		diskPathArg = *diskPath
+	}
+
+	tag, err := r.db.Exec(ctx, q, nodeID, backendIDArg, diskPathArg, vmID)
+	if err != nil {
+		return fmt.Errorf("updating VM %s placement: %w", vmID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating VM %s placement: %w", vmID, ErrNoRowsAffected)
 	}
 	return nil
 }

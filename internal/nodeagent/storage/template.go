@@ -54,6 +54,16 @@ func NewTemplateManager(rbdManager *RBDManager, conn *rados.Conn, logger *slog.L
 	}
 }
 
+// Close shuts down the dedicated Ceph connection owned by the template manager.
+func (m *TemplateManager) Close() {
+	if m == nil || m.conn == nil {
+		return
+	}
+
+	m.logger.Info("closing template ceph connection")
+	m.conn.Shutdown()
+}
+
 // ImportTemplate imports a qcow2 template image into RBD storage.
 // The import flow:
 //  1. Convert qcow2 to raw format using qemu-img

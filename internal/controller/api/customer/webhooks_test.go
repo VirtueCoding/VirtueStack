@@ -3,10 +3,15 @@ package customer
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -215,4 +220,46 @@ func TestWebhookUUIDValidation_TableDriven(t *testing.T) {
 			assert.Equal(t, "INVALID_WEBHOOK_ID", errObj["code"])
 		})
 	}
+}
+
+func TestCreateWebhook_LogSanitizesSensitiveURLParts(t *testing.T) {
+	now := time.Date(2026, time.April, 4, 0, 0, 0, 0, time.UTC)
+	webhookDB := newWebhookAuditTestDB(now)
+	var logBuffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	webhookService := services.NewWebhookService(
+		repository.NewWebhookRepository(webhookDB),
+		nil,
+		logger,
+		strings.Repeat("a", 64),
+	)
+	webhookService.SetSkipURLValidation(true)
+
+	handler := &CustomerHandler{
+		webhookService: webhookService,
+		logger:         logger,
+	}
+
+	router := setupTestRouter()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", "test-customer-id")
+		c.Next()
+	})
+	router.POST("/webhooks", handler.CreateWebhook)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/webhooks",
+		bytes.NewBufferString(`{"url":"https://user:pass@example.com/hook/path?token=abc#frag","secret":"abcdefghijklmnop","events":["vm.created"]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Contains(t, logBuffer.String(), "https://example.com")
+	assert.NotContains(t, logBuffer.String(), "user:pass")
+	assert.NotContains(t, logBuffer.String(), "token=abc")
 }

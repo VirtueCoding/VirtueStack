@@ -10,12 +10,17 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockCustomerDB implements the DB interface for testing.
 type mockCustomerDB struct {
 	execFunc     func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
+	beginFunc    func(ctx context.Context) (pgx.Tx, error)
+	commitFunc   func(ctx context.Context) error
+	rollbackFunc func(ctx context.Context) error
 }
 
 func (m *mockCustomerDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
@@ -37,6 +42,9 @@ func (m *mockCustomerDB) Exec(ctx context.Context, sql string, arguments ...any)
 }
 
 func (m *mockCustomerDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	if m.beginFunc != nil {
+		return m.beginFunc(ctx)
+	}
 	return &mockTx{mockCustomerDB: m}, nil
 }
 
@@ -46,17 +54,22 @@ type mockTx struct {
 }
 
 func (m *mockTx) Commit(ctx context.Context) error {
+	if m.commitFunc != nil {
+		return m.commitFunc(ctx)
+	}
 	return nil
 }
 
 func (m *mockTx) Rollback(ctx context.Context) error {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx)
+	}
 	return nil
 }
 
 func (m *mockTx) Conn() *pgx.Conn {
 	return nil
 }
-
 
 func (m *mockTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	return 0, nil
@@ -86,6 +99,16 @@ func (m *mockTx) ExecParams(ctx context.Context, sql string, arguments []any, oi
 type mockCustomerRow struct {
 	customer models.Customer
 	err      error
+}
+
+type mockSessionRow struct {
+	session models.Session
+	err     error
+}
+
+type mockPasswordResetRow struct {
+	reset models.PasswordReset
+	err   error
 }
 
 func (m mockCustomerRow) Scan(dest ...any) error {
@@ -144,6 +167,364 @@ func (m mockCustomerRow) Scan(dest ...any) error {
 		}
 		if updatedAt, ok := dest[14].(*time.Time); ok {
 			*updatedAt = c.UpdatedAt
+		}
+	}
+	return nil
+}
+
+func (m mockSessionRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(dest) >= 9 {
+		if id, ok := dest[0].(*string); ok {
+			*id = m.session.ID
+		}
+		if userID, ok := dest[1].(*string); ok {
+			*userID = m.session.UserID
+		}
+		if userType, ok := dest[2].(*string); ok {
+			*userType = m.session.UserType
+		}
+		if refreshHash, ok := dest[3].(*string); ok {
+			*refreshHash = m.session.RefreshTokenHash
+		}
+		if ipAddress, ok := dest[4].(**string); ok {
+			*ipAddress = m.session.IPAddress
+		}
+		if userAgent, ok := dest[5].(**string); ok {
+			*userAgent = m.session.UserAgent
+		}
+		if expiresAt, ok := dest[6].(*time.Time); ok {
+			*expiresAt = m.session.ExpiresAt
+		}
+		if lastReauthAt, ok := dest[7].(**time.Time); ok {
+			*lastReauthAt = m.session.LastReauthAt
+		}
+		if createdAt, ok := dest[8].(*time.Time); ok {
+			*createdAt = m.session.CreatedAt
+		}
+	}
+	return nil
+}
+
+func (m mockPasswordResetRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(dest) != 7 {
+		return errors.New("unexpected password reset scan destination count")
+	}
+
+	id, ok := dest[0].(*string)
+	if !ok {
+		return errors.New("unexpected password reset id destination type")
+	}
+	*id = m.reset.ID
+
+	userID, ok := dest[1].(*string)
+	if !ok {
+		return errors.New("unexpected password reset user id destination type")
+	}
+	*userID = m.reset.UserID
+
+	userType, ok := dest[2].(*string)
+	if !ok {
+		return errors.New("unexpected password reset user type destination type")
+	}
+	*userType = m.reset.UserType
+
+	tokenHash, ok := dest[3].(*string)
+	if !ok {
+		return errors.New("unexpected password reset token hash destination type")
+	}
+	*tokenHash = m.reset.TokenHash
+
+	expiresAt, ok := dest[4].(*time.Time)
+	if !ok {
+		return errors.New("unexpected password reset expires at destination type")
+	}
+	*expiresAt = m.reset.ExpiresAt
+
+	usedAt, ok := dest[5].(**time.Time)
+	if !ok {
+		return errors.New("unexpected password reset used at destination type")
+	}
+	*usedAt = m.reset.UsedAt
+
+	createdAt, ok := dest[6].(*time.Time)
+	if !ok {
+		return errors.New("unexpected password reset created at destination type")
+	}
+	*createdAt = m.reset.CreatedAt
+
+	return nil
+}
+
+func TestRotateSession(t *testing.T) {
+	now := time.Now().UTC()
+	ipAddress := "127.0.0.1"
+	userAgent := "unit-test"
+
+	tests := []struct {
+		name        string
+		queryRowErr error
+		wantErr     bool
+		errCheck    func(t *testing.T, err error)
+	}{
+		{
+			name: "rotates session atomically",
+		},
+		{
+			name:        "returns no rows affected when session already consumed",
+			queryRowErr: pgx.ErrNoRows,
+			wantErr:     true,
+			errCheck: func(t *testing.T, err error) {
+				t.Helper()
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrNoRowsAffected)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldSession := models.Session{
+				ID:               "old-session-id",
+				UserID:           "customer-123",
+				UserType:         "customer",
+				RefreshTokenHash: "old-refresh-hash",
+				IPAddress:        &ipAddress,
+				UserAgent:        &userAgent,
+				ExpiresAt:        now.Add(time.Hour),
+				CreatedAt:        now,
+			}
+			newSession := &models.Session{
+				ID:               "new-session-id",
+				UserID:           "customer-123",
+				UserType:         "customer",
+				RefreshTokenHash: "new-refresh-hash",
+				IPAddress:        &ipAddress,
+				UserAgent:        &userAgent,
+				ExpiresAt:        now.Add(2 * time.Hour),
+			}
+
+			callCount := 0
+			db := &mockCustomerDB{
+				queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+					callCount++
+					switch callCount {
+					case 1:
+						if tt.queryRowErr != nil {
+							return mockSessionRow{err: tt.queryRowErr}
+						}
+						return mockSessionRow{session: oldSession}
+					case 2:
+						return mockGenericRow{values: []any{now.Add(time.Minute)}}
+					default:
+						return mockGenericRow{err: errors.New("unexpected QueryRow call")}
+					}
+				},
+			}
+
+			repo := NewCustomerRepository(db)
+			rotatedSession, err := repo.RotateSession(context.Background(), oldSession.RefreshTokenHash, newSession)
+			if tt.wantErr {
+				tt.errCheck(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, rotatedSession)
+			assert.Equal(t, oldSession.ID, rotatedSession.ID)
+			assert.Equal(t, now.Add(time.Minute), newSession.CreatedAt)
+		})
+	}
+}
+
+func TestMarkPasswordResetUsed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		commandTag string
+		wantErr    bool
+		errCheck   func(t *testing.T, err error)
+	}{
+		{
+			name:       "marks an unused unexpired reset as used",
+			commandTag: "UPDATE 1",
+		},
+		{
+			name:       "returns no rows affected when reset is already consumed",
+			commandTag: "UPDATE 0",
+			wantErr:    true,
+			errCheck: func(t *testing.T, err error) {
+				t.Helper()
+				require.Error(t, err)
+				require.ErrorIs(t, err, ErrNoRowsAffected)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := &mockCustomerDB{
+				execFunc: func(_ context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+					require.Contains(t, sql, "UPDATE password_resets")
+					require.Contains(t, sql, "SET used_at = NOW()")
+					require.Contains(t, sql, "WHERE id = $1")
+					require.Contains(t, sql, "used_at IS NULL")
+					require.Contains(t, sql, "expires_at > NOW()")
+					require.Len(t, arguments, 1)
+					require.Equal(t, "reset-123", arguments[0])
+					return pgconn.NewCommandTag(tt.commandTag), nil
+				},
+			}
+
+			repo := NewCustomerRepository(db)
+			err := repo.MarkPasswordResetUsed(context.Background(), "reset-123")
+			if tt.wantErr {
+				tt.errCheck(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestResetPasswordWithToken(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.April, 6, 10, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name                 string
+		consumeRow           pgx.Row
+		updateTag            pgconn.CommandTag
+		updateErr            error
+		commitErr            error
+		wantErr              bool
+		errCheck             func(t *testing.T, err error)
+		wantUpdateCalls      int
+		wantCommitCalls      int
+		wantRollbackCalls    int
+		wantConsumedUserType string
+	}{
+		{
+			name: "consumes token and updates customer password atomically",
+			consumeRow: mockPasswordResetRow{
+				reset: models.PasswordReset{
+					ID:        "reset-123",
+					UserID:    "customer-123",
+					UserType:  "customer",
+					TokenHash: "token-hash",
+					ExpiresAt: now.Add(time.Hour),
+					CreatedAt: now,
+				},
+			},
+			updateTag:            pgconn.NewCommandTag("UPDATE 1"),
+			wantUpdateCalls:      1,
+			wantCommitCalls:      1,
+			wantRollbackCalls:    1,
+			wantConsumedUserType: "customer",
+		},
+		{
+			name:       "returns no rows affected when token cannot be consumed",
+			consumeRow: mockPasswordResetRow{err: pgx.ErrNoRows},
+			wantErr:    true,
+			errCheck: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, ErrNoRowsAffected)
+			},
+			wantUpdateCalls:   0,
+			wantCommitCalls:   0,
+			wantRollbackCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			updateCalls := 0
+			commitCalls := 0
+			rollbackCalls := 0
+
+			db := &mockCustomerDB{
+				queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+					require.Contains(t, sql, "UPDATE password_resets")
+					require.Contains(t, sql, "SET used_at = NOW()")
+					require.Contains(t, sql, "RETURNING")
+					require.Len(t, args, 1)
+					require.Equal(t, "token-hash", args[0])
+					return tt.consumeRow
+				},
+				execFunc: func(_ context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+					updateCalls++
+					require.Equal(t, tt.wantConsumedUserType, func() string {
+						if strings.Contains(sql, "UPDATE customers") {
+							return "customer"
+						}
+						if strings.Contains(sql, "UPDATE admins") {
+							return "admin"
+						}
+						return ""
+					}())
+					require.Len(t, arguments, 2)
+					require.Equal(t, "new-hash", arguments[0])
+					require.Equal(t, "customer-123", arguments[1])
+					return tt.updateTag, tt.updateErr
+				},
+				commitFunc: func(context.Context) error {
+					commitCalls++
+					return tt.commitErr
+				},
+				rollbackFunc: func(context.Context) error {
+					rollbackCalls++
+					return nil
+				},
+			}
+
+			repo := NewCustomerRepository(db)
+			reset, err := repo.ResetPasswordWithToken(context.Background(), "token-hash", "new-hash")
+			if tt.wantErr {
+				tt.errCheck(t, err)
+				require.Nil(t, reset)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, reset)
+				require.Equal(t, "reset-123", reset.ID)
+			}
+
+			require.Equal(t, tt.wantUpdateCalls, updateCalls)
+			require.Equal(t, tt.wantCommitCalls, commitCalls)
+			require.Equal(t, tt.wantRollbackCalls, rollbackCalls)
+		})
+	}
+}
+
+type mockGenericRow struct {
+	values []any
+	err    error
+}
+
+func (m mockGenericRow) Scan(dest ...any) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(dest) != len(m.values) {
+		return errors.New("unexpected scan destination count")
+	}
+	for i, value := range m.values {
+		switch d := dest[i].(type) {
+		case *time.Time:
+			*d = value.(time.Time)
+		default:
+			return errors.New("unexpected scan destination type")
 		}
 	}
 	return nil
@@ -298,7 +679,6 @@ func TestCustomerUpdate(t *testing.T) {
 		})
 	}
 }
-
 
 func TestCustomerUpdateProfile(t *testing.T) {
 	now := time.Now()

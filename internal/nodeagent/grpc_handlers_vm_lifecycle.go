@@ -5,12 +5,16 @@ package nodeagent
 import (
 	"context"
 	"fmt"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/guest"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/reinstallutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/transferutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	sharedlibvirtutil "github.com/AbuGosok/VirtueStack/internal/shared/libvirtutil"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,12 +40,13 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 
 	// Stop the VM if running
 	if err := h.server.vmManager.ForceStopVM(ctx, req.GetVmId()); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
+		if !sharederrors.Is(err, sharederrors.ErrNotFound) {
 			logger.Warn("failed to stop VM before reinstall", "error", err)
 		}
 	}
 
 	var diskPath string
+	var cleanupStorage storageCleanupFunc
 	switch storageBackend {
 	case vm.StorageBackendQcow:
 		templatePath := req.GetTemplateFilePath()
@@ -83,6 +88,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			return nil, status.Errorf(codes.Internal, "cloning QCOW template: %v", err)
 		}
 		diskPath = newDiskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned QCOW template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
 
 	case vm.StorageBackendCeph:
@@ -103,6 +111,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			diskName,
 		); err != nil {
 			return nil, status.Errorf(codes.Internal, "cloning RBD template: %v", err)
+		}
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskName)
 		}
 		logger.Info("cloned RBD template for reinstall", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
 
@@ -139,45 +150,67 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			return nil, status.Errorf(codes.Internal, "cloning LVM template: %v", err)
 		}
 		diskPath = newDiskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned LVM template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
 	}
 
-	// Delete the old domain definition
-	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
-			logger.Warn("failed to delete old domain", "error", err)
-		}
-	}
-
-	// Fetch current VM domain to retrieve VCPU and MemoryMB before deleting it
-	existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
-	var vcpu int
-	var memoryMB int
-	if lookupErr == nil {
-		if info, infoErr := existingDomain.GetInfo(); infoErr == nil {
-			vcpu = int(info.NrVirtCpu)
-			memoryMB = int(info.Memory / 1024) // Convert from KB to MB
-		}
-		if freeErr := existingDomain.Free(); freeErr != nil {
-			logger.Debug("failed to free domain after info fetch", "error", freeErr)
-		}
-	}
-	if vcpu <= 0 {
-		vcpu = 1
-	}
-	if memoryMB <= 0 {
-		memoryMB = 1024
+	sizing, err := reinstallutil.LookupSizingThenDelete(
+		func() (reinstallutil.Sizing, error) {
+			existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
+			if lookupErr != nil {
+				if sharedlibvirtutil.IsLibvirtError(lookupErr, libvirt.ERR_NO_DOMAIN) {
+					return reinstallutil.Sizing{}, os.ErrNotExist
+				}
+				return reinstallutil.Sizing{}, lookupErr
+			}
+			defer func() {
+				if freeErr := existingDomain.Free(); freeErr != nil {
+					logger.Debug("failed to free domain after info fetch", "error", freeErr)
+				}
+			}()
+			info, infoErr := existingDomain.GetInfo()
+			if infoErr != nil {
+				if sharedlibvirtutil.IsLibvirtError(infoErr, libvirt.ERR_NO_DOMAIN) {
+					return reinstallutil.Sizing{}, os.ErrNotExist
+				}
+				return reinstallutil.Sizing{}, infoErr
+			}
+			return reinstallutil.NormalizeSizing(reinstallutil.Sizing{
+				VCPU:     int(info.NrVirtCpu),
+				MemoryMB: int(info.Memory / 1024),
+			}), nil
+		},
+		func() error {
+			return reinstallutil.IgnoreDeleteNotFound(
+				deleteVMWithAbusePreventionCleanup(
+					ctx,
+					req.GetVmId(),
+					logger,
+					h.server.getVMTapInterface,
+					h.server.abusePreventionMgr,
+					h.server.vmManager.DeleteVM,
+				),
+				func(deleteErr error) bool {
+					return sharederrors.Is(deleteErr, sharederrors.ErrNotFound)
+				},
+			)
+		},
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "deleting old domain: %v", err)
 	}
 
 	// Re-create domain from existing config with new template
 	cfg := &vm.DomainConfig{
 		VMID:           req.GetVmId(),
 		Hostname:       req.GetHostname(),
-		VCPU:           vcpu,
-		MemoryMB:       memoryMB,
+		VCPU:           sizing.VCPU,
+		MemoryMB:       sizing.MemoryMB,
 		StorageBackend: storageBackend,
 		DiskPath:       diskPath,
 		CephPool:       h.server.config.CephPool,
@@ -186,9 +219,30 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		IPv6Address:    req.GetIpv6Address(),
 	}
 
-	result, err := h.server.vmManager.CreateVM(ctx, cfg)
-	if err != nil {
+	var result *vm.CreateResult
+	if err := createVMWithRollbackCleanup(ctx, func(ctx context.Context) error {
+		var createErr error
+		result, createErr = h.server.vmManager.CreateVM(ctx, cfg)
+		return createErr
+	}, func(ctx context.Context) error {
+		if cleanupStorage == nil {
+			return nil
+		}
+		return cleanupStorage(ctx, req.GetVmId())
+	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "recreating VM: %v", err)
+	}
+
+	if err := ensureAbusePreventionAfterCreate(
+		ctx,
+		req.GetVmId(),
+		logger,
+		h.server.getVMTapInterface,
+		h.server.abusePreventionMgr,
+		h.server.vmManager.DeleteVM,
+		cleanupStorage,
+	); err != nil {
+		return nil, h.mapError(err, "applying abuse prevention")
 	}
 
 	// Set root password via guest agent if available
@@ -206,7 +260,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 				}
 			}()
 			agent := guest.NewQEMUGuestAgent(domain, h.server.logger)
-			if err := agent.SetUserPassword(ctx, "root", req.GetRootPasswordHash()); err != nil {
+			passwordCtx, cancel := transferutil.DetachedTimeoutContext(ctx, guest.DefaultTimeout)
+			defer cancel()
+			if err := agent.SetUserPassword(passwordCtx, "root", req.GetRootPasswordHash()); err != nil {
 				logger.Error("failed to set root password via guest agent", "error", err)
 			} else {
 				logger.Info("root password set via guest agent", "vm_id", req.GetVmId())

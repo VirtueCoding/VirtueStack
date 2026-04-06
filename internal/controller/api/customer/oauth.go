@@ -1,14 +1,32 @@
 package customer
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 )
+
+const (
+	customerOAuthStateCookiePath   = "/api/v1/customer/auth/oauth/"
+	customerOAuthStateCookieMaxAge = 600
+)
+
+type oauthStateCookiePayload struct {
+	Provider  string `json:"provider"`
+	State     string `json:"state"`
+	ExpiresAt int64  `json:"expires_at"`
+}
 
 // OAuthAuthorize handles GET /auth/oauth/:provider/authorize.
 // Redirects the browser to the OAuth provider's consent page with PKCE.
@@ -41,6 +59,15 @@ func (h *CustomerHandler) OAuthAuthorize(c *gin.Context) {
 		return
 	}
 
+	if err := h.setOAuthStateCookie(c, provider, state); err != nil {
+		h.logger.Error("failed to set oauth state cookie",
+			"provider", provider, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"OAUTH_ERROR", "Failed to start OAuth flow")
+		return
+	}
+
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
 
@@ -64,6 +91,12 @@ func (h *CustomerHandler) OAuthCallback(c *gin.Context) {
 		}
 		middleware.RespondWithError(c, http.StatusBadRequest,
 			"VALIDATION_ERROR", "Invalid callback request")
+		return
+	}
+
+	if err := h.validateOAuthStateCookie(c, provider, req.State); err != nil {
+		middleware.RespondWithError(c, http.StatusBadRequest,
+			"OAUTH_ERROR", "Invalid or expired OAuth state")
 		return
 	}
 
@@ -93,12 +126,153 @@ func (h *CustomerHandler) OAuthCallback(c *gin.Context) {
 		return
 	}
 
+	resp := AuthResponse{
+		TokenType:           authTokens.TokenType,
+		ExpiresIn:           authTokens.ExpiresIn,
+		SessionID:           authTokens.SessionID,
+		SessionCleanupToken: authTokens.SessionCleanupToken,
+	}
+	customer, userErr := h.lookupAuthenticatedCustomer(c, authTokens.AccessToken)
+	if userErr != nil {
+		h.rollbackIssuedSession(c.Request.Context(), authTokens.SessionID,
+			"failed to roll back oauth session after customer lookup",
+			middleware.GetCorrelationID(c))
+		if sharederrors.Is(userErr, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
+		h.logger.Error("failed to load oauth auth response user",
+			"provider", provider,
+			"error", userErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"OAUTH_ERROR", "OAuth authentication failed")
+		return
+	}
+	resp.User = buildAuthenticatedCustomerResponse(customer)
+
 	middleware.SetAuthCookies(c, authTokens.AccessToken,
 		refreshToken, middleware.AccessTokenMaxAge,
 		middleware.RefreshTokenMaxAge,
-		"/api/v1/customer/auth/refresh")
+		customerRefreshCookiePath)
 
-	c.JSON(http.StatusOK, models.Response{Data: authTokens})
+	c.JSON(http.StatusOK, models.Response{Data: resp})
+}
+
+func (h *CustomerHandler) setOAuthStateCookie(c *gin.Context, provider, state string) error {
+	value, err := h.signOAuthStateCookie(provider, state)
+	if err != nil {
+		return err
+	}
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     oauthStateCookieName(provider),
+		Value:    value,
+		Path:     customerOAuthStateCookiePath,
+		MaxAge:   customerOAuthStateCookieMaxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	return nil
+}
+
+func (h *CustomerHandler) validateOAuthStateCookie(c *gin.Context, provider, state string) error {
+	defer h.clearOAuthStateCookie(c, provider)
+
+	cookieValue, err := c.Cookie(oauthStateCookieName(provider))
+	if err != nil {
+		return err
+	}
+
+	payload, err := h.parseOAuthStateCookie(provider, cookieValue)
+	if err != nil {
+		return err
+	}
+
+	if payload.State != state {
+		return fmt.Errorf("oauth state mismatch")
+	}
+
+	return nil
+}
+
+func (h *CustomerHandler) clearOAuthStateCookie(c *gin.Context, provider string) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     oauthStateCookieName(provider),
+		Value:    "",
+		Path:     customerOAuthStateCookiePath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *CustomerHandler) signOAuthStateCookie(provider, state string) (string, error) {
+	payload := oauthStateCookiePayload{
+		Provider:  provider,
+		State:     state,
+		ExpiresAt: time.Now().Add(customerOAuthStateCookieMaxAge * time.Second).Unix(),
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal oauth state cookie: %w", err)
+	}
+
+	payloadEncoded := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signature := oauthStateSignature(h.authConfig.JWTSecret, payloadEncoded)
+	signatureEncoded := base64.RawURLEncoding.EncodeToString(signature)
+
+	return payloadEncoded + "." + signatureEncoded, nil
+}
+
+func (h *CustomerHandler) parseOAuthStateCookie(provider, value string) (*oauthStateCookiePayload, error) {
+	payloadEncoded, signatureEncoded, ok := strings.Cut(value, ".")
+	if !ok {
+		return nil, fmt.Errorf("invalid oauth state cookie format")
+	}
+
+	signature, err := base64.RawURLEncoding.DecodeString(signatureEncoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode oauth state cookie signature: %w", err)
+	}
+
+	expectedSignature := oauthStateSignature(h.authConfig.JWTSecret, payloadEncoded)
+	if !hmac.Equal(signature, expectedSignature) {
+		return nil, fmt.Errorf("invalid oauth state cookie signature")
+	}
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(payloadEncoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode oauth state cookie payload: %w", err)
+	}
+
+	var payload oauthStateCookiePayload
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, fmt.Errorf("unmarshal oauth state cookie payload: %w", err)
+	}
+
+	if payload.Provider != provider {
+		return nil, fmt.Errorf("oauth state cookie provider mismatch")
+	}
+	if time.Now().Unix() > payload.ExpiresAt {
+		return nil, fmt.Errorf("oauth state cookie expired")
+	}
+
+	return &payload, nil
+}
+
+func oauthStateCookieName(provider string) string {
+	return "customer_oauth_state_" + provider
+}
+
+func oauthStateSignature(secret, payload string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return mac.Sum(nil)
 }
 
 // ListOAuthLinks handles GET /account/oauth.
@@ -166,6 +340,10 @@ func (h *CustomerHandler) LinkOAuthAccount(c *gin.Context) {
 		return
 	}
 
+	h.logAudit(c, "oauth.link", "oauth_link", provider, map[string]any{
+		"provider": provider,
+	}, true)
+
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{"message": "OAuth account linked successfully"},
 	})
@@ -204,6 +382,10 @@ func (h *CustomerHandler) UnlinkOAuthAccount(c *gin.Context) {
 			"UNLINK_FAILED", "Failed to unlink OAuth account")
 		return
 	}
+
+	h.logAudit(c, "oauth.unlink", "oauth_link", provider, map[string]any{
+		"provider": provider,
+	}, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: gin.H{"message": "OAuth account unlinked successfully"},

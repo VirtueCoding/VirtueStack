@@ -117,28 +117,29 @@ func (s *HealthServer) Start(ctx context.Context) error {
 
 	listenAddr := net.JoinHostPort(host, port)
 
-	s.server = &http.Server{
+	server := &http.Server{
 		Addr:         listenAddr,
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+	s.server = server
 
 	errChan := make(chan error, 1)
-	go func() {
+	go func(srv *http.Server) {
 		s.logger.Info("starting health HTTP server", "address", listenAddr)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errChan <- fmt.Errorf("health HTTP server error: %w", err)
 		}
-	}()
+	}(server)
 
 	select {
 	case <-ctx.Done():
 		s.logger.Info("context cancelled, stopping health HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := s.server.Shutdown(shutdownCtx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			s.logger.Error("error shutting down health HTTP server", "error", err)
 		}
 		return ctx.Err()

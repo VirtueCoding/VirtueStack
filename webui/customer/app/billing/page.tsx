@@ -8,12 +8,14 @@ import { RequireAuth } from "@/lib/require-auth";
 import { Sidebar } from "@/components/sidebar";
 import { MobileNav } from "@/components/mobile-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useToast } from "@virtuestack/ui";
 import {
   billingApi,
   BillingTransaction,
   BillingPayment,
   TopUpConfig,
 } from "@/lib/api-client";
+import { getSafeTopUpRedirectURL } from "@/lib/billing-redirect";
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -57,6 +59,7 @@ function BalanceCard() {
 
 function TopUpSection() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
   const [selectedGateway, setSelectedGateway] = useState<string | null>(null);
 
@@ -68,21 +71,24 @@ function TopUpSection() {
   const topUpMutation = useMutation({
     mutationFn: (amount: number) => {
       const gateway = selectedGateway || config?.gateways[0] || "stripe";
-      const returnURL =
-        gateway === "paypal"
-          ? `${window.location.origin}/billing/paypal-return`
-          : window.location.href;
       return billingApi.initiateTopUp({
         gateway,
         amount,
         currency: config?.currency || "USD",
-        return_url: returnURL,
-        cancel_url: window.location.href,
       });
     },
     onSuccess: (data) => {
       if (data.payment_url) {
-        window.location.href = data.payment_url;
+        const redirectURL = getSafeTopUpRedirectURL(data.payment_url);
+        if (!redirectURL) {
+          toast({
+            title: "Unable to continue to payment",
+            description: "The payment provider returned an invalid redirect URL.",
+            variant: "destructive",
+          });
+          return;
+        }
+        window.location.assign(redirectURL);
       }
       queryClient.invalidateQueries({ queryKey: ["billing"] });
     },
@@ -268,7 +274,7 @@ export default function BillingPage() {
   return (
     <RequireAuth>
       <div className="flex h-screen">
-        <Sidebar collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <header className="flex h-14 items-center justify-between border-b px-4 lg:px-6">
             <MobileNav />

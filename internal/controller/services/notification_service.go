@@ -43,22 +43,28 @@ type AlertConfig struct {
 type AlertType string
 
 const (
-	AlertTypeNodeFailure   AlertType = "node.failure"
-	AlertTypeNodeRecovery  AlertType = "node.recovery"
-	AlertTypeNodeDraining  AlertType = "node.draining"
-	AlertTypeVMMigration   AlertType = "vm.migration"
-	AlertTypeIPMIAttempt   AlertType = "ipmi.attempt"
+	// AlertTypeNodeFailure identifies a node failure alert.
+	AlertTypeNodeFailure AlertType = "node.failure"
+	// AlertTypeNodeRecovery identifies a node recovery alert.
+	AlertTypeNodeRecovery AlertType = "node.recovery"
+	// AlertTypeNodeDraining identifies a node draining alert.
+	AlertTypeNodeDraining AlertType = "node.draining"
+	// AlertTypeVMMigration identifies a VM migration alert.
+	AlertTypeVMMigration AlertType = "vm.migration"
+	// AlertTypeIPMIAttempt identifies an IPMI action alert.
+	AlertTypeIPMIAttempt AlertType = "ipmi.attempt"
+	// AlertTypeSystemCritical identifies a system-critical alert.
 	AlertTypeSystemCritical AlertType = "system.critical"
 )
 
 // Alert represents an alert notification to be sent.
 type Alert struct {
-	Type        AlertType
-	Subject     string
-	Message     string
-	Details     map[string]interface{}
-	Timestamp   time.Time
-	NodeID      string
+	Type         AlertType
+	Subject      string
+	Message      string
+	Details      map[string]interface{}
+	Timestamp    time.Time
+	NodeID       string
 	NodeHostname string
 }
 
@@ -233,13 +239,13 @@ func (s *AlertService) sendWebhookAlert(ctx context.Context, alert *Alert) error
 	}
 
 	payload := map[string]interface{}{
-		"type":         string(alert.Type),
-		"subject":      alert.Subject,
-		"message":      alert.Message,
-		"timestamp":    alert.Timestamp.Format(time.RFC3339),
-		"node_id":      alert.NodeID,
+		"type":          string(alert.Type),
+		"subject":       alert.Subject,
+		"message":       alert.Message,
+		"timestamp":     alert.Timestamp.Format(time.RFC3339),
+		"node_id":       alert.NodeID,
 		"node_hostname": alert.NodeHostname,
-		"details":      alert.Details,
+		"details":       alert.Details,
 	}
 
 	var errs []string
@@ -342,13 +348,13 @@ func (s *AlertService) SendCustomerWebhook(ctx context.Context, event string, cu
 
 		if err := s.sendWebhook(ctx, webhook.URL, plainSecret, payload); err != nil {
 			errs = append(errs, fmt.Sprintf("webhook %s: %v", webhook.ID, err))
-			if updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, false); updateErr != nil {
+			if _, updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, false); updateErr != nil {
 				s.logger.Error("failed to update webhook status",
 					"webhook_id", webhook.ID,
 					"error", updateErr)
 			}
 		} else {
-			if updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, true); updateErr != nil {
+			if _, updateErr := s.webhookRepo.UpdateDeliveryStatus(ctx, webhook.ID, true); updateErr != nil {
 				s.logger.Error("failed to update webhook status",
 					"webhook_id", webhook.ID,
 					"error", updateErr)

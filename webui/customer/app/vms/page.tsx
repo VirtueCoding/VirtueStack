@@ -31,6 +31,7 @@ import {
 import { useToast } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
 import { vmApi, VM } from "@/lib/api-client";
+import { getURLSyncedSearchTerm } from "@/lib/vm-search";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 import { useVMAction } from "@/lib/hooks/useVMAction";
 
@@ -67,6 +68,19 @@ export default function VMsPage() {
     }
   }, [toast, currentCursor]);
 
+  const refreshVMsStrict = useCallback(async () => {
+    const response = await vmApi.getVMs({ perPage: PAGE_SIZE, cursor: currentCursor });
+    setVms(response.data || []);
+    setNextCursor(response.meta?.next_cursor ?? undefined);
+    setHasMore(response.meta?.has_more ?? false);
+  }, [currentCursor]);
+
+  useEffect(() => {
+    setSearchTerm((currentSearchTerm) =>
+      getURLSyncedSearchTerm(currentSearchTerm, searchFromUrl)
+    );
+  }, [searchFromUrl]);
+
   useEffect(() => {
     fetchVMs();
   }, [fetchVMs]);
@@ -82,7 +96,7 @@ export default function VMsPage() {
     executeAction({
       action: "start",
       vmId: id,
-      onSuccess: fetchVMs,
+      onSuccess: refreshVMsStrict,
     });
   };
 
@@ -91,7 +105,7 @@ export default function VMsPage() {
     executeAction({
       action: "stop",
       vmId: id,
-      onSuccess: fetchVMs,
+      onSuccess: refreshVMsStrict,
     });
   };
 
@@ -99,7 +113,7 @@ export default function VMsPage() {
     executeAction({
       action: "restart",
       vmId: id,
-      onSuccess: fetchVMs,
+      onSuccess: refreshVMsStrict,
     });
   };
 

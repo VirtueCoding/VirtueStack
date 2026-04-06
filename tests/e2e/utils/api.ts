@@ -13,6 +13,14 @@ export interface APIClientOptions {
   token?: string;
 }
 
+interface ListResponse<T> {
+  data?: T[];
+}
+
+interface ItemResponse {
+  id?: string;
+}
+
 /**
  * API Client for making authenticated requests
  */
@@ -35,7 +43,7 @@ export class APIClient {
     return headers;
   }
 
-  async get<T = any>(path: string): Promise<{ data: T; status: number }> {
+  async get<T = unknown>(path: string): Promise<{ data: T | null; status: number }> {
     const resp = await this.request.get(`${this.baseUrl}${path}`, {
       headers: this.getHeaders(),
     });
@@ -43,7 +51,7 @@ export class APIClient {
     return { data, status: resp.status() };
   }
 
-  async post<T = any>(path: string, body: any): Promise<{ data: T; status: number }> {
+  async post<T = unknown, TBody = unknown>(path: string, body: TBody): Promise<{ data: T | null; status: number }> {
     const resp = await this.request.post(`${this.baseUrl}${path}`, {
       headers: this.getHeaders(),
       data: JSON.stringify(body),
@@ -52,7 +60,7 @@ export class APIClient {
     return { data, status: resp.status() };
   }
 
-  async put<T = any>(path: string, body: any): Promise<{ data: T; status: number }> {
+  async put<T = unknown, TBody = unknown>(path: string, body: TBody): Promise<{ data: T | null; status: number }> {
     const resp = await this.request.put(`${this.baseUrl}${path}`, {
       headers: this.getHeaders(),
       data: JSON.stringify(body),
@@ -93,9 +101,10 @@ export class CustomerAPIClient extends APIClient {
 export async function getFirstCustomerVMId(request: APIRequestContext): Promise<string | null> {
   try {
     const client = new CustomerAPIClient(request);
-    const { data, status } = await client.get('/api/v1/customer/vms');
-    if (status === 200 && data?.data?.length > 0) {
-      return data.data[0].id;
+    const { data, status } = await client.get<ListResponse<ItemResponse>>('/api/v1/customer/vms');
+    const firstVMID = data?.data?.[0]?.id;
+    if (status === 200 && firstVMID) {
+      return firstVMID;
     }
   } catch {
     // Fall back to env var
@@ -109,9 +118,10 @@ export async function getFirstCustomerVMId(request: APIRequestContext): Promise<
 export async function getFirstAdminVMId(request: APIRequestContext): Promise<string | null> {
   try {
     const client = new AdminAPIClient(request);
-    const { data, status } = await client.get('/api/v1/admin/vms');
-    if (status === 200 && data?.data?.length > 0) {
-      return data.data[0].id;
+    const { data, status } = await client.get<ListResponse<ItemResponse>>('/api/v1/admin/vms');
+    const firstVMID = data?.data?.[0]?.id;
+    if (status === 200 && firstVMID) {
+      return firstVMID;
     }
   } catch {
     // Fall back to env var
@@ -134,7 +144,7 @@ export async function createTestVM(
   }
 ): Promise<string | null> {
   const client = new AdminAPIClient(request);
-  const { data, status } = await client.post('/api/v1/admin/vms', vmData);
+  const { data, status } = await client.post<ItemResponse, typeof vmData>('/api/v1/admin/vms', vmData);
   if (status === 201 && data?.id) {
     return data.id;
   }

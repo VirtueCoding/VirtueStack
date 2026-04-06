@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 import { Button } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@virtuestack/ui";
 import { HardDrive, Loader2 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 import { adminNodesApi, type Node } from "@/lib/api-client";
@@ -103,26 +103,31 @@ export function StorageBackendCreateDialog({
     resolver: zodResolver(createStorageBackendSchema),
     defaultValues,
   });
+  const storageType = useWatch({ control: form.control, name: "type" });
+  const selectedNodeIds = useWatch({ control: form.control, name: "node_ids" });
+  const loadNodes = useCallback(async () => {
+    setLoadingNodes(true);
+    try {
+      const response = await adminNodesApi.getNodes();
+      setNodes((response.data || []).filter((n) => n.status === "online"));
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to load nodes.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingNodes(false);
+    }
+  }, [toast]);
 
   // Fetch nodes when dialog opens
   useEffect(() => {
     if (open) {
       form.reset(defaultValues);
-      setLoadingNodes(true);
-      adminNodesApi.getNodes()
-        .then((response) => {
-          setNodes((response.data || []).filter((n) => n.status === "online"));
-        })
-        .catch(() => {
-          toast({
-            title: "Error",
-            description: "Failed to load nodes.",
-            variant: "destructive",
-          });
-        })
-        .finally(() => setLoadingNodes(false));
+      void loadNodes();
     }
-  }, [open, form, toast]);
+  }, [form, loadNodes, open]);
 
   const handleSubmit = async (data: CreateStorageBackendFormData) => {
     try {
@@ -136,9 +141,6 @@ export function StorageBackendCreateDialog({
       });
     }
   };
-
-  const storageType = form.watch("type");
-  const selectedNodeIds = form.watch("node_ids");
 
   const toggleNode = (nodeId: string, checked: boolean) => {
     const current = selectedNodeIds || [];

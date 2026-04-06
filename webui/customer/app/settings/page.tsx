@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { settingsApi, vmApi, VM } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { RequireAuth } from "@/lib/require-auth";
+import { shouldEnableSettingsQueries } from "@/lib/settings-auth";
 import { User, Shield, Key, Webhook, Bell } from "lucide-react";
 import { ProfileTab } from "@/components/settings/ProfileTab";
 import { SecurityTab } from "@/components/settings/SecurityTab";
@@ -12,14 +14,27 @@ import { WebhooksTab } from "@/components/settings/WebhooksTab";
 import { NotificationsTab } from "@/components/settings/NotificationsTab";
 
 export default function SettingsPage() {
+  const {
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    hasBootstrapError,
+  } = useAuth();
+  const settingsQueriesEnabled = shouldEnableSettingsQueries({
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    hasBootstrapError,
+  });
+
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["profile"],
     queryFn: () => settingsApi.getProfile(),
+    enabled: settingsQueriesEnabled,
   });
 
   const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => settingsApi.getApiKeys(),
+    enabled: settingsQueriesEnabled,
   });
 
   const { data: vms, isLoading: vmsLoading } = useQuery({
@@ -40,22 +55,19 @@ export default function SettingsPage() {
 
       return allVms;
     },
+    enabled: settingsQueriesEnabled,
   });
 
   const { data: webhooks, isLoading: webhooksLoading } = useQuery({
     queryKey: ["webhooks"],
     queryFn: () => settingsApi.getWebhooks(),
+    enabled: settingsQueriesEnabled,
   });
 
   const { data: twoFactorStatus, isLoading: twoFactorLoading } = useQuery({
     queryKey: ["2fa-status"],
     queryFn: () => settingsApi.get2FAStatus(),
-  });
-
-  const { data: backupCodesData } = useQuery({
-    queryKey: ["backup-codes"],
-    queryFn: () => settingsApi.getBackupCodes(),
-    enabled: twoFactorStatus?.enabled || false,
+    enabled: settingsQueriesEnabled,
   });
 
   return (
@@ -104,7 +116,6 @@ export default function SettingsPage() {
           <TabsContent value="security" className="space-y-6">
             <SecurityTab
               twoFactorStatus={twoFactorStatus}
-              backupCodesData={backupCodesData}
               isLoading={twoFactorLoading}
             />
           </TabsContent>

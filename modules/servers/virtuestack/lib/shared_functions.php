@@ -58,10 +58,11 @@ function validateFieldValue(string $fieldName, string $value): ?string
 
     $validStatuses = [
         'running', 'stopped', 'suspended', 'provisioning',
-        'migrating', 'reinstalling', 'error', 'deleted',
+        'migrating', 'reinstalling', 'paused', 'shutting_down',
+        'error', 'crashed', 'deleted',
     ];
     $validProvisioningStatuses = [
-        'pending', 'active', 'error', 'terminated', 'suspended',
+        'pending', 'resizing', 'active', 'error', 'terminated', 'suspended',
     ];
 
     switch ($fieldName) {
@@ -104,6 +105,185 @@ function validateFieldValue(string $fieldName, string $value): ?string
             $value = substr($value, 0, 500);
             $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value);
             return $value;
+    }
+}
+
+/**
+ * Return provisioning statuses that represent in-flight async operations.
+ *
+ * @return list<string>
+ */
+function virtuestack_getAsyncPollableProvisioningStatuses(): array
+{
+    return ['pending', 'resizing'];
+}
+
+/**
+ * Extract canonical webhook context from either the live controller envelope or
+ * the legacy flat payload used by older module integrations.
+ *
+ * @param array<string, mixed> $payload
+ *
+ * @return array{
+ *     event:string,
+ *     task_id:string,
+ *     vm_id:string,
+ *     external_service_id:int,
+ *     timestamp:string,
+ *     idempotency_key:string,
+ *     event_data:array<string, mixed>
+ * }
+ */
+function virtuestack_extractWebhookContext(array $payload): array
+{
+    $eventData = [];
+    if (isset($payload['data']) && is_array($payload['data'])) {
+        $eventData = $payload['data'];
+    } elseif (isset($payload['result']) && is_array($payload['result'])) {
+        $eventData = $payload['result'];
+    }
+
+    $taskID = '';
+    if (isset($payload['task_id']) && is_string($payload['task_id'])) {
+        $taskID = trim($payload['task_id']);
+    } elseif (isset($eventData['task_id']) && is_string($eventData['task_id'])) {
+        $taskID = trim($eventData['task_id']);
+    }
+
+    $vmID = '';
+    if (isset($payload['vm_id']) && is_string($payload['vm_id'])) {
+        $vmID = trim($payload['vm_id']);
+    } elseif (isset($eventData['vm_id']) && is_string($eventData['vm_id'])) {
+        $vmID = trim($eventData['vm_id']);
+    }
+
+    $externalServiceID = 0;
+    if (isset($payload['external_service_id']) && is_int($payload['external_service_id'])) {
+        $externalServiceID = $payload['external_service_id'];
+    } elseif (isset($eventData['external_service_id']) && is_int($eventData['external_service_id'])) {
+        $externalServiceID = $eventData['external_service_id'];
+    }
+
+    return [
+        'event' => isset($payload['event']) && is_string($payload['event']) ? trim($payload['event']) : '',
+        'task_id' => $taskID,
+        'vm_id' => $vmID,
+        'external_service_id' => $externalServiceID,
+        'timestamp' => isset($payload['timestamp']) && is_string($payload['timestamp']) ? trim($payload['timestamp']) : '',
+        'idempotency_key' => isset($payload['idempotency_key']) && is_string($payload['idempotency_key']) ? trim($payload['idempotency_key']) : '',
+        'event_data' => $eventData,
+    ];
+}
+
+/**
+ * Validate a canonical webhook context against the supported event list.
+ *
+ * @param array{
+ *     event:string,
+ *     task_id:string,
+ *     vm_id:string,
+ *     external_service_id:int,
+ *     timestamp:string,
+ *     idempotency_key:string,
+ *     event_data:array<string, mixed>
+ * } $context
+ * @param list<string> $allowedEvents
+ */
+function virtuestack_validateWebhookContext(array $context, array $allowedEvents): ?string
+{
+    $eventType = $context['event'];
+    if ($eventType === '') {
+        return 'Missing required field: event';
+    }
+
+    if (!in_array($eventType, $allowedEvents, true)) {
+        return 'Unknown event type';
+    }
+
+    if ($context['task_id'] !== '' && !preg_match(UUID_PATTERN, $context['task_id'])) {
+        return 'Invalid task_id format';
+    }
+
+    if ($context['vm_id'] !== '' && !preg_match(UUID_PATTERN, $context['vm_id'])) {
+        return 'Invalid vm_id format';
+    }
+
+    return null;
+}
+
+/**
+ * Build the service-field updates for a successful async task.
+ *
+ * @param string $currentProvisioningStatus Current provisioning status
+ *
+ * @return array<string, string>
+ */
+function virtuestack_getAsyncTaskCompletionUpdates(string $currentProvisioningStatus): array
+{
+    unset($currentProvisioningStatus);
+
+    return [
+        'task_id' => '',
+        'provisioning_error' => '',
+        'provisioning_status' => 'active',
+    ];
+}
+
+/**
+ * Build the service-field updates for a failed async task.
+ *
+ * Resize failures should preserve access to an already-provisioned VM, while
+ * create failures must surface the service-level error state.
+ *
+ * @param string $currentProvisioningStatus Current provisioning status
+ * @param string $errorMessage              Failure reason
+ *
+ * @return array<string, string>
+ */
+function virtuestack_getAsyncTaskFailureUpdates(string $currentProvisioningStatus, string $errorMessage): array
+{
+    $provisioningStatus = $currentProvisioningStatus === 'resizing' ? 'active' : 'error';
+
+    return [
+        'task_id' => '',
+        'provisioning_error' => $errorMessage,
+        'provisioning_status' => $provisioningStatus,
+    ];
+}
+
+/**
+ * Determine whether a completed async task should send the provisioning email.
+ */
+function virtuestack_shouldSendProvisioningWelcomeEmail(string $taskType): bool
+{
+    return $taskType === 'vm.create';
+}
+
+/**
+ * Map controller VM runtime states onto WHMCS provisioning-status values.
+ */
+function virtuestack_mapVMStatusToProvisioningStatus(string $vmStatus): string
+{
+    return match ($vmStatus) {
+        'provisioning' => 'pending',
+        'running', 'stopped', 'migrating', 'reinstalling', 'paused', 'shutting_down' => 'active',
+        'suspended' => 'suspended',
+        'error', 'crashed' => 'error',
+        'deleted' => 'terminated',
+        default => 'active',
+    };
+}
+
+/**
+ * Apply multiple validated custom-field updates to a service.
+ *
+ * @param int                  $serviceId Service ID
+ * @param array<string,string> $updates   Field updates
+ */
+function virtuestack_applyServiceFieldUpdates(int $serviceId, array $updates): void
+{
+    foreach ($updates as $fieldName => $value) {
+        updateServiceField($serviceId, $fieldName, $value);
     }
 }
 
@@ -238,13 +418,14 @@ function findServiceByVmId(string $vmId): int
  * side-channels that could reveal whether a secret is configured.
  *
  * @param string $body      Request body
- * @param string $signature Signature from X-VirtueStack-Signature header
+ * @param string $signature Signature from the X-Webhook-Signature header
  *
  * @return bool True if valid
  */
 function verifyWebhookSignature(string $body, string $signature): bool
 {
     $webhookSecret = getWebhookSecret();
+    $normalizedSignature = normalizeWebhookSignature($signature);
 
     // Always compute the HMAC so the function takes constant time
     // regardless of whether the secret or signature is present.
@@ -254,11 +435,29 @@ function verifyWebhookSignature(string $body, string $signature): bool
         ? hash_hmac('sha256', $body, $webhookSecret)
         : hash_hmac('sha256', $body, hash('sha256', $body));
 
-    if (empty($signature) || empty($webhookSecret)) {
+    if (empty($normalizedSignature) || empty($webhookSecret)) {
         return false;
     }
 
-    return hash_equals($expectedSignature, $signature);
+    return hash_equals($expectedSignature, $normalizedSignature);
+}
+
+/**
+ * Normalize webhook signatures so modules accept the controller's raw hex HMAC
+ * and legacy "sha256=" prefixed variants during rollout.
+ *
+ * @param string $signature Signature header value
+ *
+ * @return string Normalized raw hex signature
+ */
+function normalizeWebhookSignature(string $signature): string
+{
+    $normalized = trim($signature);
+    if (stripos($normalized, 'sha256=') === 0) {
+        return substr($normalized, 7);
+    }
+
+    return $normalized;
 }
 
 /**

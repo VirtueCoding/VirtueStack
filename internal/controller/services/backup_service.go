@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,8 +18,8 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
-	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // DefaultSnapshotQuota is the default maximum number of snapshots per VM.
@@ -283,6 +284,10 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 // For Ceph VMs: creates RBD snapshot.
 // For QCOW VMs: creates qemu-img internal snapshot.
 func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (*models.Snapshot, error) {
+	return s.createSnapshot(ctx, vmID, name, DefaultSnapshotQuota)
+}
+
+func (s *BackupService) createSnapshot(ctx context.Context, vmID, name string, limit int) (*models.Snapshot, error) {
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -339,7 +344,7 @@ func (s *BackupService) CreateSnapshot(ctx context.Context, vmID, name string) (
 		}
 	}
 
-	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, DefaultSnapshotQuota); err != nil {
+	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, limit); err != nil {
 		if s.nodeAgent != nil {
 			if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
 				diskPath := ""
@@ -460,6 +465,11 @@ func (s *BackupService) CheckSnapshotQuota(ctx context.Context, vmID string, quo
 // Uses atomic limit checking to prevent race conditions when multiple concurrent
 // requests attempt to create snapshots at the limit.
 func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, customerID string) (*models.Snapshot, string, error) {
+	return s.CreateSnapshotAsyncWithLimit(ctx, vmID, name, customerID, DefaultSnapshotQuota)
+}
+
+// CreateSnapshotAsyncWithLimit creates a snapshot task after atomically enforcing the provided limit.
+func (s *BackupService) CreateSnapshotAsyncWithLimit(ctx context.Context, vmID, name, customerID string, limit int) (*models.Snapshot, string, error) {
 	vm, err := s.vmRepo.GetByID(ctx, vmID)
 	if err != nil {
 		if sharederrors.Is(err, sharederrors.ErrNotFound) {
@@ -477,24 +487,25 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 		storageBackend = storageBackendCeph
 	}
 
-	snapshotID := uuid.New().String()
+	initialSnapshotID := uuid.New().String()
 
 	snapshot := &models.Snapshot{
-		ID:             snapshotID,
+		ID:             initialSnapshotID,
 		VMID:           vmID,
 		Name:           name,
 		StorageBackend: storageBackend,
 	}
 
 	if storageBackend == storageBackendCeph {
-		snapshot.RBDSnapshot = fmt.Sprintf("snap-%s", snapshotID[:8])
-	} else {
-		qcowSnap := fmt.Sprintf("snap-%s", snapshotID[:8])
+		snapshot.RBDSnapshot = fmt.Sprintf("snap-%s", initialSnapshotID[:8])
+	}
+	if storageBackend == storageBackendQCOW {
+		qcowSnap := fmt.Sprintf("snap-%s", initialSnapshotID[:8])
 		snapshot.QCOWSnapshot = &qcowSnap
 	}
 
 	// Use atomic create with limit check to prevent TOCTOU race condition
-	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, DefaultSnapshotQuota); err != nil {
+	if err := s.snapshotRepo.CreateSnapshotWithLimitCheck(ctx, snapshot, limit); err != nil {
 		if strings.Contains(err.Error(), "limit exceeded") {
 			return nil, "", fmt.Errorf("%w: %s", ErrSnapshotQuotaExceeded, err.Error())
 		}
@@ -504,19 +515,25 @@ func (s *BackupService) CreateSnapshotAsync(ctx context.Context, vmID, name, cus
 	if s.taskPublisher != nil {
 		payload := map[string]any{
 			"vm_id":       vmID,
-			"snapshot_id": snapshotID,
+			"snapshot_id": snapshot.ID,
 			"name":        name,
 			"customer_id": customerID,
 		}
 
 		taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeSnapshotCreate, payload)
 		if err != nil {
-			_ = s.snapshotRepo.DeleteSnapshot(ctx, snapshotID)
+			cleanupErr := s.snapshotRepo.DeleteSnapshot(ctx, snapshot.ID)
+			if cleanupErr != nil {
+				return nil, "", errors.Join(
+					fmt.Errorf("publishing snapshot task: %w", err),
+					fmt.Errorf("cleaning up snapshot record %s after publish failure: %w", snapshot.ID, cleanupErr),
+				)
+			}
 			return nil, "", fmt.Errorf("publishing snapshot task: %w", err)
 		}
 
 		s.logger.Info("snapshot create task published",
-			"snapshot_id", snapshotID,
+			"snapshot_id", snapshot.ID,
 			"vm_id", vmID,
 			"task_id", taskID)
 
@@ -691,14 +708,18 @@ func (s *BackupService) RestoreSnapshot(ctx context.Context, snapshotID string) 
 		storageBackend = storageBackendCeph
 	}
 
-	if storageBackend == storageBackendQCOW && snapshot.QCOWSnapshot != nil {
-		return fmt.Errorf("QCOW snapshot revert not supported via this method - use backup restore")
-	}
-
-	if snapshot.RBDSnapshot != "" {
-		if err := s.nodeAgent.RestoreSnapshot(ctx, nodeID, vm.ID, snapshot.RBDSnapshot); err != nil {
-			return fmt.Errorf("restoring snapshot: %w", err)
+	snapshotHandle := snapshot.RBDSnapshot
+	if storageBackend == storageBackendQCOW {
+		snapshotHandle = ""
+		if snapshot.QCOWSnapshot != nil {
+			snapshotHandle = *snapshot.QCOWSnapshot
 		}
+	}
+	if snapshotHandle == "" {
+		return fmt.Errorf("snapshot %s has no backend snapshot handle", snapshotID)
+	}
+	if err := s.nodeAgent.RestoreSnapshot(ctx, nodeID, vm.ID, snapshotHandle); err != nil {
+		return fmt.Errorf("restoring snapshot: %w", err)
 	}
 
 	return nil

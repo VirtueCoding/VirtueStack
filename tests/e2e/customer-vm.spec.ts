@@ -1,4 +1,4 @@
-import { test, expect, Page, request } from '@playwright/test';
+import { test, expect, Page, APIRequestContext, request } from '@playwright/test';
 
 /**
  * Customer VM Management E2E Tests
@@ -277,7 +277,7 @@ test.describe('Customer VM List', () => {
   });
 });
 
-async function getFirstCustomerVMId(apiContext: any): Promise<string | null> {
+async function getFirstCustomerVMId(apiContext: APIRequestContext): Promise<string | null> {
   try {
     const token = process.env.CUSTOMER_TOKEN;
     if (!token) return null;

@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,16 @@ const CorrelationIDHeader = "X-Correlation-Id"
 
 // CorrelationIDContextKey is the context key for storing correlation IDs.
 const CorrelationIDContextKey = "correlation_id"
+
+type correlationIDRequestContextKey struct{}
+
+// WithCorrelationID stores a correlation ID in a request context for downstream use.
+func WithCorrelationID(ctx context.Context, correlationID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, correlationIDRequestContextKey{}, correlationID)
+}
 
 // correlationIDPattern matches the standard UUID format (8-4-4-4-12 hex with hyphens)
 // or bounded alphanumeric strings up to 64 characters. Anything else is rejected and
@@ -46,6 +57,7 @@ func CorrelationID() gin.HandlerFunc {
 		// Store in context so handlers and middleware can attach it to logs
 		// and outbound requests without coupling to the HTTP layer.
 		c.Set(CorrelationIDContextKey, correlationID)
+		c.Request = c.Request.WithContext(WithCorrelationID(c.Request.Context(), correlationID))
 
 		// Echo back in the response so clients can correlate their request
 		// with server-side log entries.
@@ -62,6 +74,21 @@ func GetCorrelationID(c *gin.Context) string {
 		if strID, ok := id.(string); ok {
 			return strID
 		}
+	}
+	if c.Request == nil {
+		return ""
+	}
+	return GetCorrelationIDFromContext(c.Request.Context())
+}
+
+// GetCorrelationIDFromContext retrieves the correlation ID from a request context.
+// Returns an empty string if not found.
+func GetCorrelationIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(correlationIDRequestContextKey{}).(string); ok {
+		return id
 	}
 	return ""
 }

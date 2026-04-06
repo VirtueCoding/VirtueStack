@@ -11,6 +11,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*models.Backup, error) {
@@ -30,6 +31,9 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 	if storageBackend == "" {
 		storageBackend = storageBackendCeph
 	}
+	if storageBackend != storageBackendQCOW {
+		return nil, unsupportedSyncFullBackupError(storageBackend)
+	}
 
 	backup := &models.Backup{
 		ID:             uuid.New().String(),
@@ -38,6 +42,9 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 		Source:         models.BackupSourceManual,
 		Status:         models.BackupStatusCreating,
 		StorageBackend: storageBackend,
+	}
+	if name != "" {
+		backup.Name = util.StringPtr(name)
 	}
 
 	if err := s.backupRepo.CreateBackup(ctx, backup); err != nil {
@@ -54,10 +61,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, vmID, name string) (*m
 		return backup, nil
 	}
 
-	if storageBackend == storageBackendQCOW {
-		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
-	}
-	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
+	return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
 }
 
 func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, name string, limit int) (*models.Backup, error) {
@@ -77,6 +81,9 @@ func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, na
 	if storageBackend == "" {
 		storageBackend = storageBackendCeph
 	}
+	if storageBackend != storageBackendQCOW {
+		return nil, unsupportedSyncFullBackupError(storageBackend)
+	}
 
 	backup := &models.Backup{
 		ID:             uuid.New().String(),
@@ -85,6 +92,9 @@ func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, na
 		Source:         models.BackupSourceManual,
 		Status:         models.BackupStatusCreating,
 		StorageBackend: storageBackend,
+	}
+	if name != "" {
+		backup.Name = util.StringPtr(name)
 	}
 
 	// Use atomic create with limit check to prevent TOCTOU race condition
@@ -105,10 +115,7 @@ func (s *BackupService) CreateBackupWithLimitCheck(ctx context.Context, vmID, na
 		return backup, nil
 	}
 
-	if storageBackend == storageBackendQCOW {
-		return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
-	}
-	return s.createCephBackup(ctx, vm, backup, snapshotName, name)
+	return s.createQCOWBackup(ctx, vm, backup, snapshotName, name)
 }
 
 func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
@@ -140,14 +147,8 @@ func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, bac
 	backup.FilePath = &backupFilePath
 	backup.SnapshotName = &snapshotName
 	backup.SizeBytes = &sizeBytes
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
-		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
-	}
-
-	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
-	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
-		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
+	if err := s.completeBackupRecord(ctx, backup); err != nil {
+		return nil, err
 	}
 
 	s.logger.Info("QCOW backup created",
@@ -160,37 +161,20 @@ func (s *BackupService) createQCOWBackup(ctx context.Context, vm *models.VM, bac
 	return backup, nil
 }
 
-func (s *BackupService) createCephBackup(ctx context.Context, vm *models.VM, backup *models.Backup, snapshotName, name string) (*models.Backup, error) {
-	nodeID := *vm.NodeID
+func unsupportedSyncFullBackupError(storageBackend string) error {
+	return fmt.Errorf(
+		"synchronous full backups are not supported for storage backend %q: %w",
+		storageBackend,
+		sharederrors.ErrNotSupported,
+	)
+}
 
-	if err := s.nodeAgent.CreateSnapshot(ctx, nodeID, vm.ID, snapshotName); err != nil {
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("creating backup snapshot: %w", err)
-	}
-
-	backupPath := fmt.Sprintf("backups/%s/%s", vm.ID, backup.ID)
-	if err := s.nodeAgent.CloneSnapshot(ctx, nodeID, vm.ID, snapshotName, backupPath); err != nil {
-		_ = s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusFailed)
-		return nil, fmt.Errorf("cloning backup: %w", err)
-	}
-
-	backup.StoragePath = &backupPath
-	backup.RBDSnapshot = &snapshotName
-
-	if err := s.backupRepo.UpdateBackupStatus(ctx, backup.ID, models.BackupStatusCompleted); err != nil {
-		s.logger.Warn("failed to update backup status", "backup_id", backup.ID, "error", err)
-	}
-
+func (s *BackupService) completeBackupRecord(ctx context.Context, backup *models.Backup) error {
 	expiresAt := time.Now().AddDate(0, 0, DefaultBackupRetentionDays)
-	if err := s.backupRepo.SetBackupExpiration(ctx, backup.ID, expiresAt); err != nil {
-		s.logger.Warn("failed to set backup expiration", "backup_id", backup.ID, "error", err)
+	backup.Status = models.BackupStatusCompleted
+	backup.ExpiresAt = &expiresAt
+	if err := s.backupRepo.CompleteBackup(ctx, backup); err != nil {
+		return fmt.Errorf("persisting backup completion: %w", err)
 	}
-
-	s.logger.Info("Ceph backup created",
-		"backup_id", backup.ID,
-		"vm_id", vm.ID,
-		"name", name,
-		"source", backup.Source)
-
-	return backup, nil
+	return nil
 }

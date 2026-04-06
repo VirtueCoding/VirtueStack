@@ -312,6 +312,9 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 			return
 		}
 		if err != nil {
+			if handleNotFoundError(c, err, "CUSTOMER_NOT_FOUND", "Customer not found") {
+				return
+			}
 			h.logger.Error("failed to update customer status",
 				"customer_id", customerID,
 				"status", *req.Status,
@@ -328,6 +331,9 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 		actorIP := c.ClientIP()
 		actorID := middleware.GetUserID(c)
 		if err := h.customerService.Update(c.Request.Context(), actorID, actorIP, customer); err != nil {
+			if handleNotFoundError(c, err, "CUSTOMER_NOT_FOUND", "Customer not found") {
+				return
+			}
 			h.logger.Error("failed to update customer profile",
 				"customer_id", customerID,
 				"error", err,
@@ -341,6 +347,10 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	if req.BillingProvider != nil {
 		customer.BillingProvider = req.BillingProvider
 		if err := h.customerRepo.UpdateBillingProvider(c.Request.Context(), customerID, *req.BillingProvider); err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+				middleware.RespondWithError(c, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "Customer not found")
+				return
+			}
 			h.logger.Error("failed to update customer billing provider",
 				"customer_id", customerID,
 				"billing_provider", *req.BillingProvider,
@@ -361,6 +371,9 @@ func (h *AdminHandler) UpdateCustomer(c *gin.Context) {
 	// Return updated customer
 	updatedCustomer, err := h.customerService.GetByID(c.Request.Context(), customerID)
 	if err != nil {
+		if handleNotFoundError(c, err, "CUSTOMER_NOT_FOUND", "Customer not found") {
+			return
+		}
 		h.logger.Error("failed to fetch updated customer after update",
 			"customer_id", customerID,
 			"error", err,

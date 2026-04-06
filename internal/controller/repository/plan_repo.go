@@ -182,7 +182,7 @@ func (r *PlanRepository) Update(ctx context.Context, plan *models.Plan) error {
 		WHERE id = $18
 		RETURNING ` + planSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		plan.Name, plan.Slug, plan.VCPU, plan.MemoryMB, plan.DiskGB,
 		plan.BandwidthLimitGB, plan.PortSpeedMbps,
 		plan.PriceMonthly, plan.PriceHourly, plan.PriceHourlyStopped,
@@ -190,8 +190,7 @@ func (r *PlanRepository) Update(ctx context.Context, plan *models.Plan) error {
 		plan.IsActive, plan.SortOrder,
 		plan.SnapshotLimit, plan.BackupLimit, plan.ISOUploadLimit,
 		plan.ID,
-	)
-	updated, err := scanPlan(row)
+	}, scanPlan)
 	if err != nil {
 		return fmt.Errorf("updating plan %s: %w", plan.ID, err)
 	}

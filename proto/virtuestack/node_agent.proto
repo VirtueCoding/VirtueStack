@@ -565,13 +565,13 @@ message SnapshotRequest {
 message SnapshotIdentifier {
   // UUID of the virtual machine
   string vm_id = 1;
-  // UUID of the snapshot
+  // Backend snapshot handle returned by CreateSnapshot/ListSnapshots
   string snapshot_id = 2;
 }
 
 // Snapshot represents a point-in-time disk snapshot.
 message Snapshot {
-  // UUID of the snapshot
+  // Backend snapshot handle consumed by DeleteSnapshot/RevertSnapshot
   string snapshot_id = 1;
   // UUID of the virtual machine
   string vm_id = 2;

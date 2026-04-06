@@ -29,19 +29,18 @@ require_once dirname(__FILE__) . DS . 'lib' . DS . 'VirtueStackHelper.php';
 
 // Constants
 define('MAX_BODY_SIZE', 65536); // 64KB
+define('PRIMARY_SIGNATURE_HEADER', 'HTTP_X_WEBHOOK_SIGNATURE');
+define('LEGACY_SIGNATURE_HEADER', 'HTTP_X_VIRTUESTACK_SIGNATURE');
 define('ALLOWED_EVENTS', [
     'vm.created',
-    'vm.creation_failed',
     'vm.deleted',
-    'vm.suspended',
-    'vm.unsuspended',
-    'vm.resized',
     'vm.started',
     'vm.stopped',
     'vm.reinstalled',
     'vm.migrated',
-    'task.completed',
-    'task.failed',
+    'backup.completed',
+    'backup.failed',
+    'webhook.test',
 ]);
 
 processWebhook();
@@ -77,11 +76,16 @@ function processWebhook(): void
     }
 
     // Verify signature
-    $signature = $_SERVER['HTTP_X_VIRTUESTACK_SIGNATURE'] ?? '';
+    $signature = getWebhookSignatureHeader();
     $webhookSecret = getWebhookSecret();
 
     if (empty($signature)) {
         sendResponse(401, ['error' => 'Missing signature header.']);
+        return;
+    }
+
+    if (empty($webhookSecret)) {
+        sendResponse(401, ['error' => 'Invalid signature.']);
         return;
     }
 
@@ -97,9 +101,9 @@ function processWebhook(): void
         return;
     }
 
-    // Validate required fields
-    $event = $payload['event'] ?? '';
-    if (empty($event)) {
+    $context = VirtueStackHelper::extractWebhookContext($payload);
+    $event = $context['event'];
+    if ($event === '') {
         sendResponse(400, ['error' => 'Missing event field.']);
         return;
     }
@@ -110,12 +114,11 @@ function processWebhook(): void
         return;
     }
 
-    // Extract fields
-    $externalServiceId = $payload['external_service_id'] ?? null;
-    $vmId = $payload['vm_id'] ?? null;
-    $taskId = $payload['task_id'] ?? null;
-    $data = $payload['data'] ?? [];
-    $errorMessage = $payload['error'] ?? ($data['error'] ?? '');
+    $externalServiceId = $context['external_service_id'];
+    $vmId = $context['vm_id'] !== '' ? $context['vm_id'] : null;
+    $taskId = $context['task_id'] !== '' ? $context['task_id'] : null;
+    $data = $context['data'];
+    $errorMessage = $context['error_message'];
 
     // Validate UUIDs where present
     if ($vmId !== null && !VirtueStackHelper::isValidUUID($vmId)) {
@@ -141,6 +144,22 @@ function processWebhook(): void
 }
 
 /**
+ * Read the webhook signature header while supporting the controller's current
+ * X-Webhook-Signature header and the legacy X-VirtueStack-Signature variant.
+ *
+ * @return string
+ */
+function getWebhookSignatureHeader(): string
+{
+    $signature = $_SERVER[PRIMARY_SIGNATURE_HEADER] ?? '';
+    if ($signature !== '') {
+        return $signature;
+    }
+
+    return $_SERVER[LEGACY_SIGNATURE_HEADER] ?? '';
+}
+
+/**
  * Handle a webhook event by updating service fields.
  *
  * @param string $event Event type
@@ -162,8 +181,14 @@ function handleEvent(
         case 'vm.created':
             $vmIp = '';
             if (!empty($data['ip_addresses']) && is_array($data['ip_addresses'])) {
-                $vmIp = $data['ip_addresses'][0]['address']
-                    ?? ($data['ip_addresses'][0] ?? '');
+                if (isset($data['ip_addresses'][0]) && is_array($data['ip_addresses'][0])) {
+                    $vmIp = isset($data['ip_addresses'][0]['address'])
+                        && is_string($data['ip_addresses'][0]['address'])
+                        ? $data['ip_addresses'][0]['address']
+                        : '';
+                } elseif (isset($data['ip_addresses'][0]) && is_string($data['ip_addresses'][0])) {
+                    $vmIp = $data['ip_addresses'][0];
+                }
             }
             updateServiceField($serviceId, 'vm_id', $vmId ?? '');
             updateServiceField($serviceId, 'vm_ip', $vmIp);
@@ -173,24 +198,8 @@ function handleEvent(
             updateServiceField($serviceId, 'provisioning_error', '');
             break;
 
-        case 'vm.creation_failed':
-            updateServiceField($serviceId, 'provisioning_status', 'error');
-            updateServiceField($serviceId, 'provisioning_error', $errorMessage);
-            updateServiceField($serviceId, 'task_id', '');
-            break;
-
         case 'vm.deleted':
             updateServiceField($serviceId, 'provisioning_status', 'terminated');
-            break;
-
-        case 'vm.suspended':
-            updateServiceField($serviceId, 'vm_status', 'suspended');
-            updateServiceField($serviceId, 'provisioning_status', 'suspended');
-            break;
-
-        case 'vm.unsuspended':
-            updateServiceField($serviceId, 'vm_status', 'stopped');
-            updateServiceField($serviceId, 'provisioning_status', 'active');
             break;
 
         case 'vm.started':
@@ -213,17 +222,12 @@ function handleEvent(
             }
             break;
 
-        case 'vm.resized':
-            // Log only, no field updates needed
-            break;
-
-        case 'task.completed':
-            updateServiceField($serviceId, 'task_id', '');
-            break;
-
-        case 'task.failed':
+        case 'backup.failed':
             updateServiceField($serviceId, 'provisioning_error', $errorMessage);
-            updateServiceField($serviceId, 'task_id', '');
+            break;
+
+        case 'backup.completed':
+        case 'webhook.test':
             break;
     }
 }

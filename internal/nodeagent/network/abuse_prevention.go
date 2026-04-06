@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/abuseprevention"
 )
 
 const (
@@ -38,20 +40,14 @@ func (m *AbusePreventionManager) ApplyVMRules(ctx context.Context, tapInterface 
 	logger := m.logger.With("interface", tapInterface)
 	logger.Info("applying abuse prevention rules")
 
-	if err := m.ensureTable(ctx); err != nil {
-		return fmt.Errorf("ensuring nftables table: %w", err)
-	}
-
-	if err := m.ensureChain(ctx, tapInterface); err != nil {
-		return fmt.Errorf("ensuring nftables chain: %w", err)
-	}
-
-	if err := m.addSMTPBlock(ctx, tapInterface); err != nil {
-		logger.Warn("failed to add SMTP block rule", "error", err)
-	}
-
-	if err := m.addMetadataBlock(ctx, tapInterface); err != nil {
-		logger.Warn("failed to add metadata block rule", "error", err)
+	if err := abuseprevention.ApplyVMRules(ctx, tapInterface, abuseprevention.RuleOperations{
+		EnsureTable:      m.ensureTable,
+		EnsureChain:      m.ensureChain,
+		AddSMTPBlock:     m.addSMTPBlock,
+		AddMetadataBlock: m.addMetadataBlock,
+	}); err != nil {
+		logger.Warn("failed to apply abuse prevention rules", "error", err)
+		return err
 	}
 
 	logger.Info("abuse prevention rules applied")

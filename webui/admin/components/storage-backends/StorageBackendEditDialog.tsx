@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 import { Button } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
@@ -16,7 +16,7 @@ import {
 } from "@virtuestack/ui";
 import { Badge } from "@virtuestack/ui";
 import { HardDrive, Loader2, Trash2 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 import { adminNodesApi, type StorageBackend, type Node } from "@/lib/api-client";
@@ -78,6 +78,22 @@ export function StorageBackendEditDialog({
       node_ids: [],
     },
   });
+  const selectedNodeIds = useWatch({ control: form.control, name: "node_ids" }) || [];
+  const loadNodes = useCallback(async () => {
+    setLoadingNodes(true);
+    try {
+      const response = await adminNodesApi.getNodes();
+      setNodes(response.data || []);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to load nodes.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingNodes(false);
+    }
+  }, [toast]);
 
   // Reset form when backend changes
   useEffect(() => {
@@ -101,21 +117,9 @@ export function StorageBackendEditDialog({
   // Fetch nodes when dialog opens
   useEffect(() => {
     if (open) {
-      setLoadingNodes(true);
-      adminNodesApi.getNodes()
-        .then((response) => {
-          setNodes(response.data || []);
-        })
-        .catch(() => {
-          toast({
-            title: "Error",
-            description: "Failed to load nodes.",
-            variant: "destructive",
-          });
-        })
-        .finally(() => setLoadingNodes(false));
+      void loadNodes();
     }
-  }, [open, toast]);
+  }, [loadNodes, open]);
 
   const handleSubmit = async (data: EditStorageBackendFormData) => {
     try {
@@ -135,8 +139,6 @@ export function StorageBackendEditDialog({
       onDelete(backend);
     }
   };
-
-  const selectedNodeIds = form.watch("node_ids") || [];
 
   const toggleNode = (nodeId: string, checked: boolean) => {
     form.setValue(

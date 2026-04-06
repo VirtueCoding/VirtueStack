@@ -36,12 +36,12 @@ type TaskListFilter struct {
 func scanTask(row pgx.Row) (models.Task, error) {
 	var t models.Task
 	var result, errorMessage []byte
-	var idempotencyKey, createdBy *string
+	var idempotencyKey, createdBy, progressMessage *string
 	err := row.Scan(
 		&t.ID, &t.Type, &t.Status, &t.Payload,
-		&result, &errorMessage, &t.Progress, &t.RetryCount,
+		&result, &errorMessage, &t.Progress, &progressMessage, &t.RetryCount,
 		&idempotencyKey, &createdBy,
-		&t.CreatedAt, &t.StartedAt, &t.CompletedAt,
+		&t.CreatedAt, &t.StartedAt, &t.CompletedAt, &t.UpdatedAt,
 	)
 	if result != nil {
 		t.Result = result
@@ -55,23 +55,26 @@ func scanTask(row pgx.Row) (models.Task, error) {
 	if createdBy != nil {
 		t.CreatedBy = *createdBy
 	}
+	if progressMessage != nil {
+		t.ProgressMessage = *progressMessage
+	}
 	return t, err
 }
 
 const taskSelectCols = `
 	id, type, status, payload,
-	result, error_message, progress, retry_count,
+	result, error_message, progress, progress_message, retry_count,
 	idempotency_key, created_by,
-	created_at, started_at, completed_at`
+	created_at, started_at, completed_at, updated_at`
 
 // Create inserts a new task record into the database.
 // The task's CreatedAt is populated by the database.
 func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	const q = `
 		INSERT INTO tasks (
-			id, type, status, payload, progress, retry_count,
+			id, type, status, payload, progress, progress_message, retry_count,
 			idempotency_key, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING ` + taskSelectCols
 
 	// Handle nullable UUID columns - empty string must be converted to NULL
@@ -84,7 +87,7 @@ func (r *TaskRepository) Create(ctx context.Context, task *models.Task) error {
 	}
 
 	row := r.db.QueryRow(ctx, q,
-		task.ID, task.Type, task.Status, task.Payload, task.Progress, task.RetryCount,
+		task.ID, task.Type, task.Status, task.Payload, task.Progress, task.ProgressMessage, task.RetryCount,
 		idempotencyKey, createdBy,
 	)
 	created, err := scanTask(row)
@@ -198,7 +201,7 @@ func (r *TaskRepository) ListPending(ctx context.Context) ([]models.Task, error)
 
 // UpdateStatus updates the status field of a task.
 func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status models.TaskStatus) error {
-	const q = `UPDATE tasks SET status = $1 WHERE id = $2`
+	const q = `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, status, id)
 	if err != nil {
 		return fmt.Errorf("updating task %s status: %w", id, err)
@@ -213,7 +216,7 @@ func (r *TaskRepository) UpdateStatus(ctx context.Context, id string, status mod
 // The progress_message column (added by migration 000060) stores a human-readable
 // description of the current progress stage (e.g., "Copying disk 3 of 5").
 func (r *TaskRepository) UpdateProgress(ctx context.Context, id string, progress int, message string) error {
-	const q = `UPDATE tasks SET progress = $1, progress_message = NULLIF($2, '') WHERE id = $3`
+	const q = `UPDATE tasks SET progress = $1, progress_message = NULLIF($2, ''), updated_at = NOW() WHERE id = $3`
 	tag, err := r.db.Exec(ctx, q, progress, message, id)
 	if err != nil {
 		return fmt.Errorf("updating task %s progress: %w", id, err)
@@ -226,7 +229,7 @@ func (r *TaskRepository) UpdateProgress(ctx context.Context, id string, progress
 
 // SetResult stores the result JSON for a completed task.
 func (r *TaskRepository) SetResult(ctx context.Context, id string, result []byte) error {
-	const q = `UPDATE tasks SET result = $1 WHERE id = $2`
+	const q = `UPDATE tasks SET result = $1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, result, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s result: %w", id, err)
@@ -239,7 +242,7 @@ func (r *TaskRepository) SetResult(ctx context.Context, id string, result []byte
 
 // SetError stores the error message for a failed task.
 func (r *TaskRepository) SetError(ctx context.Context, id string, errorMessage string) error {
-	const q = `UPDATE tasks SET error_message = $1 WHERE id = $2`
+	const q = `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s error: %w", id, err)
@@ -252,7 +255,7 @@ func (r *TaskRepository) SetError(ctx context.Context, id string, errorMessage s
 
 // SetStarted marks a task as running and sets started_at to NOW().
 func (r *TaskRepository) SetStarted(ctx context.Context, id string) error {
-	const q = `UPDATE tasks SET status = 'running', started_at = NOW() WHERE id = $1`
+	const q = `UPDATE tasks SET status = 'running', started_at = NOW(), updated_at = NOW() WHERE id = $1`
 	tag, err := r.db.Exec(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s started: %w", id, err)
@@ -265,7 +268,7 @@ func (r *TaskRepository) SetStarted(ctx context.Context, id string) error {
 
 // SetCompleted marks a task as completed, sets completed_at to NOW(), and stores the result.
 func (r *TaskRepository) SetCompleted(ctx context.Context, id string, result []byte) error {
-	const q = `UPDATE tasks SET status = 'completed', completed_at = NOW(), result = $1, progress = 100 WHERE id = $2`
+	const q = `UPDATE tasks SET status = 'completed', completed_at = NOW(), result = $1, error_message = NULL, progress = 100, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, result, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s completed: %w", id, err)
@@ -278,7 +281,7 @@ func (r *TaskRepository) SetCompleted(ctx context.Context, id string, result []b
 
 // SetFailed marks a task as failed, sets completed_at to NOW(), and stores the error message.
 func (r *TaskRepository) SetFailed(ctx context.Context, id string, errorMessage string) error {
-	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1, retry_count = retry_count + 1 WHERE id = $2`
+	const q = `UPDATE tasks SET status = 'failed', completed_at = NOW(), error_message = $1, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $2`
 	tag, err := r.db.Exec(ctx, q, errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("setting task %s failed: %w", id, err)
@@ -291,7 +294,7 @@ func (r *TaskRepository) SetFailed(ctx context.Context, id string, errorMessage 
 
 // FindStuckTasks finds running tasks older than the provided threshold.
 func (r *TaskRepository) FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error) {
-	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'running' AND started_at IS NOT NULL AND started_at < NOW() - ($1 * INTERVAL '1 second') ORDER BY started_at ASC`
+	const q = `SELECT ` + taskSelectCols + ` FROM tasks WHERE status = 'running' AND started_at IS NOT NULL AND updated_at < NOW() - ($1 * INTERVAL '1 second') ORDER BY updated_at ASC`
 	seconds := int64(threshold.Seconds())
 	tasks, err := ScanRows(ctx, r.db, q, []any{seconds}, func(rows pgx.Rows) (models.Task, error) {
 		return scanTask(rows)
@@ -307,15 +310,15 @@ func (r *TaskRepository) FindStuckTasks(ctx context.Context, threshold time.Dura
 	return result, nil
 }
 
-// ResetTask resets a task to pending state for retry.
-func (r *TaskRepository) ResetTask(ctx context.Context, taskID string) error {
-	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW() WHERE id = $1`
+// RetryTask resets a stuck task to pending state and consumes one retry attempt.
+func (r *TaskRepository) RetryTask(ctx context.Context, taskID string) error {
+	const q = `UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL, updated_at = NOW(), retry_count = retry_count + 1 WHERE id = $1`
 	tag, err := r.db.Exec(ctx, q, taskID)
 	if err != nil {
-		return fmt.Errorf("resetting task %s: %w", taskID, err)
+		return fmt.Errorf("retrying task %s: %w", taskID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("resetting task %s: %w", taskID, ErrNoRowsAffected)
+		return fmt.Errorf("retrying task %s: %w", taskID, ErrNoRowsAffected)
 	}
 	return nil
 }

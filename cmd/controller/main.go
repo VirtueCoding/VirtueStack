@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,13 @@ type infrastructure struct {
 	nc     *nats.Conn
 	js     nats.JetStreamContext
 }
+
+var (
+	natsConnector           = nats.Connect
+	secureNodeClientFactory = controller.NewNodeClient
+	mTLSNodeClientFactory   = controller.NewNodeClientWithCert
+	envLookup               = os.Getenv
+)
 
 func main() {
 	os.Exit(run())
@@ -118,7 +126,7 @@ func initializeInfrastructure(ctx context.Context, cfg *controller.Config, logge
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
 
-	nc, js, err := connectNATS(cfg.NATS.URL, logger)
+	nc, js, err := connectNATS(cfg.NATS.URL, cfg.NATS.AuthToken, logger)
 	if err != nil {
 		dbPool.Close()
 		return nil, fmt.Errorf("connecting to NATS: %w", err)
@@ -135,7 +143,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		return nil, nil, fmt.Errorf("creating task worker: %w", err)
 	}
 
-	server, err := controller.NewServer(cfg.ControllerConfig, infra.dbPool, infra.js, logger)
+	server, err := controller.NewServer(ctx, cfg.ControllerConfig, infra.dbPool, infra.js, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating server: %w", err)
 	}
@@ -148,7 +156,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	server.SetTaskWorker(worker)
 	server.SetNATSConnection(infra.nc)
 
-	if err := server.InitializeServices(); err != nil {
+	if err := server.InitializeServices(ctx); err != nil {
 		return nil, nil, fmt.Errorf("initializing services: %w", err)
 	}
 
@@ -158,6 +166,9 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		IPRepo:            repository.NewIPRepository(infra.dbPool),
 		BackupRepo:        repository.NewBackupRepository(infra.dbPool),
 		TaskRepo:          repository.NewTaskRepository(infra.dbPool),
+		WebhookRepo:       repository.NewWebhookRepository(infra.dbPool),
+		SystemWebhookRepo: repository.NewSystemWebhookRepository(infra.dbPool),
+		SystemDeliveryRepo: repository.NewSystemWebhookDeliveryRepository(infra.dbPool),
 		TemplateRepo:      repository.NewTemplateRepository(infra.dbPool),
 		TemplateCacheRepo: repository.NewTemplateCacheRepository(infra.dbPool),
 		IPAMService:       server.GetIPAMService(),
@@ -165,11 +176,12 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 			Monitors:   cfg.CephMonitors,
 			User:       cfg.CephUser,
 			SecretUUID: cfg.CephSecretUUID,
-		}, logger),
+		}, cfg.GuestOpHMACSecret.Value(), logger),
 		DNSNameservers: cfg.DNSNameservers,
 		CephUser:       cfg.CephUser,
 		CephSecretUUID: cfg.CephSecretUUID,
 		CephMonitors:   cfg.CephMonitors,
+		EncryptionKey:  cfg.EncryptionKey.Value(),
 		Logger:         logger,
 	}
 	tasks.RegisterAllHandlers(worker, handlerDeps)
@@ -182,11 +194,36 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 	return server, worker, nil
 }
 
-// buildNodeClient creates a node client using TLS if TLS_CA_FILE is set,
-// or an insecure client for non-production environments.
+// buildNodeClient creates a node client using TLS when TLS_CA_FILE is set.
+// Client-certificate authentication requires TLS_CERT_FILE and TLS_KEY_FILE
+// to be configured together; partial mTLS configuration is rejected.
 func buildNodeClient(cfg *controller.Config, logger *slog.Logger) (*controller.NodeClient, error) {
-	if tlsCAFile := os.Getenv("TLS_CA_FILE"); tlsCAFile != "" {
-		client, err := controller.NewNodeClient(tlsCAFile, logger)
+	tlsCAFile := envLookup("TLS_CA_FILE")
+	tlsCertFile := envLookup("TLS_CERT_FILE")
+	tlsKeyFile := envLookup("TLS_KEY_FILE")
+
+	hasCA := tlsCAFile != ""
+	hasCert := tlsCertFile != ""
+	hasKey := tlsKeyFile != ""
+
+	if hasCert != hasKey {
+		return nil, fmt.Errorf("TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty")
+	}
+	if (hasCert || hasKey) && !hasCA {
+		return nil, fmt.Errorf("TLS_CA_FILE must be set when TLS_CERT_FILE and TLS_KEY_FILE are configured")
+	}
+
+	if hasCA {
+		if hasCert {
+			client, err := mTLSNodeClientFactory(tlsCAFile, tlsCertFile, tlsKeyFile, logger)
+			if err != nil {
+				return nil, fmt.Errorf("creating secure node client with client cert (tls_ca_file=%s): %w", tlsCAFile, err)
+			}
+			logger.Info("Configured secure node client with client certificate", "tls_ca_file", tlsCAFile)
+			return client, nil
+		}
+
+		client, err := secureNodeClientFactory(tlsCAFile, logger)
 		if err != nil {
 			return nil, fmt.Errorf("creating secure node client (tls_ca_file=%s): %w", tlsCAFile, err)
 		}
@@ -194,7 +231,7 @@ func buildNodeClient(cfg *controller.Config, logger *slog.Logger) (*controller.N
 		return client, nil
 	}
 
-	if cfg.Environment == "production" {
+	if strings.EqualFold(cfg.Environment, "production") {
 		return nil, fmt.Errorf("TLS_CA_FILE must be set in production; refusing to start with insecure node client")
 	}
 
@@ -256,23 +293,8 @@ func connectDatabase(ctx context.Context, databaseURL string, logger *slog.Logge
 }
 
 // connectNATS connects to NATS and returns the connection and JetStream context.
-func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStreamContext, error) {
-	nc, err := nats.Connect(natsURL,
-		nats.Name("VirtueStack-Controller"),
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
-			if err != nil {
-				logger.Warn("NATS disconnected", "error", err)
-			}
-		}),
-		nats.ReconnectHandler(func(nc *nats.Conn) {
-			logger.Info("NATS reconnected", "url", nc.ConnectedUrl())
-		}),
-		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.Warn("NATS connection closed")
-		}),
-	)
+func connectNATS(natsURL, authToken string, logger *slog.Logger) (*nats.Conn, nats.JetStreamContext, error) {
+	nc, err := natsConnector(natsURL, buildNATSOptions(authToken, logger)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to NATS: %w", err)
 	}
@@ -286,6 +308,31 @@ func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStrea
 
 	logger.Info("Connected to NATS", "url", nc.ConnectedUrl())
 	return nc, js, nil
+}
+
+func buildNATSOptions(authToken string, logger *slog.Logger) []nats.Option {
+	options := []nats.Option{
+		nats.Name("VirtueStack-Controller"),
+		nats.ReconnectWait(2 * time.Second),
+		nats.MaxReconnects(-1),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			if err != nil {
+				logger.Warn("NATS disconnected", "error", err)
+			}
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			logger.Info("NATS reconnected", "url", nc.ConnectedUrl())
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			logger.Warn("NATS connection closed")
+		}),
+	}
+
+	if authToken != "" {
+		options = append(options, nats.Token(authToken))
+	}
+
+	return options
 }
 
 // closeDBPool closes the database connection pool.

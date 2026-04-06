@@ -19,6 +19,7 @@ type capturePayPalPaymentRequest struct {
 func (h *CustomerHandler) CapturePayPalPayment(c *gin.Context) {
 	var req capturePayPalPaymentRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		respondBindingError(c, err, "Invalid request")
 		return
 	}
 

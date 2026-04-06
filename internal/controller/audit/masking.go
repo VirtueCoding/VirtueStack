@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"net/url"
 	"strings"
 )
 
@@ -31,26 +32,11 @@ func MaskSensitiveFields(data map[string]any) map[string]any {
 		return nil
 	}
 
-	result := make(map[string]any, len(data))
-	for key, value := range data {
-		lowerKey := strings.ToLower(key)
-
-		// Check if this is a sensitive field
-		if isSensitiveField(lowerKey) {
-			result[key] = "[REDACTED]"
-			continue
-		}
-
-		// Recursively mask nested maps
-		switch v := value.(type) {
-		case map[string]any:
-			result[key] = MaskSensitiveFields(v)
-		default:
-			result[key] = value
-		}
+	masked, ok := maskValue(data).(map[string]any)
+	if !ok {
+		return nil
 	}
-
-	return result
+	return masked
 }
 
 // isSensitiveField checks if a field name matches a sensitive pattern.
@@ -63,4 +49,49 @@ func isSensitiveField(fieldName string) bool {
 		}
 	}
 	return false
+}
+
+func isURLField(fieldName string) bool {
+	lowerField := strings.ToLower(fieldName)
+	return lowerField == "url" || strings.HasSuffix(lowerField, "_url")
+}
+
+// SanitizeURLForAudit removes credentials, path, query, and fragment from URLs
+// before they are persisted in logs or audit changes.
+func SanitizeURLForAudit(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw
+	}
+
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func maskValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(v))
+		for key, nestedValue := range v {
+			if isSensitiveField(key) {
+				result[key] = "[REDACTED]"
+				continue
+			}
+			if isURLField(key) {
+				if rawURL, ok := nestedValue.(string); ok {
+					result[key] = SanitizeURLForAudit(rawURL)
+					continue
+				}
+			}
+			result[key] = maskValue(nestedValue)
+		}
+		return result
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = maskValue(item)
+		}
+		return result
+	default:
+		return value
+	}
 }

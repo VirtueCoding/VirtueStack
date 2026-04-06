@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/snapshotpolicy"
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/snapshotutil"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -32,14 +34,7 @@ func (h *grpcHandler) CreateSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 	// Get snapshot size
 	size, _ := h.server.storageBackend.GetImageSize(ctx, diskID)
 
-	return &nodeagentpb.Snapshot{
-		SnapshotId:      uuid.New().String(),
-		VmId:            req.GetVmId(),
-		Name:            req.GetName(),
-		RbdSnapshotName: snapName,
-		SizeBytes:       size,
-		CreatedAt:       timestamppb.Now(),
-	}, nil
+	return snapshotutil.NewSnapshotResponse(req.GetVmId(), req.GetName(), snapName, size), nil
 }
 
 // DeleteSnapshot removes a previously created disk snapshot.
@@ -59,7 +54,7 @@ func (h *grpcHandler) DeleteSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 	for _, snap := range snapshots {
 		if snap.Name == req.GetSnapshotId() {
 			if err := h.server.storageBackend.DeleteSnapshot(ctx, diskID, snap.Name); err != nil {
-				return nil, status.Errorf(codes.Internal, "deleting snapshot: %v", err)
+				return nil, mapSnapshotStorageError("deleting snapshot", err)
 			}
 			return &nodeagentpb.VMOperationResponse{
 				VmId:    req.GetVmId(),
@@ -81,22 +76,20 @@ func (h *grpcHandler) RevertSnapshot(ctx context.Context, req *nodeagentpb.Snaps
 	if err != nil {
 		return nil, h.mapError(err, "getting VM status")
 	}
-	if vmStatus.Status == "running" {
-		if err := h.server.vmManager.ForceStopVM(ctx, req.GetVmId()); err != nil {
-			return nil, status.Errorf(codes.Internal, "stopping VM: %v", err)
-		}
-	}
 
 	diskID := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 
-	if err := h.server.storageBackend.Rollback(ctx, diskID, req.GetSnapshotId()); err != nil {
-		return nil, status.Errorf(codes.Internal, "rolling back disk to snapshot: %v", err)
+	resp, err := snapshotpolicy.RevertSnapshot(req.GetVmId(), vmStatus.Status, func() error {
+		if err := h.server.storageBackend.Rollback(ctx, diskID, req.GetSnapshotId()); err != nil {
+			return mapSnapshotStorageError("rolling back disk to snapshot", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return &nodeagentpb.VMOperationResponse{
-		VmId:    req.GetVmId(),
-		Success: true,
-	}, nil
+	return resp, nil
 }
 
 // ListSnapshots retrieves all snapshots for a given virtual machine.

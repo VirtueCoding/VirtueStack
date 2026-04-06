@@ -87,7 +87,20 @@ func (h *CustomerHandler) verifyTaskOwnership(c *gin.Context, task *models.Task,
 	}
 
 	vm, err := h.vmRepo.GetByID(c.Request.Context(), vmID)
-	if err != nil || vm == nil || vm.CustomerID != customerID {
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound,
+				"TASK_NOT_FOUND", "Task not found")
+			return false
+		}
+		h.logger.Error("failed to verify task ownership",
+			"task_id", task.ID, "vm_id", vmID, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError,
+			"TASK_LOOKUP_FAILED", "Internal server error")
+		return false
+	}
+	if vm == nil || vm.CustomerID != customerID {
 		middleware.RespondWithError(c, http.StatusNotFound,
 			"TASK_NOT_FOUND", "Task not found")
 		return false
@@ -112,11 +125,12 @@ func extractVMIDFromPayload(payload json.RawMessage) string {
 // buildCustomerTaskResponse builds a TaskStatusResponse from a Task model.
 func buildCustomerTaskResponse(task *models.Task) TaskStatusResponse {
 	resp := TaskStatusResponse{
-		ID:        task.ID,
-		Type:      task.Type,
-		Status:    task.Status,
-		Progress:  task.Progress,
-		CreatedAt: task.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:              task.ID,
+		Type:            task.Type,
+		Status:          task.Status,
+		Progress:        task.Progress,
+		ProgressMessage: task.ProgressMessage,
+		CreatedAt:       task.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
 	if task.StartedAt != nil {

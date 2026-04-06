@@ -135,7 +135,7 @@ scripts/
 templates/email/                            # Email notification templates (5 files)
 nginx/                                      # Nginx reverse proxy config
 docker-compose.yml                          # Base Docker Compose
-docker-compose.override.yml                 # Development overrides
+docker-compose.dev.yml                      # Development overrides
 docker-compose.prod.yml                     # Production overrides
 docker-compose.test.yml                     # Testing overrides
 Dockerfile.controller
@@ -497,7 +497,6 @@ POST   /2fa/initiate
 POST   /2fa/enable
 POST   /2fa/disable
 GET    /2fa/status
-GET    /2fa/backup-codes
 POST   /2fa/backup-codes/regenerate
 
 GET    /notifications/preferences
@@ -1003,6 +1002,7 @@ Static (`templates/email/`): `backup-failed`, `node-offline`, `vm-created`, `vm-
 | `NATS_AUTH_TOKEN` | Yes | NATS authentication token |
 | `JWT_SECRET` | Yes | HMAC secret for JWT signing |
 | `ENCRYPTION_KEY` | Yes | 64 hex characters for AES-256-GCM |
+| `GUEST_OP_HMAC_SECRET` | Yes | Shared HMAC secret for guest-agent operations; must be at least 32 bytes and match the node agent |
 | `LISTEN_ADDR` | No | HTTP listen address (default `:8080`) |
 | `APP_ENV` | No | `development` or `production` |
 | `LOG_LEVEL` | No | `debug`/`info`/`warn`/`error` |
@@ -1056,6 +1056,7 @@ Static (`templates/email/`): `backup-failed`, `node-offline`, `vm-created`, `vm-
 | `TLS_CERT_FILE` | Yes | mTLS client certificate |
 | `TLS_KEY_FILE` | Yes | mTLS client key |
 | `TLS_CA_FILE` | Yes | CA certificate |
+| `GUEST_OP_HMAC_SECRET` | Yes | Shared HMAC secret for guest-agent operations; must be at least 32 bytes and match the controller |
 | `CLOUDINIT_PATH` | No | Cloud-init storage path |
 | `ISO_STORAGE_PATH` | No | ISO storage path |
 | `LOG_LEVEL` | No | Logging level |
@@ -1114,9 +1115,12 @@ make migrate-create NAME=feature_name # New migration pair
 ### Docker
 
 ```bash
-make docker-build   # Build images
-make docker-up      # Start stack
-make docker-down    # Stop stack
+make docker-build       # Build production images
+make docker-up          # Start production stack
+make docker-down        # Stop production stack
+make docker-dev-build   # Build development images
+make docker-dev-up      # Start development stack
+make docker-dev-down    # Stop development stack
 ```
 
 ### Build Gotchas

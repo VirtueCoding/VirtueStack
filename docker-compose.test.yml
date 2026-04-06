@@ -11,7 +11,7 @@
 #   - Exposes all service ports for direct testing
 #   - Uses test-friendly credentials
 #   - Includes health checks for all services
-#   - Mounts test seed data
+#   - Seeds test data after migrations
 # =============================================================================
 
 services:
@@ -22,13 +22,12 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: virtuestack
-      POSTGRES_PASSWORD: virtuestack_test_password
-      POSTGRES_DB: virtuestack
+      POSTGRES_USER: ${POSTGRES_USER:-virtuestack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.test}
+      POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d/migrations:ro
-      - ./migrations/test_seed.sql:/docker-entrypoint-initdb.d/99_test_seed.sql:ro
 
   # ===========================================================================
   # NATS - Exposed for direct test access
@@ -37,7 +36,7 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    command: ["nats-server", "-js", "-sd", "/data", "--auth", "virtuestack_nats_test_token", "-m", "8222"]
+    command: ["nats-server", "-js", "-sd", "/data", "--auth", "${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env.test}", "-m", "8222"]
 
   # ===========================================================================
   # Controller - Exposed for API testing
@@ -46,10 +45,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@postgres:5432/virtuestack?sslmode=disable
-      NATS_URL: nats://virtuestack_nats_test_token@nats:4222
-      JWT_SECRET: test_jwt_secret_for_e2e_testing_minimum_32_chars
-      ENCRYPTION_KEY: test_encryption_key_32_bytes!!
+      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.test}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
+      NATS_URL: nats://${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env.test}@nats:4222
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env.test}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env.test}
+      GUEST_OP_HMAC_SECRET: ${GUEST_OP_HMAC_SECRET:?GUEST_OP_HMAC_SECRET must be set in .env.test}
       LISTEN_ADDR: :8080
       LOG_LEVEL: debug
       # Disable auth rate limiting for tests

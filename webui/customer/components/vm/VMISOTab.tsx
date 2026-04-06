@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { HardDrive, Upload, Trash2, Link, Unlink, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
@@ -8,6 +8,12 @@ import { Badge } from "@virtuestack/ui";
 import { useToast } from "@virtuestack/ui";
 import { isoApi, ISORecord, ApiClientError } from "@/lib/api-client";
 import { ISOUpload } from "@/components/file-upload/iso-upload";
+import { getISOUploadDescription } from "@/lib/iso-limit";
+import {
+  completeISOMutationWithRefresh,
+  ISOMutationRefreshError,
+  loadMutationRefreshData,
+} from "@/lib/iso-refresh";
 import { formatBytes } from "@/lib/vm-utils";
 import {
   Dialog,
@@ -22,9 +28,17 @@ interface VMISOTabProps {
   vmId: string;
   vmStatus: string;
   attachedISOId?: string | null;
+  maxISOSizeBytes?: number;
+  onRefreshVM: () => Promise<void>;
 }
 
-export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
+export function VMISOTab({
+  vmId,
+  vmStatus,
+  attachedISOId,
+  maxISOSizeBytes,
+  onRefreshVM,
+}: VMISOTabProps) {
   const { toast } = useToast();
   const [isos, setISOs] = useState<ISORecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,7 +48,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
   const [isAttaching, setIsAttaching] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const fetchISOs = async () => {
+  const fetchISOs = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await isoApi.listISOs(vmId);
@@ -48,18 +62,32 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast, vmId]);
+
+  const refreshISOsStrict = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await loadMutationRefreshData(
+        () => isoApi.listISOs(vmId),
+        (data) => {
+          setISOs(data || []);
+        },
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [vmId]);
 
   useEffect(() => {
-    fetchISOs();
-  }, [vmId]);
+    void fetchISOs();
+  }, [fetchISOs]);
 
   const handleUploadComplete = (_isoId: string, fileName: string) => {
     toast({
       title: "ISO Uploaded",
       description: `${fileName} has been uploaded successfully.`,
     });
-    fetchISOs();
+    void fetchISOs();
   };
 
   const handleAttach = async (iso: ISORecord) => {
@@ -71,17 +99,28 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
     if (!selectedISO) return;
     setIsAttaching(true);
     try {
-      await isoApi.attachISO(vmId, selectedISO.id);
-      toast({
-        title: "ISO Attached",
-        description: `${selectedISO.file_name} has been attached to the VM.`,
-      });
+      const attachedISO = selectedISO;
+      await completeISOMutationWithRefresh(
+        () => isoApi.attachISO(vmId, attachedISO.id),
+        refreshISOsStrict,
+        onRefreshVM,
+        () => {
+          toast({
+            title: "ISO Attached",
+            description: `${attachedISO.file_name} has been attached to the VM.`,
+          });
+        },
+      );
       setAttachDialogOpen(false);
-      fetchISOs();
     } catch (err) {
       toast({
         title: "Error",
-        description: err instanceof ApiClientError ? err.message : "Failed to attach ISO",
+        description:
+          err instanceof ISOMutationRefreshError
+            ? err.message
+            : err instanceof ApiClientError
+              ? err.message
+              : "Failed to attach ISO",
         variant: "destructive",
       });
     } finally {
@@ -91,16 +130,26 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
 
   const handleDetach = async (iso: ISORecord) => {
     try {
-      await isoApi.detachISO(vmId, iso.id);
-      toast({
-        title: "ISO Detached",
-        description: `${iso.file_name} has been detached from the VM.`,
-      });
-      fetchISOs();
+      await completeISOMutationWithRefresh(
+        () => isoApi.detachISO(vmId, iso.id),
+        refreshISOsStrict,
+        onRefreshVM,
+        () => {
+          toast({
+            title: "ISO Detached",
+            description: `${iso.file_name} has been detached from the VM.`,
+          });
+        },
+      );
     } catch (err) {
       toast({
         title: "Error",
-        description: err instanceof ApiClientError ? err.message : "Failed to detach ISO",
+        description:
+          err instanceof ISOMutationRefreshError
+            ? err.message
+            : err instanceof ApiClientError
+              ? err.message
+              : "Failed to detach ISO",
         variant: "destructive",
       });
     }
@@ -121,7 +170,7 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
         description: `${selectedISO.file_name} has been deleted.`,
       });
       setDeleteDialogOpen(false);
-      fetchISOs();
+      void fetchISOs();
     } catch (err) {
       toast({
         title: "Error",
@@ -153,11 +202,11 @@ export function VMISOTab({ vmId, vmStatus, attachedISOId }: VMISOTabProps) {
               Upload ISO
             </CardTitle>
             <CardDescription>
-              Upload an ISO image to attach to this VM. Maximum file size is 10 GB.
+              {getISOUploadDescription(maxISOSizeBytes)}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ISOUpload vmId={vmId} onUploadComplete={handleUploadComplete} />
+            <ISOUpload vmId={vmId} maxISOSizeBytes={maxISOSizeBytes} onUploadComplete={handleUploadComplete} />
           </CardContent>
         </Card>
 

@@ -68,6 +68,23 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	nodeID := *vm.NodeID
 
 	wasRunning := vm.Status == models.VMStatusRunning
+	shouldRestoreRunning := false
+	restoreRunning := func() {
+		if !shouldRestoreRunning {
+			return
+		}
+		if err := deps.NodeClient.StartVM(ctx, nodeID, payload.VMID); err != nil {
+			logger.Warn("failed to restore VM after resize error", "error", err)
+			return
+		}
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, models.VMStatusStopped, models.VMStatusRunning); err != nil {
+			if errors.Is(err, sharederrors.ErrConflict) {
+				logger.Warn("failed to restore VM status after resize error due to state conflict", "error", err)
+				return
+			}
+			logger.Warn("failed to restore VM status after resize error", "error", err)
+		}
+	}
 
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Stopping virtual machine..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
@@ -85,6 +102,7 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 			}
 			logger.Warn("failed to transition VM status", "error", err)
 		}
+		shouldRestoreRunning = true
 	}
 
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 40, "Resizing virtual machine resources..."); err != nil {
@@ -93,6 +111,7 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 	if err := deps.NodeClient.ResizeVM(ctx, nodeID, payload.VMID, payload.NewVCPU, payload.NewMemoryMB, payload.NewDiskGB); err != nil {
 		logger.Error("failed to resize VM on node agent", "error", err)
+		restoreRunning()
 		return fmt.Errorf("resizing VM %s on node agent: %w", payload.VMID, err)
 	}
 
@@ -102,6 +121,7 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 	if err := deps.VMRepo.UpdateResources(ctx, payload.VMID, payload.NewVCPU, payload.NewMemoryMB, payload.NewDiskGB); err != nil {
 		logger.Error("failed to update VM resources in database", "error", err)
+		restoreRunning()
 		return fmt.Errorf("updating VM %s resources: %w", payload.VMID, err)
 	}
 
@@ -121,6 +141,7 @@ func handleVMResize(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 				logger.Warn("failed to transition VM status", "error", err)
 			}
 		}
+		shouldRestoreRunning = false
 	}
 
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "VM resized successfully"); err != nil {

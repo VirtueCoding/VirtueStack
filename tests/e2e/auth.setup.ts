@@ -4,7 +4,7 @@
  * This file handles authentication state for E2E tests.
  * It creates authenticated browser states that can be reused across tests.
  *
- * Run: npx playwright test --project=setup
+ * Run: pnpm exec playwright test --project=setup-admin --project=setup-customer
  */
 
 import { test as setup, expect } from '@playwright/test';

@@ -51,6 +51,7 @@ func (h *AdminHandler) ListBillingTransactions(c *gin.Context) {
 func (h *AdminHandler) AdminCreditAdjustment(c *gin.Context) {
 	var req models.AdminCreditAdjustmentRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		respondBindingError(c, err, "Invalid request")
 		return
 	}
 
@@ -159,6 +160,7 @@ func (h *AdminHandler) UpdateExchangeRate(c *gin.Context) {
 
 	var req models.UpdateExchangeRateRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		respondBindingError(c, err, "Invalid request")
 		return
 	}
 
@@ -243,6 +245,7 @@ func (h *AdminHandler) RefundPayment(c *gin.Context) {
 
 	var req models.RefundRequest
 	if err := middleware.BindAndValidate(c, &req); err != nil {
+		respondBindingError(c, err, "Invalid request")
 		return
 	}
 
@@ -287,6 +290,16 @@ func (h *AdminHandler) handleRefundError(c *gin.Context, paymentID string, err e
 
 	middleware.RespondWithError(c, http.StatusInternalServerError,
 		"REFUND_FAILED", "Failed to process refund")
+}
+
+func respondBindingError(c *gin.Context, err error, fallbackMessage string) {
+	var apiErr *sharederrors.APIError
+	if errors.As(err, &apiErr) {
+		middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+		return
+	}
+
+	middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", fallbackMessage)
 }
 
 // GetBillingConfig handles GET /admin/billing/config.

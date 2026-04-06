@@ -200,6 +200,7 @@ func TestHandleTemplateBuild(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			payloadJSON, err := json.Marshal(tt.payload)
 			require.NoError(t, err)
@@ -333,13 +334,16 @@ func handleTemplateBuildWithMocks(
 		return fmt.Errorf("creating template record: %w", err)
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
+	result, err := json.Marshal(map[string]any{
 		"template_id":     template.ID,
 		"template_name":   template.Name,
 		"storage_backend": template.StorageBackend,
 		"template_ref":    resp.TemplateRef,
 		"min_disk_gb":     minDiskGB,
 	})
+	if err != nil {
+		return fmt.Errorf("marshal template build result: %w", err)
+	}
 	task.Result = result
 
 	return nil

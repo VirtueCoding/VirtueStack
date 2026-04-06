@@ -28,6 +28,14 @@ type StorageError struct {
 	Cause   error
 }
 
+// ErrorCode returns the symbolic storage error code for transport-layer mapping.
+func (e *StorageError) ErrorCode() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Code)
+}
+
 // ErrorCode defines categories of storage errors.
 type ErrorCode string
 

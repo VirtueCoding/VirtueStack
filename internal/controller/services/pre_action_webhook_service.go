@@ -13,7 +13,9 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // PreActionWebhookService evaluates pre-action webhooks before protected operations.
@@ -55,7 +57,7 @@ func (s *PreActionWebhookService) CheckPreAction(ctx context.Context, event stri
 	webhooks, err := s.repo.ListActiveForEvent(ctx, event)
 	if err != nil {
 		s.logger.Error("failed to list pre-action webhooks", "event", event, "error", err)
-		return nil
+		return fmt.Errorf("failed to load pre-action webhooks for %q: %w", event, sharederrors.ErrForbidden)
 	}
 
 	if len(webhooks) == 0 {
@@ -79,6 +81,15 @@ func (s *PreActionWebhookService) CheckPreAction(ctx context.Context, event stri
 }
 
 func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.PreActionWebhook, payload *PreActionPayload) error {
+	if err := util.ValidateHTTPSURL(wh.URL); err != nil {
+		s.logger.Warn("pre-action webhook has insecure URL",
+			"webhook_id", wh.ID, "webhook_name", wh.Name, "error", err, "fail_open", wh.FailOpen)
+		if wh.FailOpen {
+			return nil
+		}
+		return fmt.Errorf("insecure pre-action webhook URL for %q: %w", wh.Name, sharederrors.ErrForbidden)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.logger.Error("failed to marshal pre-action payload", "webhook_id", wh.ID, "error", err)
@@ -102,7 +113,7 @@ func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.Pr
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Webhook-Secret", wh.Secret)
+	req.Header.Set("X-Webhook-Signature", crypto.GenerateHMACSignature(wh.Secret, body))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -113,7 +124,11 @@ func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.Pr
 		}
 		return fmt.Errorf("pre-action webhook %q is unreachable and configured as fail-closed: %w", wh.Name, sharederrors.ErrForbidden)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.logger.Debug("failed to close pre-action webhook response body", "webhook_id", wh.ID, "error", closeErr)
+		}
+	}()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {

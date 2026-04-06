@@ -61,12 +61,13 @@ make migrate-create NAME=feature_name # Create new migration pair
 
 ### Docker
 ```bash
-docker compose up -d    # Start all services (postgres, nats, controller, admin-webui, customer-webui, nginx)
-docker compose build    # Rebuild images
-docker compose down     # Stop all services
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d    # Start production stack
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build    # Build production images
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down     # Stop production stack
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d     # Start development stack
 ```
 
-Docker Compose variants: `docker-compose.yml` (base), `docker-compose.override.yml` (dev), `docker-compose.prod.yml` (production), `docker-compose.test.yml` (testing with mock node agent).
+Docker Compose variants: `docker-compose.yml` (base), `docker-compose.dev.yml` (dev), `docker-compose.prod.yml` (production), `docker-compose.test.yml` (testing with mock node agent).
 
 ### E2E Testing
 ```bash

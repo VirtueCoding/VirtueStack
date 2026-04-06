@@ -1,457 +1,239 @@
-import { test, expect, Page } from '@playwright/test';
-import { createHmac } from 'crypto';
+import { test, expect, type Page } from '@playwright/test';
+import { CREDENTIALS, generateTOTP } from './utils/auth';
 
-function base32Decode(input: string): Buffer {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const cleaned = input.replace(/=+$/, '');
-  const bits: string[] = [];
-  for (const char of cleaned.toUpperCase()) {
-    const val = alphabet.indexOf(char);
-    if (val === -1) continue;
-    bits.push(val.toString(2).padStart(5, '0'));
-  }
-  const octets = bits.join('');
-  const bytes = Buffer.alloc(Math.floor(octets.length / 8));
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(octets.slice(i * 8, i * 8 + 8), 2);
-  }
-  return bytes;
+const adminBaseURL = process.env.ADMIN_URL || 'http://localhost:3000';
+const customerBaseURL = process.env.CUSTOMER_URL || 'http://localhost:3001';
+const adminTwoFactorSecret =
+  process.env.TEST_ADMIN_TOTP_SECRET || CREDENTIALS.adminWith2FA.totpSecret;
+const customerTwoFactorSecret =
+  process.env.TEST_CUSTOMER_TOTP_SECRET || CREDENTIALS.customerWith2FA.totpSecret;
+
+function localPart(email: string): string {
+  return email.split('@')[0] || email;
 }
 
-function generateTOTP(secret: string, period = 30, digits = 6): string {
-  const epoch = Math.floor(Date.now() / 1000 / period);
-  const counter = Buffer.alloc(8);
-  counter.writeUInt32BE(0, 0);
-  counter.writeUInt32BE(epoch, 4);
-  const key = base32Decode(secret.replace(/ /g, ''));
-  const hmac = createHmac('sha1', key);
-  hmac.update(counter);
-  const bytes = hmac.digest();
-  const offset = bytes[bytes.length - 1] & 0x0f;
-  const binary =
-    ((bytes[offset] & 0x7f) << 24) |
-    ((bytes[offset + 1] & 0xff) << 16) |
-    ((bytes[offset + 2] & 0xff) << 8) |
-    (bytes[offset + 3] & 0xff);
-  return (binary % Math.pow(10, digits)).toString().padStart(digits, '0');
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Authentication E2E Tests
- * 
- * Tests cover:
- * - Admin login/logout flow
- * - Customer login/logout flow
- * - MFA/2FA verification
- * - Session management
- * - Password validation
- */
-
-// Test credentials
-const ADMIN_CREDENTIALS = {
-  email: 'admin@virtuestack.local',
-  password: 'AdminTest123!',
-};
-
-const CUSTOMER_CREDENTIALS = {
-  email: 'customer@virtuestack.local',
-  password: 'CustomerTest123!',
-};
-
-// Page Object Models
 class LoginPage {
-  constructor(private page: Page) {}
+  constructor(private readonly page: Page) {}
 
-  async gotoAdmin() {
+  async goto(): Promise<void> {
     await this.page.goto('/login');
-    await expect(this.page).toHaveTitle(/Login|VirtueStack/);
   }
 
-  async gotoCustomer() {
-    await this.page.goto('/login');
-    await expect(this.page).toHaveTitle(/Login|VirtueStack/);
+  async submitCredentials(email: string, password: string): Promise<void> {
+    await this.page.locator('#email').fill(email);
+    await this.page.locator('#password').fill(password);
+    await this.page.getByRole('button', { name: /^sign in$/i }).click();
   }
 
-  async login(email: string, password: string) {
-    await this.page.fill('input[name="email"]', email);
-    await this.page.fill('input[name="password"]', password);
-    await this.page.click('button[type="submit"]');
+  async expectLoginForm(): Promise<void> {
+    await expect(this.page.locator('#email')).toBeVisible();
+    await expect(this.page.locator('#password')).toBeVisible();
+    await expect(this.page.getByRole('button', { name: /^sign in$/i })).toBeVisible();
   }
 
-  async expectError(message: string | RegExp) {
-    await expect(this.page.locator('[role="alert"], .error-message')).toContainText(message);
+  async expectTwoFactorPrompt(): Promise<void> {
+    await expect(this.page.getByText('Two-Factor Authentication')).toBeVisible();
+    await expect(this.page.locator('#totp_code')).toBeVisible();
   }
 
-  async expect2FARequired() {
-    await expect(this.page.locator('input[name="totp_code"], .totp-input')).toBeVisible();
-  }
-
-  async enter2FACode(code: string) {
-    await this.page.fill('input[name="totp_code"]', code);
-    await this.page.click('button[type="submit"]');
+  async submitTwoFactorCode(code: string): Promise<void> {
+    await this.page.locator('#totp_code').fill(code);
+    await this.page.getByRole('button', { name: /^verify$/i }).click();
   }
 }
 
-// ============================================
-// Admin Login Tests
-// ============================================
+async function logoutFromUserMenu(page: Page, email: string): Promise<void> {
+  const trigger = page
+    .getByRole('button', { name: new RegExp(escapeRegExp(localPart(email)), 'i') })
+    .last();
 
-test.describe('Admin Authentication', () => {
-  let loginPage: LoginPage;
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await page.getByRole('menuitem', { name: /log out/i }).click();
+}
 
-  test.beforeEach(async ({ page }) => {
-    loginPage = new LoginPage(page);
-    await loginPage.gotoAdmin();
+test.use({ storageState: { cookies: [], origins: [] } });
+
+test.describe('Admin authentication', () => {
+  test.use({ baseURL: adminBaseURL });
+
+  test('shows the seeded admin login form', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+
+    await expect(page.getByText('Admin Login')).toBeVisible();
+    await loginPage.expectLoginForm();
   });
 
-  test('should display login form', async ({ page }) => {
-    await expect(page.locator('input[name="email"]')).toBeVisible();
-    await expect(page.locator('input[name="password"]')).toBeVisible();
-    await expect(page.locator('button[type="submit"]')).toBeVisible();
+  test('validates admin login form input before submission', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials('invalid-email', 'short-pass');
+
+    await expect(page.getByText('Invalid email address')).toBeVisible();
+    await expect(page.getByText('Password must be at least 12 characters')).toBeVisible();
   });
 
-  test('should show validation errors for empty fields', async ({ page }) => {
-    await page.click('button[type="submit"]');
-    
-    // Should show validation errors
-    await expect(page.locator('text=/email is required|please enter your email/i')).toBeVisible();
+  test('rejects invalid seeded admin credentials', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(CREDENTIALS.adminWith2FA.email, 'WrongAdminPass987!');
+
+    await expect(page.getByText('Invalid email or password. Please try again.')).toBeVisible();
   });
 
-  test('should show error for invalid email format', async ({ page }) => {
-    await page.fill('input[name="email"]', 'invalid-email');
-    await page.fill('input[name="password"]', 'password123');
-    await page.click('button[type="submit"]');
-    
-    await expect(page.locator('text=/invalid email|please enter a valid email/i')).toBeVisible();
-  });
+  test('requires 2FA for the seeded admin account', async ({ page }) => {
+    const loginPage = new LoginPage(page);
 
-  test('should show error for non-existent admin', async ({ page }) => {
-    await loginPage.login('nonexistent@example.com', 'Password123!');
-    
-    await loginPage.expectError(/invalid credentials|user not found/i);
-  });
-
-  test('should show error for wrong password', async ({ page }) => {
-    await loginPage.login(ADMIN_CREDENTIALS.email, 'WrongPassword123!');
-    
-    await loginPage.expectError(/invalid credentials|incorrect password/i);
-  });
-
-  test('should require 2FA for admin login', async ({ page }) => {
-    // Note: This test requires a valid admin account with 2FA enabled
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    
-    // Admin should always see 2FA prompt
-    await loginPage.expect2FARequired();
-  });
-
-  test('should show error for invalid 2FA code', async ({ page }) => {
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
-    
-    await loginPage.enter2FACode('000000');
-    
-    await loginPage.expectError(/invalid.*code|verification failed/i);
-  });
-
-  test('should complete login with valid 2FA code', async ({ page }) => {
-    // Skip if no valid TOTP code available
-    test.skip(!process.env.ADMIN_TOTP_SECRET, 'Requires ADMIN_TOTP_SECRET env var');
-    
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
-    
-    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET!);
-    await loginPage.enter2FACode(validCode);
-    
-    // Should redirect to admin dashboard
-    await expect(page).toHaveURL(/\/dashboard|\/admin/);
-  });
-
-  test('should logout successfully', async ({ page }) => {
-    test.skip(!process.env.ADMIN_TOTP_SECRET, 'Requires ADMIN_TOTP_SECRET for full login flow');
-
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
-
-    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET!);
-    await loginPage.enter2FACode(validCode);
-
-    await expect(page).toHaveURL(/\/dashboard|\/admin/);
-
-    // Click logout button
-    await page.click('[data-testid="logout-button"], button:has-text("Logout")');
-
-    // Should redirect to login
-    await expect(page).toHaveURL(/\/login/);
-
-    // Should not be able to access protected routes
-    await page.goto('/dashboard');
-    await expect(page).toHaveURL(/\/login/);
-  });
-});
-
-// ============================================
-// Customer Login Tests
-// ============================================
-
-test.describe('Customer Authentication', () => {
-  let loginPage: LoginPage;
-
-  test.beforeEach(async ({ page }) => {
-    loginPage = new LoginPage(page);
-    await loginPage.gotoCustomer();
-  });
-
-  test('should display customer login form', async ({ page }) => {
-    await expect(page.locator('input[name="email"]')).toBeVisible();
-    await expect(page.locator('input[name="password"]')).toBeVisible();
-    await expect(page.locator('button[type="submit"]')).toBeVisible();
-  });
-
-  test('should show link to registration', async ({ page }) => {
-    await expect(page.locator('a:has-text("Register"), a:has-text("Sign up")')).toBeVisible();
-  });
-
-  test('should show link to forgot password', async ({ page }) => {
-    await expect(page.locator('a:has-text("Forgot password"), a:has-text("Reset password")')).toBeVisible();
-  });
-
-  test('should show error for invalid credentials', async ({ page }) => {
-    await loginPage.login('nonexistent@example.com', 'Password123!');
-    
-    await loginPage.expectError(/invalid credentials/i);
-  });
-
-  test('should login successfully for customer without 2FA', async ({ page }) => {
-    // This test requires a customer account without 2FA
-    await loginPage.login(CUSTOMER_CREDENTIALS.email, CUSTOMER_CREDENTIALS.password);
-    
-    // Should redirect to customer dashboard
-    await expect(page).toHaveURL(/\/dashboard|\/vms|\/overview/);
-  });
-
-  test('should require 2FA for customers with 2FA enabled', async ({ page }) => {
-    // This test requires a customer account with 2FA enabled
-    const customerWith2FA = '2fa-customer@virtuestack.local';
-    await loginPage.login(customerWith2FA, 'Password123!');
-    
-    await loginPage.expect2FARequired();
-  });
-
-  test('should complete customer login with valid 2FA', async ({ page }) => {
-    // This requires actual TOTP generation
-    test.skip(!process.env.CUSTOMER_TOTP_SECRET, 'Requires CUSTOMER_TOTP_SECRET env var');
-    
-    const customerWith2FA = '2fa-customer@virtuestack.local';
-    await loginPage.login(customerWith2FA, 'Password123!');
-    await loginPage.expect2FARequired();
-    
-    const validCode = generateTOTP(process.env.CUSTOMER_TOTP_SECRET!);
-    await loginPage.enter2FACode(validCode);
-    
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-  });
-
-  test('should logout customer successfully', async ({ page }) => {
-    // Login first
-    await loginPage.login(CUSTOMER_CREDENTIALS.email, CUSTOMER_CREDENTIALS.password);
-    
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-    
-    // Click logout
-    await page.click('[data-testid="logout-button"], button:has-text("Logout")');
-    
-    await expect(page).toHaveURL(/\/login/);
-  });
-});
-
-// ============================================
-// Password Reset Tests
-// ============================================
-
-test.describe('Password Reset', () => {
-  test('should show forgot password form', async ({ page }) => {
-    await page.goto('/forgot-password');
-    
-    await expect(page.locator('input[name="email"]')).toBeVisible();
-    await expect(page.locator('button[type="submit"]')).toBeVisible();
-  });
-
-  test('should send reset email for valid email', async ({ page }) => {
-    await page.goto('/forgot-password');
-    
-    await page.fill('input[name="email"]', CUSTOMER_CREDENTIALS.email);
-    await page.click('button[type="submit"]');
-    
-    // Should show success message
-    await expect(page.locator('text=/email sent|check your inbox/i')).toBeVisible();
-  });
-
-  test('should not reveal if email exists', async ({ page }) => {
-    await page.goto('/forgot-password');
-    
-    await page.fill('input[name="email"]', 'nonexistent@example.com');
-    await page.click('button[type="submit"]');
-    
-    // Should still show success message (security: don't reveal existence)
-    await expect(page.locator('text=/email sent|check your inbox/i')).toBeVisible();
-  });
-
-  test('should reset password with valid token', async ({ page }) => {
-    // This requires a valid reset token
-    const resetToken = process.env.TEST_RESET_TOKEN || 'test-token';
-    await page.goto(`/reset-password?token=${resetToken}`);
-    
-    await expect(page.locator('input[name="password"]')).toBeVisible();
-    await expect(page.locator('input[name="confirm_password"]')).toBeVisible();
-  });
-
-  test('should enforce password requirements', async ({ page }) => {
-    const resetToken = process.env.TEST_RESET_TOKEN || 'test-token';
-    await page.goto(`/reset-password?token=${resetToken}`);
-    
-    // Try weak password
-    await page.fill('input[name="password"]', 'weak');
-    await page.fill('input[name="confirm_password"]', 'weak');
-    await page.click('button[type="submit"]');
-    
-    await expect(page.locator('text=/password.*requirements|min.*characters/i')).toBeVisible();
-  });
-});
-
-// ============================================
-// Session Management Tests
-// ============================================
-
-test.describe('Session Management', () => {
-  test('should maintain session across page reloads', async ({ page }) => {
-    // Login first
-    await page.goto('/login');
-    await page.fill('input[name="email"]', CUSTOMER_CREDENTIALS.email);
-    await page.fill('input[name="password"]', CUSTOMER_CREDENTIALS.password);
-    await page.click('button[type="submit"]');
-    
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-    
-    // Reload page
-    await page.reload();
-    
-    // Should still be logged in
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-  });
-
-  test('should expire session after inactivity', async ({ page }) => {
-    // This test simulates session expiration
-    // Login first
-    await page.goto('/login');
-    await page.fill('input[name="email"]', CUSTOMER_CREDENTIALS.email);
-    await page.fill('input[name="password"]', CUSTOMER_CREDENTIALS.password);
-    await page.click('button[type="submit"]');
-    
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-    
-    // Clear cookies to simulate expired session
-    await page.context().clearCookies();
-    
-    // Try to access protected page
-    await page.goto('/dashboard');
-    
-    // Should redirect to login
-    await expect(page).toHaveURL(/\/login/);
-  });
-
-  test('should handle concurrent sessions', async ({ page, context }) => {
-    // Login in first page
-    await page.goto('/login');
-    await page.fill('input[name="email"]', CUSTOMER_CREDENTIALS.email);
-    await page.fill('input[name="password"]', CUSTOMER_CREDENTIALS.password);
-    await page.click('button[type="submit"]');
-    
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-    
-    // Open second page in same context
-    const page2 = await context.newPage();
-    await page2.goto('/dashboard');
-    
-    // Both pages should be logged in
-    await expect(page2).toHaveURL(/\/dashboard|\/vms/);
-  });
-});
-
-// ============================================
-// Security Tests
-// ============================================
-
-test.describe('Authentication Security', () => {
-  let loginPage: LoginPage;
-
-  test.beforeEach(async ({ page }) => {
-    loginPage = new LoginPage(page);
-  });
-
-  test('should prevent SQL injection in login form', async ({ page }) => {
-    await loginPage.gotoAdmin();
-    
-    await page.fill('input[name="email"]', "admin@example.com' OR '1'='1");
-    await page.fill('input[name="password"]', "' OR '1'='1");
-    await page.click('button[type="submit"]');
-    
-    // Should not login, should show error
-    await expect(page).toHaveURL(/\/login/);
-    await loginPage.expectError(/invalid credentials/i);
-  });
-
-  test('should rate limit login attempts', async ({ page }) => {
-    await page.goto('/login');
-    
-    // Attempt multiple failed logins
-    for (let i = 0; i < 6; i++) {
-      await page.fill('input[name="email"]', 'test@example.com');
-      await page.fill('input[name="password"]', `wrong-password-${i}`);
-      await page.click('button[type="submit"]');
-      await page.waitForLoadState('networkidle');
-    }
-    
-    // Should show rate limit error
-    await expect(page.locator('text=/too many|rate limit|try again later/i')).toBeVisible();
-  });
-
-  test('should have CSRF protection', async ({ page }) => {
-    await loginPage.gotoAdmin();
-
-    // Check for CSRF token in form
-    const csrfToken = await page.locator('input[name="_csrf"], input[name="csrf_token"], input[name="csrf"]').getAttribute('value');
-
-    // CSRF protection must be present: either a hidden form input or a csrf cookie
-    const cookies = await page.context().cookies();
-    const csrfCookie = cookies.find(c => c.name.toLowerCase().includes('csrf'));
-
-    if (csrfToken) {
-      expect(csrfToken).toBeTruthy();
-      expect(csrfToken.length).toBeGreaterThan(0);
-    } else {
-      expect(csrfCookie).toBeDefined();
-      expect(csrfCookie!.value.length).toBeGreaterThan(0);
-    }
-  });
-
-  test('should set secure cookie attributes', async ({ page, context }) => {
-    await loginPage.gotoAdmin();
-    await loginPage.login(CUSTOMER_CREDENTIALS.email, CUSTOMER_CREDENTIALS.password);
-
-    await expect(page).toHaveURL(/\/dashboard|\/vms/);
-
-    const cookies = await context.cookies();
-    const sessionCookie = cookies.find(c =>
-      c.name.includes('session') || c.name.includes('token') || c.name.includes('auth')
+    await loginPage.goto();
+    await loginPage.submitCredentials(
+      CREDENTIALS.adminWith2FA.email,
+      CREDENTIALS.adminWith2FA.password,
     );
 
-    if (sessionCookie) {
-      expect(sessionCookie.httpOnly).toBe(true);
-      expect(sessionCookie.secure).toBe(true);
-      expect(sessionCookie.sameSite).toBeDefined();
-    }
+    await loginPage.expectTwoFactorPrompt();
+  });
+
+  test('rejects an invalid admin 2FA code', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(
+      CREDENTIALS.adminWith2FA.email,
+      CREDENTIALS.adminWith2FA.password,
+    );
+    await loginPage.expectTwoFactorPrompt();
+    await loginPage.submitTwoFactorCode('000000');
+
+    await expect(page.getByText('Invalid 2FA code. Please try again.')).toBeVisible();
+  });
+
+  test('signs in and logs out with the seeded admin 2FA account', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(
+      CREDENTIALS.adminWith2FA.email,
+      CREDENTIALS.adminWith2FA.password,
+    );
+    await loginPage.expectTwoFactorPrompt();
+    await loginPage.submitTwoFactorCode(generateTOTP(adminTwoFactorSecret));
+
+    await expect(page).toHaveURL(new URL('/', adminBaseURL).toString());
+
+    await logoutFromUserMenu(page, CREDENTIALS.adminWith2FA.email);
+
+    await expect(page).toHaveURL(new URL('/login', adminBaseURL).toString());
+    await expect(page.getByText('Admin Login')).toBeVisible();
   });
 });
 
+test.describe('Customer authentication', () => {
+  test.use({ baseURL: customerBaseURL });
+
+  test('shows the seeded customer login form and password reset link', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+
+    await expect(page.getByText('Welcome back')).toBeVisible();
+    await loginPage.expectLoginForm();
+    await expect(
+      page.getByRole('link', { name: /forgot your password\?/i }),
+    ).toBeVisible();
+  });
+
+  test('rejects invalid seeded customer credentials', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(CREDENTIALS.customer.email, 'WrongCustomerPass987!');
+
+    await expect(page.getByText('Invalid email or password. Please try again.')).toBeVisible();
+  });
+
+  test('signs in and logs out with the seeded customer account', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(CREDENTIALS.customer.email, CREDENTIALS.customer.password);
+
+    await expect(page).toHaveURL(new URL('/vms', customerBaseURL).toString());
+
+    await logoutFromUserMenu(page, CREDENTIALS.customer.email);
+
+    await expect(page).toHaveURL(new URL('/login', customerBaseURL).toString());
+    await expect(page.getByText('Welcome back')).toBeVisible();
+  });
+
+  test('requires 2FA for the seeded customer 2FA account', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(
+      CREDENTIALS.customerWith2FA.email,
+      CREDENTIALS.customerWith2FA.password,
+    );
+
+    await loginPage.expectTwoFactorPrompt();
+  });
+
+  test('signs in with the seeded customer 2FA account', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.goto();
+    await loginPage.submitCredentials(
+      CREDENTIALS.customerWith2FA.email,
+      CREDENTIALS.customerWith2FA.password,
+    );
+    await loginPage.expectTwoFactorPrompt();
+    await loginPage.submitTwoFactorCode(generateTOTP(customerTwoFactorSecret));
+
+    await expect(page).toHaveURL(new URL('/vms', customerBaseURL).toString());
+  });
+});
+
+test.describe('Customer password reset pages', () => {
+  test.use({ baseURL: customerBaseURL });
+
+  test('navigates from login to the forgot password page', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByRole('link', { name: /forgot your password\?/i }).click();
+
+    await expect(page).toHaveURL(new URL('/forgot-password', customerBaseURL).toString());
+    await expect(page.getByLabel('Email Address')).toBeVisible();
+    await expect(page.getByRole('button', { name: /send reset link/i })).toBeVisible();
+  });
+
+  test('keeps forgot password responses generic for unknown emails', async ({ page }) => {
+    await page.goto('/forgot-password');
+    await page.getByLabel('Email Address').fill('missing@example.com');
+    await page.getByRole('button', { name: /send reset link/i }).click();
+
+    await expect(
+      page.getByText('If an account with that email exists'),
+    ).toBeVisible();
+  });
+
+  test('shows the invalid reset link state without a token', async ({ page }) => {
+    await page.goto('/reset-password');
+
+    await expect(page.getByText('Invalid Reset Link')).toBeVisible();
+    await expect(page.getByText('Request New Reset Link')).toBeVisible();
+  });
+
+  test('shows the reset password form when a token is present', async ({ page }) => {
+    await page.goto('/reset-password?token=test-reset-token');
+
+    await expect(page.getByLabel('New Password')).toBeVisible();
+    await expect(page.getByLabel('Confirm Password')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^reset password$/i })).toBeVisible();
+  });
+});

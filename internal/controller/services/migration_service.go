@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path"
+	"path/filepath"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -21,13 +23,13 @@ import (
 // It handles VM migration between hypervisor nodes, including pre-checks,
 // target node selection, and coordination of the migration process.
 type MigrationService struct {
-	vmRepo           *repository.VMRepository
-	nodeRepo         *repository.NodeRepository
-	taskRepo         *repository.TaskRepository
-	taskPublisher    TaskPublisher
-	nodeClient       NodeAgentClient
+	vmRepo            *repository.VMRepository
+	nodeRepo          *repository.NodeRepository
+	taskRepo          *repository.TaskRepository
+	taskPublisher     TaskPublisher
+	nodeClient        NodeAgentClient
 	storageBackendSvc StorageBackendGetter
-	logger           *slog.Logger
+	logger            *slog.Logger
 }
 
 // NewMigrationService creates a new MigrationService with the given dependencies.
@@ -41,13 +43,13 @@ func NewMigrationService(
 	logger *slog.Logger,
 ) *MigrationService {
 	return &MigrationService{
-		vmRepo:           vmRepo,
-		nodeRepo:         nodeRepo,
-		taskRepo:         taskRepo,
-		taskPublisher:    taskPublisher,
-		nodeClient:       nodeClient,
+		vmRepo:            vmRepo,
+		nodeRepo:          nodeRepo,
+		taskRepo:          taskRepo,
+		taskPublisher:     taskPublisher,
+		nodeClient:        nodeClient,
 		storageBackendSvc: storageBackendSvc,
-		logger:          logger.With("component", "migration-service"),
+		logger:            logger.With("component", "migration-service"),
 	}
 }
 
@@ -183,21 +185,21 @@ func (s *MigrationService) executeMigration(ctx context.Context, vm *models.VM, 
 		return nil, fmt.Errorf("storage backend validation failed: %w", err)
 	}
 
-	sourceDiskPath := s.getVMDiskPath(vm, sourceNode)
-	targetDiskPath := s.getVMDiskPathForTarget(vm, targetNode)
-
-	s.logger.Info("migration strategy determined", "vm_id", vm.ID, "storage_backend", vmStorageBackend, "strategy", migrationStrategy, "source_disk", sourceDiskPath, "target_disk", targetDiskPath)
-
 	preMigrationStatus := vm.Status
-	if err := s.vmRepo.UpdateStatus(ctx, vm.ID, models.VMStatusMigrating); err != nil {
-		return nil, fmt.Errorf("updating VM status to migrating: %w", err)
+	taskPayload, err := s.buildMigrationPayload(ctx, vm, sourceNode, targetNode, vmStorageBackend, migrationStrategy, live, adminID, preMigrationStatus)
+	if err != nil {
+		return nil, fmt.Errorf("building migration payload: %w", err)
 	}
 
-	taskPayload := s.buildMigrationPayload(vm, sourceNode, targetNode, vmStorageBackend, migrationStrategy, sourceDiskPath, targetDiskPath, live, adminID, preMigrationStatus)
+	s.logger.Info("migration strategy determined",
+		"vm_id", vm.ID,
+		"storage_backend", vmStorageBackend,
+		"strategy", migrationStrategy,
+		"source_disk", taskPayload["source_disk_path"],
+		"target_disk", taskPayload["target_disk_path"])
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMMigrate, taskPayload)
 	if err != nil {
-		_ = s.vmRepo.UpdateStatus(ctx, vm.ID, preMigrationStatus)
 		return nil, fmt.Errorf("publishing migration task: %w", err)
 	}
 
@@ -207,28 +209,133 @@ func (s *MigrationService) executeMigration(ctx context.Context, vm *models.VM, 
 }
 
 // buildMigrationPayload constructs the task payload for a migration operation.
-func (s *MigrationService) buildMigrationPayload(vm *models.VM, sourceNode, targetNode *models.Node, storageBackend string, strategy tasks.MigrationStrategy, sourceDiskPath, targetDiskPath string, live bool, adminID string, preMigrationStatus string) map[string]any {
+func (s *MigrationService) buildMigrationPayload(ctx context.Context, vm *models.VM, sourceNode, targetNode *models.Node, storageBackend string, strategy tasks.MigrationStrategy, live bool, _, preMigrationStatus string) (map[string]any, error) {
+	payload := tasks.VMMigratePayload{
+		VMID:                 vm.ID,
+		SourceNodeID:         *vm.NodeID,
+		TargetNodeID:         targetNode.ID,
+		PreMigrationState:    preMigrationStatus,
+		SourceStorageBackend: storageBackend,
+		TargetStorageBackend: storageBackend,
+		SourceStoragePath:    sourceNode.StoragePath,
+		TargetStoragePath:    targetNode.StoragePath,
+		SourceCephPool:       sourceNode.CephPool,
+		TargetCephPool:       targetNode.CephPool,
+		MigrationStrategy:    strategy,
+		Live:                 live,
+		DiskSizeGB:           vm.DiskGB,
+	}
+
+	sourceBackend, err := s.resolveMigrationBackend(ctx, sourceNode.ID, storageBackend, vm.StorageBackendID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source storage backend: %w", err)
+	}
+	if sourceBackend != nil {
+		applyStorageBackendMetadata(&payload, sourceBackend, true)
+	}
+
+	targetPreferredBackendID := targetMigrationBackendID(storageBackend, vm.StorageBackendID)
+	targetBackend, err := s.resolveMigrationBackend(ctx, targetNode.ID, storageBackend, targetPreferredBackendID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving target storage backend: %w", err)
+	}
+	if targetBackend != nil {
+		applyStorageBackendMetadata(&payload, targetBackend, false)
+		payload.TargetStorageBackendID = targetBackend.ID
+	}
+	payload.SourceDiskPath = s.getVMDiskPath(vm, sourceNode, sourceBackend)
+	payload.TargetDiskPath = s.getVMDiskPathForTarget(vm, targetNode, targetBackend)
+
 	return map[string]any{
-		"vm_id":               vm.ID,
-		"source_node_id":      *vm.NodeID,
-		"target_node_id":      targetNode.ID,
-		"hostname":            vm.Hostname,
-		"vcpu":                vm.VCPU,
-		"memory_mb":           vm.MemoryMB,
-		"disk_gb":             vm.DiskGB,
-		"mac_address":         vm.MACAddress,
-		"live":                live,
-		"source_ceph_pool":    sourceNode.CephPool,
-		"target_ceph_pool":    targetNode.CephPool,
-		"initiated_by":        adminID,
-		"pre_migration_state": preMigrationStatus,
-		"storage_backend":     storageBackend,
-		"source_storage_path": sourceNode.StoragePath,
-		"target_storage_path": targetNode.StoragePath,
-		"migration_strategy":  string(strategy),
-		"source_disk_path":    sourceDiskPath,
-		"target_disk_path":    targetDiskPath,
-		"disk_size_gb":        vm.DiskGB,
+		"vm_id":                     payload.VMID,
+		"source_node_id":            payload.SourceNodeID,
+		"target_node_id":            payload.TargetNodeID,
+		"pre_migration_state":       payload.PreMigrationState,
+		"source_storage_backend":    payload.SourceStorageBackend,
+		"target_storage_backend":    payload.TargetStorageBackend,
+		"target_storage_backend_id": payload.TargetStorageBackendID,
+		"source_storage_path":       payload.SourceStoragePath,
+		"target_storage_path":       payload.TargetStoragePath,
+		"source_ceph_pool":          payload.SourceCephPool,
+		"target_ceph_pool":          payload.TargetCephPool,
+		"source_lvm_volume_group":   payload.SourceLVMVolumeGroup,
+		"source_lvm_thin_pool":      payload.SourceLVMThinPool,
+		"target_lvm_volume_group":   payload.TargetLVMVolumeGroup,
+		"target_lvm_thin_pool":      payload.TargetLVMThinPool,
+		"migration_strategy":        string(payload.MigrationStrategy),
+		"live":                      payload.Live,
+		"source_disk_path":          payload.SourceDiskPath,
+		"target_disk_path":          payload.TargetDiskPath,
+		"disk_size_gb":              payload.DiskSizeGB,
+	}, nil
+}
+
+func (s *MigrationService) resolveMigrationBackend(ctx context.Context, nodeID, backendType string, preferredBackendID *string) (*models.StorageBackend, error) {
+	if s.storageBackendSvc == nil {
+		return nil, nil
+	}
+
+	backends, err := s.storageBackendSvc.GetBackendsForNodeByType(ctx, nodeID, backendType)
+	if err != nil {
+		return nil, fmt.Errorf("getting storage backends for node %s: %w", nodeID, err)
+	}
+	if len(backends) == 0 {
+		return nil, nil
+	}
+
+	if preferredBackendID != nil {
+		for i := range backends {
+			if backends[i].ID == *preferredBackendID {
+				return &backends[i], nil
+			}
+		}
+		return nil, fmt.Errorf("storage backend %s is not assigned to node %s", *preferredBackendID, nodeID)
+	}
+
+	if len(backends) > 1 {
+		return nil, fmt.Errorf("node %s has multiple %s storage backends assigned; migration target selection is ambiguous", nodeID, backendType)
+	}
+
+	return &backends[0], nil
+}
+
+func applyStorageBackendMetadata(payload *tasks.VMMigratePayload, backend *models.StorageBackend, isSource bool) {
+	if backend == nil {
+		return
+	}
+
+	switch string(backend.Type) {
+	case models.StorageBackendQcow:
+		if backend.StoragePath != nil {
+			if isSource {
+				payload.SourceStoragePath = *backend.StoragePath
+			} else {
+				payload.TargetStoragePath = *backend.StoragePath
+			}
+		}
+	case models.StorageBackendLvm:
+		if backend.LVMVolumeGroup != nil {
+			if isSource {
+				payload.SourceLVMVolumeGroup = *backend.LVMVolumeGroup
+			} else {
+				payload.TargetLVMVolumeGroup = *backend.LVMVolumeGroup
+			}
+		}
+		if backend.LVMThinPool != nil {
+			if isSource {
+				payload.SourceLVMThinPool = *backend.LVMThinPool
+			} else {
+				payload.TargetLVMThinPool = *backend.LVMThinPool
+			}
+		}
+	case models.StorageBackendCeph:
+		if backend.CephPool != nil {
+			if isSource {
+				payload.SourceCephPool = *backend.CephPool
+			} else {
+				payload.TargetCephPool = *backend.CephPool
+			}
+		}
 	}
 }
 
@@ -264,17 +371,16 @@ func (s *MigrationService) validateStorageBackend(storageBackend string) error {
 }
 
 // getVMDiskPath returns the disk path for a VM on its current node.
-func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) string {
-	if vm.DiskPath != nil && *vm.DiskPath != "" {
-		return *vm.DiskPath
-	}
-
+func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node, backend *models.StorageBackend) string {
 	storageBackend := s.getNodeStorageBackend(vm)
 	if storageBackend == models.StorageBackendQcow {
-		if node.StoragePath != "" {
-			return fmt.Sprintf("%s/%s-disk0.qcow2", node.StoragePath, vm.ID)
+		if vm.DiskPath != nil && *vm.DiskPath != "" {
+			return *vm.DiskPath
 		}
-		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+		return qcowDiskIdentifier(qcowBasePath(node, backend), vm.ID)
+	}
+	if storageBackend == models.StorageBackendLvm {
+		return lvmDiskIdentifier(vm.ID, lvmVolumeGroup(backend))
 	}
 
 	if vm.RBDImage != nil && *vm.RBDImage != "" {
@@ -284,20 +390,52 @@ func (s *MigrationService) getVMDiskPath(vm *models.VM, node *models.Node) strin
 }
 
 // getVMDiskPathForTarget returns the disk path for a VM on the target node.
-func (s *MigrationService) getVMDiskPathForTarget(vm *models.VM, targetNode *models.Node) string {
+func (s *MigrationService) getVMDiskPathForTarget(vm *models.VM, targetNode *models.Node, backend *models.StorageBackend) string {
 	storageBackend := s.getNodeStorageBackend(vm)
 
 	if storageBackend == models.StorageBackendQcow {
-		if targetNode.StoragePath != "" {
-			return fmt.Sprintf("%s/%s-disk0.qcow2", targetNode.StoragePath, vm.ID)
-		}
-		return fmt.Sprintf("/var/lib/virtuestack/vms/%s-disk0.qcow2", vm.ID)
+		return qcowDiskIdentifier(qcowBasePath(targetNode, backend), vm.ID)
+	}
+	if storageBackend == models.StorageBackendLvm {
+		return lvmDiskIdentifier(vm.ID, lvmVolumeGroup(backend))
 	}
 
 	if vm.RBDImage != nil && *vm.RBDImage != "" {
 		return *vm.RBDImage
 	}
 	return fmt.Sprintf("vm-%s-disk0", vm.ID)
+}
+
+func qcowBasePath(node *models.Node, backend *models.StorageBackend) string {
+	if backend != nil && backend.StoragePath != nil && *backend.StoragePath != "" {
+		return *backend.StoragePath
+	}
+	if node != nil && node.StoragePath != "" {
+		return node.StoragePath
+	}
+	return "/var/lib/virtuestack/vms"
+}
+
+func qcowDiskIdentifier(basePath, vmID string) string {
+	return filepath.Join(basePath, fmt.Sprintf("%s-disk0.qcow2", vmID))
+}
+
+func lvmVolumeGroup(backend *models.StorageBackend) string {
+	if backend != nil && backend.LVMVolumeGroup != nil && *backend.LVMVolumeGroup != "" {
+		return *backend.LVMVolumeGroup
+	}
+	return "vgvs"
+}
+
+func lvmDiskIdentifier(vmID, volumeGroup string) string {
+	return path.Join("/dev", volumeGroup, fmt.Sprintf("vs-%s-disk0", vmID))
+}
+
+func targetMigrationBackendID(storageBackend string, vmStorageBackendID *string) *string {
+	if storageBackend == models.StorageBackendCeph {
+		return vmStorageBackendID
+	}
+	return nil
 }
 
 // validateTargetNode validates that a specified target node is suitable for migration.
@@ -321,6 +459,10 @@ func (s *MigrationService) validateTargetNode(ctx context.Context, targetNodeID,
 		return nil, fmt.Errorf("target node %s is not online (status: %s)", targetNodeID, targetNode.Status)
 	}
 
+	if err := s.validateTargetNodeStorageCompatibility(ctx, targetNode, vm); err != nil {
+		return nil, err
+	}
+
 	return targetNode, nil
 }
 
@@ -334,14 +476,14 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 	}
 
 	nodes, _, _, err := s.nodeRepo.List(ctx, models.NodeListFilter{
-		Status: util.StringPtr(models.NodeStatusOnline),
+		Status:           util.StringPtr(models.NodeStatusOnline),
 		PaginationParams: models.PaginationParams{PerPage: models.MaxPerPage},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing online nodes: %w", err)
 	}
 
-	candidates := s.filterCandidateNodes(nodes, sourceNodeID, vm)
+	candidates := s.filterCandidateNodes(ctx, nodes, sourceNodeID, vm)
 
 	// Provide clear error message based on storage backend type
 	if len(candidates) == 0 {
@@ -359,7 +501,12 @@ func (s *MigrationService) findBestTargetNode(ctx context.Context, sourceNodeID 
 // It also ensures storage backend compatibility - Ceph VMs can only migrate to
 // nodes with access to the same Ceph cluster; QCOW/LVM VMs cannot migrate
 // (disk is local to the source node).
-func (s *MigrationService) filterCandidateNodes(nodes []models.Node, sourceNodeID string, vm *models.VM) []models.Node {
+func (s *MigrationService) filterCandidateNodes(
+	ctx context.Context,
+	nodes []models.Node,
+	sourceNodeID string,
+	vm *models.VM,
+) []models.Node {
 	var candidates []models.Node
 	vmStorageBackend := s.getNodeStorageBackend(vm)
 
@@ -369,47 +516,13 @@ func (s *MigrationService) filterCandidateNodes(nodes []models.Node, sourceNodeI
 			continue
 		}
 
-		// Check storage backend compatibility
-		// Ceph VMs can only migrate to nodes with Ceph storage
-		// QCOW/LVM VMs cannot migrate (disk is local)
-		if vmStorageBackend != models.StorageBackendCeph {
-			// QCOW and LVM VMs cannot migrate between nodes
-			// (disk is local to the source node)
-			continue
-		}
-
-		// For Ceph VMs, verify the target node also has Ceph storage via junction table
-		// This checks the node_storage junction table for proper backend assignment
-		if s.storageBackendSvc != nil && vm.StorageBackendID != nil {
-			// Use junction table to verify node has access to the same storage backend
-			backends, err := s.storageBackendSvc.GetBackendsForNodeByType(context.Background(), node.ID, models.StorageBackendCeph)
-			if err != nil {
-				s.logger.Debug("failed to check storage backends for node during migration",
+		if err := s.validateTargetNodeStorageCompatibility(ctx, node, vm); err != nil {
+			if vmStorageBackend == models.StorageBackendCeph && s.logger != nil {
+				s.logger.Debug("skipping incompatible target node during migration",
 					"node_id", node.ID,
 					"error", err)
-				continue
 			}
-
-			// Check if the node has access to the same storage backend as the VM
-			hasSameBackend := false
-			for _, backend := range backends {
-				if backend.ID == *vm.StorageBackendID {
-					hasSameBackend = true
-					break
-				}
-			}
-			if !hasSameBackend {
-				continue
-			}
-		} else {
-			// Fallback to legacy node.StorageBackend field for backward compatibility
-			nodeStorageBackend := node.StorageBackend
-			if nodeStorageBackend == "" {
-				nodeStorageBackend = models.StorageBackendCeph // Default
-			}
-			if nodeStorageBackend != models.StorageBackendCeph {
-				continue
-			}
+			continue
 		}
 
 		// Check CPU and memory capacity
@@ -420,6 +533,38 @@ func (s *MigrationService) filterCandidateNodes(nodes []models.Node, sourceNodeI
 		}
 	}
 	return candidates
+}
+
+func (s *MigrationService) validateTargetNodeStorageCompatibility(ctx context.Context, targetNode *models.Node, vm *models.VM) error {
+	vmStorageBackend := s.getNodeStorageBackend(vm)
+	if vmStorageBackend != models.StorageBackendCeph {
+		return fmt.Errorf("VMs with %s storage backend cannot be migrated between nodes (disk is local to source node); only Ceph VMs support cross-node migration", vmStorageBackend)
+	}
+
+	if s.storageBackendSvc != nil && vm.StorageBackendID != nil {
+		backends, err := s.storageBackendSvc.GetBackendsForNodeByType(ctx, targetNode.ID, models.StorageBackendCeph)
+		if err != nil {
+			return fmt.Errorf("checking storage backends for target node %s: %w", targetNode.ID, err)
+		}
+
+		for i := range backends {
+			if backends[i].ID == *vm.StorageBackendID {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("target node %s does not have access to the same storage backend as VM %s", targetNode.ID, vm.ID)
+	}
+
+	targetNodeStorageBackend := targetNode.StorageBackend
+	if targetNodeStorageBackend == "" {
+		targetNodeStorageBackend = models.StorageBackendCeph
+	}
+	if targetNodeStorageBackend != models.StorageBackendCeph {
+		return fmt.Errorf("target node %s does not support Ceph storage for VM %s", targetNode.ID, vm.ID)
+	}
+
+	return nil
 }
 
 // selectBestCandidate selects the best node from candidates based on scoring.

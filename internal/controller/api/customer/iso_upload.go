@@ -18,17 +18,17 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	sharedconfig "github.com/AbuGosok/VirtueStack/internal/shared/config"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 const (
-	maxISOSizeBytes int64 = 10 * 1024 * 1024 * 1024
-
 	// isoMagicReadBytes is the number of bytes read at the start of the file
-	// to detect ISO 9660 / UDF magic identifiers (F-074).
-	isoMagicReadBytes = 32 * 1024
+	// to detect ISO 9660 / UDF magic identifiers (F-074). UDF recognition
+	// markers extend to offset 0x9001.
+	isoMagicReadBytes = 0x9001 + len("TEA01")
 
 	// defaultISOLimit is the default maximum number of ISO files per VM
 	// when the plan does not specify a limit.
@@ -59,6 +59,17 @@ type isoUploadContext struct {
 	vm         *models.VM
 	file       io.ReadCloser
 	header     *multipart.FileHeader
+}
+
+func (h *CustomerHandler) resolvedMaxISOSizeBytes() int64 {
+	if h.maxISOSizeBytes > 0 {
+		return h.maxISOSizeBytes
+	}
+	return sharedconfig.DefaultISOMaxSizeBytes()
+}
+
+func (h *CustomerHandler) maxISOSizeMessage() string {
+	return fmt.Sprintf("ISO file exceeds maximum allowed size of %d GB", h.resolvedMaxISOSizeBytes()/(1024*1024*1024))
 }
 
 // UploadISO handles POST /vms/:id/iso/upload - multipart ISO upload.
@@ -110,6 +121,12 @@ func (h *CustomerHandler) UploadISO(c *gin.Context) {
 		"file_size", result.FileSize,
 		"correlation_id", middleware.GetCorrelationID(c))
 
+	h.logAudit(c, "iso.upload", "iso", result.ID, map[string]any{
+		"vm_id":     ctx.vmID,
+		"file_name": result.FileName,
+		"file_size": result.FileSize,
+	}, true)
+
 	c.JSON(http.StatusCreated, models.Response{Data: result})
 }
 
@@ -141,8 +158,9 @@ func (h *CustomerHandler) validateISOUploadAccess(c *gin.Context) (*isoUploadCon
 	// F-012: Reject oversized uploads before reading the body.
 	// Content-Length is advisory (clients may lie), but it catches honest clients
 	// and reduces unnecessary disk I/O for clearly oversized uploads.
+	maxISOSizeBytes := h.resolvedMaxISOSizeBytes()
 	if cl := c.Request.ContentLength; cl > 0 && cl > maxISOSizeBytes+1024 {
-		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
+		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", h.maxISOSizeMessage())
 		return nil, false
 	}
 
@@ -169,8 +187,9 @@ func (h *CustomerHandler) validateISOFile(c *gin.Context, header *multipart.File
 		return false
 	}
 
+	maxISOSizeBytes := h.resolvedMaxISOSizeBytes()
 	if header.Size > maxISOSizeBytes {
-		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
+		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", h.maxISOSizeMessage())
 		return false
 	}
 
@@ -275,6 +294,7 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 
 	// F-012: Limit the reader to maxISOSizeBytes+1 so that copyFileWithHash will
 	// detect an overrun without writing the entire oversized stream to disk first.
+	maxISOSizeBytes := h.resolvedMaxISOSizeBytes()
 	limitedReader := io.LimitReader(file, maxISOSizeBytes+1)
 
 	written, checksum, magicBuf, err := h.copyFileWithHash(dst, limitedReader, tempPath)
@@ -292,7 +312,7 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 			h.logger.Warn("failed to remove oversized ISO file", "path", tempPath, "error", err,
 				"correlation_id", middleware.GetCorrelationID(c))
 		}
-		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", "ISO file exceeds maximum allowed size of 10 GB")
+		middleware.RespondWithError(c, http.StatusBadRequest, "FILE_TOO_LARGE", h.maxISOSizeMessage())
 		return nil, false
 	}
 
@@ -316,9 +336,21 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 		SHA256:      checksum,
 		StoragePath: finalPath,
 	}
-	if err := h.isoUploadRepo.CreateIfUnderLimit(c.Request.Context(), upload, planLimit); err != nil {
+	if err := os.Rename(tempPath, finalPath); err != nil {
 		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			h.logger.Warn("failed to remove rejected ISO upload", "path", tempPath, "error", removeErr,
+			h.logger.Warn("failed to remove ISO temp file after rename failure", "path", tempPath, "error", removeErr,
+				"correlation_id", middleware.GetCorrelationID(c))
+		}
+		h.logger.Error("failed to finalize ISO upload",
+			"path", finalPath, "error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to finalize ISO upload")
+		return nil, false
+	}
+
+	if err := h.isoUploadRepo.CreateIfUnderLimit(c.Request.Context(), upload, planLimit); err != nil {
+		if removeErr := os.Remove(finalPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			h.logger.Warn("failed to remove rejected ISO upload", "path", finalPath, "error", removeErr,
 				"correlation_id", middleware.GetCorrelationID(c))
 		}
 		var limitErr *repository.LimitExceededError
@@ -334,19 +366,6 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 		return nil, false
 	}
 
-	if err := os.Rename(tempPath, finalPath); err != nil {
-		_ = h.isoUploadRepo.Delete(c.Request.Context(), upload.ID)
-		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			h.logger.Warn("failed to remove ISO temp file after rename failure", "path", tempPath, "error", removeErr,
-				"correlation_id", middleware.GetCorrelationID(c))
-		}
-		h.logger.Error("failed to finalize ISO upload",
-			"path", finalPath, "error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_UPLOAD_FAILED", "Failed to finalize ISO upload")
-		return nil, false
-	}
-
 	h.writeChecksumSidecar(finalPath, checksum, middleware.GetCorrelationID(c))
 
 	return &ISOUploadResponse{
@@ -357,10 +376,9 @@ func (h *CustomerHandler) writeISOFile(c *gin.Context, file io.Reader, vm *model
 	}, true
 }
 
-// isValidISOMagic checks ISO 9660 and UDF magic signatures in the first bytes of the file.
-// F-074: ISO 9660 Primary Volume Descriptor begins at byte 32768 (sector 16, 2048 bytes/sector).
-// For files smaller than 32768 + 5 bytes the check is skipped (graceful degradation).
-// UDF recognition volume structures also appear in this region.
+// isValidISOMagic checks ISO 9660 and UDF magic signatures in the captured bytes.
+// F-074: ISO 9660 Primary Volume Descriptor begins at byte 32768 (sector 16,
+// 2048 bytes/sector) and the identifier starts at offset 0x8001.
 func isValidISOMagic(buf []byte) bool {
 	// ISO 9660: the Primary Volume Descriptor starts at offset 0x8000 (32768).
 	// The 5-byte identifier "CD001" starts at offset 0x8001.
@@ -373,9 +391,35 @@ func isValidISOMagic(buf []byte) bool {
 		}
 	}
 
-	// If the buffer is too small to reach the ISO 9660 region, skip the check
-	// (graceful degradation for very small test files; in practice real ISOs are large).
-	return len(buf) < iso9660Offset
+	// UDF volume recognition sequence descriptors are recorded in the same
+	// descriptor area, one 2048-byte sector apart.
+	udfStart := []byte("BEA01")
+	udfVersionDescriptors := [][]byte{
+		[]byte("NSR02"),
+		[]byte("NSR03"),
+	}
+	udfEnd := []byte("TEA01")
+
+	if len(buf) < 0x9001+len(udfEnd) {
+		return false
+	}
+
+	if !bytes.Equal(buf[0x8001:0x8001+len(udfStart)], udfStart) {
+		return false
+	}
+
+	versionOK := false
+	for _, version := range udfVersionDescriptors {
+		if bytes.Equal(buf[0x8801:0x8801+len(version)], version) {
+			versionOK = true
+			break
+		}
+	}
+	if !versionOK {
+		return false
+	}
+
+	return bytes.Equal(buf[0x9001:0x9001+len(udfEnd)], udfEnd)
 }
 
 // copyFileWithHash copies data from reader to file while computing SHA256 hash.
@@ -391,22 +435,30 @@ func (h *CustomerHandler) copyFileWithHash(dst *os.File, src io.Reader, destPath
 	// The buffer only ever needs isoMagicReadBytes worth of data.
 	magicBuf := bytes.NewBuffer(make([]byte, 0, isoMagicReadBytes))
 	teeReader := io.TeeReader(src, magicBuf)
-	limitedMagic := io.LimitReader(teeReader, isoMagicReadBytes)
+	limitedMagic := io.LimitReader(teeReader, int64(isoMagicReadBytes))
 
 	// Write the first isoMagicReadBytes through hasher and dst.
 	multiWriter := io.MultiWriter(dst, hasher)
 	_, err := io.Copy(multiWriter, limitedMagic)
 	if err != nil {
-		_ = dst.Close()
-		_ = os.Remove(destPath)
+		if closeErr := dst.Close(); closeErr != nil {
+			h.logger.Warn("failed to close ISO file after partial write", "path", destPath, "error", closeErr)
+		}
+		if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			h.logger.Warn("failed to remove partial ISO file after write error", "path", destPath, "error", removeErr)
+		}
 		return 0, "", nil, err
 	}
 
 	// Now copy the remainder of the stream (the LimitReader stopped at isoMagicReadBytes).
 	remaining, err := io.Copy(multiWriter, src)
 	if err != nil {
-		_ = dst.Close()
-		_ = os.Remove(destPath)
+		if closeErr := dst.Close(); closeErr != nil {
+			h.logger.Warn("failed to close ISO file after stream write error", "path", destPath, "error", closeErr)
+		}
+		if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			h.logger.Warn("failed to remove partial ISO file after stream write error", "path", destPath, "error", removeErr)
+		}
 		return 0, "", nil, err
 	}
 
@@ -509,8 +561,7 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		return
 	}
 
-	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
-	if err != nil {
+	if _, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false); err != nil {
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -519,38 +570,28 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		return
 	}
 
-	if vm.AttachedISO != nil && *vm.AttachedISO == isoID {
-		middleware.RespondWithError(c, http.StatusConflict, "ISO_ATTACHED", "Cannot delete an ISO that is currently attached to the VM")
-		return
-	}
-
-	upload, err := h.isoUploadRepo.GetByID(c.Request.Context(), isoID)
+	upload, err := h.isoUploadRepo.DeleteForVMIfDetached(c.Request.Context(), vmID, isoID, customerID)
 	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+		switch {
+		case errors.Is(err, repository.ErrVMLockNotFound):
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		case sharederrors.Is(err, sharederrors.ErrConflict):
+			middleware.RespondWithError(c, http.StatusConflict, "ISO_ATTACHED", "Cannot delete an ISO that is currently attached to the VM")
+			return
+		case sharederrors.Is(err, sharederrors.ErrNotFound), sharederrors.Is(err, sharederrors.ErrNoRowsAffected):
 			middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
 			return
+		default:
+			middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO metadata")
+			return
 		}
-		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to retrieve ISO upload")
-		return
-	}
-	if upload.VMID != vmID || upload.CustomerID != customerID {
-		middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
-		return
 	}
 
 	if err := os.Remove(upload.StoragePath); err != nil && !os.IsNotExist(err) {
-		h.logger.Error("failed to delete ISO",
+		h.logger.Warn("failed to delete ISO file after metadata removal",
 			"path", upload.StoragePath, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
-		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO file")
-		return
-	}
-	if err := h.isoUploadRepo.DeleteByVMAndID(c.Request.Context(), vmID, isoID); err != nil && !sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
-		h.logger.Error("failed to delete ISO metadata",
-			"iso_id", isoID, "vm_id", vmID, "error", err,
-			"correlation_id", middleware.GetCorrelationID(c))
-		middleware.RespondWithError(c, http.StatusInternalServerError, "ISO_DELETE_FAILED", "Failed to delete ISO metadata")
-		return
 	}
 	if err := os.Remove(upload.StoragePath + ".sha256"); err != nil && !os.IsNotExist(err) {
 		h.logger.Warn("failed to delete ISO checksum sidecar",
@@ -564,6 +605,10 @@ func (h *CustomerHandler) DeleteISO(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c),
 	)
+
+	h.logAudit(c, "iso.delete", "iso", isoID, map[string]any{
+		"vm_id": vmID,
+	}, true)
 
 	c.Status(http.StatusNoContent)
 }
@@ -637,7 +682,15 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 		return
 	}
 
-	if err := h.vmRepo.UpdateAttachedISO(c.Request.Context(), vmID, &isoID); err != nil {
+	if err := h.isoUploadRepo.AttachToVMIfAvailable(c.Request.Context(), vmID, isoID, customerID); err != nil {
+		if errors.Is(err, repository.ErrVMLockNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		if sharederrors.Is(err, sharederrors.ErrNotFound) || sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			middleware.RespondWithError(c, http.StatusNotFound, "ISO_NOT_FOUND", "ISO not found")
+			return
+		}
 		h.logger.Error("failed to attach ISO",
 			"vm_id", vmID, "iso_id", isoID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
@@ -651,6 +704,10 @@ func (h *CustomerHandler) AttachISO(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c),
 	)
+
+	h.logAudit(c, "iso.attach", "iso", isoID, map[string]any{
+		"vm_id": vmID,
+	}, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{
 		"message":         "ISO attached successfully",
@@ -698,7 +755,15 @@ func (h *CustomerHandler) DetachISO(c *gin.Context) {
 		return
 	}
 
-	if err := h.vmRepo.UpdateAttachedISO(c.Request.Context(), vmID, nil); err != nil {
+	if err := h.isoUploadRepo.DetachFromVMIfAttached(c.Request.Context(), vmID, isoID); err != nil {
+		if errors.Is(err, repository.ErrVMLockNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
+			return
+		}
+		if sharederrors.Is(err, sharederrors.ErrConflict) || sharederrors.Is(err, sharederrors.ErrNoRowsAffected) {
+			middleware.RespondWithError(c, http.StatusBadRequest, "ISO_NOT_ATTACHED", "This ISO is not attached to the VM")
+			return
+		}
 		h.logger.Error("failed to detach ISO",
 			"vm_id", vmID, "iso_id", isoID, "error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
@@ -712,6 +777,10 @@ func (h *CustomerHandler) DetachISO(c *gin.Context) {
 		"customer_id", customerID,
 		"correlation_id", middleware.GetCorrelationID(c),
 	)
+
+	h.logAudit(c, "iso.detach", "iso", isoID, map[string]any{
+		"vm_id": vmID,
+	}, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "ISO detached successfully"}})
 }

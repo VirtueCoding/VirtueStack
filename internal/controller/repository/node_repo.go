@@ -342,7 +342,7 @@ func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
 		WHERE id = $8
 		RETURNING ` + nodeSelectCols
 
-	row := r.db.QueryRow(ctx, q,
+	updated, err := ScanRow(ctx, r.db, q, []any{
 		node.GRPCAddress,
 		node.LocationID,
 		node.TotalVCPU,
@@ -351,9 +351,7 @@ func (r *NodeRepository) Update(ctx context.Context, node *models.Node) error {
 		node.StorageBackend,
 		node.StoragePath,
 		node.ID,
-	)
-
-	updated, err := scanNode(row)
+	}, scanNode)
 	if err != nil {
 		return fmt.Errorf("updating node %s: %w", node.ID, err)
 	}

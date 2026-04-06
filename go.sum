@@ -244,6 +244,8 @@ github.com/shirou/gopsutil/v4 v4.26.2 h1:X8i6sicvUFih4BmYIGT1m2wwgw2VG9YgrDTi7cI
 github.com/shirou/gopsutil/v4 v4.26.2/go.mod h1:LZ6ewCSkBqUpvSOf+LsTGnRinC6iaNUNMGBtDkJBaLQ=
 github.com/sirupsen/logrus v1.9.3 h1:dueUQJ1C2q9oE3F7wvmSGAaVtTmUizReu6fjN8uqzbQ=
 github.com/sirupsen/logrus v1.9.3/go.mod h1:naHLuLoDiP4jHNo9R0sCBMtWGeIprob74mVsIT4qYEQ=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1vwZ3Je0FKVCfqOLp5zO6trqMLYs0=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
@@ -260,12 +262,18 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/stripe/stripe-go/v82 v82.5.1 h1:05q6ZDKoe8PLMpQV072obF74HCgP4XJeJYoNuRSX2+8=
 github.com/stripe/stripe-go/v82 v82.5.1/go.mod h1:majCQX6AfObAvJiHraPi/5udwHi4ojRvJnnxckvHrX8=
+github.com/sv-tools/openapi v0.4.0 h1:UhD9DVnGox1hfTePNclpUzUFgos57FvzT2jmcAuTOJ4=
+github.com/sv-tools/openapi v0.4.0/go.mod h1:kD/dG+KP0+Fom1r6nvcj/ORtLus8d8enXT6dyRZDirE=
 github.com/swaggo/files v1.0.1 h1:J1bVJ4XHZNq0I46UU90611i9/YzdrF7x92oX1ig5IdE=
 github.com/swaggo/files v1.0.1/go.mod h1:0qXmMNH6sXNf+73t65aKeB+ApmgxdnkQzVTAj2uaMUg=
 github.com/swaggo/gin-swagger v1.6.1 h1:Ri06G4gc9N4t4k8hekMigJ9zKTFSlqj/9paAQCQs7cY=
 github.com/swaggo/gin-swagger v1.6.1/go.mod h1:LQ+hJStHakCWRiK/YNYtJOu4mR2FP+pxLnILT/qNiTw=
 github.com/swaggo/swag v1.8.12 h1:pctzkNPu0AlQP2royqX3apjKCQonAnf7KGoxeO4y64w=
 github.com/swaggo/swag v1.8.12/go.mod h1:lNfm6Gg+oAq3zRJQNEMBE66LIJKM44mxFqhEEgy2its=
+github.com/swaggo/swag v1.16.6 h1:qBNcx53ZaX+M5dxVyTrgQ0PJ/ACK+NzhwcbieTt+9yI=
+github.com/swaggo/swag v1.16.6/go.mod h1:ngP2etMK5a0P3QBizic5MEwpRmluJZPHjXcMoj4Xesg=
+github.com/swaggo/swag/v2 v2.0.0-rc5 h1:fK7d6ET9rrEsdB8IyuwXREWMcyQN3N7gawGFbbrjgHk=
+github.com/swaggo/swag/v2 v2.0.0-rc5/go.mod h1:kCL8Fu4Zl8d5tB2Bgj96b8wRowwrwk175bZHXfuGVFI=
 github.com/testcontainers/testcontainers-go v0.41.0 h1:mfpsD0D36YgkxGj2LrIyxuwQ9i2wCKAD+ESsYM1wais=
 github.com/testcontainers/testcontainers-go v0.41.0/go.mod h1:pdFrEIfaPl24zmBjerWTTYaY0M6UHsqA1YSvsoU40MI=
 github.com/testcontainers/testcontainers-go/modules/nats v0.41.0 h1:ONiEuMwUgOLL3DiIHDgS4NvjwsSND4zkAhFlxkXWdb0=

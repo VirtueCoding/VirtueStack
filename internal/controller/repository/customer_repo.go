@@ -3,11 +3,11 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
-	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -41,6 +41,7 @@ type CustomerRepo interface {
 	UpdateCustomerPasswordHash(ctx context.Context, id, passwordHash string) error
 	CreatePasswordReset(ctx context.Context, reset *models.PasswordReset) error
 	GetPasswordResetByTokenHash(ctx context.Context, tokenHash string) (*models.PasswordReset, error)
+	ResetPasswordWithToken(ctx context.Context, tokenHash, passwordHash string) (*models.PasswordReset, error)
 	MarkPasswordResetUsed(ctx context.Context, id string) error
 	UpdateTOTPEnabled(ctx context.Context, id string, enabled bool, secretEncrypted *string, backupCodesHash []string) error
 	UpdateBackupCodes(ctx context.Context, userID string, codes []string) error
@@ -482,6 +483,59 @@ func (r *CustomerRepository) DeleteSession(ctx context.Context, id string) error
 	return nil
 }
 
+// RotateSession atomically consumes a refresh-token session and inserts its replacement.
+// Returns ErrNoRowsAffected when the current refresh token has already been consumed.
+func (r *CustomerRepository) RotateSession(
+	ctx context.Context,
+	currentRefreshTokenHash string,
+	newSession *models.Session,
+) (*models.Session, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning session rotation transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is a best-effort safety net after commit or early return.
+
+	const deleteQ = `
+		DELETE FROM sessions
+		WHERE id = (
+			SELECT id
+			FROM sessions
+			WHERE refresh_token_hash = $1
+			FOR UPDATE
+		)
+		RETURNING id, user_id, user_type, refresh_token_hash,
+		          ip_address::text, user_agent, expires_at, last_reauth_at, created_at`
+
+	currentSession, err := ScanRow(ctx, tx, deleteQ, []any{currentRefreshTokenHash}, scanSession)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			return nil, ErrNoRowsAffected
+		}
+		return nil, fmt.Errorf("deleting current refresh session: %w", err)
+	}
+
+	const insertQ = `
+		INSERT INTO sessions (
+			id, user_id, user_type, refresh_token_hash,
+			ip_address, user_agent, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING created_at`
+
+	if err := tx.QueryRow(ctx, insertQ,
+		newSession.ID, newSession.UserID, newSession.UserType, newSession.RefreshTokenHash,
+		newSession.IPAddress, newSession.UserAgent, newSession.ExpiresAt,
+	).Scan(&newSession.CreatedAt); err != nil {
+		return nil, fmt.Errorf("creating rotated session: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing session rotation: %w", err)
+	}
+
+	return &currentSession, nil
+}
+
 // DeleteExpiredSessions removes all sessions that have expired.
 func (r *CustomerRepository) DeleteExpiredSessions(ctx context.Context) error {
 	const q = `DELETE FROM sessions WHERE expires_at < NOW()`
@@ -824,9 +878,64 @@ func (r *CustomerRepository) GetPasswordResetByTokenHash(ctx context.Context, to
 	return &reset, nil
 }
 
+// ResetPasswordWithToken atomically consumes a valid password reset token and updates the user's password.
+func (r *CustomerRepository) ResetPasswordWithToken(ctx context.Context, tokenHash, passwordHash string) (*models.PasswordReset, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning password reset transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is a best-effort safety net after commit or early return.
+
+	const consumeResetQ = `
+		UPDATE password_resets
+		SET used_at = NOW()
+		WHERE token_hash = $1
+		  AND used_at IS NULL
+		  AND expires_at > NOW()
+		RETURNING ` + passwordResetSelectCols
+
+	reset, err := scanPasswordReset(tx.QueryRow(ctx, consumeResetQ, tokenHash))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoRowsAffected
+		}
+		return nil, fmt.Errorf("consuming password reset token: %w", err)
+	}
+
+	userLabel := reset.UserType
+	var updatePasswordQ string
+	switch reset.UserType {
+	case "customer":
+		updatePasswordQ = `UPDATE customers SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND status != 'deleted'`
+	case "admin":
+		updatePasswordQ = `UPDATE admins SET password_hash = $1 WHERE id = $2`
+	default:
+		return nil, fmt.Errorf("invalid user type: %s", reset.UserType)
+	}
+
+	tag, err := tx.Exec(ctx, updatePasswordQ, passwordHash, reset.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("updating %s password: %w", userLabel, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, fmt.Errorf("updating %s password: %w", userLabel, ErrNoRowsAffected)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing password reset transaction: %w", err)
+	}
+
+	return &reset, nil
+}
+
 // MarkPasswordResetUsed marks a password reset token as used by setting used_at.
 func (r *CustomerRepository) MarkPasswordResetUsed(ctx context.Context, id string) error {
-	const q = `UPDATE password_resets SET used_at = NOW() WHERE id = $1`
+	const q = `
+		UPDATE password_resets
+		SET used_at = NOW()
+		WHERE id = $1
+		  AND used_at IS NULL
+		  AND expires_at > NOW()`
 	tag, err := r.db.Exec(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("marking password reset used: %w", err)

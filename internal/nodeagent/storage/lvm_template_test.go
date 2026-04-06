@@ -1,13 +1,18 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockTemplateRunner allows mocking command execution for template manager tests.
@@ -191,6 +196,113 @@ func TestLVMTemplateManagerImportTempDirCleanup(t *testing.T) {
 
 	t.Logf("Temp dir cleanup test: directory %s exists and will be cleaned up", tmpDir)
 	_ = m
+}
+
+func TestLVMTemplateManagerImportTemplateReturnsCanonicalLVPath(t *testing.T) {
+	commandLogPath := installFakeTemplateImportBinaries(t)
+
+	manager, err := NewLVMTemplateManager("vgvs", "thinpool", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	sourcePath := filepath.Join(t.TempDir(), "template.qcow2")
+	require.NoError(t, os.WriteFile(sourcePath, []byte("qcow"), 0o600))
+
+	filePath, sizeBytes, err := manager.ImportTemplate(context.Background(), "ubuntu-2204", sourcePath, TemplateMeta{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "/dev/vgvs/ubuntu-2204-base", filePath)
+	assert.Equal(t, int64(10737418240), sizeBytes)
+
+	commandLog := strings.Join(readTemplateImportCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "info --output=json "+sourcePath)
+	assert.Contains(t, commandLog, "--thin -V 10737418240B -n ubuntu-2204-base vgvs/thinpool")
+	assert.Contains(t, commandLog, "if=")
+	assert.Contains(t, commandLog, "of=/dev/vgvs/ubuntu-2204-base")
+}
+
+func TestNormalizeLVMTemplateRef(t *testing.T) {
+	tests := []struct {
+		name        string
+		vgName      string
+		ref         string
+		wantLVName  string
+		wantPath    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:       "bare ref adds suffix",
+			vgName:     "vgvs",
+			ref:        "ubuntu-2204",
+			wantLVName: "ubuntu-2204-base",
+			wantPath:   "/dev/vgvs/ubuntu-2204-base",
+		},
+		{
+			name:       "bare ref with suffix stays stable",
+			vgName:     "vgvs",
+			ref:        "ubuntu-2204-base",
+			wantLVName: "ubuntu-2204-base",
+			wantPath:   "/dev/vgvs/ubuntu-2204-base",
+		},
+		{
+			name:       "canonical path preserves lv name",
+			vgName:     "vgvs",
+			ref:        "/dev/vgvs/ubuntu-2204-base",
+			wantLVName: "ubuntu-2204-base",
+			wantPath:   "/dev/vgvs/ubuntu-2204-base",
+		},
+		{
+			name:        "different volume group is rejected",
+			vgName:      "vgvs",
+			ref:         "/dev/other-vg/ubuntu-2204-base",
+			wantErr:     true,
+			errContains: "expected volume group",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lvName, err := NormalizeLVMTemplateRef(tt.vgName, tt.ref)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLVName, lvName)
+
+			path, err := CanonicalLVMTemplatePath(tt.vgName, tt.ref)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, path)
+		})
+	}
+}
+
+func TestLVMTemplateManagerCloneForVMAcceptsCanonicalTemplatePath(t *testing.T) {
+	commandLogPath := installFakeTemplateCloneBinaries(t)
+
+	manager, err := NewLVMTemplateManager("vgvs", "thinpool", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	diskPath, err := manager.CloneForVM(context.Background(), "/dev/vgvs/ubuntu-2204-base", "test-vm", 10)
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/vgvs/vs-test-vm-disk0", diskPath)
+
+	commandLog := strings.Join(readTemplateImportCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "--thin -s --name vs-test-vm-disk0 /dev/vgvs/ubuntu-2204-base")
+	assert.Contains(t, commandLog, "--noheadings --units b -o lv_size /dev/vgvs/ubuntu-2204-base")
+}
+
+func TestNewLVMTemplateStepContextPropagatesParentCancellation(t *testing.T) {
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	stepCtx, cancelStep := newLVMTemplateStepContext(parentCtx)
+	defer cancelStep()
+
+	cancelParent()
+
+	<-stepCtx.Done()
+	assert.ErrorIs(t, stepCtx.Err(), context.Canceled)
 }
 
 // TestLVMTemplateManagerCloneCreatesThinSnapshot tests that CloneForVM
@@ -416,6 +528,99 @@ func TestLVMTemplateManagerQemuImgInfoOutputParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func installFakeTemplateImportBinaries(t *testing.T) string {
+	t.Helper()
+
+	workingDir := t.TempDir()
+	commandLogPath := filepath.Join(workingDir, "template-import.log")
+
+	writeTemplateImportExecutable(t, workingDir, "qemu-img", `#!/bin/sh
+set -eu
+
+printf '%s %s\n' "$(basename "$0")" "$*" >> "$TEMPLATE_IMPORT_LOG"
+
+case "$1" in
+  info)
+    printf '%s\n' '{"virtual-size":10737418240}'
+    exit 0
+    ;;
+  convert)
+    : > "$7"
+    exit 0
+    ;;
+esac
+
+printf 'unexpected qemu-img command: %s\n' "$*" >&2
+exit 1
+`)
+
+	writeTemplateImportExecutable(t, workingDir, "lvcreate", `#!/bin/sh
+set -eu
+
+printf '%s %s\n' "$(basename "$0")" "$*" >> "$TEMPLATE_IMPORT_LOG"
+exit 0
+`)
+
+	writeTemplateImportExecutable(t, workingDir, "dd", `#!/bin/sh
+set -eu
+
+printf '%s %s\n' "$(basename "$0")" "$*" >> "$TEMPLATE_IMPORT_LOG"
+exit 0
+`)
+
+	t.Setenv("TEMPLATE_IMPORT_LOG", commandLogPath)
+	t.Setenv("PATH", workingDir)
+
+	return commandLogPath
+}
+
+func installFakeTemplateCloneBinaries(t *testing.T) string {
+	t.Helper()
+
+	workingDir := t.TempDir()
+	commandLogPath := filepath.Join(workingDir, "template-clone.log")
+
+	writeTemplateImportExecutable(t, workingDir, "lvcreate", `#!/bin/sh
+set -eu
+
+printf '%s %s\n' "$(basename "$0")" "$*" >> "$TEMPLATE_IMPORT_LOG"
+exit 0
+`)
+
+	writeTemplateImportExecutable(t, workingDir, "lvs", `#!/bin/sh
+set -eu
+
+printf '%s %s\n' "$(basename "$0")" "$*" >> "$TEMPLATE_IMPORT_LOG"
+printf '%s\n' '10737418240.00'
+exit 0
+`)
+
+	t.Setenv("TEMPLATE_IMPORT_LOG", commandLogPath)
+	t.Setenv("PATH", workingDir)
+
+	return commandLogPath
+}
+
+func writeTemplateImportExecutable(t *testing.T, workingDir, name, script string) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, name), []byte(script), 0o755))
+}
+
+func readTemplateImportCommands(t *testing.T, commandLogPath string) []string {
+	t.Helper()
+
+	data, err := os.ReadFile(commandLogPath)
+	require.NoError(t, err)
+
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil
+	}
+
+	return strings.Split(trimmed, "\n")
 }
 
 var _ = filepath.Join

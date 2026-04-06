@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@virtuestack/ui";
 import { User, Mail, Loader2, ShieldCheck } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 
@@ -55,6 +55,7 @@ export function CustomerEditDialog({ open, onOpenChange, customer, onSave, isSav
       status: "active",
     },
   });
+  const status = useWatch({ control: form.control, name: "status" });
 
   // Reset form when customer changes
   useEffect(() => {
@@ -131,7 +132,7 @@ export function CustomerEditDialog({ open, onOpenChange, customer, onSave, isSav
               Account Status
             </Label>
             <Select
-              value={form.watch("status")}
+              value={status}
               onValueChange={(value: "active" | "suspended") => form.setValue("status", value)}
             >
               <SelectTrigger>

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,12 +21,14 @@ const (
 	ConsoleTokenDuration = 1 * time.Hour
 )
 
-// GetConsoleToken handles POST /vms/:id/console-token - generates a NoVNC access token.
-// The token is valid for 1 hour and provides graphical console access.
-// The token is single-use and bound to the specific VM.
+// GetConsoleToken handles POST /vms/:id/console-token - generates a legacy-compatible
+// VNC console token and returns the direct authenticated websocket URL.
+// The token is valid for 1 hour, single-use, and bound to the specific VM, but
+// first-party clients should connect to the returned URL without placing secrets
+// in the query string.
 // @Tags Customer
-// @Summary Get VNC console token
-// @Description Issues short-lived VNC console token for a customer VM.
+// @Summary Get VNC console access details
+// @Description Returns the direct authenticated VNC websocket URL for a customer VM and a legacy-compatible short-lived token.
 // @Produce json
 // @Security BearerAuth
 // @Security APIKeyAuth
@@ -48,6 +51,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// Get VM with ownership verification (isAdmin=false)
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -63,12 +67,14 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 
 	// Check if VM is running (console requires running VM)
 	if vm.Status != models.VMStatusRunning {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, fmt.Errorf("VM must be running to access console"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, fmt.Errorf("VM has no node assigned"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
@@ -78,6 +84,7 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// to generate a ticket for the VNC websocket proxy
 	token, err := generateConsoleToken(vm.ID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, err)
 		h.logger.Error("failed to generate console token",
 			"vm_id", vmID,
 			"customer_id", customerID,
@@ -91,16 +98,25 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	// Store the token so the WebSocket handler can validate and invalidate it on use.
 	h.tokenStore.Store(token, vm.ID, customerID, ConsoleTokenDuration)
 
-	// Construct the NoVNC URL
-	// In production, this would include the actual websocket proxy URL
-	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
-	consoleURL := fmt.Sprintf("%s/vnc?token=%s", baseURL, token)
+	consoleURL, err := buildConsoleWebSocketURL(h.consoleBaseURL, consoleTypeVNC, vm.ID)
+	if err != nil {
+		h.logFailedAudit(c, "console.vnc_token.issue", "vm", vmID, nil, err)
+		h.logger.Error("failed to build console websocket url",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "CONSOLE_TOKEN_FAILED", "Internal server error")
+		return
+	}
 
 	h.logger.Info("console token generated",
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"node_id", *vm.NodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "console.vnc_token.issue", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: ConsoleTokenResponse{
@@ -111,11 +127,12 @@ func (h *CustomerHandler) GetConsoleToken(c *gin.Context) {
 	})
 }
 
-// GetSerialToken handles POST /vms/:id/serial-token - generates a serial console access token.
+// GetSerialToken handles POST /vms/:id/serial-token - generates a legacy-compatible
+// serial console token and returns the direct authenticated websocket URL.
 // Serial console provides text-based console access (useful for troubleshooting).
 // @Tags Customer
-// @Summary Get serial console token
-// @Description Issues short-lived serial console token for a customer VM.
+// @Summary Get serial console access details
+// @Description Returns the direct authenticated serial websocket URL for a customer VM and a legacy-compatible short-lived token.
 // @Produce json
 // @Security BearerAuth
 // @Security APIKeyAuth
@@ -138,6 +155,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	// Get VM with ownership verification (isAdmin=false)
 	vm, err := h.vmService.GetVM(c.Request.Context(), vmID, customerID, false)
 	if err != nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, err)
 		if sharederrors.Is(err, sharederrors.ErrForbidden) || sharederrors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "VM_NOT_FOUND", "VM not found")
 			return
@@ -153,12 +171,14 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 
 	// Check if VM is running
 	if vm.Status != models.VMStatusRunning {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, fmt.Errorf("VM must be running to access serial console"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NOT_RUNNING", "VM must be running to access serial console")
 		return
 	}
 
 	// Check if VM has a node assigned
 	if vm.NodeID == nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, fmt.Errorf("VM has no node assigned"))
 		middleware.RespondWithError(c, http.StatusConflict, "VM_NO_NODE", "VM has no node assigned")
 		return
 	}
@@ -166,6 +186,7 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	// Generate serial console token
 	token, err := generateConsoleToken(vm.ID, customerID)
 	if err != nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, err)
 		h.logger.Error("failed to generate serial console token",
 			"vm_id", vmID,
 			"customer_id", customerID,
@@ -179,15 +200,25 @@ func (h *CustomerHandler) GetSerialToken(c *gin.Context) {
 	// Store the token so the WebSocket handler can validate and invalidate it on use.
 	h.tokenStore.Store(token, vm.ID, customerID, ConsoleTokenDuration)
 
-	// Construct the serial console URL
-	baseURL := strings.TrimRight(h.consoleBaseURL, "/")
-	serialURL := fmt.Sprintf("%s/serial?token=%s", baseURL, token)
+	serialURL, err := buildConsoleWebSocketURL(h.consoleBaseURL, consoleTypeSerial, vm.ID)
+	if err != nil {
+		h.logFailedAudit(c, "console.serial_token.issue", "vm", vmID, nil, err)
+		h.logger.Error("failed to build serial websocket url",
+			"vm_id", vmID,
+			"customer_id", customerID,
+			"error", err,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SERIAL_TOKEN_FAILED", "Internal server error")
+		return
+	}
 
 	h.logger.Info("serial console token generated",
 		"vm_id", vmID,
 		"customer_id", customerID,
 		"node_id", *vm.NodeID,
 		"correlation_id", middleware.GetCorrelationID(c))
+
+	h.logAudit(c, "console.serial_token.issue", "vm", vmID, nil, true)
 
 	c.JSON(http.StatusOK, models.Response{
 		Data: ConsoleTokenResponse{
@@ -207,4 +238,33 @@ func generateConsoleToken(vmID, customerID string) (string, error) {
 		return "", fmt.Errorf("crypto/rand unavailable: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func buildConsoleWebSocketURL(baseURL string, ct consoleType, vmID string) (string, error) {
+	base := strings.TrimSpace(baseURL)
+	if base == "" {
+		return "", fmt.Errorf("console base url is empty")
+	}
+
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse console base url: %w", err)
+	}
+
+	switch parsed.Scheme {
+	case "https":
+		parsed.Scheme = "wss"
+	case "http":
+		parsed.Scheme = "ws"
+	default:
+		return "", fmt.Errorf("unsupported console base url scheme %q", parsed.Scheme)
+	}
+
+	pathSuffix := "/api/v1/customer/ws/" + string(ct) + "/" + vmID
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + pathSuffix
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+
+	return parsed.String(), nil
 }

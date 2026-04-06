@@ -4,6 +4,8 @@
 # Node identification
 node_id: "node-001"
 controller_grpc_addr: "controller:50051"
+# Optional: override the local gRPC bind address exposed by the node agent.
+# listen_addr: "0.0.0.0:50052"
 
 # Storage backend configuration
 # Options: "ceph" (Ceph RBD) or "qcow" (file-based QCOW2)
@@ -25,11 +27,18 @@ vnc_host: "0.0.0.0"
 tls_cert_file: "/etc/virtuestack/certs/node-agent.crt"
 tls_key_file: "/etc/virtuestack/certs/node-agent.key"
 tls_ca_file: "/etc/virtuestack/certs/ca.crt"
+# Shared HMAC secret for guest-agent operations. Required, must match controller, and be at least 32 chars.
+# guest_op_hmac_secret: "replace-with-a-shared-32-plus-char-secret"
+
+# Metrics endpoint for Prometheus scraping. The code defaults to loopback-only
+# for safety, so set an explicit listener when using remote Prometheus.
+metrics_addr: "0.0.0.0:9091"
 
 # Paths
 data_dir: "/var/lib/virtuestack"
 cloudinit_path: "/var/lib/virtuestack/cloud-init"
 iso_storage_path: "/var/lib/virtuestack/iso"
+max_iso_size_gb: 10
 
 # Logging
 log_level: "info"

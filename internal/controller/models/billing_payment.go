@@ -7,11 +7,10 @@ import (
 
 // Billing payment gateway constants.
 const (
-	PaymentGatewayStripe      = "stripe"
-	PaymentGatewayPayPal      = "paypal"
-	PaymentGatewayBTCPay      = "btcpay"
-	PaymentGatewayNOWPayments = "nowpayments"
-	PaymentGatewayAdmin       = "admin"
+	PaymentGatewayStripe = "stripe"
+	PaymentGatewayPayPal = "paypal"
+	PaymentGatewayCrypto = "crypto"
+	PaymentGatewayAdmin  = "admin"
 )
 
 // Billing payment status constants.
@@ -39,11 +38,9 @@ type BillingPayment struct {
 
 // TopUpRequest holds fields for initiating a credit top-up.
 type TopUpRequest struct {
-	Gateway   string `json:"gateway" validate:"required,oneof=stripe paypal btcpay nowpayments"`
-	Amount    int64  `json:"amount" validate:"required,gt=0"`
-	Currency  string `json:"currency" validate:"required,len=3"`
-	ReturnURL string `json:"return_url" validate:"required,url"`
-	CancelURL string `json:"cancel_url" validate:"required,url"`
+	Gateway  string `json:"gateway" validate:"required,oneof=stripe paypal crypto"`
+	Amount   int64  `json:"amount" validate:"required,gt=0"`
+	Currency string `json:"currency" validate:"required,len=3"`
 }
 
 // TopUpResponse is returned after initiating a top-up.

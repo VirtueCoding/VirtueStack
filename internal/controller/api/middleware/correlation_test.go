@@ -107,6 +107,22 @@ func TestCorrelationID_Middleware(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+
+	t.Run("stores correlation ID on request context", func(t *testing.T) {
+		r := gin.New()
+		r.Use(CorrelationID())
+		r.GET("/test", func(c *gin.Context) {
+			assert.Equal(t, "my-trace-id", GetCorrelationIDFromContext(c.Request.Context()))
+			c.Status(http.StatusOK)
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set(CorrelationIDHeader, "my-trace-id")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 func TestGetCorrelationID(t *testing.T) {

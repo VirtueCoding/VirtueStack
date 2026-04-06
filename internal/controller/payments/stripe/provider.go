@@ -119,8 +119,6 @@ func (p *Provider) HandleWebhook(
 	switch event.Type {
 	case "checkout.session.completed":
 		return p.handleCheckoutCompleted(&event, idempotencyKey)
-	case "payment_intent.succeeded":
-		return p.handlePaymentIntentSucceeded(&event, idempotencyKey)
 	default:
 		p.logger.Debug("ignoring unhandled stripe event type",
 			"event_type", event.Type,
@@ -151,26 +149,6 @@ func (p *Provider) handleCheckoutCompleted(
 		Status:         "completed",
 		IdempotencyKey: idempotencyKey,
 		Metadata:       sess.Metadata,
-	}, nil
-}
-
-func (p *Provider) handlePaymentIntentSucceeded(
-	event *stripe.Event, idempotencyKey string,
-) (*payments.WebhookEvent, error) {
-	var pi stripe.PaymentIntent
-	if err := parseStripeObject(event.Data.Raw, &pi); err != nil {
-		return nil, fmt.Errorf("parse payment intent: %w", err)
-	}
-
-	return &payments.WebhookEvent{
-		Type:           payments.WebhookEventPaymentCompleted,
-		GatewayEventID: event.ID,
-		PaymentID:      pi.ID,
-		AmountCents:    pi.Amount,
-		Currency:       string(pi.Currency),
-		Status:         "completed",
-		IdempotencyKey: idempotencyKey,
-		Metadata:       pi.Metadata,
 	}, nil
 }
 

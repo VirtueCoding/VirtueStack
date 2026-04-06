@@ -90,6 +90,11 @@ func (h *AdminHandler) AuthConfig() middleware.AuthConfig {
 
 // NewAdminHandler creates a new AdminHandler with the given dependencies.
 func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
+	authConfig := middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer}
+	if cfg.AuthService != nil {
+		authConfig.SessionValidator = cfg.AuthService.ValidateAccessSession
+	}
+
 	return &AdminHandler{
 		nodeService:             cfg.NodeService,
 		vmService:               cfg.VMService,
@@ -119,7 +124,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		customerRepo:            cfg.CustomerRepo,
 		rdnsService:             cfg.RDNSService,
 		invoiceService:          cfg.InvoiceService,
-		authConfig:              middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
+		authConfig:              authConfig,
 		logger:                  cfg.Logger.With("component", "admin-handler"),
 	}
 }

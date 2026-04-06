@@ -448,6 +448,24 @@ func TestEnsureTemplateCachedOnNode(t *testing.T) {
 	}
 }
 
+func TestEnsureTemplateCachedOnNode_DoesNotSendVirtualDiskSizeAsArtifactSize(t *testing.T) {
+	template := &models.Template{
+		ID:             "tmpl-1",
+		Name:           "Ubuntu 24.04",
+		StorageBackend: "qcow",
+		FilePath:       stringPtr("https://controller.example.com/templates/ubuntu-2404.qcow2"),
+		MinDiskGB:      20,
+	}
+
+	req := buildEnsureTemplateCachedRequest(template, *template.FilePath)
+	require.NotNil(t, req)
+	assert.Zero(t, req.ExpectedSizeBytes)
+	assert.Equal(t, template.ID, req.TemplateID)
+	assert.Equal(t, template.Name, req.TemplateName)
+	assert.Equal(t, template.StorageBackend, req.StorageBackend)
+	assert.Equal(t, *template.FilePath, req.SourceURL)
+}
+
 func TestTemplateCacheStatusConstants(t *testing.T) {
 	assert.Equal(t, models.TemplateCacheStatus("pending"), models.TemplateCacheStatusPending)
 	assert.Equal(t, models.TemplateCacheStatus("downloading"), models.TemplateCacheStatusDownloading)

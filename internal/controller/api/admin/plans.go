@@ -161,6 +161,9 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 
 	err = h.planService.Update(c.Request.Context(), plan)
 	if err != nil {
+		if handleNotFoundError(c, err, "PLAN_NOT_FOUND", "Plan not found") {
+			return
+		}
 		h.logger.Error("failed to update plan",
 			"plan_id", planID,
 			"error", err,

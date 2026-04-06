@@ -4,6 +4,7 @@ import {
   apiRequest as sharedAPIRequest,
   fetchCsrfToken as sharedFetchCsrfToken,
   getCsrfToken,
+  logoutWithRefreshRecovery,
 } from "@virtuestack/api-client";
 
 import type {
@@ -17,6 +18,16 @@ export type { AuthTokens, LoginRequest, Verify2FARequest };
 
 async function fetchCsrfToken(): Promise<void> {
   await sharedFetchCsrfToken(API_BASE_URL, "/customer/auth/csrf");
+}
+
+export interface CustomerAuthUser {
+  id: string;
+  email: string;
+  role: string;
+}
+
+export interface CustomerAuthSessionResponse extends AuthTokens {
+  user?: CustomerAuthUser;
 }
 
 export async function apiRequest<T>(
@@ -57,88 +68,41 @@ export const apiClient = {
   },
 };
 
-function getAccessTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|;\s*)vs_access_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function decodeJWTPayload(token: string): { exp?: number } | null {
-  try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(
-      base64.length + ((4 - (base64.length % 4)) % 4),
-      "="
-    );
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-let tokenValidUntil = 0;
-
 export const customerAuthApi = {
-  async login(credentials: LoginRequest): Promise<AuthTokens> {
+  async login(credentials: LoginRequest): Promise<CustomerAuthSessionResponse> {
     await fetchCsrfToken();
-    return apiClient.post<AuthTokens>("/customer/auth/login", credentials);
+    return apiClient.post<CustomerAuthSessionResponse>("/customer/auth/login", credentials);
   },
 
-  async verify2FA(request: Verify2FARequest): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/customer/auth/verify-2fa", request);
-  },
-
-  async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/customer/auth/refresh", {});
+  async verify2FA(request: Verify2FARequest): Promise<CustomerAuthSessionResponse> {
+    await fetchCsrfToken();
+    return apiClient.post<CustomerAuthSessionResponse>("/customer/auth/verify-2fa", request);
   },
 
   async logout(): Promise<void> {
-    try {
-      await apiClient.post("/customer/auth/logout", {});
-    } catch (err) {
-      // Logout errors are non-fatal — session may already be invalid.
-      // Log for debugging but always clear local state regardless.
-      console.warn('Logout request failed (session may already be invalid):', err);
-    }
-    tokenValidUntil = 0;
+    await logoutWithRefreshRecovery({
+      invalidateSession: () => customerAuthApi.invalidateSession(),
+      refreshSession: () => customerAuthApi.refresh(),
+    });
   },
 
-  async ensureValidToken(): Promise<boolean> {
-    const token = getAccessTokenFromCookie();
+  async invalidateSession(sessionCleanupToken?: string): Promise<void> {
+    await apiClient.post("/customer/auth/logout", sessionCleanupToken
+      ? { session_cleanup_token: sessionCleanupToken }
+      : {});
+  },
 
-    if (token) {
-      const payload = decodeJWTPayload(token);
-      if (payload && typeof payload.exp === "number") {
-        const now = Math.floor(Date.now() / 1000);
-        if (payload.exp - now >= 60) {
-          return true;
-        }
-      }
-    }
-
-    if (Date.now() < tokenValidUntil) {
-      return true;
-    }
-
-    try {
-      const tokens = await customerAuthApi.refreshToken();
-      tokenValidUntil =
-        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
-      return true;
-    } catch {
-      tokenValidUntil = 0;
-      return false;
-    }
+  async refresh(): Promise<CustomerAuthSessionResponse> {
+    return apiClient.post<CustomerAuthSessionResponse>("/customer/auth/refresh", {});
   },
 
   async forgotPassword(email: string): Promise<{ message: string }> {
+    await fetchCsrfToken();
     return apiClient.post<{ message: string }>("/customer/auth/forgot-password", { email });
   },
 
   async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    await fetchCsrfToken();
     return apiClient.post<{ message: string }>("/customer/auth/reset-password", {
       token,
       new_password: newPassword,
@@ -188,12 +152,7 @@ export interface VM {
   plan_name?: string;
   attached_iso?: string;
   ip_addresses?: IPAddress[];
-}
-
-export interface ConsoleTokenResponse {
-  token: string;
-  url: string;
-  expires_at: string;
+  max_iso_size_bytes?: number;
 }
 
 export interface VMOperationResponse {
@@ -211,14 +170,6 @@ export interface CursorPaginatedResponse<T> {
 }
 
 export const vmApi = {
-  async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
-    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
-  },
-
-  async getSerialToken(vmId: string): Promise<ConsoleTokenResponse> {
-    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/serial-token`, {});
-  },
-
   async startVM(vmId: string): Promise<VMOperationResponse> {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/start`, {});
   },
@@ -416,10 +367,8 @@ export const backupApi = {
     if (response.task_id && onProgress) {
       try {
         await taskApi.pollTaskCompletion(response.task_id, onProgress);
-      } catch (error) {
-        // Log the polling error but don't fail the restore request
-        // The restore has been initiated successfully
-        console.warn("Failed to poll restore task:", error);
+      } catch {
+        // Restore initiation already succeeded; skip optional progress polling noise.
       }
     }
 
@@ -614,10 +563,6 @@ export const settingsApi = {
     return apiClient.post<{ message: string }>("/customer/2fa/disable", request);
   },
 
-  async getBackupCodes(): Promise<BackupCodesResponse> {
-    return apiClient.get<BackupCodesResponse>("/customer/2fa/backup-codes");
-  },
-
   async get2FAStatus(): Promise<{ enabled: boolean }> {
     return apiClient.get<{ enabled: boolean }>("/customer/2fa/status");
   },
@@ -702,6 +647,7 @@ export const isoApi = {
     signal?: AbortSignal,
   ): Promise<ISOUploadResponse> {
     const url = `${API_BASE_URL}/customer/vms/${vmId}/iso/upload`;
+    await fetchCsrfToken();
     const csrfToken = getCsrfToken();
 
     return new Promise<ISOUploadResponse>((resolve, reject) => {
@@ -918,8 +864,7 @@ export const inAppNotificationApi = {
   },
 
   async getUnreadCount(): Promise<UnreadCountResponse> {
-    const resp = await apiClient.get<{ data: UnreadCountResponse }>("/customer/notifications/unread-count");
-    return (resp as unknown as { data: UnreadCountResponse }).data;
+    return apiClient.get<UnreadCountResponse>("/customer/notifications/unread-count");
   },
 };
 
@@ -965,8 +910,6 @@ export interface TopUpRequest {
   gateway: string;
   amount: number;
   currency: string;
-  return_url: string;
-  cancel_url: string;
 }
 
 export interface TopUpResponse {
@@ -976,10 +919,9 @@ export interface TopUpResponse {
 
 export const billingApi = {
   async getBalance(): Promise<BillingBalance> {
-    const resp = await apiClient.get<{ data: BillingBalance }>(
+    return apiClient.get<BillingBalance>(
       "/customer/billing/balance"
     );
-    return (resp as unknown as { data: BillingBalance }).data;
   },
 
   async getTransactions(
@@ -1007,29 +949,29 @@ export const billingApi = {
   },
 
   async getTopUpConfig(): Promise<TopUpConfig> {
-    const resp = await apiClient.get<{ data: TopUpConfig }>(
+    return apiClient.get<TopUpConfig>(
       "/customer/billing/top-up/config"
     );
-    return (resp as unknown as { data: TopUpConfig }).data;
   },
 
   async initiateTopUp(req: TopUpRequest): Promise<TopUpResponse> {
     await fetchCsrfToken();
-    const resp = await apiClient.post<{ data: TopUpResponse }>(
+    return apiClient.post<TopUpResponse>(
       "/customer/billing/top-up",
       req
     );
-    return (resp as unknown as { data: TopUpResponse }).data;
   },
 
   async capturePayPalOrder(
     orderID: string
   ): Promise<{ capture_id: string; status: string; amount_cents: number; currency: string }> {
     await fetchCsrfToken();
-    const resp = await apiClient.post<{
-      data: { capture_id: string; status: string; amount_cents: number; currency: string };
+    return apiClient.post<{
+      capture_id: string;
+      status: string;
+      amount_cents: number;
+      currency: string;
     }>("/customer/billing/payments/paypal/capture", { order_id: orderID });
-    return (resp as unknown as { data: { capture_id: string; status: string; amount_cents: number; currency: string } }).data;
   },
 };
 
@@ -1078,10 +1020,9 @@ export const invoiceApi = {
   },
 
   async get(id: string): Promise<Invoice> {
-    const resp = await apiClient.get<{ data: Invoice }>(
+    return apiClient.get<Invoice>(
       `/customer/invoices/${id}`
     );
-    return (resp as unknown as { data: Invoice }).data;
   },
 
   getPDFUrl(id: string): string {
@@ -1112,9 +1053,9 @@ export const oauthApi = {
   async callback(
     provider: string,
     request: OAuthCallbackRequest
-  ): Promise<AuthTokens> {
+  ): Promise<CustomerAuthSessionResponse> {
     await fetchCsrfToken();
-    return apiClient.post<AuthTokens>(
+    return apiClient.post<CustomerAuthSessionResponse>(
       `/customer/auth/oauth/${provider}/callback`,
       request
     );
@@ -1130,6 +1071,7 @@ export const oauthApi = {
     provider: string,
     request: OAuthCallbackRequest
   ): Promise<{ message: string }> {
+    await fetchCsrfToken();
     return apiClient.post<{ message: string }>(
       `/customer/account/oauth/${provider}/link`,
       request

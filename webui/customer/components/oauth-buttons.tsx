@@ -2,15 +2,15 @@
 
 import { useCallback, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@virtuestack/ui";
+import { Button, useToast } from "@virtuestack/ui";
+import { startOAuthFlow } from "@/lib/oauth-flow";
 import {
-  generateCodeVerifier,
   generateCodeChallenge,
+  generateCodeVerifier,
   generateState,
   storeOAuthState,
 } from "@/lib/utils/oauth";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
+import { getOAuthStartFailureMessage } from "./oauth-start-state";
 
 interface OAuthButtonsProps {
   googleEnabled?: boolean;
@@ -26,30 +26,33 @@ export function OAuthButtons({
   mode = "login",
 }: OAuthButtonsProps) {
   const [loading, setLoading] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const startOAuth = useCallback(
     async (provider: string) => {
       setLoading(provider);
       try {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const state = generateState();
-        const redirectURI = `${window.location.origin}/auth/callback`;
-
-        storeOAuthState({ codeVerifier, state, provider, redirectURI });
-
-        const params = new URLSearchParams({
-          code_challenge: codeChallenge,
-          state,
-          redirect_uri: redirectURI,
+        const authorizeURL = await startOAuthFlow({
+          provider,
+          origin: window.location.origin,
+          mode,
+          returnTo: mode === "link" ? window.location.pathname : undefined,
+          generateCodeVerifier,
+          generateCodeChallenge,
+          generateState,
+          storeState: storeOAuthState,
         });
-
-        window.location.href = `${API_BASE_URL}/customer/auth/oauth/${provider}/authorize?${params}`;
+        window.location.href = authorizeURL;
       } catch {
         setLoading(null);
+        toast({
+          title: "OAuth Error",
+          description: getOAuthStartFailureMessage(provider),
+          variant: "destructive",
+        });
       }
     },
-    []
+    [mode, toast]
   );
 
   const label = mode === "link" ? "Link" : "Sign in with";

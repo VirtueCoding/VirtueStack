@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
@@ -19,10 +21,14 @@ import (
 )
 
 type mock2FACustomerRepo struct {
-	customer    *models.Customer
-	updateErr   error
-	getErr      error
-	updateCalls int
+	customer         *models.Customer
+	session          *models.Session
+	updateErr        error
+	getErr           error
+	getSessionErr    error
+	deleteSessionErr error
+	updateCalls      int
+	createdSession   *models.Session
 }
 
 func (m *mock2FACustomerRepo) GetByEmail(ctx context.Context, email string) (*models.Customer, error) {
@@ -49,11 +55,19 @@ func (m *mock2FACustomerRepo) SoftDelete(ctx context.Context, id string) error {
 }
 
 func (m *mock2FACustomerRepo) CreateSession(ctx context.Context, session *models.Session) error {
+	sessionCopy := *session
+	m.createdSession = &sessionCopy
 	return nil
 }
 
 func (m *mock2FACustomerRepo) GetSession(ctx context.Context, id string) (*models.Session, error) {
-	return nil, fmt.Errorf("not found")
+	if m.getSessionErr != nil {
+		return nil, m.getSessionErr
+	}
+	if m.session != nil {
+		return m.session, nil
+	}
+	return nil, sharederrors.ErrNotFound
 }
 
 func (m *mock2FACustomerRepo) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
@@ -61,7 +75,7 @@ func (m *mock2FACustomerRepo) GetSessionByRefreshToken(ctx context.Context, refr
 }
 
 func (m *mock2FACustomerRepo) DeleteSession(ctx context.Context, id string) error {
-	return nil
+	return m.deleteSessionErr
 }
 
 func (m *mock2FACustomerRepo) CountSessionsByUser(ctx context.Context, userID, userType string) (int, error) {
@@ -108,19 +122,33 @@ func (m *mock2FACustomerRepo) GetPasswordResetByTokenHash(ctx context.Context, t
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *mock2FACustomerRepo) ResetPasswordWithToken(ctx context.Context, tokenHash, passwordHash string) (*models.PasswordReset, error) {
+	return nil, repository.ErrNoRowsAffected
+}
+
 func (m *mock2FACustomerRepo) MarkPasswordResetUsed(ctx context.Context, id string) error {
 	return nil
 }
 
 func (m *mock2FACustomerRepo) UpdateBackupCodes(ctx context.Context, userID string, codes []string) error {
+	if m.customer != nil {
+		m.customer.TOTPBackupCodesHash = append([]string(nil), codes...)
+	}
 	return nil
 }
 
 func (m *mock2FACustomerRepo) UpdateBackupCodesShown(ctx context.Context, id string, shown bool) error {
+	if m.customer != nil {
+		m.customer.TOTPBackupCodesShown = shown
+	}
 	return nil
 }
 
 func (m *mock2FACustomerRepo) UpdateBackupCodesWithShown(ctx context.Context, id string, backupCodesHash []string) error {
+	if m.customer != nil {
+		m.customer.TOTPBackupCodesHash = append([]string(nil), backupCodesHash...)
+		m.customer.TOTPBackupCodesShown = false
+	}
 	return nil
 }
 
@@ -158,6 +186,415 @@ func test2FALogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+type mockRefreshSessionRepo struct {
+	*mock2FACustomerRepo
+	sessionByRefreshToken *models.Session
+	deleteSessionIDs      []string
+}
+
+type atomicRotateResult struct {
+	session *models.Session
+	err     error
+}
+
+type atomicRefreshSessionRepo struct {
+	*mock2FACustomerRepo
+	sessionByRefreshToken *models.Session
+	result                atomicRotateResult
+	rotateFunc            func(
+		ctx context.Context,
+		currentRefreshTokenHash string,
+		newSession *models.Session,
+	) (*models.Session, error)
+	calls int
+}
+
+func (m *mockRefreshSessionRepo) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
+	if m.sessionByRefreshToken == nil {
+		return nil, sharederrors.ErrNotFound
+	}
+	return m.sessionByRefreshToken, nil
+}
+
+func (m *mockRefreshSessionRepo) DeleteSession(ctx context.Context, id string) error {
+	m.deleteSessionIDs = append(m.deleteSessionIDs, id)
+	if m.mock2FACustomerRepo != nil {
+		return m.mock2FACustomerRepo.DeleteSession(ctx, id)
+	}
+	return nil
+}
+
+func (m *atomicRefreshSessionRepo) RotateSession(
+	ctx context.Context,
+	currentRefreshTokenHash string,
+	newSession *models.Session,
+) (*models.Session, error) {
+	m.calls++
+	if m.rotateFunc != nil {
+		return m.rotateFunc(ctx, currentRefreshTokenHash, newSession)
+	}
+	if m.mock2FACustomerRepo != nil {
+		sessionCopy := *newSession
+		m.createdSession = &sessionCopy
+	}
+	return m.result.session, m.result.err
+}
+
+func (m *atomicRefreshSessionRepo) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
+	if m.sessionByRefreshToken != nil {
+		return m.sessionByRefreshToken, nil
+	}
+	if m.result.session != nil {
+		return m.result.session, nil
+	}
+	return nil, sharederrors.ErrNotFound
+}
+
+func TestCreateLoginSession_BindsAccessTokenToSessionID(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	repo := &mock2FACustomerRepo{}
+	authService := &AuthService{
+		customerRepo: repo,
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+			Issuer:    "virtuestack",
+		},
+		logger: logger,
+	}
+
+	tokens, _, err := authService.CreateLoginSession(
+		ctx,
+		"customer-123",
+		"customer",
+		"",
+		"127.0.0.1",
+		"unit-test",
+		CustomerRefreshTokenDuration,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, repo.createdSession)
+
+	claims, err := middleware.ValidateJWT(authService.authConfig, tokens.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, repo.createdSession.ID, claims.SessionID)
+	assert.Equal(t, "customer-123", claims.UserID)
+}
+
+func TestRefreshToken_BindsReplacementAccessTokenToNewSessionID(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	refreshToken, err := middleware.GenerateRefreshToken()
+	require.NoError(t, err)
+
+	repo := &mockRefreshSessionRepo{
+		mock2FACustomerRepo: &mock2FACustomerRepo{
+			customer: &models.Customer{
+				ID:     "customer-123",
+				Status: models.CustomerStatusActive,
+			},
+		},
+		sessionByRefreshToken: &models.Session{
+			ID:               "old-session-id",
+			UserID:           "customer-123",
+			UserType:         "customer",
+			RefreshTokenHash: crypto.HashSHA256(refreshToken),
+			ExpiresAt:        time.Now().Add(time.Hour),
+		},
+	}
+	authService := &AuthService{
+		customerRepo: repo,
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+			Issuer:    "virtuestack",
+		},
+		logger: logger,
+	}
+
+	tokens, _, err := authService.RefreshToken(
+		ctx,
+		refreshToken,
+		"127.0.0.1",
+		"unit-test",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, repo.createdSession)
+
+	claims, err := middleware.ValidateJWT(authService.authConfig, tokens.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, repo.createdSession.ID, claims.SessionID)
+	assert.Contains(t, repo.deleteSessionIDs, "old-session-id")
+}
+
+func TestRefreshToken_AtomicRotationRejectsConcurrentReuse(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	refreshToken, err := middleware.GenerateRefreshToken()
+	require.NoError(t, err)
+
+	repo := &atomicRefreshSessionRepo{
+		mock2FACustomerRepo: &mock2FACustomerRepo{
+			customer: &models.Customer{
+				ID:     "customer-123",
+				Status: models.CustomerStatusActive,
+			},
+		},
+		sessionByRefreshToken: &models.Session{
+			ID:               "old-session-id",
+			UserID:           "customer-123",
+			UserType:         "customer",
+			RefreshTokenHash: crypto.HashSHA256(refreshToken),
+			ExpiresAt:        time.Now().Add(time.Hour),
+		},
+		result: atomicRotateResult{
+			session: &models.Session{
+				ID:               "old-session-id",
+				UserID:           "customer-123",
+				UserType:         "customer",
+				RefreshTokenHash: crypto.HashSHA256(refreshToken),
+				ExpiresAt:        time.Now().Add(time.Hour),
+			},
+		},
+	}
+
+	authService := &AuthService{
+		customerRepo: repo,
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+			Issuer:    "virtuestack",
+		},
+		logger: logger,
+	}
+
+	tokens, _, err := authService.RefreshToken(ctx, refreshToken, "127.0.0.1", "unit-test")
+	require.NoError(t, err)
+	require.NotNil(t, repo.createdSession)
+	assert.Equal(t, 1, repo.calls)
+
+	claims, err := middleware.ValidateJWT(authService.authConfig, tokens.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, repo.createdSession.ID, claims.SessionID)
+}
+
+func TestRefreshToken_ConcurrentReuseFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	refreshToken, err := middleware.GenerateRefreshToken()
+	require.NoError(t, err)
+
+	baseSession := &models.Session{
+		ID:               "old-session-id",
+		UserID:           "customer-123",
+		UserType:         "customer",
+		RefreshTokenHash: crypto.HashSHA256(refreshToken),
+		ExpiresAt:        time.Now().Add(time.Hour),
+	}
+
+	repo := &atomicRefreshSessionRepo{
+		mock2FACustomerRepo: &mock2FACustomerRepo{
+			customer: &models.Customer{
+				ID:     "customer-123",
+				Status: models.CustomerStatusActive,
+			},
+		},
+		sessionByRefreshToken: baseSession,
+	}
+	var rotateMu sync.Mutex
+	consumed := false
+	repo.rotateFunc = func(
+		ctx context.Context,
+		currentRefreshTokenHash string,
+		newSession *models.Session,
+	) (*models.Session, error) {
+		rotateMu.Lock()
+		defer rotateMu.Unlock()
+
+		if consumed {
+			return nil, repository.ErrNoRowsAffected
+		}
+
+		consumed = true
+		sessionCopy := *newSession
+		repo.createdSession = &sessionCopy
+		return baseSession, nil
+	}
+	authService := &AuthService{
+		customerRepo: repo,
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+			Issuer:    "virtuestack",
+		},
+		logger: logger,
+	}
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+	wg.Add(2)
+
+	for i := range results {
+		go func(idx int) {
+			defer wg.Done()
+			_, _, results[idx] = authService.RefreshToken(ctx, refreshToken, "127.0.0.1", "unit-test")
+		}(i)
+	}
+
+	wg.Wait()
+
+	successCount := 0
+	unauthorizedCount := 0
+	for _, refreshErr := range results {
+		if refreshErr == nil {
+			successCount++
+			continue
+		}
+		if sharederrors.Is(refreshErr, sharederrors.ErrUnauthorized) {
+			unauthorizedCount++
+		}
+	}
+
+	assert.Equal(t, 1, successCount)
+	assert.Equal(t, 1, unauthorizedCount)
+}
+
+func TestRefreshToken_RejectsSuspendedCustomer(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	refreshToken, err := middleware.GenerateRefreshToken()
+	require.NoError(t, err)
+
+	repo := &mockRefreshSessionRepo{
+		mock2FACustomerRepo: &mock2FACustomerRepo{
+			customer: &models.Customer{
+				ID:     "customer-123",
+				Status: models.CustomerStatusSuspended,
+			},
+		},
+		sessionByRefreshToken: &models.Session{
+			ID:               "old-session-id",
+			UserID:           "customer-123",
+			UserType:         "customer",
+			RefreshTokenHash: crypto.HashSHA256(refreshToken),
+			ExpiresAt:        time.Now().Add(time.Hour),
+		},
+	}
+	authService := &AuthService{
+		customerRepo: repo,
+		authConfig: middleware.AuthConfig{
+			JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+			Issuer:    "virtuestack",
+		},
+		logger: logger,
+	}
+
+	tokens, newRefreshToken, err := authService.RefreshToken(ctx, refreshToken, "127.0.0.1", "unit-test")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sharederrors.ErrUnauthorized)
+	assert.Nil(t, tokens)
+	assert.Empty(t, newRefreshToken)
+	assert.Nil(t, repo.createdSession)
+}
+
+func TestLogout_IgnoresMissingSessionDeleteSentinels(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	tests := []struct {
+		name      string
+		deleteErr error
+	}{
+		{
+			name:      "err not found",
+			deleteErr: sharederrors.ErrNotFound,
+		},
+		{
+			name:      "err no rows affected",
+			deleteErr: sharederrors.ErrNoRowsAffected,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mock2FACustomerRepo{deleteSessionErr: tt.deleteErr}
+			authService := &AuthService{
+				customerRepo: repo,
+				logger:       logger,
+			}
+
+			err := authService.Logout(ctx, "missing-session")
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateAccessSession_RejectsMissingSession(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	authService := &AuthService{
+		customerRepo: &mock2FACustomerRepo{getSessionErr: sharederrors.ErrNotFound},
+		logger:       logger,
+	}
+
+	err := authService.ValidateAccessSession(ctx, "missing-session")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sharederrors.ErrUnauthorized)
+}
+
+func TestValidateAccessSession_RejectsExpiredSession(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	authService := &AuthService{
+		customerRepo: &mock2FACustomerRepo{
+			session: &models.Session{
+				ID:        "expired-session",
+				ExpiresAt: time.Now().Add(-time.Minute),
+			},
+		},
+		logger: logger,
+	}
+
+	err := authService.ValidateAccessSession(ctx, "expired-session")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sharederrors.ErrUnauthorized)
+}
+
+func TestValidateAccessSession_PropagatesLookupErrors(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	authService := &AuthService{
+		customerRepo: &mock2FACustomerRepo{getSessionErr: errors.New("database unavailable")},
+		logger:       logger,
+	}
+
+	err := authService.ValidateAccessSession(ctx, "broken-session")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "getting session")
+	assert.Contains(t, err.Error(), "database unavailable")
+}
+
+func TestLogout_PropagatesUnexpectedDeleteErrors(t *testing.T) {
+	ctx := context.Background()
+	logger := test2FALogger()
+
+	repo := &mock2FACustomerRepo{deleteSessionErr: errors.New("database unavailable")}
+	authService := &AuthService{
+		customerRepo: repo,
+		logger:       logger,
+	}
+
+	err := authService.Logout(ctx, "session-123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deleting session")
+	assert.Contains(t, err.Error(), "database unavailable")
+}
+
 func TestInitiate2FA(t *testing.T) {
 	ctx := context.Background()
 	logger := test2FALogger()
@@ -183,8 +620,7 @@ func TestInitiate2FA(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, result.Secret)
 		assert.NotEmpty(t, result.QRURL)
-		assert.Len(t, result.BackupCodes, 10)
-		assert.Len(t, customer.TOTPBackupCodesHash, 10)
+		assert.Empty(t, customer.TOTPBackupCodesHash)
 		assert.NotNil(t, customer.TOTPSecretEncrypted)
 		assert.False(t, customer.TOTPEnabled)
 	})
@@ -208,7 +644,7 @@ func TestInitiate2FA(t *testing.T) {
 		result, err := authService.Initiate2FA(ctx, "test-customer-id", "test@example.com")
 		require.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "already enabled")
+		assert.ErrorIs(t, err, sharederrors.ErrTwoFAAlreadyEnabled)
 	})
 
 	t.Run("CustomerNotFound", func(t *testing.T) {
@@ -253,9 +689,11 @@ func TestEnable2FA(t *testing.T) {
 
 		validCode := generateValidTOTPCode("JBSWY3DPEHPK3PXP")
 
-		err = authService.Enable2FA(ctx, "test-customer-id", validCode)
+		backupCodes, err := authService.Enable2FA(ctx, "test-customer-id", validCode)
 		require.NoError(t, err)
+		assert.Len(t, backupCodes, 10)
 		assert.True(t, customer.TOTPEnabled)
+		assert.Len(t, customer.TOTPBackupCodesHash, 10)
 	})
 
 	t.Run("AlreadyEnabled", func(t *testing.T) {
@@ -273,9 +711,10 @@ func TestEnable2FA(t *testing.T) {
 			logger:        logger,
 		}
 
-		err := authService.Enable2FA(ctx, "test-customer-id", "123456")
+		backupCodes, err := authService.Enable2FA(ctx, "test-customer-id", "123456")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "already enabled")
+		assert.Nil(t, backupCodes)
+		assert.ErrorIs(t, err, sharederrors.ErrTwoFAAlreadyEnabled)
 	})
 
 	t.Run("NotInitiated", func(t *testing.T) {
@@ -292,9 +731,10 @@ func TestEnable2FA(t *testing.T) {
 			logger:        logger,
 		}
 
-		err := authService.Enable2FA(ctx, "test-customer-id", "123456")
+		backupCodes, err := authService.Enable2FA(ctx, "test-customer-id", "123456")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not initiated")
+		assert.Nil(t, backupCodes)
+		assert.ErrorIs(t, err, sharederrors.ErrTwoFASetupNotInitiated)
 	})
 
 	t.Run("InvalidCode", func(t *testing.T) {
@@ -315,8 +755,9 @@ func TestEnable2FA(t *testing.T) {
 			logger:        logger,
 		}
 
-		err = authService.Enable2FA(ctx, "test-customer-id", "000000")
+		backupCodes, err := authService.Enable2FA(ctx, "test-customer-id", "000000")
 		require.Error(t, err)
+		assert.Nil(t, backupCodes)
 		assert.True(t, errors.Is(err, sharederrors.ErrUnauthorized))
 		assert.False(t, customer.TOTPEnabled)
 	})
@@ -370,7 +811,7 @@ func TestDisable2FA(t *testing.T) {
 
 		err := authService.Disable2FA(ctx, "test-customer-id", "password")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not enabled")
+		assert.ErrorIs(t, err, sharederrors.ErrTwoFANotEnabled)
 	})
 
 	t.Run("InvalidPassword", func(t *testing.T) {

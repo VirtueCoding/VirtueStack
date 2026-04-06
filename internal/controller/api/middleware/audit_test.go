@@ -20,10 +20,10 @@ func init() { gin.SetMode(gin.TestMode) }
 
 func TestExtractResourceFromPath(t *testing.T) {
 	tests := []struct {
-		name         string
-		path         string
-		wantType     string
-		wantID       string
+		name     string
+		path     string
+		wantType string
+		wantID   string
 	}{
 		{
 			name:     "VM with UUID and sub-action",
@@ -120,6 +120,30 @@ func TestExtractResourceFromPath(t *testing.T) {
 			path:     "/api/v1/admin/permissions",
 			wantType: "permission",
 			wantID:   "",
+		},
+		{
+			name:     "storage backend collection",
+			path:     "/api/v1/admin/storage-backends",
+			wantType: "storage_backend",
+			wantID:   "",
+		},
+		{
+			name:     "system webhook with UUID",
+			path:     "/api/v1/admin/system-webhooks/550e8400-e29b-41d4-a716-446655440000",
+			wantType: "system_webhook",
+			wantID:   "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{
+			name:     "pre action webhook with UUID",
+			path:     "/api/v1/admin/pre-action-webhooks/550e8400-e29b-41d4-a716-446655440000",
+			wantType: "pre_action_webhook",
+			wantID:   "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{
+			name:     "notification with opaque numeric identifier",
+			path:     "/api/v1/admin/notifications/123/read",
+			wantType: "notification",
+			wantID:   "123",
 		},
 	}
 
@@ -221,6 +245,18 @@ func TestMapMethodToAction(t *testing.T) {
 			path:       "/api/v1/admin/vms/" + uuid,
 			wantAction: "vm.action",
 		},
+		{
+			name:       "POST notification read action",
+			method:     http.MethodPost,
+			path:       "/api/v1/admin/notifications/123/read",
+			wantAction: "notification.read",
+		},
+		{
+			name:       "DELETE pre-action webhook with ID",
+			method:     http.MethodDelete,
+			path:       "/api/v1/admin/pre-action-webhooks/" + uuid,
+			wantAction: "pre_action_webhook.delete",
+		},
 	}
 
 	for _, tt := range tests {
@@ -279,6 +315,40 @@ func TestAudit_ReadOnlyMethodsSkipped(t *testing.T) {
 			assert.False(t, called, "audit logger should not be called for %s", method)
 		})
 	}
+}
+
+func TestAudit_UsesHandlerOverride(t *testing.T) {
+	const uuid = "550e8400-e29b-41d4-a716-446655440000"
+	capture := &capturedEntry{}
+
+	r := gin.New()
+	r.Use(Audit(newCapturingLogger(capture)))
+	r.PUT("/api/v1/admin/system-webhooks/:id", func(c *gin.Context) {
+		SetAuditOverride(c, &AuditOverride{
+			Action:       "system_webhook.update",
+			ResourceType: "system_webhook",
+			ResourceID:   uuid,
+			Changes: map[string]any{
+				"name": "updated webhook",
+			},
+		})
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/system-webhooks/"+uuid, nil)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	entry := capture.get()
+	require.NotNil(t, entry)
+	assert.Equal(t, "system_webhook.update", entry.Action)
+	assert.Equal(t, "system_webhook", entry.ResourceType)
+	assert.Equal(t, uuid, entry.ResourceID)
+	changes, ok := entry.Changes.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "updated webhook", changes["name"])
 }
 
 func TestAudit_POST_TriggersAuditLog(t *testing.T) {
@@ -468,7 +538,7 @@ func TestAudit_ActorType_FromContext(t *testing.T) {
 		},
 		{
 			name:          "empty when nothing set",
-			setContext:     func(_ *gin.Context) {},
+			setContext:    func(_ *gin.Context) {},
 			wantActorType: "",
 		},
 	}

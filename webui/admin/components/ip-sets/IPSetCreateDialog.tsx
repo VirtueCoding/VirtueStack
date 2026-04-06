@@ -1,6 +1,6 @@
 "use client";
 
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@virtuestack/ui";
 import { Input } from "@virtuestack/ui";
@@ -34,7 +34,7 @@ export function IPSetCreateDialog({ open, onOpenChange, onCreate, isCreating }: 
     },
   });
 
-  const ipVersion = createForm.watch("ip_version");
+  const ipVersion = useWatch({ control: createForm.control, name: "ip_version" });
 
   const handleSubmit = async (data: CreateIPSetFormData) => {
     await onCreate(data);

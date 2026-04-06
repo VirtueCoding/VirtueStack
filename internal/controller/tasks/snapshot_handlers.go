@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
@@ -87,18 +88,27 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// Generate RBD snapshot name
-	rbdSnapshotName := fmt.Sprintf("snap-%s-%d", shortID(payload.SnapshotID), time.Now().Unix())
+	storageBackend := vm.StorageBackend
+	if storageBackend == "" {
+		storageBackend = models.StorageBackendCeph
+	}
+
+	// Generate a display name for the backend snapshot request.
+	snapshotName := fmt.Sprintf("snap-%s-%d", shortID(payload.SnapshotID), time.Now().Unix())
 
 	// Create snapshot via node agent
-	snapshotResp, err := deps.NodeClient.CreateSnapshot(ctx, nodeID, payload.VMID, rbdSnapshotName)
+	snapshotResp, err := deps.NodeClient.CreateSnapshot(ctx, nodeID, payload.VMID, snapshotName)
 	if err != nil {
 		logger.Error("failed to create snapshot", "error", err)
 		return fmt.Errorf("creating snapshot for VM %s: %w", payload.VMID, err)
 	}
+	snapshotHandle := snapshotResp.SnapshotID
+	if snapshotHandle == "" {
+		snapshotHandle = snapshotResp.RBDSnapshotName
+	}
 
-	logger.Info("RBD snapshot created successfully",
-		"snapshot_name", snapshotResp.RBDSnapshotName,
+	logger.Info("snapshot created successfully",
+		"snapshot_handle", snapshotHandle,
 		"size_bytes", snapshotResp.SizeBytes)
 
 	// Update task progress: Updating database
@@ -110,23 +120,27 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 	_, err = deps.BackupRepo.GetSnapshotByID(ctx, payload.SnapshotID)
 	if err != nil {
 		logger.Error("failed to get snapshot record", "error", err)
-		// Attempt to clean up the created snapshot
-		_ = deps.NodeClient.DeleteSnapshot(ctx, nodeID, payload.VMID, rbdSnapshotName)
+		cleanupCreatedSnapshot(ctx, deps, logger, nodeID, payload.VMID, snapshotHandle, "database lookup")
 		return fmt.Errorf("getting snapshot record %s: %w", payload.SnapshotID, err)
 	}
 
 	updatedSnapshot := &models.Snapshot{
-		ID:          payload.SnapshotID,
-		VMID:        payload.VMID,
-		Name:        payload.Name,
-		RBDSnapshot: snapshotResp.RBDSnapshotName,
-		SizeBytes:   &snapshotResp.SizeBytes,
+		ID:             payload.SnapshotID,
+		VMID:           payload.VMID,
+		Name:           payload.Name,
+		StorageBackend: storageBackend,
+		SizeBytes:      &snapshotResp.SizeBytes,
+	}
+	if storageBackend == models.StorageBackendQcow {
+		handle := snapshotHandle
+		updatedSnapshot.QCOWSnapshot = &handle
+	} else {
+		updatedSnapshot.RBDSnapshot = snapshotHandle
 	}
 
 	if err := deps.BackupRepo.UpdateSnapshot(ctx, updatedSnapshot); err != nil {
 		logger.Error("failed to update snapshot record", "error", err)
-		// Attempt to clean up the created snapshot
-		_ = deps.NodeClient.DeleteSnapshot(ctx, nodeID, payload.VMID, rbdSnapshotName)
+		cleanupCreatedSnapshot(ctx, deps, logger, nodeID, payload.VMID, snapshotHandle, "database update")
 		return fmt.Errorf("updating snapshot record: %w", err)
 	}
 
@@ -137,10 +151,16 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 
 	// Set task result
 	result := map[string]any{
-		"snapshot_id":  payload.SnapshotID,
-		"vm_id":        payload.VMID,
-		"rbd_snapshot": snapshotResp.RBDSnapshotName,
-		"size_bytes":   snapshotResp.SizeBytes,
+		"snapshot_id":     payload.SnapshotID,
+		"vm_id":           payload.VMID,
+		"storage_backend": storageBackend,
+		"snapshot_handle": snapshotHandle,
+		"size_bytes":      snapshotResp.SizeBytes,
+	}
+	if storageBackend == models.StorageBackendQcow {
+		result["qcow_snapshot"] = snapshotHandle
+	} else {
+		result["rbd_snapshot"] = snapshotHandle
 	}
 	// json.Marshal error is intentionally suppressed: the map contains only
 	// primitive types (string, int, bool) whose marshaling cannot fail.
@@ -151,7 +171,7 @@ func handleSnapshotCreate(ctx context.Context, task *models.Task, deps *HandlerD
 
 	logger.Info("snapshot.create task completed successfully",
 		"snapshot_id", payload.SnapshotID,
-		"rbd_snapshot", snapshotResp.RBDSnapshotName)
+		"snapshot_handle", snapshotHandle)
 
 	return nil
 }
@@ -231,8 +251,13 @@ func handleSnapshotRevert(ctx context.Context, task *models.Task, deps *HandlerD
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
+	snapshotHandle := snapshotBackendHandle(snapshot)
+	if snapshotHandle == "" {
+		return fmt.Errorf("snapshot %s has no backend snapshot handle", payload.SnapshotID)
+	}
+
 	// Restore from snapshot via node agent
-	if err := deps.NodeClient.RestoreSnapshot(ctx, nodeID, payload.VMID, snapshot.RBDSnapshot); err != nil {
+	if err := deps.NodeClient.RestoreSnapshot(ctx, nodeID, payload.VMID, snapshotHandle); err != nil {
 		logger.Error("failed to restore snapshot", "error", err)
 		return fmt.Errorf("restoring snapshot %s for VM %s: %w", payload.SnapshotID, payload.VMID, err)
 	}
@@ -338,14 +363,18 @@ func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerD
 	// Delete from storage if node is assigned
 	if vm.NodeID != nil {
 		nodeID := *vm.NodeID
-		if err := deps.NodeClient.DeleteSnapshot(ctx, nodeID, payload.VMID, snapshot.RBDSnapshot); err != nil {
+		snapshotHandle := snapshotBackendHandle(snapshot)
+		if snapshotHandle == "" {
+			return fmt.Errorf("snapshot %s has no backend snapshot handle", payload.SnapshotID)
+		}
+		if err := deps.NodeClient.DeleteSnapshot(ctx, nodeID, payload.VMID, snapshotHandle); err != nil {
 			logger.Warn("failed to delete snapshot from storage",
 				"error", err,
-				"rbd_snapshot", snapshot.RBDSnapshot)
+				"snapshot_handle", snapshotHandle)
 			// Continue with database deletion
 		} else {
 			logger.Info("snapshot deleted from storage",
-				"rbd_snapshot", snapshot.RBDSnapshot)
+				"snapshot_handle", snapshotHandle)
 		}
 	}
 
@@ -383,4 +412,34 @@ func handleSnapshotDelete(ctx context.Context, task *models.Task, deps *HandlerD
 		"vm_id", payload.VMID)
 
 	return nil
+}
+
+func snapshotBackendHandle(snapshot *models.Snapshot) string {
+	if snapshot.StorageBackend == models.StorageBackendQcow {
+		if snapshot.QCOWSnapshot != nil && *snapshot.QCOWSnapshot != "" {
+			return *snapshot.QCOWSnapshot
+		}
+		return ""
+	}
+	if snapshot.RBDSnapshot != "" {
+		return snapshot.RBDSnapshot
+	}
+	if snapshot.QCOWSnapshot != nil {
+		return *snapshot.QCOWSnapshot
+	}
+	return ""
+}
+
+func cleanupCreatedSnapshot(
+	ctx context.Context,
+	deps *HandlerDeps,
+	logger *slog.Logger,
+	nodeID, vmID, snapshotHandle, failureStage string,
+) {
+	if err := deps.NodeClient.DeleteSnapshot(ctx, nodeID, vmID, snapshotHandle); err != nil {
+		logger.Warn("failed to cleanup snapshot after "+failureStage,
+			"vm_id", vmID,
+			"snapshot_handle", snapshotHandle,
+			"error", err)
+	}
 }

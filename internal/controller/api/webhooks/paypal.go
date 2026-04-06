@@ -1,6 +1,8 @@
 package webhooks
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -8,20 +10,24 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/payments/paypal"
-	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 const maxPayPalWebhookBodySize int64 = 1 << 20 // 1MB
 
+type payPalWebhookPaymentService interface {
+	HandlePayPalWebhook(ctx context.Context, headers http.Header, payload []byte) error
+}
+
 // PayPalWebhookHandler handles PayPal webhook callbacks.
 type PayPalWebhookHandler struct {
-	paymentService *services.PaymentService
+	paymentService payPalWebhookPaymentService
 	logger         *slog.Logger
 }
 
 // NewPayPalWebhookHandler creates a new PayPalWebhookHandler.
 func NewPayPalWebhookHandler(
-	paymentService *services.PaymentService,
+	paymentService payPalWebhookPaymentService,
 	logger *slog.Logger,
 ) *PayPalWebhookHandler {
 	return &PayPalWebhookHandler{
@@ -53,7 +59,11 @@ func (h *PayPalWebhookHandler) Handle(c *gin.Context) {
 		c.Request.Context(), c.Request.Header, payload,
 	); err != nil {
 		h.logger.Error("paypal webhook processing failed", "error", err)
-		c.Status(http.StatusBadRequest)
+		if errors.Is(err, sharederrors.ErrValidation) {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		c.Status(http.StatusInternalServerError)
 		return
 	}
 

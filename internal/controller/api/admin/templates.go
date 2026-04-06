@@ -480,6 +480,11 @@ func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
 
 	taskID, err := h.templateService.DistributeToNodes(c.Request.Context(), id, req.NodeIDs)
 	if err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
 		if errors.Is(err, sharederrors.ErrNotFound) {
 			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "Template not found")
 			return
@@ -497,7 +502,7 @@ func (h *AdminHandler) DistributeTemplate(c *gin.Context) {
 	}
 
 	h.logAuditEvent(c, "template.distribute", "template", id, map[string]interface{}{
-		"node_ids":  req.NodeIDs,
+		"node_ids":   req.NodeIDs,
 		"node_count": len(req.NodeIDs),
 	}, true)
 

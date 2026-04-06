@@ -3,6 +3,7 @@ import {
   ApiClientError,
   apiRequest as sharedAPIRequest,
   fetchCsrfToken as sharedFetchCsrfToken,
+  logoutWithRefreshRecovery,
 } from "@virtuestack/api-client";
 
 import type {
@@ -43,7 +44,7 @@ export interface Admin {
 }
 
 async function fetchCsrfToken(): Promise<void> {
-  await sharedFetchCsrfToken(API_BASE_URL, "/admin/auth/me");
+  await sharedFetchCsrfToken(API_BASE_URL, "/admin/auth/csrf");
 }
 
 /**
@@ -139,58 +140,40 @@ export const apiClient = {
   },
 };
 
-function getAccessTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|;\s*)vs_access_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function decodeJWTPayload(token: string): { exp?: number } | null {
-  try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(
-      base64.length + ((4 - (base64.length % 4)) % 4),
-      "="
-    );
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-let tokenValidUntil = 0;
-
 export interface ReauthResponse {
   reauth_token: string;
   expires_in: number;
 }
 
+export interface AuthSessionResponse extends AuthTokens {
+  user?: AdminUser;
+}
+
 export const adminAuthApi = {
-  async login(credentials: LoginRequest): Promise<AuthTokens> {
+  async login(credentials: LoginRequest): Promise<AuthSessionResponse> {
     await fetchCsrfToken();
-    return apiClient.post<AuthTokens>("/admin/auth/login", credentials);
+    return apiClient.post<AuthSessionResponse>("/admin/auth/login", credentials);
   },
 
-  async verify2FA(request: Verify2FARequest): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/admin/auth/verify-2fa", request);
-  },
-
-  async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/admin/auth/refresh", {});
+  async verify2FA(request: Verify2FARequest): Promise<AuthSessionResponse> {
+    return apiClient.post<AuthSessionResponse>("/admin/auth/verify-2fa", request);
   },
 
   async logout(): Promise<void> {
-    try {
-      await apiClient.postVoid("/admin/auth/logout", {});
-    } catch (err) {
-      // Logout errors are non-fatal — session may already be invalid.
-      // Log for debugging but don't propagate to prevent UI from hanging.
-      console.warn('Logout request failed (session may already be invalid):', err);
-    }
-    tokenValidUntil = 0;
+    await logoutWithRefreshRecovery({
+      invalidateSession: () => adminAuthApi.invalidateSession(),
+      refreshSession: () => adminAuthApi.refresh(),
+    });
+  },
+
+  async invalidateSession(sessionCleanupToken?: string): Promise<void> {
+    await apiClient.post("/admin/auth/logout", sessionCleanupToken
+      ? { session_cleanup_token: sessionCleanupToken }
+      : {});
+  },
+
+  async refresh(): Promise<AuthSessionResponse> {
+    return apiClient.post<AuthSessionResponse>("/admin/auth/refresh", {});
   },
 
   // me() fetches the current authenticated admin user's identity from the server.
@@ -218,34 +201,6 @@ export const adminAuthApi = {
   // header when performing destructive operations (DELETE nodes, VMs, etc.).
   async reauth(password: string): Promise<ReauthResponse> {
     return apiClient.post<ReauthResponse>("/admin/auth/reauth", { password });
-  },
-
-  async ensureValidToken(): Promise<boolean> {
-    const token = getAccessTokenFromCookie();
-
-    if (token) {
-      const payload = decodeJWTPayload(token);
-      if (payload && typeof payload.exp === "number") {
-        const now = Math.floor(Date.now() / 1000);
-        if (payload.exp - now >= 60) {
-          return true;
-        }
-      }
-    }
-
-    if (Date.now() < tokenValidUntil) {
-      return true;
-    }
-
-    try {
-      const tokens = await adminAuthApi.refreshToken();
-      tokenValidUntil =
-        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
-      return true;
-    } catch {
-      tokenValidUntil = 0;
-      return false;
-    }
   },
 };
 
@@ -344,8 +299,16 @@ export interface Customer {
   name: string;
   email: string;
   vm_count: number;
-  status: "active" | "suspended";
+  status: "active" | "pending_verification" | "suspended" | "deleted";
   created_at: string;
+  updated_at?: string;
+  phone?: string;
+  auth_provider?: "local" | "oauth";
+}
+
+export interface CustomerDetail extends Customer {
+  active_vms: number;
+  backup_count: number;
 }
 
 export interface CreateCustomerRequest {
@@ -371,8 +334,8 @@ export const adminCustomersApi = {
     return apiClient.get<PaginatedResponse<Customer>>(`/admin/customers${query ? `?${query}` : ""}`);
   },
 
-  async getCustomer(id: string): Promise<Customer> {
-    return apiClient.get<Customer>(`/admin/customers/${id}`);
+  async getCustomer(id: string): Promise<CustomerDetail> {
+    return apiClient.get<CustomerDetail>(`/admin/customers/${id}`);
   },
 
   async createCustomer(data: CreateCustomerRequest): Promise<Customer> {
@@ -554,11 +517,24 @@ export interface CreateVMResponse {
   task_id: string;
 }
 
+export interface AdminVMListParams {
+  per_page?: number;
+  cursor?: string;
+  customer_id?: string;
+  node_id?: string;
+  status?: string;
+  search?: string;
+}
+
 export const adminVMsApi = {
-  async getVMs(params: { per_page?: number; cursor?: string } = {}): Promise<PaginatedResponse<VM>> {
+  async getVMs(params: AdminVMListParams = {}): Promise<PaginatedResponse<VM>> {
     const searchParams = new URLSearchParams();
     if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
     if (params.cursor) searchParams.set("cursor", params.cursor);
+    if (params.customer_id) searchParams.set("customer_id", params.customer_id);
+    if (params.node_id) searchParams.set("node_id", params.node_id);
+    if (params.status) searchParams.set("status", params.status);
+    if (params.search) searchParams.set("search", params.search);
     const query = searchParams.toString();
     return apiClient.get<PaginatedResponse<VM>>(`/admin/vms${query ? `?${query}` : ""}`);
   },
@@ -1230,8 +1206,8 @@ export const adminStorageBackendsApi = {
     return apiClient.get<StorageBackendNode[]>(`/admin/storage-backends/${id}/nodes`);
   },
 
-  async assignStorageBackendNodes(id: string, nodeIds: string[]): Promise<void> {
-    return apiClient.postVoid(`/admin/storage-backends/${id}/nodes`, { node_ids: nodeIds });
+  async assignStorageBackendNodes(id: string, nodeIds: string[]): Promise<StorageBackendNode[]> {
+    return apiClient.post<StorageBackendNode[]>(`/admin/storage-backends/${id}/nodes`, { node_ids: nodeIds });
   },
 
   async removeStorageBackendNode(id: string, nodeId: string): Promise<void> {
@@ -1293,8 +1269,7 @@ export const inAppNotificationApi = {
   },
 
   async getUnreadCount(): Promise<UnreadCountResponse> {
-    const resp = await apiClient.get<{ data: UnreadCountResponse }>("/admin/notifications/unread-count");
-    return (resp as unknown as { data: UnreadCountResponse }).data;
+    return apiClient.get<UnreadCountResponse>("/admin/notifications/unread-count");
   },
 };
 
@@ -1367,11 +1342,10 @@ export const adminBillingApi = {
     description: string
   ): Promise<BillingTransaction> {
     await fetchCsrfToken();
-    const resp = await apiClient.post<{ data: BillingTransaction }>(
+    return apiClient.post<BillingTransaction>(
       `/admin/billing/credit?customer_id=${customerID}`,
       { amount, description }
     );
-    return (resp as unknown as { data: BillingTransaction }).data;
   },
 
   async getPayments(
@@ -1400,18 +1374,16 @@ export const adminBillingApi = {
     req: RefundRequest
   ): Promise<RefundResult> {
     await fetchCsrfToken();
-    const resp = await apiClient.post<{ data: RefundResult }>(
+    return apiClient.post<RefundResult>(
       `/admin/billing/refund/${paymentID}`,
       req
     );
-    return (resp as unknown as { data: RefundResult }).data;
   },
 
   async getConfig(): Promise<BillingConfig> {
-    const resp = await apiClient.get<{ data: BillingConfig }>(
+    return apiClient.get<BillingConfig>(
       "/admin/billing/config"
     );
-    return (resp as unknown as { data: BillingConfig }).data;
   },
 };
 
@@ -1475,19 +1447,17 @@ export const adminInvoicesApi = {
   },
 
   async get(id: string): Promise<Invoice> {
-    const resp = await apiClient.get<{ data: Invoice }>(
+    return apiClient.get<Invoice>(
       `/admin/invoices/${id}`
     );
-    return (resp as unknown as { data: Invoice }).data;
   },
 
   async voidInvoice(id: string): Promise<{ status: string }> {
     await fetchCsrfToken();
-    const resp = await apiClient.post<{ data: { status: string } }>(
+    return apiClient.post<{ status: string }>(
       `/admin/invoices/${id}/void`,
       {}
     );
-    return (resp as unknown as { data: { status: string } }).data;
   },
 
   getPDFUrl(id: string): string {

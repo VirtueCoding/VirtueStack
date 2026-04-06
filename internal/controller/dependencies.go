@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -25,7 +26,7 @@ import (
 
 // InitializeServices initializes all services and handlers.
 // This must be called after SetTaskWorker and SetNodeClient.
-func (s *Server) InitializeServices() error {
+func (s *Server) InitializeServices(ctx context.Context) error {
 	// Initialize repositories
 	vmRepo := repository.NewVMRepository(s.dbPool)
 	nodeRepo := repository.NewNodeRepository(s.dbPool)
@@ -40,8 +41,9 @@ func (s *Server) InitializeServices() error {
 	adminRepo := repository.NewAdminRepository(s.dbPool)
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
-	systemWebhookRepo := repository.NewSystemWebhookRepository(s.dbPool)
-	preActionWebhookRepo := repository.NewPreActionWebhookRepository(s.dbPool)
+	systemWebhookRepo := repository.NewEncryptedSystemWebhookRepository(s.dbPool, s.config.EncryptionKey.Value())
+	systemDeliveryRepo := repository.NewSystemWebhookDeliveryRepository(s.dbPool)
+	preActionWebhookRepo := repository.NewEncryptedPreActionWebhookRepository(s.dbPool, s.config.EncryptionKey.Value())
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
 	isoUploadRepo := repository.NewISOUploadRepository(s.dbPool)
@@ -50,11 +52,15 @@ func (s *Server) InitializeServices() error {
 	s.bandwidthRepo = bandwidthRepo
 	s.customerAPIKeyRepo = apiKeyRepo
 
-	// Create task publisher using the worker
-	var taskPublisher services.TaskPublisher
-	if s.taskWorker != nil {
-		taskPublisher = services.NewDefaultTaskPublisher(taskRepo, s.logger)
+	if err := systemWebhookRepo.EncryptPlaintextSecrets(ctx); err != nil {
+		return fmt.Errorf("encrypting existing system webhook secrets: %w", err)
 	}
+	if err := preActionWebhookRepo.EncryptPlaintextSecrets(ctx); err != nil {
+		return fmt.Errorf("encrypting existing pre-action webhook secrets: %w", err)
+	}
+
+	// Create task publisher using the worker queue when available.
+	taskPublisher := buildTaskPublisher(taskRepo, s.taskWorker, s.logger)
 
 	var nodeAgentClient services.NodeAgentClient
 	var backupNodeAgentClient services.BackupNodeAgentClient
@@ -63,7 +69,7 @@ func (s *Server) InitializeServices() error {
 			Monitors:   s.config.CephMonitors,
 			User:       s.config.CephUser,
 			SecretUUID: s.config.CephSecretUUID,
-		}, s.logger)
+		}, s.config.GuestOpHMACSecret.Value(), s.logger)
 		nodeAgentClient = nodeAgentGRPCClient
 		backupNodeAgentClient = services.NewBackupNodeAgentAdapter(nodeAgentGRPCClient, vmRepo)
 	}
@@ -87,7 +93,13 @@ func (s *Server) InitializeServices() error {
 	nodeStorageRepo := repository.NewNodeStorageRepository(s.dbPool)
 	systemEventService := services.NewSystemEventService(
 		systemWebhookRepo,
+		systemDeliveryRepo,
 		taskPublisher,
+		s.logger,
+	)
+	systemWebhookService := services.NewSystemWebhookService(
+		systemWebhookRepo,
+		systemDeliveryRepo,
 		s.logger,
 	)
 
@@ -268,6 +280,7 @@ func (s *Server) InitializeServices() error {
 		SettingsRepo: settingsRepo,
 		StoragePath:  s.config.Billing.InvoiceStoragePath,
 	})
+	invoiceAdvisoryLockDB := repository.NewAdvisoryLockDB(s.dbPool)
 	billingInvoiceService := services.NewBillingInvoiceService(services.BillingInvoiceServiceConfig{
 		InvoiceRepo:     billingInvoiceRepo,
 		TransactionRepo: billingTxRepo,
@@ -278,6 +291,8 @@ func (s *Server) InitializeServices() error {
 		Logger:          s.logger,
 	})
 	s.invoiceService = billingInvoiceService
+	s.invoiceSchedulerLock = invoiceAdvisoryLockDB
+	s.generateMonthlyInvoices = billingInvoiceService.GenerateAllMonthlyInvoices
 
 	s.vmService = services.NewVMService(services.VMServiceConfig{
 		VMRepo:              vmRepo,
@@ -293,6 +308,7 @@ func (s *Server) InitializeServices() error {
 		PreActionWebhookSvc: preActionWebhookService,
 		BillingHooks:        billing.NewRegistryHookAdapter(billingRegistry),
 		CustomerRepo:        customerRepo,
+		MaxISOSizeBytes:     int64(s.config.FileStorage.MaxISOSizeGB) * 1024 * 1024 * 1024,
 		EncryptionKey:       s.config.EncryptionKey.Value(),
 		Logger:              s.logger,
 	})
@@ -398,6 +414,7 @@ func (s *Server) InitializeServices() error {
 		s.logger,
 		s.config.EncryptionKey.Value(),
 	)
+	s.webhookScheduler = services.NewCombinedWebhookScheduler(webhookService, systemWebhookService)
 
 	// Initialize PowerDNS rDNS service if MySQL connection is configured
 	if s.config.PowerDNS.MySQLURL != "" {
@@ -426,6 +443,7 @@ func (s *Server) InitializeServices() error {
 		SSOTokenRepo:     ssoTokenRepo,
 		AuditRepo:        auditRepo,
 		PlanService:      s.planService,
+		RDNSService:      s.rdnsService,
 		JWTSecret:        s.config.JWTSecret.Value(),
 		Issuer:           "virtuestack",
 		EncryptionKey:    s.config.EncryptionKey.Value(),
@@ -465,9 +483,11 @@ func (s *Server) InitializeServices() error {
 		NodeAgent:                     s.nodeClient,
 		JWTSecret:                     s.config.JWTSecret.Value(),
 		Issuer:                        "virtuestack",
+		GuestOpHMACSecret:             s.config.GuestOpHMACSecret.Value(),
 		EncryptionKey:                 s.config.EncryptionKey.Value(),
 		ConsoleBaseURL:                s.config.ConsoleBaseURL,
 		ISOStoragePath:                isoStoragePath,
+		MaxISOSizeBytes:               int64(s.config.FileStorage.MaxISOSizeGB) * 1024 * 1024 * 1024,
 		RegistrationEmailVerification: s.config.RegistrationEmailVerification,
 		Logger:                        s.logger,
 	})
@@ -525,6 +545,8 @@ func (s *Server) InitializeServices() error {
 		notificationPreferenceRepo,
 		notificationEventRepo,
 		notifyService,
+		auditRepo,
+		s.logger,
 	)
 
 	// Initialize in-app notification system (SSE hub, repo, service, handlers)
@@ -535,9 +557,13 @@ func (s *Server) InitializeServices() error {
 		Hub:    s.sseHub,
 		Logger: s.logger,
 	})
-	authCfg := middleware.AuthConfig{JWTSecret: s.config.JWTSecret.Value(), Issuer: "virtuestack"}
+	authCfg := middleware.AuthConfig{
+		JWTSecret:        s.config.JWTSecret.Value(),
+		Issuer:           "virtuestack",
+		SessionValidator: s.authService.ValidateAccessSession,
+	}
 	s.customerInAppNotifHandler = customer.NewInAppNotificationsHandler(
-		s.inAppNotifService, s.sseHub, authCfg, s.logger,
+		s.inAppNotifService, s.sseHub, authCfg, s.logger, auditRepo,
 	)
 	s.adminInAppNotifHandler = admin.NewAdminInAppNotificationsHandler(
 		s.inAppNotifService, s.sseHub, authCfg, s.logger,

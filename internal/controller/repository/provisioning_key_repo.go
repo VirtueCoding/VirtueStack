@@ -184,8 +184,7 @@ func (r *ProvisioningKeyRepository) Update(ctx context.Context, id string, req *
 		ipsArg = req.AllowedIPs
 	}
 
-	row := r.db.QueryRow(ctx, q, nameArg, descArg, ipsArg, req.ExpiresAt, id)
-	key, err := scanProvisioningKey(row)
+	key, err := ScanRow(ctx, r.db, q, []any{nameArg, descArg, ipsArg, req.ExpiresAt, id}, scanProvisioningKey)
 	if err != nil {
 		return nil, fmt.Errorf("updating provisioning key %s: %w", id, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -283,6 +284,53 @@ func TestGenerateHMACSignature(t *testing.T) {
 		sig1 := GenerateHMACSignature("key1", []byte("payload"))
 		sig2 := GenerateHMACSignature("key2", []byte("payload"))
 		assert.NotEqual(t, sig1, sig2)
+	})
+}
+
+func TestGuestOpToken(t *testing.T) {
+	t.Run("generate and verify round trip", func(t *testing.T) {
+		now := time.Unix(1_700_000_000, 0)
+		token, err := GenerateGuestOpToken("shared-secret-0123456789abcdef", "vm-123", now)
+		require.NoError(t, err)
+
+		err = VerifyGuestOpToken(
+			"shared-secret-0123456789abcdef",
+			"vm-123",
+			token,
+			now.Add(2*time.Minute),
+			5*time.Minute,
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects empty secret", func(t *testing.T) {
+		_, err := GenerateGuestOpToken("", "vm-123", time.Unix(1_700_000_000, 0))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "guest operation HMAC secret is required")
+	})
+
+	t.Run("rejects malformed token", func(t *testing.T) {
+		err := VerifyGuestOpToken(
+			"shared-secret-0123456789abcdef",
+			"vm-123",
+			"bad-token",
+			time.Unix(1_700_000_100, 0),
+			5*time.Minute,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "malformed guest operation token")
+	})
+
+	t.Run("rejects token when secret missing", func(t *testing.T) {
+		err := VerifyGuestOpToken(
+			"",
+			"vm-123",
+			"1700000000:abc",
+			time.Unix(1_700_000_100, 0),
+			5*time.Minute,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "guest operation HMAC secret is required")
 	})
 }
 

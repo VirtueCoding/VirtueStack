@@ -79,6 +79,10 @@ func (g *CloudInitGenerator) Generate(ctx context.Context, cfg *CloudInitConfig)
 	logger := g.logger.With("vm_id", cfg.VMID, "hostname", cfg.Hostname)
 	logger.Info("generating cloud-init ISO")
 
+	if err := validateCloudInitHostname(cfg.Hostname); err != nil {
+		return "", fmt.Errorf("invalid hostname for VM %s: %w", cfg.VMID, err)
+	}
+
 	if err := os.MkdirAll(g.outputPath, 0755); err != nil {
 		return "", fmt.Errorf("creating cloud-init output dir %s: %w", g.outputPath, err)
 	}
@@ -113,6 +117,20 @@ func (g *CloudInitGenerator) Generate(ctx context.Context, cfg *CloudInitConfig)
 
 	logger.Info("cloud-init ISO generated", "path", isoPath)
 	return isoPath, nil
+}
+
+func validateCloudInitHostname(hostname string) error {
+	if strings.TrimSpace(hostname) == "" {
+		return fmt.Errorf("hostname must not be empty")
+	}
+	if strings.ContainsAny(hostname, "\r\n") {
+		return fmt.Errorf("hostname must not contain line breaks")
+	}
+	if strings.Contains(hostname, ":") {
+		return fmt.Errorf("hostname must not contain colon characters")
+	}
+
+	return nil
 }
 
 // Delete removes the cloud-init ISO file for the given VM ID.
@@ -153,10 +171,11 @@ func (g *CloudInitGenerator) writeUserData(tmpDir string, cfg *CloudInitConfig) 
 	if len(cfg.SSHPublicKeys) > 0 {
 		sb.WriteString("ssh_authorized_keys:\n")
 		for _, key := range cfg.SSHPublicKeys {
-			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key)); err != nil {
+			canonicalKey, err := normalizeAuthorizedKey(key)
+			if err != nil {
 				return fmt.Errorf("invalid SSH public key: %w", err)
 			}
-			sb.WriteString(fmt.Sprintf("  - %s\n", key))
+			sb.WriteString(fmt.Sprintf("  - %q\n", canonicalKey))
 		}
 	}
 
@@ -166,6 +185,18 @@ func (g *CloudInitGenerator) writeUserData(tmpDir string, cfg *CloudInitConfig) 
 	sb.WriteString("timezone: UTC\n")
 
 	return os.WriteFile(filepath.Join(tmpDir, "user-data"), []byte(sb.String()), 0644)
+}
+
+func normalizeAuthorizedKey(key string) (string, error) {
+	_, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(key))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return "", fmt.Errorf("authorized key contains trailing content")
+	}
+
+	return strings.TrimSpace(key), nil
 }
 
 // validateCIDRHost validates that s is a valid CIDR address (IP/prefix) by checking

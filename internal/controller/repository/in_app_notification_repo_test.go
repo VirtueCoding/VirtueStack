@@ -296,11 +296,11 @@ func TestInAppNotificationRepository_Create(t *testing.T) {
 
 func TestInAppNotificationRepository_ListByCustomer_CursorPagination(t *testing.T) {
 	tests := []struct {
-		name       string
-		cursor     string
-		perPage    int
-		queryErr   error
-		wantErr    bool
+		name     string
+		cursor   string
+		perPage  int
+		queryErr error
+		wantErr  bool
 	}{
 		{name: "first page no cursor", cursor: "", perPage: 20},
 		{name: "with cursor", cursor: "2024-01-01T00:00:00Z", perPage: 10},
@@ -317,6 +317,8 @@ func TestInAppNotificationRepository_ListByCustomer_CursorPagination(t *testing.
 					assert.Contains(t, sql, "customer_id")
 					if tt.cursor != "" {
 						assert.True(t, strings.Contains(sql, "created_at < $"))
+						require.Len(t, args, 3)
+						assert.Equal(t, "2024-01-01T00:00:00Z", args[1])
 					}
 					return &emptyRows{}, nil
 				},
@@ -334,15 +336,35 @@ func TestInAppNotificationRepository_ListByCustomer_CursorPagination(t *testing.
 	}
 }
 
+func TestInAppNotificationRepository_ListByCustomer_DecodesOpaqueCursor(t *testing.T) {
+	cursor := models.EncodeCursor("2024-01-01T00:00:00Z", "next")
+	db := &mockNotifDB{
+		queryFunc: func(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+			assert.Contains(t, sql, "created_at < $")
+			require.Len(t, args, 3)
+			assert.Equal(t, "cust-1", args[0])
+			assert.Equal(t, "2024-01-01T00:00:00Z", args[1])
+			assert.Equal(t, 11, args[2])
+			return &emptyRows{}, nil
+		},
+	}
+
+	repo := NewInAppNotificationRepository(db)
+	results, hasMore, err := repo.ListByCustomer(context.Background(), "cust-1", false, cursor, 10)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+	assert.False(t, hasMore)
+}
+
 // emptyRows implements pgx.Rows for zero-result queries.
 type emptyRows struct{}
 
-func (e *emptyRows) Close()                                         {}
-func (e *emptyRows) Err() error                                     { return nil }
-func (e *emptyRows) CommandTag() pgconn.CommandTag                   { return pgconn.CommandTag{} }
-func (e *emptyRows) FieldDescriptions() []pgconn.FieldDescription   { return nil }
-func (e *emptyRows) Next() bool                                     { return false }
-func (e *emptyRows) Scan(_ ...any) error                            { return nil }
-func (e *emptyRows) Values() ([]any, error)                         { return nil, nil }
-func (e *emptyRows) RawValues() [][]byte                            { return nil }
-func (e *emptyRows) Conn() *pgx.Conn                                { return nil }
+func (e *emptyRows) Close()                                       {}
+func (e *emptyRows) Err() error                                   { return nil }
+func (e *emptyRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (e *emptyRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (e *emptyRows) Next() bool                                   { return false }
+func (e *emptyRows) Scan(_ ...any) error                          { return nil }
+func (e *emptyRows) Values() ([]any, error)                       { return nil, nil }
+func (e *emptyRows) RawValues() [][]byte                          { return nil }
+func (e *emptyRows) Conn() *pgx.Conn                              { return nil }

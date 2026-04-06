@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@virtuestack/ui";
 import { Cpu, MemoryStick, HardDrive, Network, DollarSign, Loader2, Camera, Archive, Disc, Server, Hash, Activity, Zap } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 
@@ -81,6 +81,9 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
     resolver: zodResolver(createPlanSchema),
     defaultValues,
   });
+  const priceMonthly = useWatch({ control: form.control, name: "price_monthly" });
+  const storageBackend = useWatch({ control: form.control, name: "storage_backend" });
+  const isActive = useWatch({ control: form.control, name: "is_active" });
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -276,7 +279,7 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                   <p className="text-xs text-destructive">{form.formState.errors.price_monthly.message}</p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  {form.watch("price_monthly") ? `$${((form.watch("price_monthly") || 0) / 100).toFixed(2)}` : "Enter cents, e.g., 999 = $9.99"}
+                  {priceMonthly ? `$${((priceMonthly || 0) / 100).toFixed(2)}` : "Enter cents, e.g., 999 = $9.99"}
                 </p>
               </div>
               <div className="space-y-2">
@@ -363,7 +366,7 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                   Storage Backend
                 </Label>
                 <Select
-                  value={form.watch("storage_backend")}
+                  value={storageBackend}
                   onValueChange={(value: "ceph" | "qcow" | "lvm") => form.setValue("storage_backend", value)}
                 >
                   <SelectTrigger>
@@ -403,11 +406,11 @@ export function PlanCreateDialog({ open, onOpenChange, onCreate, isCreating }: P
                 <div className="flex items-center gap-3 pt-2">
                   <Switch
                     id="is_active"
-                    checked={form.watch("is_active")}
+                    checked={isActive}
                     onCheckedChange={(checked) => form.setValue("is_active", checked)}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {form.watch("is_active") ? "Active" : "Inactive"}
+                    {isActive ? "Active" : "Inactive"}
                   </span>
                 </div>
               </div>

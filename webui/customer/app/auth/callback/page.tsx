@@ -5,18 +5,22 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@virtuestack/ui";
 import { Button } from "@virtuestack/ui";
-import { useQuery } from "@tanstack/react-query";
-import { oauthApi } from "@/lib/api-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { customerAuthApi, oauthApi } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+import { completeOAuthFlow } from "@/lib/oauth-flow";
 import { retrieveOAuthState } from "@/lib/utils/oauth";
-import { fetchCustomerProfileAfter2FA } from "@/lib/auth-utils";
-
-const AUTH_STATE_KEY = "customer_auth_state";
+import { finalizeOAuthSession } from "@/lib/oauth-callback-session";
 
 function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { getAuthVersion, guardedSetAuthenticatedUser } = useAuth();
+  const queryClient = useQueryClient();
+  const isClient = typeof window !== "undefined";
 
-  // Derive validation synchronously from URL params.
+  // Validate only URL parameters during render. Browser-only PKCE state is
+  // consumed after mount so SSR does not touch sessionStorage.
   const callbackInput = useMemo(() => {
     const errorParam = searchParams.get("error");
     if (errorParam) {
@@ -29,15 +33,8 @@ function OAuthCallbackContent() {
     if (!code || !state) {
       return { error: "Missing authorization code or state parameter." };
     }
-    const stored = retrieveOAuthState(state);
-    if (!stored) {
-      return { error: "OAuth state mismatch or expired. Please try again." };
-    }
     return {
-      provider: stored.provider,
       code,
-      codeVerifier: stored.codeVerifier,
-      redirectURI: stored.redirectURI,
       state,
     };
   }, [searchParams]);
@@ -45,35 +42,43 @@ function OAuthCallbackContent() {
   const hasError = "error" in callbackInput;
 
   // useQuery to handle the async callback (runs once, no retries).
+  // Browser-only PKCE state is consumed only when the component is running on
+  // the client, so SSR never touches sessionStorage.
   const { error: queryError, isLoading } = useQuery({
     queryKey: ["oauth-callback", callbackInput],
     queryFn: async () => {
       if (hasError) throw new Error(callbackInput.error);
-      const input = callbackInput as {
-        provider: string; code: string; codeVerifier: string;
-        redirectURI: string; state: string;
-      };
-
-      await oauthApi.callback(input.provider, {
+      const input = callbackInput as { code: string; state: string };
+      const stored = retrieveOAuthState(input.state);
+      if (!stored) {
+        throw new Error("OAuth state mismatch or expired. Please try again.");
+      }
+      const callbackVersion = getAuthVersion();
+      const request = {
         code: input.code,
-        code_verifier: input.codeVerifier,
-        redirect_uri: input.redirectURI,
+        code_verifier: stored.codeVerifier,
+        redirect_uri: stored.redirectURI,
         state: input.state,
-      });
+      };
+      const result = await completeOAuthFlow(stored, request, oauthApi);
 
-      const user = await fetchCustomerProfileAfter2FA();
-
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(
-          AUTH_STATE_KEY,
-          JSON.stringify({ user, isAuthenticated: true })
-        );
+      if (result.mode === "link") {
+        await queryClient.invalidateQueries({ queryKey: ["oauth-links"] });
+        router.push(result.returnTo);
+        return true;
       }
 
-      router.push("/vms");
+      await finalizeOAuthSession({
+        user: result.tokens.user ?? null,
+        sessionCleanupToken: result.tokens.session_cleanup_token,
+        setAuthenticatedUser: (user) =>
+          guardedSetAuthenticatedUser(callbackVersion, user),
+        invalidateSession: customerAuthApi.invalidateSession,
+      });
+      router.push(result.returnTo);
       return true;
     },
-    enabled: !hasError,
+    enabled: isClient && !hasError,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -112,7 +117,7 @@ function OAuthCallbackContent() {
     );
   }
 
-  if (isLoading) {
+  if (!isClient || isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4 bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-blue-950">
         <Card className="w-full max-w-md shadow-xl">

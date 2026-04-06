@@ -128,6 +128,14 @@ func newTestPaymentService(
 	provider *mockPaymentProvider,
 	repo *mockBillingPaymentRepo,
 ) *PaymentService {
+	return newTestPaymentServiceWithTx(provider, repo, &mockBillingTxRepo{})
+}
+
+func newTestPaymentServiceWithTx(
+	provider *mockPaymentProvider,
+	repo *mockBillingPaymentRepo,
+	txRepo BillingTransactionRepo,
+) *PaymentService {
 	reg := payments.NewPaymentRegistry()
 	if provider != nil {
 		if err := reg.Register(provider.name, provider); err != nil {
@@ -136,7 +144,7 @@ func newTestPaymentService(
 	}
 	logger := logging.NewLogger("error")
 	ledger := NewBillingLedgerService(BillingLedgerServiceConfig{
-		TransactionRepo: &mockBillingTxRepo{},
+		TransactionRepo: txRepo,
 		Logger:          logger,
 	})
 	return NewPaymentService(PaymentServiceConfig{
@@ -147,19 +155,28 @@ func newTestPaymentService(
 	})
 }
 
-type mockBillingTxRepo struct{}
+type mockBillingTxRepo struct {
+	creditAccountFunc func(ctx context.Context, customerID string, amount int64, description string, idempotencyKey *string) (*models.BillingTransaction, error)
+	debitAccountFunc  func(ctx context.Context, customerID string, amount int64, description string, referenceType, referenceID, idempotencyKey *string) (*models.BillingTransaction, error)
+}
 
 func (m *mockBillingTxRepo) CreditAccount(
-	_ context.Context, _ string, amount int64, _ string, _ *string,
+	ctx context.Context, customerID string, amount int64, description string, idempotencyKey *string,
 ) (*models.BillingTransaction, error) {
+	if m.creditAccountFunc != nil {
+		return m.creditAccountFunc(ctx, customerID, amount, description, idempotencyKey)
+	}
 	return &models.BillingTransaction{
 		ID: "tx_1", Amount: amount, BalanceAfter: amount,
 	}, nil
 }
 
 func (m *mockBillingTxRepo) DebitAccount(
-	_ context.Context, _ string, amount int64, _ string, _, _, _ *string,
+	ctx context.Context, customerID string, amount int64, description string, referenceType, referenceID, idempotencyKey *string,
 ) (*models.BillingTransaction, error) {
+	if m.debitAccountFunc != nil {
+		return m.debitAccountFunc(ctx, customerID, amount, description, referenceType, referenceID, idempotencyKey)
+	}
 	return &models.BillingTransaction{
 		ID: "tx_2", Amount: amount,
 	}, nil
@@ -316,6 +333,263 @@ func TestPaymentService_HandleWebhook_PaymentFailed(t *testing.T) {
 	err := svc.HandleWebhook(context.Background(), "stripe", []byte("{}"), "sig")
 	require.NoError(t, err)
 	assert.True(t, statusUpdated)
+}
+
+func TestPaymentService_HandleWebhook_PayPalUsesResolvedLocalPayment(t *testing.T) {
+	provider := &mockPaymentProvider{
+		name: "paypal",
+		handleWebhookFunc: func(_ context.Context, _ []byte, _ string) (*payments.WebhookEvent, error) {
+			return &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_1",
+				PaymentID:      "CAP-123",
+				AmountCents:    5000,
+				Currency:       "USD",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-123",
+				Metadata: map[string]string{
+					"customer_id": "cust_1",
+					"payment_id":  "ORDER-123",
+				},
+			}, nil
+		},
+	}
+
+	statusUpdated := false
+	creditedCustomerID := ""
+	repo := &mockBillingPaymentRepo{
+		getByGatewayFunc: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+			assert.Equal(t, "paypal", gateway)
+			assert.Equal(t, "ORDER-123", gatewayPaymentID)
+			return &models.BillingPayment{
+				ID:         "pay_local_1",
+				CustomerID: "cust_1",
+				Gateway:    "paypal",
+				Amount:     5000,
+				Currency:   "USD",
+				Status:     models.PaymentStatusPending,
+			}, nil
+		},
+		updateStatusFunc: func(_ context.Context, id, status string, gatewayPaymentID *string) error {
+			statusUpdated = true
+			assert.Equal(t, "pay_local_1", id)
+			assert.Equal(t, models.PaymentStatusCompleted, status)
+			require.NotNil(t, gatewayPaymentID)
+			assert.Equal(t, "CAP-123", *gatewayPaymentID)
+			return nil
+		},
+	}
+	txRepo := &mockBillingTxRepo{
+		creditAccountFunc: func(_ context.Context, customerID string, amount int64, description string, idempotencyKey *string) (*models.BillingTransaction, error) {
+			creditedCustomerID = customerID
+			assert.Equal(t, int64(5000), amount)
+			assert.Equal(t, "Top-up via paypal", description)
+			require.NotNil(t, idempotencyKey)
+			assert.Equal(t, "paypal:capture:CAP-123", *idempotencyKey)
+			return &models.BillingTransaction{ID: "tx_1", Amount: amount, BalanceAfter: amount}, nil
+		},
+	}
+
+	svc := newTestPaymentServiceWithTx(provider, repo, txRepo)
+	err := svc.HandleWebhook(context.Background(), "paypal", []byte("{}"), "")
+
+	require.NoError(t, err)
+	assert.True(t, statusUpdated)
+	assert.Equal(t, "cust_1", creditedCustomerID)
+}
+
+func TestPaymentService_HandleWebhook_PayPalRejectsInvalidPaymentContext(t *testing.T) {
+	tests := []struct {
+		name       string
+		event      *payments.WebhookEvent
+		getPayment func(ctx context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error)
+		wantStatus bool
+		wantCredit bool
+	}{
+		{
+			name: "unknown order id",
+			event: &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_unknown",
+				PaymentID:      "CAP-404",
+				AmountCents:    5000,
+				Currency:       "USD",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-404",
+				Metadata: map[string]string{
+					"customer_id": "cust_1",
+					"payment_id":  "ORDER-404",
+				},
+			},
+			getPayment: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+				assert.Equal(t, "paypal", gateway)
+				assert.Equal(t, "ORDER-404", gatewayPaymentID)
+				return nil, sharederrors.ErrNotFound
+			},
+		},
+		{
+			name: "customer mismatch",
+			event: &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_customer_mismatch",
+				PaymentID:      "CAP-201",
+				AmountCents:    5000,
+				Currency:       "USD",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-201",
+				Metadata: map[string]string{
+					"customer_id": "cust_payload",
+					"payment_id":  "ORDER-201",
+				},
+			},
+			getPayment: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+				return &models.BillingPayment{
+					ID:         "pay_local_201",
+					CustomerID: "cust_db",
+					Gateway:    "paypal",
+					Amount:     5000,
+					Currency:   "USD",
+					Status:     models.PaymentStatusPending,
+				}, nil
+			},
+		},
+		{
+			name: "amount mismatch",
+			event: &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_amount_mismatch",
+				PaymentID:      "CAP-202",
+				AmountCents:    7000,
+				Currency:       "USD",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-202",
+				Metadata: map[string]string{
+					"customer_id": "cust_1",
+					"payment_id":  "ORDER-202",
+				},
+			},
+			getPayment: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+				return &models.BillingPayment{
+					ID:         "pay_local_202",
+					CustomerID: "cust_1",
+					Gateway:    "paypal",
+					Amount:     5000,
+					Currency:   "USD",
+					Status:     models.PaymentStatusPending,
+				}, nil
+			},
+		},
+		{
+			name: "currency mismatch",
+			event: &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_currency_mismatch",
+				PaymentID:      "CAP-203",
+				AmountCents:    5000,
+				Currency:       "EUR",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-203",
+				Metadata: map[string]string{
+					"customer_id": "cust_1",
+					"payment_id":  "ORDER-203",
+				},
+			},
+			getPayment: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+				return &models.BillingPayment{
+					ID:         "pay_local_203",
+					CustomerID: "cust_1",
+					Gateway:    "paypal",
+					Amount:     5000,
+					Currency:   "USD",
+					Status:     models.PaymentStatusPending,
+				}, nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mockPaymentProvider{
+				name: "paypal",
+				handleWebhookFunc: func(_ context.Context, _ []byte, _ string) (*payments.WebhookEvent, error) {
+					return tt.event, nil
+				},
+			}
+
+			statusUpdated := false
+			creditCalled := false
+			repo := &mockBillingPaymentRepo{
+				getByGatewayFunc: tt.getPayment,
+				updateStatusFunc: func(_ context.Context, _, _ string, _ *string) error {
+					statusUpdated = true
+					return nil
+				},
+			}
+			txRepo := &mockBillingTxRepo{
+				creditAccountFunc: func(_ context.Context, _ string, amount int64, _ string, _ *string) (*models.BillingTransaction, error) {
+					creditCalled = true
+					return &models.BillingTransaction{ID: "tx_invalid", Amount: amount, BalanceAfter: amount}, nil
+				},
+			}
+
+			svc := newTestPaymentServiceWithTx(provider, repo, txRepo)
+			err := svc.HandleWebhook(context.Background(), "paypal", []byte("{}"), "")
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, sharederrors.ErrValidation)
+			assert.Equal(t, tt.wantStatus, statusUpdated)
+			assert.Equal(t, tt.wantCredit, creditCalled)
+		})
+	}
+}
+
+func TestPaymentService_HandleWebhook_PayPalLookupFailureReturnsServerError(t *testing.T) {
+	provider := &mockPaymentProvider{
+		name: "paypal",
+		handleWebhookFunc: func(_ context.Context, _ []byte, _ string) (*payments.WebhookEvent, error) {
+			return &payments.WebhookEvent{
+				Type:           payments.WebhookEventPaymentCompleted,
+				GatewayEventID: "evt_paypal_db_failure",
+				PaymentID:      "CAP-500",
+				AmountCents:    5000,
+				Currency:       "USD",
+				Status:         "completed",
+				IdempotencyKey: "paypal:capture:CAP-500",
+				Metadata: map[string]string{
+					"customer_id": "cust_1",
+					"payment_id":  "ORDER-500",
+				},
+			}, nil
+		},
+	}
+
+	statusUpdated := false
+	creditCalled := false
+	repo := &mockBillingPaymentRepo{
+		getByGatewayFunc: func(_ context.Context, gateway, gatewayPaymentID string) (*models.BillingPayment, error) {
+			assert.Equal(t, "paypal", gateway)
+			assert.Equal(t, "ORDER-500", gatewayPaymentID)
+			return nil, errors.New("database unavailable")
+		},
+		updateStatusFunc: func(_ context.Context, _, _ string, _ *string) error {
+			statusUpdated = true
+			return nil
+		},
+	}
+	txRepo := &mockBillingTxRepo{
+		creditAccountFunc: func(_ context.Context, _ string, amount int64, _ string, _ *string) (*models.BillingTransaction, error) {
+			creditCalled = true
+			return &models.BillingTransaction{ID: "tx_500", Amount: amount, BalanceAfter: amount}, nil
+		},
+	}
+
+	svc := newTestPaymentServiceWithTx(provider, repo, txRepo)
+	err := svc.HandleWebhook(context.Background(), "paypal", []byte("{}"), "")
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, sharederrors.ErrValidation)
+	assert.False(t, statusUpdated)
+	assert.False(t, creditCalled)
 }
 
 func TestPaymentService_GetPaymentHistory(t *testing.T) {

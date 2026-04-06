@@ -3,10 +3,16 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // parseThinPoolStats parses lvs output for thin pool stats.
@@ -70,14 +76,14 @@ func TestThinPoolStatsParsing(t *testing.T) {
 			wantErr:         false,
 		},
 		{
-			name:            "single value missing",
-			lvsOutput:       "  45.20\n",
-			wantErr:         true,
+			name:      "single value missing",
+			lvsOutput: "  45.20\n",
+			wantErr:   true,
 		},
 		{
-			name:            "invalid number",
-			lvsOutput:       "  abc  12.80\n",
-			wantErr:         true,
+			name:      "invalid number",
+			lvsOutput: "  abc  12.80\n",
+			wantErr:   true,
 		},
 	}
 
@@ -227,4 +233,288 @@ func TestCloneFromTemplateNoSizeArgument(t *testing.T) {
 	// Verify CloneFromTemplate implementation for thin LVs creates snapshot without -L
 	// The current implementation uses the same pattern as CreateSnapshot
 	t.Log("CloneFromTemplate uses thin snapshot (no -L for thin provisioning)")
+}
+
+func TestLVMMutationOperationsAcceptCanonicalDiskPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		invoke       func(t *testing.T, manager *LVMManager, diskPath string)
+		wantCommands []string
+	}{
+		{
+			name: "delete",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.Delete(context.Background(), diskPath))
+			},
+			wantCommands: []string{
+				"lvs --noheadings -o lv_name --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool",
+				"lvremove -f /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "resize",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.Resize(context.Background(), diskPath, 50))
+			},
+			wantCommands: []string{
+				"lvresize -L 50G /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "create snapshot",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.CreateSnapshot(context.Background(), diskPath, "snap-new"))
+			},
+			wantCommands: []string{
+				"lvs /dev/vgvs/snap-new",
+				"lvcreate --thin -s --name snap-new /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "delete snapshot",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.DeleteSnapshot(context.Background(), diskPath, "snap-existing"))
+			},
+			wantCommands: []string{
+				"lvremove -f /dev/vgvs/snap-existing",
+			},
+		},
+		{
+			name: "flatten image",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.FlattenImage(context.Background(), diskPath))
+			},
+			wantCommands: []string{
+				"lvconvert --splitsnapshot /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "rollback",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				require.NoError(t, manager.Rollback(context.Background(), diskPath, "snap-existing"))
+			},
+			wantCommands: []string{
+				"lvs /dev/vgvs/snap-existing",
+				"lvrename /dev/vgvs/vs-test-vm-123-disk0 vs-test-vm-123-disk0-old",
+				"lvrename /dev/vgvs/snap-existing vs-test-vm-123-disk0",
+				"lvremove -f /dev/vgvs/vs-test-vm-123-disk0-old",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			commandLogPath := installFakeLVMBinary(t)
+			manager := newTestLVMManager(t)
+			diskPath := manager.DiskIdentifier("test-vm-123")
+
+			tt.invoke(t, manager, diskPath)
+
+			commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+			for _, wantCommand := range tt.wantCommands {
+				assert.Contains(t, commandLog, wantCommand)
+			}
+		})
+	}
+}
+
+func TestLVMQueryOperationsAcceptCanonicalDiskPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		invoke       func(t *testing.T, manager *LVMManager, diskPath string)
+		wantCommands []string
+	}{
+		{
+			name: "image exists",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				exists, err := manager.ImageExists(context.Background(), diskPath)
+				require.NoError(t, err)
+				assert.True(t, exists)
+			},
+			wantCommands: []string{
+				"lvs /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "get image size",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				size, err := manager.GetImageSize(context.Background(), diskPath)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1073741824), size)
+			},
+			wantCommands: []string{
+				"lvs --noheadings --units b -o lv_size /dev/vgvs/vs-test-vm-123-disk0",
+			},
+		},
+		{
+			name: "list snapshots",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				snapshots, err := manager.ListSnapshots(context.Background(), diskPath)
+				require.NoError(t, err)
+				require.Len(t, snapshots, 1)
+				assert.Equal(t, "snap-existing", snapshots[0].Name)
+				assert.Equal(t, int64(1073741824), snapshots[0].Size)
+			},
+			wantCommands: []string{
+				"lvs --noheadings --units b -o lv_name,lv_size --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool",
+			},
+		},
+		{
+			name: "get image info",
+			invoke: func(t *testing.T, manager *LVMManager, diskPath string) {
+				info, err := manager.GetImageInfo(context.Background(), diskPath)
+				require.NoError(t, err)
+				assert.Equal(t, "/dev/vgvs/vs-test-vm-123-disk0", info.Filename)
+				assert.Equal(t, int64(1073741824), info.VirtualSizeBytes)
+				assert.Equal(t, "lvm", info.Format)
+			},
+			wantCommands: []string{
+				"lvs /dev/vgvs/vs-test-vm-123-disk0",
+				"lvs --noheadings --units b -o lv_size,lv_attr --reportformat json vgvs/vs-test-vm-123-disk0",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			commandLogPath := installFakeLVMBinary(t)
+			manager := newTestLVMManager(t)
+			diskPath := manager.DiskIdentifier("test-vm-123")
+
+			tt.invoke(t, manager, diskPath)
+
+			commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+			for _, wantCommand := range tt.wantCommands {
+				assert.Contains(t, commandLog, wantCommand)
+			}
+		})
+	}
+}
+
+func TestLVMRollbackRejectsSnapshotsOutsideTargetOrigin(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.Rollback(context.Background(), diskPath, "snap-foreign")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot snap-foreign")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs --noheadings --units b -o lv_name,lv_size --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool")
+	assert.NotContains(t, commandLog, "lvrename /dev/vgvs/vs-test-vm-123-disk0")
+	assert.NotContains(t, commandLog, "lvrename /dev/vgvs/snap-foreign")
+}
+
+func TestLVMDeleteSnapshotRejectsSnapshotsOutsideTargetOrigin(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.DeleteSnapshot(context.Background(), diskPath, "snap-foreign")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot snap-foreign")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs --noheadings --units b -o lv_name,lv_size --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool")
+	assert.NotContains(t, commandLog, "lvremove -f /dev/vgvs/snap-foreign")
+}
+
+func TestLVMDeleteSnapshotPropagatesExistenceCheckFailures(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.DeleteSnapshot(context.Background(), diskPath, "snap-error")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checking if snapshot snap-error exists")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs /dev/vgvs/snap-error")
+	assert.NotContains(t, commandLog, "lvremove -f /dev/vgvs/snap-error")
+}
+
+func newTestLVMManager(t *testing.T) *LVMManager {
+	t.Helper()
+
+	manager, err := NewLVMManager("vgvs", "thinpool", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	return manager
+}
+
+func installFakeLVMBinary(t *testing.T) string {
+	t.Helper()
+
+	workingDir := t.TempDir()
+	commandLogPath := filepath.Join(workingDir, "lvm-commands.log")
+	binaryPath := filepath.Join(workingDir, "lvm")
+	script := `#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >> "$LVM_LOG"
+
+case "$1" in
+  lvs)
+    case "$*" in
+      *"origin=vs-test-vm-123-disk0 && pool_lv=thinpool"*)
+        printf '%s\n' 'snap-existing 1073741824B'
+        exit 0
+        ;;
+      *"/dev/vgvs/snap-error"*)
+        printf '%s\n' 'lvmlockd unavailable' >&2
+        exit 4
+        ;;
+      *"/dev/vgvs/snap-new"*)
+        exit 5
+        ;;
+      *"--reportformat json"*)
+        printf '%s\n' '{"report":[{"lv":[{"lv_size":"1073741824B","lv_attr":"Vwi-a-tz--"}]}]}'
+        exit 0
+        ;;
+      *"--noheadings --units b -o lv_size"*)
+        printf '%s\n' '1073741824B'
+        exit 0
+        ;;
+      *"--noheadings --units b -o lv_name,lv_size"*)
+        printf '%s\n' 'snap-existing 1073741824B'
+        exit 0
+        ;;
+      *"--noheadings -o lv_name --select"*)
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  lvcreate|lvremove|lvresize|lvrename|lvconvert)
+    exit 0
+    ;;
+esac
+
+printf 'unexpected command: %s\n' "$*" >&2
+exit 1
+`
+	require.NoError(t, os.WriteFile(binaryPath, []byte(script), 0o755))
+	t.Setenv("LVM_LOG", commandLogPath)
+	t.Setenv("PATH", workingDir)
+
+	return commandLogPath
+}
+
+func readFakeLVMCommands(t *testing.T, commandLogPath string) []string {
+	t.Helper()
+
+	data, err := os.ReadFile(commandLogPath)
+	require.NoError(t, err)
+
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil
+	}
+
+	return strings.Split(trimmed, "\n")
 }

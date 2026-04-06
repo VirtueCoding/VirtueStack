@@ -51,9 +51,9 @@ var validLVMLVName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 //
 // See: https://man7.org/linux/man-pages/man8/lvmlockd.8.html
 type LVMManager struct {
-	vgName    string
-	thinPool  string
-	logger    *slog.Logger
+	vgName   string
+	thinPool string
+	logger   *slog.Logger
 }
 
 // NewLVMManager creates a new LVMManager for the given volume group and thin pool.
@@ -106,6 +106,38 @@ func (m *LVMManager) validateLVIdentifier(id string) error {
 			fmt.Sprintf("invalid LVM identifier %q: must not contain path traversal characters", id), nil)
 	}
 	return nil
+}
+
+// normalizeLVName accepts either a bare LV name or the canonical device path
+// returned by DiskIdentifier and resolves it to the LV name used in LVM queries.
+func (m *LVMManager) normalizeLVName(identifier string) (string, error) {
+	if !strings.HasPrefix(identifier, "/") {
+		if err := m.validateLVIdentifier(identifier); err != nil {
+			return "", err
+		}
+		return identifier, nil
+	}
+
+	prefix := m.lvPath("")
+	if !strings.HasPrefix(identifier, prefix) {
+		return "", NewStorageError(ErrCodeInvalid,
+			fmt.Sprintf("invalid LVM path %q: must be within %s", identifier, strings.TrimSuffix(prefix, "/")), nil)
+	}
+
+	lvName := strings.TrimPrefix(identifier, prefix)
+	if lvName == "" {
+		return "", NewStorageError(ErrCodeInvalid,
+			fmt.Sprintf("invalid LVM path %q: missing logical volume name", identifier), nil)
+	}
+	if strings.Contains(lvName, "/") {
+		return "", NewStorageError(ErrCodeInvalid,
+			fmt.Sprintf("invalid LVM path %q: must reference a single logical volume", identifier), nil)
+	}
+	if err := m.validateLVIdentifier(lvName); err != nil {
+		return "", err
+	}
+
+	return lvName, nil
 }
 
 // lvPath returns the full device path for a logical volume.
@@ -235,12 +267,12 @@ func (m *LVMManager) CloneSnapshotToPool(ctx context.Context, sourcePool, source
 // Resize can only grow an LV, not shrink it.
 // The guest OS is responsible for growing the filesystem (cloud-init / growpart).
 func (m *LVMManager) Resize(ctx context.Context, imageName string, newSizeGB int) error {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	lvPath := m.lvPath(lvName)
 	logger := m.logger.With("lv", lvPath, "size_gb", newSizeGB)
 	logger.Info("resizing LVM thin LV")
 
@@ -252,7 +284,7 @@ func (m *LVMManager) Resize(ctx context.Context, imageName string, newSizeGB int
 	sizeArg := fmt.Sprintf("%dG", newSizeGB)
 	output, err := m.runLVMCommand(ctx, "lvresize", "-L", sizeArg, lvPath)
 	if err != nil {
-		return fmt.Errorf("resizing LV %s to %dGB: %w", imageName, newSizeGB, err)
+		return fmt.Errorf("resizing LV %s to %dGB: %w", lvName, newSizeGB, err)
 	}
 
 	logger.Debug("lvresize output", "output", string(output))
@@ -263,26 +295,26 @@ func (m *LVMManager) Resize(ctx context.Context, imageName string, newSizeGB int
 // Delete removes an LVM thin LV and all its dependent snapshots.
 // Returns ErrCodeInUse if the device is open (VM running).
 func (m *LVMManager) Delete(ctx context.Context, imageName string) error {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	lvPath := m.lvPath(lvName)
 	logger := m.logger.With("lv", lvPath)
 	logger.Info("deleting LVM thin LV")
 
 	// Check for dependent thin snapshots
 	output, err := m.runLVMCommand(ctx,
 		"lvs", "--noheadings", "-o", "lv_name",
-		"--select", fmt.Sprintf("origin=%s && pool_lv=%s", imageName, m.thinPool))
+		"--select", fmt.Sprintf("origin=%s && pool_lv=%s", lvName, m.thinPool))
 	if err != nil {
 		// If the LV doesn't exist, treat as success (idempotent)
 		if strings.Contains(err.Error(), "Failed to find logical volume") {
 			logger.Debug("LV does not exist, nothing to delete")
 			return nil
 		}
-		return fmt.Errorf("checking dependents for %s: %w", imageName, err)
+		return fmt.Errorf("checking dependents for %s: %w", lvName, err)
 	}
 
 	// Remove dependent snapshots first
@@ -315,7 +347,7 @@ func (m *LVMManager) Delete(ctx context.Context, imageName string) error {
 			logger.Debug("LV does not exist, nothing to delete")
 			return nil
 		}
-		return fmt.Errorf("deleting LV %s: %w", imageName, err)
+		return fmt.Errorf("deleting LV %s: %w", lvName, err)
 	}
 
 	logger.Debug("lvremove output", "output", string(output))
@@ -326,9 +358,9 @@ func (m *LVMManager) Delete(ctx context.Context, imageName string) error {
 // CreateSnapshot creates a thin snapshot of an existing LV.
 // This is idempotent - if the snapshot already exists, it returns nil.
 func (m *LVMManager) CreateSnapshot(ctx context.Context, imageName, snapName string) error {
-	// Validate identifiers to prevent injection
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 	if err := m.validateLVIdentifier(snapName); err != nil {
 		return fmt.Errorf("validating snapshot name: %w", err)
@@ -344,7 +376,7 @@ func (m *LVMManager) CreateSnapshot(ctx context.Context, imageName, snapName str
 		return nil
 	}
 
-	sourcePath := m.lvPath(imageName)
+	sourcePath := m.lvPath(lvName)
 	snapPath := m.lvPath(snapName)
 
 	logger := m.logger.With("source", sourcePath, "snapshot", snapPath)
@@ -357,7 +389,7 @@ func (m *LVMManager) CreateSnapshot(ctx context.Context, imageName, snapName str
 		"--name", snapName,
 		sourcePath)
 	if err != nil {
-		return fmt.Errorf("creating snapshot %s from %s: %w", snapName, imageName, err)
+		return fmt.Errorf("creating snapshot %s from %s: %w", snapName, lvName, err)
 	}
 
 	logger.Debug("lvcreate output", "output", string(output))
@@ -367,12 +399,30 @@ func (m *LVMManager) CreateSnapshot(ctx context.Context, imageName, snapName str
 
 // DeleteSnapshot removes a thin snapshot LV.
 func (m *LVMManager) DeleteSnapshot(ctx context.Context, imageName, snapName string) error {
-	// Validate identifiers to prevent injection
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 	if err := m.validateLVIdentifier(snapName); err != nil {
 		return fmt.Errorf("validating snapshot name: %w", err)
+	}
+
+	exists, err := m.ImageExists(ctx, snapName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s exists: %w", snapName, err)
+	}
+	if !exists {
+		m.logger.Debug("snapshot does not exist, nothing to delete", "snapshot", snapName)
+		return nil
+	}
+
+	snapshotBelongsToImage, err := m.snapshotBelongsToImage(ctx, lvName, snapName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s belongs to %s: %w", snapName, lvName, err)
+	}
+	if !snapshotBelongsToImage {
+		return NewStorageError(ErrCodeNotFound,
+			fmt.Sprintf("snapshot %s for image %s", snapName, lvName), nil)
 	}
 
 	snapPath := m.lvPath(snapName)
@@ -396,17 +446,17 @@ func (m *LVMManager) DeleteSnapshot(ctx context.Context, imageName, snapName str
 
 // ListSnapshots returns all thin snapshots of an LV in the configured pool.
 func (m *LVMManager) ListSnapshots(ctx context.Context, imageName string) ([]SnapshotInfo, error) {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return nil, fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
 	// lvs --noheadings --units b -o lv_name,lv_size --select "origin={imageName} && pool_lv={thinPool}"
 	output, err := m.runLVMCommand(ctx,
 		"lvs", "--noheadings", "--units", "b", "-o", "lv_name,lv_size",
-		"--select", fmt.Sprintf("origin=%s && pool_lv=%s", imageName, m.thinPool))
+		"--select", fmt.Sprintf("origin=%s && pool_lv=%s", lvName, m.thinPool))
 	if err != nil {
-		return nil, fmt.Errorf("listing snapshots of %s: %w", imageName, err)
+		return nil, fmt.Errorf("listing snapshots of %s: %w", lvName, err)
 	}
 
 	// Parse the output
@@ -450,18 +500,18 @@ func (m *LVMManager) ListSnapshots(ctx context.Context, imageName string) ([]Sna
 // GetImageSize returns the virtual size of an LVM thin LV in bytes.
 // This returns the virtual size, not the amount of pool space consumed.
 func (m *LVMManager) GetImageSize(ctx context.Context, imageName string) (int64, error) {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return 0, fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return 0, fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	lvPath := m.lvPath(lvName)
 
 	// lvs --noheadings --units b -o lv_size /dev/{vg}/{imageName}
 	output, err := m.runLVMCommand(ctx,
 		"lvs", "--noheadings", "--units", "b", "-o", "lv_size", lvPath)
 	if err != nil {
-		return 0, fmt.Errorf("getting size of LV %s: %w", imageName, err)
+		return 0, fmt.Errorf("getting size of LV %s: %w", lvName, err)
 	}
 
 	// Parse the output (strip trailing 'B')
@@ -470,7 +520,7 @@ func (m *LVMManager) GetImageSize(ctx context.Context, imageName string) (int64,
 
 	size, err := strconv.ParseInt(sizeStr, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("parsing size of LV %s: %w", imageName, err)
+		return 0, fmt.Errorf("parsing size of LV %s: %w", lvName, err)
 	}
 
 	return size, nil
@@ -478,18 +528,20 @@ func (m *LVMManager) GetImageSize(ctx context.Context, imageName string) (int64,
 
 // ImageExists checks if an LVM thin LV exists.
 func (m *LVMManager) ImageExists(ctx context.Context, imageName string) (bool, error) {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return false, fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return false, fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	lvPath := m.lvPath(lvName)
 
 	// lvs /dev/{vg}/{imageName} - exit code 0 = exists, non-zero = does not exist
-	_, err := m.runLVMCommand(ctx, "lvs", lvPath)
+	_, err = m.runLVMCommand(ctx, "lvs", lvPath)
 	if err != nil {
-		// Non-zero exit code means the LV doesn't exist
-		return false, nil
+		if strings.Contains(err.Error(), "Failed to find logical volume") {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking if LV %s exists: %w", lvName, err)
 	}
 	return true, nil
 }
@@ -497,19 +549,19 @@ func (m *LVMManager) ImageExists(ctx context.Context, imageName string) (bool, e
 // FlattenImage severs a snapshot's CoW relationship with its origin,
 // making it a fully independent thin LV.
 func (m *LVMManager) FlattenImage(ctx context.Context, imageName string) error {
-	// Validate identifier
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	lvPath := m.lvPath(lvName)
 	logger := m.logger.With("lv", lvPath)
 	logger.Info("flattening thin snapshot")
 
 	// lvconvert --splitsnapshot /dev/{vg}/{imageName}
 	output, err := m.runLVMCommand(ctx, "lvconvert", "--splitsnapshot", lvPath)
 	if err != nil {
-		return fmt.Errorf("flattening snapshot %s: %w", imageName, err)
+		return fmt.Errorf("flattening snapshot %s: %w", lvName, err)
 	}
 
 	logger.Debug("lvconvert output", "output", string(output))
@@ -596,9 +648,9 @@ func (m *LVMManager) ThinPoolStats(ctx context.Context) (dataPercent, metadataPe
 // Uses a three-step swap to avoid data-loss window.
 // The VM must be stopped before calling this method.
 func (m *LVMManager) Rollback(ctx context.Context, imageName, snapshotName string) error {
-	// Validate identifiers to prevent injection
-	if err := m.validateLVIdentifier(imageName); err != nil {
-		return fmt.Errorf("validating image name: %w", err)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 	if err := m.validateLVIdentifier(snapshotName); err != nil {
 		return fmt.Errorf("validating snapshot name: %w", err)
@@ -614,31 +666,40 @@ func (m *LVMManager) Rollback(ctx context.Context, imageName, snapshotName strin
 			fmt.Sprintf("snapshot %s", snapshotName), nil)
 	}
 
-	lvPath := m.lvPath(imageName)
+	snapshotBelongsToImage, err := m.snapshotBelongsToImage(ctx, lvName, snapshotName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s belongs to %s: %w", snapshotName, lvName, err)
+	}
+	if !snapshotBelongsToImage {
+		return NewStorageError(ErrCodeNotFound,
+			fmt.Sprintf("snapshot %s for image %s", snapshotName, lvName), nil)
+	}
+
+	lvPath := m.lvPath(lvName)
 	snapPath := m.lvPath(snapshotName)
-	oldPath := m.lvPath(imageName + "-old")
+	oldPath := m.lvPath(lvName + "-old")
 
 	logger := m.logger.With("lv", lvPath, "snapshot", snapPath, "old", oldPath)
 	logger.Info("rolling back LV to snapshot")
 
 	// Step 1: Rename current disk to -old
 	logger.Debug("step 1: renaming current disk to -old")
-	_, err = m.runLVMCommand(ctx, "lvrename", lvPath, imageName+"-old")
+	_, err = m.runLVMCommand(ctx, "lvrename", lvPath, lvName+"-old")
 	if err != nil {
-		return fmt.Errorf("renaming LV %s to %s-old: %w", imageName, imageName, err)
+		return fmt.Errorf("renaming LV %s to %s-old: %w", lvName, lvName, err)
 	}
 
 	// Step 2: Rename snapshot to main disk name
 	logger.Debug("step 2: renaming snapshot to main disk name")
-	_, err = m.runLVMCommand(ctx, "lvrename", snapPath, imageName)
+	_, err = m.runLVMCommand(ctx, "lvrename", snapPath, lvName)
 	if err != nil {
 		// Attempt to rename the old disk back
-		_, rollbackErr := m.runLVMCommand(ctx, "lvrename", oldPath, imageName)
+		_, rollbackErr := m.runLVMCommand(ctx, "lvrename", oldPath, lvName)
 		if rollbackErr != nil {
 			logger.Error("failed to rollback after rename failure",
 				"original_error", err, "rollback_error", rollbackErr)
 		}
-		return fmt.Errorf("renaming snapshot %s to %s: %w", snapshotName, imageName, err)
+		return fmt.Errorf("renaming snapshot %s to %s: %w", snapshotName, lvName, err)
 	}
 
 	// Step 3: Remove the old disk
@@ -651,6 +712,21 @@ func (m *LVMManager) Rollback(ctx context.Context, imageName, snapshotName strin
 
 	logger.Info("LV rolled back to snapshot successfully")
 	return nil
+}
+
+func (m *LVMManager) snapshotBelongsToImage(ctx context.Context, imageName, snapshotName string) (bool, error) {
+	snapshots, err := m.ListSnapshots(ctx, imageName)
+	if err != nil {
+		return false, fmt.Errorf("listing snapshots for %s: %w", imageName, err)
+	}
+
+	for _, snapshot := range snapshots {
+		if snapshot.Name == snapshotName {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // GetStorageType returns the storage backend type.
@@ -700,21 +776,26 @@ func (m *LVMManager) CreateImage(ctx context.Context, imageName string, sizeGB i
 
 // GetImageInfo returns detailed information about an LVM logical volume.
 func (m *LVMManager) GetImageInfo(ctx context.Context, imageName string) (*ImageInfo, error) {
-	// Check if LV exists
-	if exists, _ := m.ImageExists(ctx, imageName); !exists {
-		return nil, NewStorageError(ErrCodeNotFound, fmt.Sprintf("LV %q", imageName), nil)
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing image identifier: %w", err)
 	}
 
-	lvPath := m.lvPath(imageName)
+	// Check if LV exists
+	if exists, _ := m.ImageExists(ctx, lvName); !exists {
+		return nil, NewStorageError(ErrCodeNotFound, fmt.Sprintf("LV %q", lvName), nil)
+	}
 
-	// Get LV size using lvs
-	cmd := exec.CommandContext(ctx, "lvs",
+	lvPath := m.lvPath(lvName)
+
+	// Get LV size using the same LVM wrapper as the rest of the backend.
+	output, err := m.runLVMCommand(ctx,
+		"lvs",
 		"--noheadings",
 		"--units", "b",
 		"-o", "lv_size,lv_attr",
 		"--reportformat", "json",
-		fmt.Sprintf("%s/%s", m.vgName, imageName))
-	output, err := cmd.Output()
+		fmt.Sprintf("%s/%s", m.vgName, lvName))
 	if err != nil {
 		return nil, fmt.Errorf("getting LV info for %s: %w", lvPath, err)
 	}
@@ -746,7 +827,7 @@ func (m *LVMManager) GetImageInfo(ctx context.Context, imageName string) (*Image
 	}
 
 	return &ImageInfo{
-		Filename:          lvPath,
+		Filename:         lvPath,
 		Format:           "lvm",
 		VirtualSizeBytes: sizeBytes,
 		ActualSizeBytes:  0, // LVM thin doesn't track this directly

@@ -5,17 +5,14 @@ package nodeagent
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/guest"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -23,7 +20,7 @@ import (
 	"libvirt.org/go/libvirt"
 )
 
-// guestOpTokenWindow is the maximum age of a GuestSetPassword HMAC token.
+// guestOpTokenWindow is the maximum age of a guest operation HMAC token.
 const guestOpTokenWindow = 5 * time.Minute
 
 // GuestExecCommand executes a command inside the VM via QEMU guest agent.
@@ -33,6 +30,10 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 	}
 	if req.GetCommand() == "" {
 		return nil, status.Error(codes.InvalidArgument, "command is required")
+	}
+
+	if err := h.verifyGuestOpToken(ctx, req.GetVmId()); err != nil {
+		return nil, err
 	}
 
 	// Whitelist of allowed guest commands: exact full paths only, no symlinks,
@@ -140,10 +141,7 @@ func (h *grpcHandler) GuestExecCommand(ctx context.Context, req *nodeagentpb.Gue
 func (h *grpcHandler) verifyGuestOpToken(ctx context.Context, vmID string) error {
 	secret := h.server.config.GuestOpHMACSecret.Value()
 	if secret == "" {
-		// HMAC verification is disabled when no secret is configured.
-		// Log a warning so operators are aware.
-		h.server.logger.Warn("GuestOpHMACSecret not configured; skipping per-operation token verification", "vm_id", vmID)
-		return nil
+		return status.Error(codes.FailedPrecondition, "guest operation HMAC secret is not configured")
 	}
 
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -156,34 +154,21 @@ func (h *grpcHandler) verifyGuestOpToken(ctx context.Context, vmID string) error
 		return status.Error(codes.Unauthenticated, "missing x-guest-op-token metadata")
 	}
 
-	tokenStr := vals[0]
-	parts := strings.SplitN(tokenStr, ":", 2)
-	if len(parts) != 2 {
-		return status.Error(codes.Unauthenticated, "malformed x-guest-op-token")
-	}
-
-	ts, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return status.Error(codes.Unauthenticated, "malformed x-guest-op-token timestamp")
-	}
-
-	tokenTime := time.Unix(ts, 0)
-	age := time.Since(tokenTime)
-	if age < 0 {
-		age = -age
-	}
-	if age > guestOpTokenWindow {
-		return status.Errorf(codes.Unauthenticated, "x-guest-op-token expired (age %v)", age)
-	}
-
-	// Verify HMAC: key=secret, message="<vmID>:<timestamp>"
-	message := fmt.Sprintf("%s:%d", vmID, ts)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(message))
-	expectedMAC := hex.EncodeToString(mac.Sum(nil))
-
-	if !hmac.Equal([]byte(parts[1]), []byte(expectedMAC)) {
-		return status.Error(codes.Unauthenticated, "x-guest-op-token signature invalid")
+	if err := sharedcrypto.VerifyGuestOpToken(secret, vmID, vals[0], time.Now(), guestOpTokenWindow); err != nil {
+		switch {
+		case err == sharedcrypto.ErrGuestOpSecretRequired:
+			return status.Error(codes.FailedPrecondition, "guest operation HMAC secret is not configured")
+		case err == sharedcrypto.ErrGuestOpTokenMalformed:
+			return status.Error(codes.Unauthenticated, "malformed x-guest-op-token")
+		case err == sharedcrypto.ErrGuestOpTokenTimestampMalformed:
+			return status.Error(codes.Unauthenticated, "malformed x-guest-op-token timestamp")
+		case err == sharedcrypto.ErrGuestOpTokenExpired:
+			return status.Error(codes.Unauthenticated, "x-guest-op-token expired")
+		case err == sharedcrypto.ErrGuestOpTokenSignatureInvalid:
+			return status.Error(codes.Unauthenticated, "x-guest-op-token signature invalid")
+		default:
+			return status.Errorf(codes.Internal, "verifying x-guest-op-token: %v", err)
+		}
 	}
 
 	return nil
@@ -230,6 +215,10 @@ func (h *grpcHandler) GuestFreezeFilesystems(ctx context.Context, req *nodeagent
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	if err := h.verifyGuestOpToken(ctx, req.GetVmId()); err != nil {
+		return nil, err
+	}
+
 	domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
@@ -260,6 +249,10 @@ func (h *grpcHandler) GuestThawFilesystems(ctx context.Context, req *nodeagentpb
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
+	if err := h.verifyGuestOpToken(ctx, req.GetVmId()); err != nil {
+		return nil, err
+	}
+
 	domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "VM not found: %v", err)
@@ -288,6 +281,10 @@ func (h *grpcHandler) GuestThawFilesystems(ctx context.Context, req *nodeagentpb
 func (h *grpcHandler) GuestGetNetworkInterfaces(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.GuestNetworkResponse, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
+	}
+
+	if err := h.verifyGuestOpToken(ctx, req.GetVmId()); err != nil {
+		return nil, err
 	}
 
 	domain, err := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))

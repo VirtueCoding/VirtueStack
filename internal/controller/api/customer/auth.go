@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -22,17 +23,31 @@ type Verify2FARequest struct {
 	TOTPCode  string `json:"totp_code" validate:"required,len=6,numeric"`
 }
 
-
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" validate:"required,min=12,max=128"`
 	NewPassword     string `json:"new_password" validate:"required,min=12,max=128"`
 }
 
 type AuthResponse struct {
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in,omitempty"`
-	Requires2FA bool   `json:"requires_2fa,omitempty"`
-	TempToken   string `json:"temp_token,omitempty"`
+	TokenType           string                         `json:"token_type"`
+	ExpiresIn           int                            `json:"expires_in,omitempty"`
+	Requires2FA         bool                           `json:"requires_2fa,omitempty"`
+	TempToken           string                         `json:"temp_token,omitempty"`
+	SessionID           string                         `json:"session_id,omitempty"`
+	SessionCleanupToken string                         `json:"session_cleanup_token,omitempty"`
+	User                *AuthenticatedCustomerResponse `json:"user,omitempty"`
+}
+
+// AuthenticatedCustomerResponse contains the customer fields returned after authentication.
+type AuthenticatedCustomerResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+// LogoutRequest carries the cleanup token used to revoke the current customer session.
+type LogoutRequest struct {
+	SessionCleanupToken string `json:"session_cleanup_token"`
 }
 
 const customerRefreshCookiePath = "/api/v1/customer/auth/refresh"
@@ -89,6 +104,25 @@ func (h *CustomerHandler) Login(c *gin.Context) {
 	if tokens.Requires2FA {
 		resp.TempToken = tokens.TempToken
 	} else {
+		user, userErr := h.lookupAuthenticatedCustomer(c, tokens.AccessToken)
+		if userErr != nil {
+			h.rollbackIssuedSession(c.Request.Context(), tokens.SessionID,
+				"failed to roll back login session after customer lookup",
+				middleware.GetCorrelationID(c))
+			if sharederrors.Is(userErr, sharederrors.ErrNotFound) {
+				middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+				return
+			}
+			h.logger.Error("failed to load customer auth response user",
+				"error", userErr,
+				"correlation_id", middleware.GetCorrelationID(c))
+			middleware.RespondWithError(c, http.StatusInternalServerError, "LOGIN_FAILED", "Internal server error")
+			return
+		}
+
+		resp.SessionID = tokens.SessionID
+		resp.SessionCleanupToken = tokens.SessionCleanupToken
+		resp.User = buildAuthenticatedCustomerResponse(user)
 		middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
 			middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
 	}
@@ -147,6 +181,10 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_2FA_CODE", "Invalid or expired 2FA code")
 			return
 		}
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
 
 		h.logger.Error("2FA verification internal error", "error", err, "correlation_id", middleware.GetCorrelationID(c))
 		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
@@ -158,13 +196,32 @@ func (h *CustomerHandler) Verify2FA(c *gin.Context) {
 		recordVerify2FASuccess(jti)
 	}
 
-	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
-		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
+	user, userErr := h.lookupAuthenticatedCustomer(c, tokens.AccessToken)
+	if userErr != nil {
+		h.rollbackIssuedSession(c.Request.Context(), tokens.SessionID,
+			"failed to roll back 2FA session after customer lookup",
+			middleware.GetCorrelationID(c))
+		if sharederrors.Is(userErr, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
+			return
+		}
+		h.logger.Error("failed to load customer 2FA auth response user",
+			"error", userErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "2FA_VERIFICATION_FAILED", "Internal server error")
+		return
+	}
 
 	resp := AuthResponse{
-		TokenType: tokens.TokenType,
-		ExpiresIn: tokens.ExpiresIn,
+		TokenType:           tokens.TokenType,
+		ExpiresIn:           tokens.ExpiresIn,
+		SessionID:           tokens.SessionID,
+		SessionCleanupToken: tokens.SessionCleanupToken,
+		User:                buildAuthenticatedCustomerResponse(user),
 	}
+
+	middleware.SetAuthCookies(c, tokens.AccessToken, refreshToken,
+		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
 
 	h.logger.Info("customer 2FA verification successful",
 		"correlation_id", middleware.GetCorrelationID(c))
@@ -184,10 +241,8 @@ func extractTempTokenJTI(tempToken string, authConfig middleware.AuthConfig) str
 
 // @Tags Customer
 // @Summary Refresh customer token
-// @Description Refreshes customer access token using refresh token.
-// @Accept json
+// @Description Refreshes customer access token using the HttpOnly refresh_token cookie.
 // @Produce json
-// @Param request body object true "Refresh token request"
 // @Success 200 {object} models.Response
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -226,8 +281,10 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAge, customerRefreshCookiePath)
 
 	resp := AuthResponse{
-		TokenType: tokens.TokenType,
-		ExpiresIn: tokens.ExpiresIn,
+		TokenType:           tokens.TokenType,
+		ExpiresIn:           tokens.ExpiresIn,
+		SessionID:           tokens.SessionID,
+		SessionCleanupToken: tokens.SessionCleanupToken,
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
@@ -242,33 +299,38 @@ func (h *CustomerHandler) RefreshToken(c *gin.Context) {
 // @Failure 401 {object} models.ErrorResponse
 // @Router /api/v1/customer/auth/logout [post]
 func (h *CustomerHandler) Logout(c *gin.Context) {
-	refreshToken := middleware.GetRefreshTokenFromCookie(c)
-
-	if refreshToken != "" {
-		refreshTokenHash := hashToken(refreshToken)
-		session, err := h.customerRepo.GetSessionByRefreshToken(c.Request.Context(), refreshTokenHash)
-		if err == nil {
-			userID := middleware.GetUserID(c)
-			if session.UserID == userID {
-				// Error intentionally ignored: logout clears cookies regardless of session
-				// invalidation failure so the client is always logged out locally.
-				if logoutErr := h.authService.Logout(c.Request.Context(), session.ID); logoutErr != nil {
-					h.logger.Warn("failed to invalidate session on logout",
-						"session_id", session.ID,
-						"error", logoutErr,
-						"correlation_id", middleware.GetCorrelationID(c))
-				}
-				// F-152: Audit log entry for successful session logout.
-				h.logAudit(c, "session.logout", "session", session.ID, nil, true)
-				h.logger.Info("customer logged out",
-					"user_id", userID,
-					"session_id", session.ID,
-					"correlation_id", middleware.GetCorrelationID(c))
-			}
+	var req LogoutRequest
+	if err := middleware.BindOptionalJSON(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
 		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", "request body could not be parsed as JSON")
+		return
 	}
 
-	middleware.ClearAuthCookies(c, customerRefreshCookiePath)
+	targetSessionID, currentSessionID, authErr := resolveCustomerLogoutSession(c, h.authConfig, req.SessionCleanupToken)
+	if authErr != nil {
+		middleware.RespondWithError(c, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	if logoutErr := h.authService.Logout(c.Request.Context(), targetSessionID); logoutErr != nil {
+		h.logger.Warn("failed to invalidate session on logout",
+			"session_id", targetSessionID,
+			"error", logoutErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		h.logAudit(c, "session.logout", "session", targetSessionID, nil, false)
+		middleware.RespondWithError(c, http.StatusInternalServerError, "LOGOUT_FAILED", "Failed to log out")
+		return
+	}
+
+	h.logAudit(c, "session.logout", "session", targetSessionID, nil, true)
+
+	if shouldClearLogoutCookies(req.SessionCleanupToken, targetSessionID, currentSessionID) {
+		middleware.ClearAuthCookies(c, customerRefreshCookiePath)
+	}
 	c.JSON(http.StatusOK, models.Response{Data: gin.H{"message": "Logged out successfully"}})
 }
 
@@ -315,9 +377,14 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 			"user_id", userID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
+		h.logFailedAudit(c, "password.change", "user", userID, nil, err)
 
 		if sharederrors.Is(err, sharederrors.ErrUnauthorized) {
 			middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_CURRENT_PASSWORD", "Current password is incorrect")
+			return
+		}
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "NOT_FOUND", "customer not found")
 			return
 		}
 
@@ -336,4 +403,67 @@ func (h *CustomerHandler) ChangePassword(c *gin.Context) {
 
 func hashToken(token string) string {
 	return crypto.HashSHA256(token)
+}
+
+func (h *CustomerHandler) rollbackIssuedSession(ctx context.Context, sessionID, message, correlationID string) {
+	if sessionID == "" {
+		return
+	}
+	if err := h.authService.Logout(ctx, sessionID); err != nil {
+		h.logger.Warn(message,
+			"session_id", sessionID,
+			"error", err,
+			"correlation_id", correlationID)
+	}
+}
+
+func (h *CustomerHandler) lookupAuthenticatedCustomer(c *gin.Context, accessToken string) (*models.Customer, error) {
+	claims, err := middleware.ValidateJWT(h.authConfig, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	customer, err := h.customerRepo.GetByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return customer, nil
+}
+
+func buildAuthenticatedCustomerResponse(customer *models.Customer) *AuthenticatedCustomerResponse {
+	return &AuthenticatedCustomerResponse{
+		ID:    customer.ID,
+		Email: customer.Email,
+		Role:  "customer",
+	}
+}
+
+func resolveCustomerLogoutSession(c *gin.Context, authConfig middleware.AuthConfig, sessionCleanupToken string) (targetSessionID, currentSessionID string, err error) {
+	currentSessionID = middleware.GetSessionID(c)
+	if sessionCleanupToken != "" {
+		claims, cleanupErr := middleware.ValidateSessionCleanupToken(authConfig, sessionCleanupToken)
+		if cleanupErr != nil {
+			return "", currentSessionID, cleanupErr
+		}
+		return claims.SessionID, currentSessionID, nil
+	}
+
+	if currentSessionID == "" {
+		return "", "", errors.New("missing session id")
+	}
+
+	return currentSessionID, currentSessionID, nil
+}
+
+func shouldClearLogoutCookies(sessionCleanupToken, targetSessionID, currentSessionID string) bool {
+	if sessionCleanupToken == "" {
+		return true
+	}
+
+	if currentSessionID == "" {
+		return targetSessionID != ""
+	}
+
+	return targetSessionID == currentSessionID
 }

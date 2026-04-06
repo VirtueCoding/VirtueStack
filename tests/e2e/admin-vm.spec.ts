@@ -1,4 +1,4 @@
-import { test, expect, Page, request } from '@playwright/test';
+import { test, expect, Page, APIRequestContext, request } from '@playwright/test';
 
 /**
  * Admin VM Management E2E Tests
@@ -15,7 +15,7 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const createdVMIds: string[] = [];
 
-async function cleanupCreatedVMs(apiContext: any) {
+async function cleanupCreatedVMs(apiContext: APIRequestContext) {
   if (!ADMIN_TOKEN || createdVMIds.length === 0) return;
   for (const vmId of createdVMIds) {
     try {
@@ -23,8 +23,9 @@ async function cleanupCreatedVMs(apiContext: any) {
         headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       });
       console.log(`Cleanup: DELETE /api/v1/admin/vms/${vmId} -> ${resp.status()}`);
-    } catch (e: any) {
-      console.log(`Cleanup failed for ${vmId}: ${e.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'unknown error';
+      console.log(`Cleanup failed for ${vmId}: ${message}`);
     }
   }
   createdVMIds.length = 0;
@@ -177,7 +178,9 @@ class AdminVMDetailPage {
   }
 
   async getStatus(): Promise<string> {
-    return this.page.locator('[data-testid="vm-status"], .status-badge').textContent() || '';
+    return (await this.page
+      .locator('[data-testid="vm-status"], .status-badge')
+      .textContent()) || '';
   }
 
   async startVM() {
@@ -262,7 +265,7 @@ test.describe('Admin VM List', () => {
     
     // Should have at least header row
     const headers = page.locator('table thead th');
-    await expect(headers).toHaveCountGreaterThan(3);
+    expect(await headers.count()).toBeGreaterThan(3);
   });
 
   test('should show VM counts', async ({ page }) => {

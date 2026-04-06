@@ -1,8 +1,20 @@
 package services
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,4 +86,299 @@ func TestSetSkipURLValidation_NoPanicOutsideProduction(t *testing.T) {
 	assert.NotPanics(t, func() {
 		svc.SetSkipURLValidation(true)
 	})
+}
+
+type webhookServiceTestDB struct {
+	queryRowFunc func(ctx context.Context, sql string, args ...any) pgx.Row
+	execFunc     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func (m *webhookServiceTestDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if m.queryRowFunc != nil {
+		return m.queryRowFunc(ctx, sql, args...)
+	}
+	return webhookServiceTestRow{err: pgx.ErrNoRows}
+}
+
+func (m *webhookServiceTestDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (m *webhookServiceTestDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if m.execFunc != nil {
+		return m.execFunc(ctx, sql, args...)
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func (m *webhookServiceTestDB) Begin(context.Context) (pgx.Tx, error) {
+	return nil, nil
+}
+
+type webhookServiceTestRow struct {
+	values []any
+	err    error
+}
+
+func (r webhookServiceTestRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != len(r.values) {
+		return fmt.Errorf("scan destination count mismatch: got %d want %d", len(dest), len(r.values))
+	}
+	for i := range dest {
+		if err := assignWebhookServiceTestValue(dest[i], r.values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assignWebhookServiceTestValue(dest any, val any) error {
+	dv := reflect.ValueOf(dest)
+	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+		return fmt.Errorf("destination is not a pointer")
+	}
+	if val == nil {
+		dv.Elem().Set(reflect.Zero(dv.Elem().Type()))
+		return nil
+	}
+
+	v := reflect.ValueOf(val)
+	if v.Type().AssignableTo(dv.Elem().Type()) {
+		dv.Elem().Set(v)
+		return nil
+	}
+	if v.Type().ConvertibleTo(dv.Elem().Type()) {
+		dv.Elem().Set(v.Convert(dv.Elem().Type()))
+		return nil
+	}
+	return fmt.Errorf("cannot assign %T to %T", val, dest)
+}
+
+func testWebhookRow() []any {
+	now := time.Now().UTC()
+	return []any{
+		"webhook-1",
+		"customer-1",
+		"https://old.example.com/webhook",
+		"encrypted-secret",
+		[]string{"vm.created"},
+		true,
+		0,
+		(*time.Time)(nil),
+		(*time.Time)(nil),
+		now,
+		now,
+	}
+}
+
+func TestWebhookServiceUpdate_InvalidSecretDoesNotApplyOtherChanges(t *testing.T) {
+	newURL := "https://new.example.com/webhook"
+	shortSecret := "too-short"
+	updateCalled := false
+	updateSecretCalled := false
+
+	repo := repository.NewWebhookRepository(&webhookServiceTestDB{
+		queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			return webhookServiceTestRow{values: testWebhookRow()}
+		},
+		execFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			if len(args) > 0 && args[len(args)-1] == "webhook-1" {
+				updateCalled = true
+			}
+			if len(args) == 2 && args[0] != newURL {
+				updateSecretCalled = true
+			}
+			return pgconn.NewCommandTag("UPDATE 1"), nil
+		},
+	})
+
+	svc := NewWebhookService(
+		repo,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	)
+	svc.SetSkipURLValidation(true)
+
+	_, err := svc.Update(context.Background(), "webhook-1", "customer-1", UpdateWebhookRequest{
+		URL:    &newURL,
+		Secret: &shortSecret,
+	})
+
+	require.ErrorIs(t, err, ErrSecretTooShort)
+	assert.False(t, updateCalled, "non-secret updates should not be persisted when secret validation fails")
+	assert.False(t, updateSecretCalled, "secret update must not run when validation fails")
+}
+
+func TestWebhookServiceUpdate_SecretWriteFailureDoesNotPartiallyApplyChanges(t *testing.T) {
+	oldURL := "https://old.example.com/webhook"
+	storedURL := oldURL
+	storedSecret := "encrypted-secret"
+	newURL := "https://new.example.com/webhook"
+	newSecret := "0123456789abcdef"
+	updateAttempted := false
+
+	repo := repository.NewWebhookRepository(&webhookServiceTestDB{
+		queryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			rowValues := testWebhookRow()
+			rowValues[2] = storedURL
+			rowValues[3] = storedSecret
+			return webhookServiceTestRow{values: rowValues}
+		},
+		execFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			if !strings.Contains(sql, "UPDATE webhooks SET") {
+				return pgconn.NewCommandTag("UPDATE 1"), nil
+			}
+			updateAttempted = true
+			assert.Contains(t, sql, "url =")
+			assert.Contains(t, sql, "secret_hash =")
+			assert.NotContains(t, sql, "events =")
+			assert.NotContains(t, sql, "active =")
+			require.Len(t, args, 3)
+			assert.Equal(t, newURL, args[0])
+			assert.NotEmpty(t, args[1])
+			assert.Equal(t, "webhook-1", args[2])
+			return pgconn.CommandTag{}, fmt.Errorf("secret write failed")
+		},
+	})
+
+	svc := NewWebhookService(
+		repo,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	)
+	svc.SetSkipURLValidation(true)
+
+	_, err := svc.Update(context.Background(), "webhook-1", "customer-1", UpdateWebhookRequest{
+		URL:    &newURL,
+		Secret: &newSecret,
+	})
+
+	require.ErrorContains(t, err, "updating webhook")
+	require.ErrorContains(t, err, "secret write failed")
+	assert.True(t, updateAttempted, "combined webhook update should be attempted once")
+	assert.Equal(t, oldURL, storedURL, "webhook URL should remain unchanged when secret persistence fails")
+	assert.Equal(t, "encrypted-secret", storedSecret, "webhook secret should remain unchanged when secret persistence fails")
+}
+
+func TestWebhookService_OnlyMapsRealNotFoundErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		queryRowErr   error
+		execErr       error
+		rowsAffected  int64
+		assertOutcome func(t *testing.T, svc *WebhookService)
+	}{
+		{
+			name:        "get propagates backend failure",
+			queryRowErr: errors.New("database offline"),
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, err := svc.Get(context.Background(), "webhook-1", "customer-1")
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "database offline")
+				assert.False(t, errors.Is(err, ErrWebhookNotFound))
+			},
+		},
+		{
+			name:        "get maps missing webhook",
+			queryRowErr: pgx.ErrNoRows,
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, err := svc.Get(context.Background(), "webhook-1", "customer-1")
+				require.ErrorIs(t, err, ErrWebhookNotFound)
+			},
+		},
+		{
+			name:        "update propagates backend failure",
+			queryRowErr: errors.New("lookup unavailable"),
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, err := svc.Update(context.Background(), "webhook-1", "customer-1", UpdateWebhookRequest{})
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "lookup unavailable")
+				assert.False(t, errors.Is(err, ErrWebhookNotFound))
+			},
+		},
+		{
+			name:        "update maps missing webhook",
+			queryRowErr: pgx.ErrNoRows,
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, err := svc.Update(context.Background(), "webhook-1", "customer-1", UpdateWebhookRequest{})
+				require.ErrorIs(t, err, ErrWebhookNotFound)
+			},
+		},
+		{
+			name:    "delete propagates backend failure",
+			execErr: errors.New("delete failed"),
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				err := svc.Delete(context.Background(), "webhook-1", "customer-1")
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "delete failed")
+				assert.False(t, errors.Is(err, ErrWebhookNotFound))
+			},
+		},
+		{
+			name:         "delete maps missing webhook",
+			rowsAffected: 0,
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				err := svc.Delete(context.Background(), "webhook-1", "customer-1")
+				require.ErrorIs(t, err, ErrWebhookNotFound)
+			},
+		},
+		{
+			name:        "list deliveries propagates backend failure",
+			queryRowErr: errors.New("query timeout"),
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, _, _, err := svc.ListDeliveries(context.Background(), "webhook-1", "customer-1", models.PaginationParams{PerPage: 10})
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "query timeout")
+				assert.False(t, errors.Is(err, ErrWebhookNotFound))
+			},
+		},
+		{
+			name:        "list deliveries maps missing webhook",
+			queryRowErr: pgx.ErrNoRows,
+			assertOutcome: func(t *testing.T, svc *WebhookService) {
+				_, _, _, err := svc.ListDeliveries(context.Background(), "webhook-1", "customer-1", models.PaginationParams{PerPage: 10})
+				require.ErrorIs(t, err, ErrWebhookNotFound)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := repository.NewWebhookRepository(&webhookServiceTestDB{
+				queryRowFunc: func(context.Context, string, ...any) pgx.Row {
+					if tt.queryRowErr != nil {
+						return webhookServiceTestRow{err: tt.queryRowErr}
+					}
+					return webhookServiceTestRow{values: testWebhookRow()}
+				},
+				execFunc: func(context.Context, string, ...any) (pgconn.CommandTag, error) {
+					if tt.execErr != nil {
+						return pgconn.CommandTag{}, tt.execErr
+					}
+					if tt.rowsAffected == 0 {
+						return pgconn.NewCommandTag("DELETE 0"), nil
+					}
+					return pgconn.NewCommandTag("DELETE 1"), nil
+				},
+			})
+
+			svc := NewWebhookService(
+				repo,
+				nil,
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			)
+
+			tt.assertOutcome(t, svc)
+		})
+	}
 }

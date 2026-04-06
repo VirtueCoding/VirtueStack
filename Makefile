@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race load-test migrate-up migrate-down certs clean help backup-db
+.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race load-test migrate-up migrate-down certs clean help backup-db docker-build docker-up docker-down docker-dev-build docker-dev-up docker-dev-down
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -6,6 +6,7 @@ BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
 # Go commands
+MODULE_PATH := github.com/AbuGosok/VirtueStack
 GOCMD := go
 GOBUILD := $(GOCMD) build $(LDFLAGS)
 GOTEST := $(GOCMD) test
@@ -13,6 +14,7 @@ GOVET := $(GOCMD) vet
 GOMOD := $(GOCMD) mod
 
 TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -Ev '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$|tests/integration$$)')
+LINT_PACKAGES := $(shell $(GOCMD) list ./... | grep -Ev '^$(MODULE_PATH)/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$)' | sed 's#^$(MODULE_PATH)#.#')
 INTEGRATION_TEST_PACKAGES := ./tests/integration
 NATIVE_TEST_PACKAGES := $(shell $(GOCMD) list ./... | grep -E '^github.com/AbuGosok/VirtueStack/(cmd/node-agent|internal/nodeagent($$|/)|internal/shared/libvirtutil$$)')
 
@@ -61,7 +63,12 @@ swagger:
 
 ## lint: Run golangci-lint
 lint:
-	golangci-lint run ./...
+	@if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libvirt rados rbd; then \
+		golangci-lint run ./...; \
+	else \
+		echo "Native lint deps missing; linting non-native packages only"; \
+		golangci-lint run $(LINT_PACKAGES); \
+	fi
 
 ## vet: Run go vet
 vet:
@@ -144,12 +151,24 @@ backup-db:
 
 ## docker-build: Build Docker images
 docker-build:
-	docker compose build
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 
 ## docker-up: Start all services
 docker-up:
-	docker compose up -d
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ## docker-down: Stop all services
 docker-down:
-	docker compose down
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+## docker-dev-build: Build development Docker images
+docker-dev-build:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+## docker-dev-up: Start development services
+docker-dev-up:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+## docker-dev-down: Stop development services
+docker-dev-down:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down

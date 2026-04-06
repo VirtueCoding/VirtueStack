@@ -3,6 +3,8 @@ export interface AuthTokens {
   expires_in: number
   requires_2fa?: boolean
   temp_token?: string
+  session_id?: string
+  session_cleanup_token?: string
 }
 
 export interface LoginRequest {
@@ -29,20 +31,168 @@ export class ApiClientError extends Error {
   }
 }
 
+const requestTimeoutMs = 10_000
+
+interface LogoutWithRefreshRecoveryOptions {
+  invalidateSession: () => Promise<void>
+  refreshSession: () => Promise<unknown>
+}
+
+function isUnauthorizedError(error: unknown): error is ApiClientError {
+  return error instanceof ApiClientError && error.status === 401
+}
+
+function isMissingRefreshSessionError(error: unknown): error is ApiClientError {
+  return error instanceof ApiClientError && (error.status === 400 || error.status === 401)
+}
+
+export async function logoutWithRefreshRecovery(
+  options: LogoutWithRefreshRecoveryOptions
+): Promise<void> {
+  try {
+    await options.invalidateSession()
+    return
+  } catch (error) {
+    if (!isUnauthorizedError(error)) {
+      throw error
+    }
+  }
+
+  try {
+    await options.refreshSession()
+  } catch (error) {
+    if (isMissingRefreshSessionError(error)) {
+      return
+    }
+    throw error
+  }
+
+  await options.invalidateSession()
+}
+
 export function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null
   const match = document.cookie.match(/csrf_token=([^;]+)/)
   return match ? decodeURIComponent(match[1]) : null
 }
 
-export async function fetchCsrfToken(apiBaseURL: string, csrfPath: string): Promise<void> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+export function parseUnreadCountEventData(raw: string): number | null {
   try {
-    await fetch(`${apiBaseURL}${csrfPath}`, {
-      method: "GET",
-      credentials: "include",
-    })
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) {
+      return null
+    }
+
+    const count = parsed["count"]
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      return null
+    }
+
+    return count
   } catch {
-    // Non-fatal: CSRF cookie may already be present or next write request will return explicit error.
+    return null
+  }
+}
+
+export async function fetchCsrfToken(
+  apiBaseURL: string,
+  csrfPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await fetchWithTimeout(`${apiBaseURL}${csrfPath}`, {
+    method: "GET",
+    credentials: "include",
+    signal,
+  })
+}
+
+function csrfPathForEndpoint(apiBaseURL: string, endpoint: string): string | null {
+  const normalizedEndpoint = endpoint.startsWith(apiBaseURL)
+    ? endpoint.slice(apiBaseURL.length)
+    : endpoint
+
+  if (normalizedEndpoint.startsWith("/customer/")) {
+    return "/customer/auth/csrf"
+  }
+  if (normalizedEndpoint.startsWith("/admin/")) {
+    return "/admin/auth/csrf"
+  }
+
+  return null
+}
+
+async function ensureCsrfForStateChangingRequest(
+  apiBaseURL: string,
+  endpoint: string,
+  isStateChanging: boolean,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!isStateChanging || typeof document === "undefined" || getCsrfToken()) {
+    return
+  }
+
+  const csrfPath = csrfPathForEndpoint(apiBaseURL, endpoint)
+  if (!csrfPath) {
+    return
+  }
+
+  await fetchCsrfToken(apiBaseURL, csrfPath, signal)
+}
+
+async function fetchWithTimeout(url: string, config: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  let abortSource: "caller" | "timeout" | null = null
+  const markAbortSource = (source: "caller" | "timeout") => {
+    if (abortSource === null) {
+      abortSource = source
+    }
+  }
+
+  const callerAbortListener = () => markAbortSource("caller")
+  const timeoutAbortListener = () => markAbortSource("timeout")
+
+  if (config.signal?.aborted) {
+    markAbortSource("caller")
+  } else {
+    config.signal?.addEventListener("abort", callerAbortListener, { once: true })
+  }
+
+  controller.signal.addEventListener("abort", timeoutAbortListener, { once: true })
+
+  const timeoutID = setTimeout(() => {
+    markAbortSource("timeout")
+    controller.abort()
+  }, requestTimeoutMs)
+  const signal = config.signal
+    ? AbortSignal.any([config.signal, controller.signal])
+    : controller.signal
+
+  try {
+    return await fetch(url, {
+      ...config,
+      signal,
+    })
+  } catch (networkErr) {
+    const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError"
+    const isCallerAbort = isAbort && abortSource === "caller"
+
+    if (isCallerAbort) {
+      throw networkErr
+    }
+
+    throw new ApiClientError(
+      isAbort ? "Request timed out" : "Network error: unable to reach the server",
+      isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
+      0
+    )
+  } finally {
+    clearTimeout(timeoutID)
+    config.signal?.removeEventListener("abort", callerAbortListener)
+    controller.signal.removeEventListener("abort", timeoutAbortListener)
   }
 }
 
@@ -90,6 +240,14 @@ export async function apiRequest<T>(
   const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
     (options.method || "GET").toUpperCase()
   )
+  const requestSignal = options.signal ?? undefined
+
+  await ensureCsrfForStateChangingRequest(
+    apiBaseURL,
+    endpoint,
+    isStateChanging,
+    requestSignal,
+  )
 
   const config: RequestInit = {
     ...options,
@@ -100,26 +258,7 @@ export async function apiRequest<T>(
     },
   }
 
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 10_000)
-  let response: Response
-  try {
-    try {
-      response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      })
-    } catch (networkErr) {
-      const isAbort = networkErr instanceof DOMException && networkErr.name === "AbortError"
-      throw new ApiClientError(
-        isAbort ? "Request timed out" : "Network error: unable to reach the server",
-        isAbort ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
-        0
-      )
-    }
-  } finally {
-    clearTimeout(timeoutId)
-  }
+  const response = await fetchWithTimeout(url, config)
 
   if (!response.ok) {
     throw await parseError(response)

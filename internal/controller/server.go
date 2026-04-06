@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/admin"
@@ -37,6 +39,13 @@ import (
 
 type fallbackTemplateStorage struct{}
 
+const monthlyInvoiceSchedulerLockID int64 = 0x5649525455455349
+
+type schedulerLock interface {
+	TryAdvisoryLock(ctx context.Context, lockID int64) (bool, error)
+	ReleaseAdvisoryLock(ctx context.Context, lockID int64) error
+}
+
 func (fallbackTemplateStorage) ImportTemplate(ctx context.Context, name, sourcePath string) (string, string, error) {
 	return "", "", fmt.Errorf("template storage backend is not configured")
 }
@@ -63,17 +72,21 @@ const (
 
 // Server represents the VirtueStack Controller HTTP server.
 type Server struct {
-	config     *config.ControllerConfig
-	router     *gin.Engine
-	httpServer *http.Server
-	dbPool     *pgxpool.Pool
-	powerDNSDB *sql.DB // MySQL connection to PowerDNS database
-	natsConn   *nats.Conn
-	jetstream  nats.JetStreamContext
-	taskWorker *tasks.Worker
-	logger     *slog.Logger
-	nodeClient *NodeClient
-	storage    services.TemplateStorage
+	config        *config.ControllerConfig
+	router        *gin.Engine
+	httpServer    *http.Server
+	metricsServer *http.Server
+	metricsLn     net.Listener
+	metricsDone   chan struct{}
+	metricsMu     sync.Mutex
+	dbPool        *pgxpool.Pool
+	powerDNSDB    *sql.DB // MySQL connection to PowerDNS database
+	natsConn      *nats.Conn
+	jetstream     nats.JetStreamContext
+	taskWorker    *tasks.Worker
+	logger        *slog.Logger
+	nodeClient    *NodeClient
+	storage       services.TemplateStorage
 	// Services
 	vmService                  *services.VMService
 	authService                *services.AuthService
@@ -91,33 +104,38 @@ type Server struct {
 	adminBackupScheduleService *services.AdminBackupScheduleService
 	billingScheduler           *services.BillingScheduler
 	invoiceService             *services.BillingInvoiceService
+	invoiceSchedulerLock       schedulerLock
+	generateMonthlyInvoices    func(ctx context.Context, year int, month time.Month) (int, error)
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
-	provisioningHandler        *provisioning.ProvisioningHandler
-	customerHandler            *customer.CustomerHandler
-	adminHandler               *admin.AdminHandler
-	notifyHandler              *customer.NotificationsHandler
-	customerInAppNotifHandler  *customer.InAppNotificationsHandler
-	adminInAppNotifHandler     *admin.AdminInAppNotificationsHandler
-	sseHub                     *services.SSEHub
-	inAppNotifService          *services.InAppNotificationService
-	stripeWebhookHandler       *webhooks.StripeWebhookHandler
-	paypalProvider             *paypalPayments.Provider
-	paypalWebhookHandler       *webhooks.PayPalWebhookHandler
-	cryptoWebhookHandler       *webhooks.CryptoWebhookHandler
-	readinessDBPing            func(context.Context) error
-	readinessNATSStatus        func() nats.Status
+	provisioningHandler       *provisioning.ProvisioningHandler
+	customerHandler           *customer.CustomerHandler
+	adminHandler              *admin.AdminHandler
+	notifyHandler             *customer.NotificationsHandler
+	customerInAppNotifHandler *customer.InAppNotificationsHandler
+	adminInAppNotifHandler    *admin.AdminInAppNotificationsHandler
+	sseHub                    *services.SSEHub
+	inAppNotifService         *services.InAppNotificationService
+	webhookScheduler          interface{ StartScheduler(context.Context) }
+	stripeWebhookHandler      *webhooks.StripeWebhookHandler
+	paypalProvider            *paypalPayments.Provider
+	paypalWebhookHandler      *webhooks.PayPalWebhookHandler
+	cryptoWebhookHandler      *webhooks.CryptoWebhookHandler
+	readinessDBPing           func(context.Context) error
+	readinessNATSStatus       func() nats.Status
+	serveHTTPFunc             func(*http.Server, net.Listener) error
+	shutdownHTTPFunc          func(*http.Server, context.Context) error
 }
 
 // NewServer creates a new Controller server.
-func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetStreamContext, logger *slog.Logger) (*Server, error) {
+func NewServer(ctx context.Context, cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetStreamContext, logger *slog.Logger) (*Server, error) {
 	// Set Gin to release mode always
 	gin.SetMode(gin.ReleaseMode)
 
 	var redisClient *controllerredis.Client
 	if cfg.Redis.URL != "" {
-		client, err := controllerredis.NewClient(context.Background(), cfg.Redis.URL)
+		client, err := controllerredis.NewClient(ctx, cfg.Redis.URL)
 		if err != nil {
 			return nil, fmt.Errorf("initializing redis rate limit backend: %w", err)
 		}
@@ -157,7 +175,9 @@ func NewServer(cfg *config.ControllerConfig, dbPool *pgxpool.Pool, js nats.JetSt
 	router.Use(s.requestLogger())
 
 	// Setup routes
-	s.setupRoutes()
+	if err := s.setupRoutes(); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -178,7 +198,11 @@ func (s *Server) SetNATSConnection(conn *nats.Conn) {
 }
 
 // setupRoutes configures all HTTP routes.
-func (s *Server) setupRoutes() {
+func (s *Server) setupRoutes() error {
+	if err := s.router.SetTrustedProxies(s.config.TrustedProxies); err != nil {
+		return fmt.Errorf("configuring trusted proxies: %w", err)
+	}
+
 	// CORS configuration - use configured origins or defaults
 	allowOrigins := s.config.CORSOrigins
 	if len(allowOrigins) == 0 {
@@ -198,12 +222,10 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/health", s.healthHandler)
 	s.router.GET("/ready", s.readinessHandler)
 
-	// Metrics endpoint
-	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
-
 	// Provisioning API (WHMCS) - requires API key authentication
 	// Note: Handlers are nil until InitializeServices is called
 	// Routes will be registered in RegisterAPIRoutes after services are initialized
+	return nil
 }
 
 // RegisterAPIRoutes registers all API routes after services are initialized.
@@ -307,30 +329,158 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:  IdleTimeout,
 	}
 
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.config.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listening on HTTP address %s: %w", s.config.ListenAddr, err)
+	}
+
+	if err := s.startMetricsHTTPServer(ctx); err != nil {
+		if closeErr := listener.Close(); closeErr != nil {
+			s.logger.Warn("failed to close HTTP listener after metrics setup failure", "error", closeErr)
+		}
+		return err
+	}
+
 	s.logger.Info("starting HTTP server", "address", s.config.ListenAddr)
 
-	err := s.httpServer.ListenAndServe()
+	err = s.serveHTTP(listener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			s.logger.Warn("failed to close HTTP listener after startup failure", "error", closeErr)
+		}
+
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if shutdownErr := s.shutdownMetricsServer(shutdownCtx); shutdownErr != nil {
+			s.logger.Error("failed to stop metrics server after HTTP server startup failure", "error", shutdownErr)
+		}
 		return fmt.Errorf("starting HTTP server: %w", err)
 	}
 
 	return nil
 }
 
+func (s *Server) startMetricsHTTPServer(ctx context.Context) error {
+	if s.config == nil || s.config.MetricsAddr == "" {
+		return nil
+	}
+
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.config.MetricsAddr)
+	if err != nil {
+		return fmt.Errorf("listening on metrics address %s: %w", s.config.MetricsAddr, err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+
+	metricsServer := &http.Server{
+		Addr:         s.config.MetricsAddr,
+		Handler:      mux,
+		ReadTimeout:  ReadTimeout,
+		WriteTimeout: WriteTimeout,
+		IdleTimeout:  IdleTimeout,
+	}
+	metricsDone := make(chan struct{})
+
+	s.metricsMu.Lock()
+	s.metricsServer = metricsServer
+	s.metricsLn = listener
+	s.metricsDone = metricsDone
+	s.metricsMu.Unlock()
+
+	s.logger.Info("starting metrics server", "address", s.config.MetricsAddr)
+
+	go func(server *http.Server, ln net.Listener, done chan struct{}) {
+		defer close(done)
+		if serveErr := server.Serve(ln); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			s.logger.Error("metrics server stopped unexpectedly", "error", serveErr)
+		}
+	}(metricsServer, listener, metricsDone)
+
+	return nil
+}
+
+func (s *Server) shutdownMetricsServer(ctx context.Context) error {
+	s.metricsMu.Lock()
+	server := s.metricsServer
+	listener := s.metricsLn
+	done := s.metricsDone
+
+	s.metricsServer = nil
+	s.metricsLn = nil
+	s.metricsDone = nil
+	s.metricsMu.Unlock()
+
+	if server == nil {
+		return nil
+	}
+
+	var shutdownErr error
+	if err := server.Shutdown(ctx); err != nil {
+		shutdownErr = fmt.Errorf("shutting down metrics server: %w", err)
+	}
+
+	if listener != nil {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("closing metrics listener: %w", err))
+		}
+	}
+
+	if done != nil && ctx.Err() == nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("waiting for metrics server shutdown: %w", ctx.Err()))
+		}
+	}
+
+	return shutdownErr
+}
+
+func (s *Server) serveHTTP(listener net.Listener) error {
+	if s.serveHTTPFunc != nil {
+		return s.serveHTTPFunc(s.httpServer, listener)
+	}
+	return s.httpServer.Serve(listener)
+}
+
+func (s *Server) shutdownHTTP(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	if s.shutdownHTTPFunc != nil {
+		return s.shutdownHTTPFunc(s.httpServer, ctx)
+	}
+	return s.httpServer.Shutdown(ctx)
+}
+
 // Stop gracefully stops the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil {
+	s.metricsMu.Lock()
+	hasMetricsServer := s.metricsServer != nil
+	s.metricsMu.Unlock()
+	if s.httpServer == nil && !hasMetricsServer {
 		return nil
 	}
 
 	s.logger.Info("stopping HTTP server")
 
-	// Create shutdown context with deadline
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	var shutdownErr error
 
-	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutting down HTTP server: %w", err)
+	if s.httpServer != nil {
+		httpShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		httpErr := s.shutdownHTTP(httpShutdownCtx)
+		cancel()
+		if httpErr != nil {
+			shutdownErr = fmt.Errorf("shutting down HTTP server: %w", httpErr)
+		}
+	}
+
+	metricsShutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	metricsErr := s.shutdownMetricsServer(metricsShutdownCtx)
+	cancel()
+	if metricsErr != nil {
+		shutdownErr = errors.Join(shutdownErr, metricsErr)
 	}
 
 	// Close the PowerDNS MySQL connection if it was opened.
@@ -340,6 +490,10 @@ func (s *Server) Stop(ctx context.Context) error {
 		} else {
 			s.logger.Info("PowerDNS MySQL connection closed")
 		}
+	}
+
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 
 	s.logger.Info("HTTP server stopped")

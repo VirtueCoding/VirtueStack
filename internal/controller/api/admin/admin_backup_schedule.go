@@ -309,6 +309,10 @@ func (h *AdminHandler) UpdateAdminBackupSchedule(c *gin.Context) {
 	}
 
 	if err := h.adminBackupScheduleRepo.Update(c.Request.Context(), schedule); err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "SCHEDULE_NOT_FOUND", "Admin backup schedule not found")
+			return
+		}
 		h.logger.Error("failed to update admin backup schedule",
 			"schedule_id", scheduleID,
 			"error", err,

@@ -1,13 +1,14 @@
 import { useState, useCallback } from "react";
 import { useToast } from "@virtuestack/ui";
 import { vmApi, ApiClientError } from "@/lib/api-client";
+import { completeVMActionWithRefresh, VMActionRefreshError } from "@/lib/vm-action-refresh";
 
 export type VMAction = "start" | "stop" | "forceStop" | "restart";
 
 interface VMActionConfig {
   action: VMAction;
   vmId: string;
-  onSuccess?: () => void;
+  onSuccess?: () => Promise<void> | void;
   successMessage?: string;
   errorMessage?: string;
 }
@@ -73,32 +74,35 @@ export function useVMAction() {
       setLoadingVMId(vmId);
 
       try {
-        switch (action) {
-          case "start":
-            await vmApi.startVM(vmId);
-            break;
-          case "stop":
-            await vmApi.stopVM(vmId);
-            break;
-          case "forceStop":
-            await vmApi.forceStopVM(vmId);
-            break;
-          case "restart":
-            await vmApi.restartVM(vmId);
-            break;
-        }
+        await completeVMActionWithRefresh(async () => {
+          switch (action) {
+            case "start":
+              await vmApi.startVM(vmId);
+              break;
+            case "stop":
+              await vmApi.stopVM(vmId);
+              break;
+            case "forceStop":
+              await vmApi.forceStopVM(vmId);
+              break;
+            case "restart":
+              await vmApi.restartVM(vmId);
+              break;
+          }
+        }, onSuccess);
 
         toast({
           title: ACTION_TITLES[action],
           description: successMessage || messages.success,
         });
 
-        onSuccess?.();
         return true;
       } catch (error) {
-        const message = error instanceof ApiClientError
+        const message = error instanceof VMActionRefreshError
           ? error.message
-          : errorMessage || messages.error;
+          : error instanceof ApiClientError
+            ? error.message
+            : errorMessage || messages.error;
 
         toast({
           title: "Error",
@@ -141,32 +145,35 @@ export async function executeVMAction(
   const messages = DEFAULT_MESSAGES[action];
 
   try {
-    switch (action) {
-      case "start":
-        await vmApi.startVM(vmId);
-        break;
-      case "stop":
-        await vmApi.stopVM(vmId);
-        break;
-      case "forceStop":
-        await vmApi.forceStopVM(vmId);
-        break;
-      case "restart":
-        await vmApi.restartVM(vmId);
-        break;
-    }
+    await completeVMActionWithRefresh(async () => {
+      switch (action) {
+        case "start":
+          await vmApi.startVM(vmId);
+          break;
+        case "stop":
+          await vmApi.stopVM(vmId);
+          break;
+        case "forceStop":
+          await vmApi.forceStopVM(vmId);
+          break;
+        case "restart":
+          await vmApi.restartVM(vmId);
+          break;
+      }
+    }, onSuccess);
 
     toast({
       title: ACTION_TITLES[action],
       description: successMessage || messages.success,
     });
 
-    onSuccess?.();
     return true;
   } catch (error) {
-    const message = error instanceof ApiClientError
+    const message = error instanceof VMActionRefreshError
       ? error.message
-      : errorMessage || messages.error;
+      : error instanceof ApiClientError
+        ? error.message
+        : errorMessage || messages.error;
 
     toast({
       title: "Error",

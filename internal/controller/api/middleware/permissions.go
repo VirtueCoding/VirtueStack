@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,7 +44,8 @@ func GetAdmin(c *gin.Context) *models.Admin {
 // Must be used after JWTAuth middleware, which sets user_id in the context.
 // On success, it calls SetAdmin to store the admin in context for downstream handlers.
 // Returns 401 if user_id is not found in context (auth missing or invalid).
-// Returns 500 if the admin fetch fails (database error or admin not found).
+// Returns 404 if the authenticated admin record no longer exists.
+// Returns 500 on other fetch failures.
 func AdminLoader(fetcher AdminFetcher) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		adminID := GetUserID(c)
@@ -55,6 +57,11 @@ func AdminLoader(fetcher AdminFetcher) gin.HandlerFunc {
 
 		admin, err := fetcher(c.Request.Context(), adminID)
 		if err != nil {
+			if sharederrors.Is(err, sharederrors.ErrNotFound) {
+				RespondWithError(c, http.StatusNotFound, "NOT_FOUND",
+					"admin not found")
+				return
+			}
 			slog.Error("failed to fetch admin",
 				"admin_id", adminID,
 				"error", err,

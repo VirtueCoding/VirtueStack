@@ -137,10 +137,6 @@ func (s *AuthService) checkLoginLockoutForType(ctx context.Context, email, userT
 // createLoginSession mints access + refresh tokens and persists the session row.
 // Returns the AuthTokens response and the plain-text refresh token.
 func (s *AuthService) createLoginSession(ctx context.Context, userID, userType, role, ipAddress, userAgent string, refreshDuration time.Duration) (*models.AuthTokens, string, error) {
-	accessToken, err := middleware.GenerateAccessToken(s.authConfig, userID, userType, role, AccessTokenDuration)
-	if err != nil {
-		return nil, "", fmt.Errorf("generating access token: %w", err)
-	}
 	refreshToken, err := middleware.GenerateRefreshToken()
 	if err != nil {
 		return nil, "", fmt.Errorf("generating refresh token: %w", err)
@@ -154,10 +150,22 @@ func (s *AuthService) createLoginSession(ctx context.Context, userID, userType, 
 	if err := s.customerRepo.CreateSession(ctx, session); err != nil {
 		return nil, "", fmt.Errorf("creating session: %w", err)
 	}
+
+	accessToken, err := middleware.GenerateAccessToken(s.authConfig, userID, userType, role, session.ID, AccessTokenDuration)
+	if err != nil {
+		return nil, "", fmt.Errorf("generating access token: %w", err)
+	}
+
+	sessionCleanupToken, err := middleware.GenerateSessionCleanupToken(s.authConfig, userID, userType, role, session.ID)
+	if err != nil {
+		return nil, "", fmt.Errorf("generating session cleanup token: %w", err)
+	}
 	return &models.AuthTokens{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(AccessTokenDuration.Seconds()),
+		AccessToken:         accessToken,
+		TokenType:           "Bearer",
+		ExpiresIn:           int(AccessTokenDuration.Seconds()),
+		SessionID:           session.ID,
+		SessionCleanupToken: sessionCleanupToken,
 	}, refreshToken, nil
 }
 

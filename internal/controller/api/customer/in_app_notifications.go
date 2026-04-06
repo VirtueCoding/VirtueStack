@@ -11,6 +11,7 @@ import (
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-gonic/gin"
@@ -18,10 +19,11 @@ import (
 
 // InAppNotificationsHandler handles in-app notification endpoints for customers.
 type InAppNotificationsHandler struct {
-	service *services.InAppNotificationService
-	hub     *services.SSEHub
-	authCfg middleware.AuthConfig
-	logger  *slog.Logger
+	service   *services.InAppNotificationService
+	hub       *services.SSEHub
+	authCfg   middleware.AuthConfig
+	logger    *slog.Logger
+	auditRepo *repository.AuditRepository
 }
 
 // NewInAppNotificationsHandler creates a new InAppNotificationsHandler.
@@ -30,12 +32,14 @@ func NewInAppNotificationsHandler(
 	hub *services.SSEHub,
 	authCfg middleware.AuthConfig,
 	logger *slog.Logger,
+	auditRepo *repository.AuditRepository,
 ) *InAppNotificationsHandler {
 	return &InAppNotificationsHandler{
-		service: service,
-		hub:     hub,
-		authCfg: authCfg,
-		logger:  logger.With("component", "customer-in-app-notifications-handler"),
+		service:   service,
+		hub:       hub,
+		authCfg:   authCfg,
+		logger:    logger.With("component", "customer-in-app-notifications-handler"),
+		auditRepo: auditRepo,
 	}
 }
 
@@ -79,6 +83,7 @@ func (h *InAppNotificationsHandler) MarkAsRead(c *gin.Context) {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark notification as read")
 		return
 	}
+	h.logAudit(c, "notification.read", "notification", notifID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -90,6 +95,7 @@ func (h *InAppNotificationsHandler) MarkAllAsRead(c *gin.Context) {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark all as read")
 		return
 	}
+	h.logAudit(c, "notification.read_all", "customer", customerID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -131,8 +137,13 @@ func (h *InAppNotificationsHandler) streamSSE(c *gin.Context, userID string) {
 	// Send initial unread count
 	count, err := h.service.GetUnreadCount(c.Request.Context(), userID, "")
 	if err == nil {
-		data, _ := json.Marshal(models.UnreadCountResponse{Count: count})
-		writeSSEEvent(c, "unread_count", data)
+		data, marshalErr := json.Marshal(models.UnreadCountResponse{Count: count})
+		if marshalErr != nil {
+			h.logger.Warn("failed to marshal unread count event", "error", marshalErr, "user_id", userID)
+		} else if writeErr := writeSSEEvent(c, "unread_count", data); writeErr != nil {
+			h.logger.Warn("failed to write unread count event", "error", writeErr, "user_id", userID)
+			return
+		}
 	}
 
 	heartbeat := time.NewTicker(30 * time.Second)
@@ -144,16 +155,30 @@ func (h *InAppNotificationsHandler) streamSSE(c *gin.Context, userID string) {
 		case <-ctx.Done():
 			return
 		case event := <-ch:
-			writeSSEEvent(c, event.Type, event.Data)
+			if err := writeSSEEvent(c, event.Type, event.Data); err != nil {
+				h.logger.Debug("SSE client disconnected while writing event",
+					"event_type", event.Type,
+					"user_id", userID,
+					"error", err)
+				return
+			}
 		case <-heartbeat.C:
-			writeSSEEvent(c, "heartbeat", json.RawMessage(`{}`))
+			if err := writeSSEEvent(c, "heartbeat", json.RawMessage(`{}`)); err != nil {
+				h.logger.Debug("SSE client disconnected while writing heartbeat",
+					"user_id", userID,
+					"error", err)
+				return
+			}
 		}
 	}
 }
 
-func writeSSEEvent(c *gin.Context, eventType string, data json.RawMessage) {
-	fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, string(data))
+func writeSSEEvent(c *gin.Context, eventType string, data json.RawMessage) error {
+	if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, string(data)); err != nil {
+		return err
+	}
 	c.Writer.Flush()
+	return nil
 }
 
 func parsePerPage(raw string, defaultVal, maxVal int) int {
@@ -168,4 +193,41 @@ func parsePerPage(raw string, defaultVal, maxVal int) int {
 		return maxVal
 	}
 	return v
+}
+
+func (h *InAppNotificationsHandler) logAudit(c *gin.Context, action, resourceType, resourceID string) {
+	if h.auditRepo == nil {
+		return
+	}
+
+	customerID := middleware.GetUserID(c)
+	actorIP := c.ClientIP()
+	correlationID := middleware.GetCorrelationID(c)
+	changesJSON, err := json.Marshal(map[string]any{})
+	if err != nil {
+		h.logger.Error("failed to marshal audit changes",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+		return
+	}
+
+	auditLog := &models.AuditLog{
+		ActorID:       &customerID,
+		ActorType:     models.AuditActorCustomer,
+		ActorIP:       &actorIP,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    &resourceID,
+		Changes:       changesJSON,
+		CorrelationID: &correlationID,
+		Success:       true,
+	}
+
+	if err := h.auditRepo.Append(c.Request.Context(), auditLog); err != nil {
+		h.logger.Error("failed to write audit log",
+			"action", action,
+			"resource_id", resourceID,
+			"error", err)
+	}
 }

@@ -111,18 +111,18 @@ func (h *AdminHandler) CreateStorageBackend(c *gin.Context) {
 
 	// Build the storage backend model
 	sb := &models.StorageBackend{
-		Name:             req.Name,
-		Type:             req.Type,
-		CephPool:         req.CephPool,
-		CephUser:         req.CephUser,
-		CephMonitors:     req.CephMonitors,
-		CephKeyringPath:  req.CephKeyringPath,
-		StoragePath:      req.StoragePath,
-		LVMVolumeGroup:   req.LVMVolumeGroup,
-		LVMThinPool:      req.LVMThinPool,
+		Name:                        req.Name,
+		Type:                        req.Type,
+		CephPool:                    req.CephPool,
+		CephUser:                    req.CephUser,
+		CephMonitors:                req.CephMonitors,
+		CephKeyringPath:             req.CephKeyringPath,
+		StoragePath:                 req.StoragePath,
+		LVMVolumeGroup:              req.LVMVolumeGroup,
+		LVMThinPool:                 req.LVMThinPool,
 		LVMDataPercentThreshold:     req.LVMDataPercentThreshold,
 		LVMMetadataPercentThreshold: req.LVMMetadataPercentThreshold,
-		HealthStatus:     "unknown",
+		HealthStatus:                "unknown",
 	}
 
 	if err := h.storageBackendRepo.Create(c.Request.Context(), sb); err != nil {
@@ -294,6 +294,9 @@ func (h *AdminHandler) UpdateStorageBackend(c *gin.Context) {
 	}
 
 	if err := h.storageBackendRepo.Update(c.Request.Context(), backend); err != nil {
+		if handleNotFoundError(c, err, "STORAGE_BACKEND_NOT_FOUND", "Storage backend not found") {
+			return
+		}
 		h.logger.Error("failed to update storage backend",
 			"storage_backend_id", backendID,
 			"error", err,
@@ -306,6 +309,9 @@ func (h *AdminHandler) UpdateStorageBackend(c *gin.Context) {
 	// Fetch with nodes for response
 	updated, err := h.storageBackendRepo.GetByIDWithNodes(c.Request.Context(), backendID)
 	if err != nil {
+		if handleNotFoundError(c, err, "STORAGE_BACKEND_NOT_FOUND", "Storage backend not found") {
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "STORAGE_BACKEND_GET_FAILED",
 			"Failed to retrieve updated storage backend")
 		return
@@ -681,16 +687,16 @@ func (h *AdminHandler) RefreshStorageBackendHealth(c *gin.Context) {
 
 // StorageBackendHealthResponse represents the health response for a storage backend.
 type StorageBackendHealthResponse struct {
-	ID                string                    `json:"id"`
-	Name              string                    `json:"name"`
-	Type              models.StorageBackendType `json:"type"`
-	HealthStatus      string                    `json:"health_status"`
-	HealthMessage     *string                   `json:"health_message,omitempty"`
-	TotalGB           *int64                    `json:"total_gb,omitempty"`
-	UsedGB            *int64                    `json:"used_gb,omitempty"`
-	AvailableGB       *int64                    `json:"available_gb,omitempty"`
-	LVMDataPercent    *float64                  `json:"lvm_data_percent,omitempty"`
-	LVMMetadataPercent *float64                 `json:"lvm_metadata_percent,omitempty"`
+	ID                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	Type               models.StorageBackendType `json:"type"`
+	HealthStatus       string                    `json:"health_status"`
+	HealthMessage      *string                   `json:"health_message,omitempty"`
+	TotalGB            *int64                    `json:"total_gb,omitempty"`
+	UsedGB             *int64                    `json:"used_gb,omitempty"`
+	AvailableGB        *int64                    `json:"available_gb,omitempty"`
+	LVMDataPercent     *float64                  `json:"lvm_data_percent,omitempty"`
+	LVMMetadataPercent *float64                  `json:"lvm_metadata_percent,omitempty"`
 }
 
 // validateStorageBackendConfig validates type-specific configuration for a storage backend.

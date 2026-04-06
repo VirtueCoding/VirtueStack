@@ -3,7 +3,7 @@
 # =============================================================================
 # Usage:
 #   Production: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-#   Development: docker compose up -d (uses override automatically)
+#   Development: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 # =============================================================================
 
 services:
@@ -96,7 +96,11 @@ services:
       NATS_URL: nats://${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env}@nats:4222
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GUEST_OP_HMAC_SECRET: ${GUEST_OP_HMAC_SECRET:?GUEST_OP_HMAC_SECRET must be set in .env}
       LISTEN_ADDR: :8080
+      # Prometheus scrapes the dedicated metrics listener, not the main HTTP router.
+      METRICS_ADDR: ${CONTROLLER_METRICS_ADDR:-:9091}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.20.0.0/24}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
@@ -201,7 +205,6 @@ services:
     image: nginx:1.28-alpine
     container_name: virtuestack-nginx
     restart: unless-stopped
-    user: "101:101"
     ports:
       - "80:80"
       - "443:443"
@@ -210,8 +213,6 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ${SSL_CERT_PATH:-./ssl/cert.pem}:/etc/nginx/ssl/cert.pem:ro
       - ${SSL_KEY_PATH:-./ssl/key.pem}:/etc/nginx/ssl/key.pem:ro
-      - nginx_cache:/var/cache/nginx
-      - nginx_logs:/var/log/nginx
     depends_on:
       controller:
         condition: service_healthy
@@ -262,7 +263,3 @@ volumes:
     name: virtuestack-postgres-data
   nats_data:
     name: virtuestack-nats-data
-  nginx_cache:
-    name: virtuestack-nginx-cache
-  nginx_logs:
-    name: virtuestack-nginx-logs

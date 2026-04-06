@@ -165,7 +165,14 @@ Content-Type: application/json
 {
   "data": {
     "token_type": "Bearer",
-    "expires_in": 900
+    "expires_in": 900,
+    "session_id": "admin-session-123",
+    "session_cleanup_token": "cleanup-token-abc",
+    "user": {
+      "id": "admin-uuid",
+      "email": "admin@example.com",
+      "role": "admin"
+    }
   }
 }
 ```
@@ -188,14 +195,9 @@ Or rely on the HTTP-only cookies (automatic). If cookies are present, the `Autho
 
 ```http
 POST /api/v1/admin/auth/refresh
-Content-Type: application/json
-
-{
-  "refresh_token": "<refresh_token>"
-}
 ```
 
-The refresh token can be provided in the request body or via the `refresh_token` cookie. On success, both cookies are updated with new tokens.
+The refresh token is read exclusively from the `refresh_token` HttpOnly cookie. On success, both cookies are updated with new tokens.
 
 **Logout:**
 
@@ -203,7 +205,15 @@ The refresh token can be provided in the request body or via the `refresh_token`
 POST /api/v1/admin/auth/logout
 ```
 
-Clears the authentication cookies.
+Normal browser-session logout uses the authenticated admin session plus CSRF protection and clears the authentication cookies. Cleanup-token logout may instead provide:
+
+```json
+{
+  "session_cleanup_token": "cleanup-token-abc"
+}
+```
+
+This allows the frontend to invalidate a just-issued session safely even when the current access token is no longer usable.
 
 #### JWT Claims (Admin)
 
@@ -259,7 +269,14 @@ Content-Type: application/json
   "data": {
     "token_type": "Bearer",
     "expires_in": 900,
-    "requires_2fa": false
+    "requires_2fa": false,
+    "session_id": "customer-session-123",
+    "session_cleanup_token": "cleanup-token-abc",
+    "user": {
+      "id": "customer-uuid",
+      "email": "customer@example.com",
+      "role": "customer"
+    }
   }
 }
 ```
@@ -297,18 +314,25 @@ Content-Type: application/json
 
 ```http
 POST /api/v1/customer/auth/refresh
-Content-Type: application/json
-
-{
-  "refresh_token": "<refresh_token>"
-}
 ```
+
+The refresh token is read exclusively from the `refresh_token` HttpOnly cookie.
 
 **Logout:**
 
 ```http
 POST /api/v1/customer/auth/logout
 ```
+
+Normal browser-session logout requires the authenticated customer session plus CSRF protection. Cleanup-token logout may instead provide:
+
+```json
+{
+  "session_cleanup_token": "cleanup-token-abc"
+}
+```
+
+This allows the frontend to invalidate a just-issued session safely when it only has the cleanup token.
 
 #### Login Request Fields
 
@@ -712,6 +736,9 @@ Verify TOTP code to complete authentication.
 |-------|------|-------------|
 | `token_type` | string | `"Bearer"` |
 | `expires_in` | integer | Access token lifetime (900 seconds / 15 min) |
+| `session_id` | string | Server-issued session identifier |
+| `session_cleanup_token` | string | One-time token for cleanup-token logout |
+| `user` | object | Authenticated admin identity (`id`, `email`, `role`, optional `permissions`) |
 
 Sets `access_token` and `refresh_token` HTTP-only cookies.
 
@@ -724,11 +751,7 @@ Sets `access_token` and `refresh_token` HTTP-only cookies.
 
 Refresh the access token using a refresh token.
 
-**Request Body (optional):**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `refresh_token` | string | No | If omitted, cookie is used |
+**Authentication source:** HttpOnly `refresh_token` cookie only.
 
 **Response (`200 OK`):**
 
@@ -1910,7 +1933,20 @@ Authenticate a customer. If 2FA is enabled, a `temp_token` is returned.
 | `email` | string | Yes | Valid email, max 254 chars |
 | `password` | string | Yes | Min 12, max 128 chars |
 
-**Response (`200 OK`):** Same format as admin login (see Admin Authentication above).
+**Response (`200 OK`):**
+
+When 2FA is disabled, the response includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_type` | string | `"Bearer"` |
+| `expires_in` | integer | Access token lifetime |
+| `requires_2fa` | boolean | Always `false` in this branch |
+| `session_id` | string | Server-issued session identifier |
+| `session_cleanup_token` | string | One-time token for cleanup-token logout |
+| `user` | object | Authenticated customer identity (`id`, `email`, `role`) |
+
+When 2FA is enabled, the response instead returns `requires_2fa: true` plus a short-lived `temp_token`.
 
 ---
 
@@ -1920,7 +1956,15 @@ Verify TOTP code (if 2FA is enabled).
 
 **Request Body:** Same as admin 2FA verification.
 
-**Response (`200 OK`):** Sets cookies and returns token info.
+**Response (`200 OK`):** Sets cookies and returns:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_type` | string | `"Bearer"` |
+| `expires_in` | integer | Access token lifetime |
+| `session_id` | string | Server-issued session identifier |
+| `session_cleanup_token` | string | One-time token for cleanup-token logout |
+| `user` | object | Authenticated customer identity (`id`, `email`, `role`) |
 
 ---
 
@@ -1928,7 +1972,16 @@ Verify TOTP code (if 2FA is enabled).
 
 Refresh the access token.
 
-**Response (`200 OK`):** Updates cookies and returns token info.
+**Authentication source:** HttpOnly `refresh_token` cookie only.
+
+**Response (`200 OK`):** Updates cookies and returns:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_type` | string | `"Bearer"` |
+| `expires_in` | integer | New access token lifetime |
+| `session_id` | string | Refreshed server-issued session identifier |
+| `session_cleanup_token` | string | One-time token for cleanup-token logout |
 
 ---
 
@@ -1953,6 +2006,14 @@ Consume a short-lived opaque WHMCS SSO token, set the standard customer session 
 #### `POST /customer/auth/logout`
 
 Invalidate session and clear cookies.
+
+Normal browser-session logout uses the authenticated customer session plus CSRF protection. Cleanup-token logout may instead send:
+
+```json
+{
+  "session_cleanup_token": "cleanup-token-abc"
+}
+```
 
 **Response (`200 OK`):**
 
@@ -2091,7 +2152,7 @@ Start the 2FA enrollment process. Returns a TOTP secret and QR code data.
 {
   "data": {
     "secret": "JBSWY3DPEHPK3PXP",
-    "qr_code_data": "otpauth://totp/VirtueStack:customer@example.com?secret=JBSWY3DPEHPK3PXP&issuer=VirtueStack"
+    "qr_code_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
   }
 }
 ```
@@ -2107,7 +2168,6 @@ Enable 2FA by verifying a TOTP code against the enrolled secret.
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
 | `totp_code` | string | Yes | 6 numeric digits |
-| `password` | string | Yes | Current password for verification |
 
 **Response (`200 OK`):** Returns backup recovery codes (shown only once):
 
@@ -2153,31 +2213,16 @@ Check if 2FA is enabled for the account.
 ```json
 {
   "data": {
-    "enabled": true,
-    "backup_codes_configured": true
+    "enabled": true
   }
 }
 ```
 
 ---
 
-#### `GET /customer/2fa/backup-codes`
-
-Get backup recovery codes (only available if 2FA is enabled).
-
-**Response (`200 OK`):** Returns array of backup code strings.
-
----
-
 #### `POST /customer/2fa/backup-codes/regenerate`
 
 Generate new backup recovery codes. Invalidates all previous codes.
-
-**Request Body:**
-
-| Field | Type | Required | Constraints |
-|-------|------|----------|-------------|
-| `password` | string | Yes | Current password |
 
 **Response (`200 OK`):** Returns new array of backup codes.
 
@@ -2307,7 +2352,7 @@ Restart a running VM (graceful shutdown + start).
 
 #### `POST /customer/vms/:id/console-token`
 
-Generate a NoVNC access token for graphical (VNC) console access.
+Return direct VNC console access details for graphical (NoVNC) console access.
 
 **Prerequisites:** VM must be running and have a node assigned.
 
@@ -2317,13 +2362,14 @@ Generate a NoVNC access token for graphical (VNC) console access.
 {
   "data": {
     "token": "hex-encoded-32-byte-token",
-    "url": "https://controller/vnc?token=hex-encoded-32-byte-token",
+    "url": "wss://controller.example.com/api/v1/customer/ws/vnc/<vm-id>",
     "expires_at": "2026-03-15T11:30:00Z"
   }
 }
 ```
 
-Token is valid for 1 hour and is single-use.
+The returned `url` is the preferred first-party connection target and does not embed the token.
+The token remains valid for 1 hour and single-use for legacy clients that still send it as a query parameter.
 
 **Error Responses:**
 - `409` — `VM_NOT_RUNNING`: VM must be running to access console
@@ -2333,7 +2379,7 @@ Token is valid for 1 hour and is single-use.
 
 #### `POST /customer/vms/:id/serial-token`
 
-Generate a serial console access token (text-based, xterm.js).
+Return direct serial console access details (text-based, xterm.js).
 
 **Prerequisites:** VM must be running and have a node assigned.
 
@@ -2343,11 +2389,13 @@ Generate a serial console access token (text-based, xterm.js).
 {
   "data": {
     "token": "hex-encoded-32-byte-token",
-    "url": "https://controller/serial?token=hex-encoded-32-byte-token",
+    "url": "wss://controller.example.com/api/v1/customer/ws/serial/<vm-id>",
     "expires_at": "2026-03-15T11:30:00Z"
   }
 }
 ```
+
+As with VNC, the direct websocket `url` is preferred and the token is retained only for backward compatibility.
 
 Token is valid for 1 hour.
 
@@ -2419,12 +2467,12 @@ Upload an ISO image to attach to a VM.
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `file` | file | Yes | `.iso` file, max 10 GB |
+| `file` | file | Yes | `.iso` file, max size controlled by `MAX_ISO_SIZE_GB` (default 10 GB) |
 
 **Additional constraints:**
 - Max 5 ISO files per VM
 - Only `.iso` files accepted
-- File size limited to 10 GB
+- File size limited by `MAX_ISO_SIZE_GB` (default 10 GB)
 
 **Response (`200 OK`):**
 
@@ -2442,7 +2490,7 @@ Upload an ISO image to attach to a VM.
 **Error Responses:**
 - `400` — `MISSING_FILE`: No file in `file` form field
 - `400` — `INVALID_FILE_TYPE`: Only `.iso` files allowed
-- `400` — `FILE_TOO_LARGE`: ISO exceeds 10 GB limit
+- `400` — `FILE_TOO_LARGE`: ISO exceeds the configured `MAX_ISO_SIZE_GB` limit
 - `400` — `ISO_LIMIT_REACHED`: Max 5 ISOs per VM
 
 ---
@@ -2919,33 +2967,33 @@ Remove reverse DNS for an IP address.
 
 #### `GET /customer/ws/vnc/:vmId`
 
-WebSocket endpoint for VNC console access. Requires a valid console token.
+WebSocket endpoint for VNC console access.
 
 **Protocol:** `wss://`  
-**Authentication:** Console token (from `POST /vms/:id/console-token`)  
+**Authentication:** Normal customer authentication (JWT or scoped API key with `vm:power` + VM scope). Optional legacy query token from `POST /vms/:id/console-token`.  
 **Message format:** Binary frames (VNC protocol proxied through WebSocket)
 
 **Connection lifecycle:**
-1. Obtain a console token via REST API
-2. Connect to WebSocket with `?token=<token>`
+1. Ensure the VM is running
+2. Connect to `/api/v1/customer/ws/vnc/:vmId` with the existing authenticated customer session or scoped API key
 3. VNC frames are bidirectionally proxied
-4. Connection auto-closes after 1 hour (token expiry)
+4. Optional legacy clients may still include `?token=<token>`
 
 ---
 
 #### `GET /customer/ws/serial/:vmId`
 
-WebSocket endpoint for serial console access. Requires a valid serial token.
+WebSocket endpoint for serial console access.
 
 **Protocol:** `wss://`  
-**Authentication:** Serial token (from `POST /vms/:id/serial-token`)  
+**Authentication:** Normal customer authentication (JWT or scoped API key with `vm:power` + VM scope). Optional legacy query token from `POST /vms/:id/serial-token`.  
 **Message format:** Text frames (terminal data)
 
 **Connection lifecycle:**
-1. Obtain a serial token via REST API
-2. Connect to WebSocket with `?token=<token>`
+1. Ensure the VM is running
+2. Connect to `/api/v1/customer/ws/serial/:vmId` with the existing authenticated customer session or scoped API key
 3. Terminal data is bidirectionally proxied
-4. Connection auto-closes after 1 hour (token expiry)
+4. Optional legacy clients may still include `?token=<token>`
 
 ---
 
@@ -3662,10 +3710,10 @@ Extends `VM` with:
 | Aspect | Detail |
 |--------|--------|
 | Protocol | WebSocket over TLS (`wss://`) |
-| Authentication | Console token via `?token=` query parameter |
+| Authentication | Customer session or scoped API key with `vm:power`; optional legacy `?token=` query parameter |
 | Frame Type | Binary |
 | Direction | Bidirectional (client ↔ server) |
-| Timeout | 1 hour (token expiry) |
+| Timeout | Session-controlled; legacy query tokens expire after 1 hour |
 | Proxy | Controller proxies to Node Agent gRPC `StreamVNCConsole` |
 
 ### Serial Console (`wss://<host>/api/v1/customer/ws/serial/:vmId`)
@@ -3673,10 +3721,10 @@ Extends `VM` with:
 | Aspect | Detail |
 |--------|--------|
 | Protocol | WebSocket over TLS (`wss://`) |
-| Authentication | Serial token via `?token=` query parameter |
+| Authentication | Customer session or scoped API key with `vm:power`; optional legacy `?token=` query parameter |
 | Frame Type | Text |
 | Direction | Bidirectional (client ↔ server) |
-| Timeout | 1 hour (token expiry) |
+| Timeout | Session-controlled; legacy query tokens expire after 1 hour |
 | Proxy | Controller proxies to Node Agent gRPC `StreamSerialConsole` |
 
 ---
@@ -3956,20 +4004,18 @@ POST /api/v1/customer/billing/top-up
 **Request:**
 ```json
 {
-  "amount": "50.00",
+  "amount": 5000,
   "currency": "USD",
-  "gateway": "stripe",
-  "return_url": "https://panel.example.com/billing"
+  "gateway": "stripe"
 }
 ```
 
-**Response (201):**
+**Response (200):**
 ```json
 {
   "data": {
     "payment_id": "uuid",
-    "checkout_url": "https://checkout.stripe.com/c/pay/cs_abc123",
-    "gateway": "stripe"
+    "payment_url": "https://checkout.stripe.com/c/pay/cs_abc123"
   }
 }
 ```
@@ -3984,9 +4030,10 @@ GET /api/v1/customer/billing/top-up/config
 ```json
 {
   "data": {
-    "gateways": ["stripe", "paypal", "btcpay"],
-    "min_amount": "5.00",
-    "max_amount": "1000.00",
+    "gateways": ["stripe", "paypal", "crypto"],
+    "min_amount_cents": 500,
+    "max_amount_cents": 50000,
+    "presets": [500, 1000, 2500, 5000, 10000],
     "currency": "USD"
   }
 }

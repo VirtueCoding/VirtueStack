@@ -38,6 +38,14 @@ type AdminVMUpdateRequest struct {
 // VMMigrateRequest represents the request body for VM migration.
 type VMMigrateRequest struct {
 	TargetNodeID string `json:"target_node_id" validate:"required,uuid"`
+	Live         *bool  `json:"live,omitempty"`
+}
+
+func resolveMigrationLiveFlag(live *bool) bool {
+	if live == nil {
+		return true
+	}
+	return *live
 }
 
 // ListVMs handles GET /vms - lists all VMs across all customers.
@@ -171,7 +179,7 @@ func (h *AdminHandler) CreateVM(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, models.Response{
 		Data: VMCreateResponse{
-			VMID:  vm.ID,
+			VMID:   vm.ID,
 			TaskID: taskID,
 		},
 	})
@@ -459,21 +467,25 @@ func (h *AdminHandler) MigrateVM(c *gin.Context) {
 		return
 	}
 
+	live := resolveMigrationLiveFlag(req.Live)
+
 	// Log audit event
 	h.logAuditEvent(c, "vm.migrate", "vm", vmID, map[string]interface{}{
 		"source_node_id": vm.NodeID,
 		"target_node_id": req.TargetNodeID,
+		"live":           live,
 	}, true)
 
 	h.logger.Info("VM migration requested via admin API",
 		"vm_id", vmID,
 		"target_node_id", req.TargetNodeID,
+		"live", live,
 		"correlation_id", middleware.GetCorrelationID(c))
 
 	result, err := h.migrationService.MigrateVM(c.Request.Context(), &services.MigrateVMRequest{
 		VMID:         vmID,
 		TargetNodeID: &req.TargetNodeID,
-		Live:         true,
+		Live:         live,
 	}, middleware.GetUserID(c))
 	if err != nil {
 		h.logger.Error("failed to initiate migration",

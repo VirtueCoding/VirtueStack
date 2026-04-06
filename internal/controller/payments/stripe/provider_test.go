@@ -150,10 +150,7 @@ func TestHandleWebhook_PaymentIntentSucceeded(t *testing.T) {
 	sig := signPayload(t, payload, secret)
 	result, webhookErr := p.HandleWebhook(context.Background(), payload, sig)
 	require.NoError(t, webhookErr)
-	require.NotNil(t, result)
-	assert.Equal(t, payments.WebhookEventPaymentCompleted, result.Type)
-	assert.Equal(t, "pi_test_456", result.PaymentID)
-	assert.Equal(t, int64(2500), result.AmountCents)
+	assert.Nil(t, result)
 }
 
 func TestValidateConfig(t *testing.T) {

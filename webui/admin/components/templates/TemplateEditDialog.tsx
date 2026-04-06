@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@virtuestack/ui";
 import { HardDrive, Hash, Server, Activity, Disc, FileText, Database, Loader2 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@virtuestack/ui";
 
@@ -86,6 +86,9 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
       file_path: "",
     },
   });
+  const storageBackend = useWatch({ control: form.control, name: "storage_backend" });
+  const isActive = useWatch({ control: form.control, name: "is_active" });
+  const supportsCloudinit = useWatch({ control: form.control, name: "supports_cloudinit" });
 
   // Reset form when template changes
   useEffect(() => {
@@ -230,7 +233,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                   Storage Backend
                 </Label>
                 <Select
-                  value={form.watch("storage_backend")}
+                  value={storageBackend}
                   onValueChange={(value: "ceph" | "qcow" | "lvm") => form.setValue("storage_backend", value)}
                 >
                   <SelectTrigger>
@@ -263,7 +266,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 <p className="text-xs text-muted-foreground">Minimum disk size required</p>
               </div>
             </div>
-            {form.watch("storage_backend") === "ceph" && (
+            {storageBackend === "ceph" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-rbd_image">RBD Image</Label>
@@ -289,7 +292,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 </div>
               </div>
             )}
-            {form.watch("storage_backend") === "qcow" && (
+            {storageBackend === "qcow" && (
               <div className="space-y-2">
                 <Label htmlFor="edit-file_path">File Path</Label>
                 <Input
@@ -303,7 +306,7 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 <p className="text-xs text-muted-foreground">Path to the QCOW2 template file on the node</p>
               </div>
             )}
-            {form.watch("storage_backend") === "lvm" && (
+            {storageBackend === "lvm" && (
               <div className="space-y-2">
                 <Label htmlFor="edit-file_path">LV Path</Label>
                 <Input
@@ -331,11 +334,11 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 <div className="flex items-center gap-3 pt-2">
                   <Switch
                     id="edit-is_active"
-                    checked={form.watch("is_active")}
+                    checked={isActive}
                     onCheckedChange={(checked) => form.setValue("is_active", checked)}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {form.watch("is_active") ? "Active" : "Inactive"}
+                    {isActive ? "Active" : "Inactive"}
                   </span>
                 </div>
               </div>
@@ -344,11 +347,11 @@ export function TemplateEditDialog({ open, onOpenChange, template, onSave, isSav
                 <div className="flex items-center gap-3 pt-2">
                   <Switch
                     id="edit-supports_cloudinit"
-                    checked={form.watch("supports_cloudinit")}
+                    checked={supportsCloudinit}
                     onCheckedChange={(checked) => form.setValue("supports_cloudinit", checked)}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {form.watch("supports_cloudinit") ? "Supported" : "Not Supported"}
+                    {supportsCloudinit ? "Supported" : "Not Supported"}
                   </span>
                 </div>
               </div>
