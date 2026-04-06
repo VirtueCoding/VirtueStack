@@ -41,6 +41,7 @@ node_modules/
 .turbo/
 .npm/
 npm-debug.log*
+*.tsbuildinfo
 
 # Test artifacts
 tests/e2e/test-results/
