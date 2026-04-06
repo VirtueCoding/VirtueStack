@@ -15,6 +15,7 @@ import {
 import { Upload, Loader2 } from "lucide-react";
 import { useToast } from "@virtuestack/ui";
 import { apiClient } from "@/lib/api-client";
+import { extractValidImportAddresses } from "./validation";
 // Import IPSet type for the id/name fields used in the dropdown; cidr is a display-only field
 // provided by the caller (IPSetDisplay from IPSetList).
 import type { IPSet } from "@/lib/api-client";
@@ -74,26 +75,7 @@ export function IPSetImportDialog({ ipSets, onImportComplete }: IPSetImportDialo
       const text = await importFile.text();
       const lines = text.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
 
-      // Parse IPs: support "ip" or "ip,subnet,gateway" CSV format
-      const ips: string[] = [];
-      for (const line of lines) {
-        // Skip header rows
-        if (line.toLowerCase().startsWith("ip") || line.startsWith("#")) continue;
-
-        // Take first column if CSV
-        const ip = line.split(",")[0].trim();
-
-        // IP validation (v4 or v6)
-        // IPv4: standard dotted-quad with optional CIDR prefix
-        const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
-        // IPv6: RFC-compliant pattern accepting full and compressed forms (including ::)
-        // Matches: full 8-group, compressed with ::, and link-local/loopback abbreviations
-        const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))(\/\d{1,3})?$/;
-
-        if (ipv4Regex.test(ip) || ipv6Regex.test(ip)) {
-          ips.push(ip);
-        }
-      }
+      const ips = extractValidImportAddresses(lines);
 
       if (ips.length === 0) {
         toast({

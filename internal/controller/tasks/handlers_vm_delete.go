@@ -7,9 +7,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // handleVMDelete handles the VM deletion flow.
@@ -42,6 +44,9 @@ func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	vm, err := deps.VMRepo.GetByID(ctx, payload.VMID)
 	if err != nil {
 		logger.Error("failed to get VM record", "error", err)
+		if !errors.Is(err, sharederrors.ErrNotFound) {
+			return fmt.Errorf("getting VM %s: %w", payload.VMID, err)
+		}
 		// If VM doesn't exist, consider deletion successful (idempotent).
 		// json.Marshal error is intentionally suppressed: the map contains only
 		// primitive types (string, int, bool) whose marshaling cannot fail.

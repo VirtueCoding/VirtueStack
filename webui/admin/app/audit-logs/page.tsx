@@ -22,6 +22,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { adminAuditLogsApi, type AuditLog } from "@/lib/api-client";
+import { buildAuditLogCSV } from "@/lib/audit-csv";
 import { useToast } from "@virtuestack/ui";
 
 const PAGE_SIZE = 20;
@@ -96,7 +97,7 @@ export default function AuditLogsPage() {
         log.success ? "true" : "false",
         log.actor_ip || "",
       ]);
-      const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const csv = buildAuditLogCSV([headers, ...rows]);
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

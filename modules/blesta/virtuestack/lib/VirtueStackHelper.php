@@ -32,7 +32,7 @@ class VirtueStackHelper
      * Verify a webhook HMAC-SHA256 signature using timing-safe comparison.
      *
      * @param string $body Raw request body
-     * @param string $signature Signature from X-VirtueStack-Signature header
+     * @param string $signature Signature from the X-Webhook-Signature header
      * @param string $secret Webhook shared secret
      * @return bool True if signature is valid
      */
@@ -41,9 +41,27 @@ class VirtueStackHelper
         string $signature,
         string $secret
     ): bool {
-        $computed = 'sha256=' . hash_hmac('sha256', $body, $secret);
+        $computed = hash_hmac('sha256', $body, $secret);
+        $normalizedSignature = self::normalizeWebhookSignature($signature);
 
-        return hash_equals($computed, $signature);
+        return $normalizedSignature !== '' && hash_equals($computed, $normalizedSignature);
+    }
+
+    /**
+     * Normalize webhook signatures so Blesta accepts the controller's raw hex
+     * HMAC and the legacy "sha256=" prefixed format during rollout.
+     *
+     * @param string $signature Signature header value
+     * @return string Normalized raw hex signature
+     */
+    public static function normalizeWebhookSignature(string $signature): string
+    {
+        $normalized = trim($signature);
+        if (stripos($normalized, 'sha256=') === 0) {
+            return substr($normalized, 7);
+        }
+
+        return $normalized;
     }
 
     /**
@@ -77,6 +95,67 @@ class VirtueStackHelper
     public static function isValidVMStatus(string $value): bool
     {
         return in_array($value, self::VALID_VM_STATUSES, true);
+    }
+
+    /**
+     * Extract canonical webhook context from either the live controller envelope
+     * or the older flat payload shape.
+     *
+     * @param array<string, mixed> $payload
+     * @return array{
+     *     event:string,
+     *     external_service_id:int|null,
+     *     vm_id:string,
+     *     task_id:string,
+     *     data:array<string, mixed>,
+     *     error_message:string
+     * }
+     */
+    public static function extractWebhookContext(array $payload): array
+    {
+        $data = [];
+        if (isset($payload['data']) && is_array($payload['data'])) {
+            $data = $payload['data'];
+        }
+
+        $externalServiceID = null;
+        if (isset($payload['external_service_id']) && is_int($payload['external_service_id'])) {
+            $externalServiceID = $payload['external_service_id'];
+        } elseif (isset($data['external_service_id']) && is_int($data['external_service_id'])) {
+            $externalServiceID = $data['external_service_id'];
+        }
+
+        $vmID = '';
+        if (isset($payload['vm_id']) && is_string($payload['vm_id'])) {
+            $vmID = trim($payload['vm_id']);
+        } elseif (isset($data['vm_id']) && is_string($data['vm_id'])) {
+            $vmID = trim($data['vm_id']);
+        }
+
+        $taskID = '';
+        if (isset($payload['task_id']) && is_string($payload['task_id'])) {
+            $taskID = trim($payload['task_id']);
+        } elseif (isset($data['task_id']) && is_string($data['task_id'])) {
+            $taskID = trim($data['task_id']);
+        }
+
+        $errorMessage = '';
+        if (isset($payload['error']) && is_string($payload['error'])) {
+            $errorMessage = $payload['error'];
+        } elseif (isset($data['error']) && is_string($data['error'])) {
+            $errorMessage = $data['error'];
+        } elseif (isset($data['message']) && is_string($data['message'])) {
+            $errorMessage = $data['message'];
+        }
+
+        return [
+            'event' => isset($payload['event']) && is_string($payload['event']) ? trim($payload['event']) : '',
+            'external_service_id' => $externalServiceID,
+            'vm_id' => $vmID,
+            'task_id' => $taskID,
+            'data' => $data,
+            'error_message' => $errorMessage,
+        ];
     }
 
     /**

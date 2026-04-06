@@ -110,11 +110,20 @@ func handleWebhookDeliver(ctx context.Context, task *models.Task, deps *WebhookD
 }
 
 func processClaimedDelivery(ctx context.Context, deps *WebhookDeliveryDeps, delivery *models.WebhookDelivery, logger *slog.Logger) (bool, error) {
+	claimedLeaseUntil, err := claimedWebhookLease(delivery.NextRetryAt)
+	if err != nil {
+		return false, fmt.Errorf("reading claimed delivery lease for %s: %w", delivery.ID, err)
+	}
+
 	if delivery.AttemptCount >= delivery.MaxAttempts {
 		logger.Warn("delivery max attempts reached, marking as failed",
 			"attempt_count", delivery.AttemptCount)
-		if err := markDeliveryFailed(ctx, deps, delivery.ID, "max attempts reached"); err != nil {
-			logger.Error("failed to mark delivery failed", "delivery_id", delivery.ID, "error", err)
+		if markErr := markDeliveryFailed(ctx, deps, delivery.ID, claimedLeaseUntil, "max attempts reached"); markErr != nil {
+			if isStaleDeliveryFinalization(markErr) {
+				logger.Info("delivery lease lost before max-attempt finalization, skipping stale update", "delivery_id", delivery.ID)
+				return true, nil
+			}
+			logger.Error("failed to mark delivery failed", "delivery_id", delivery.ID, "error", markErr)
 		}
 		return false, nil
 	}
@@ -126,7 +135,11 @@ func processClaimedDelivery(ctx context.Context, deps *WebhookDeliveryDeps, deli
 
 	if !webhook.IsActive {
 		logger.Warn("webhook is disabled, skipping delivery")
-		if err := markDeliveryFailed(ctx, deps, delivery.ID, "webhook disabled"); err != nil {
+		if err := markDeliveryFailed(ctx, deps, delivery.ID, claimedLeaseUntil, "webhook disabled"); err != nil {
+			if isStaleDeliveryFinalization(err) {
+				logger.Info("delivery lease lost before disabled-webhook finalization, skipping stale update", "delivery_id", delivery.ID)
+				return true, nil
+			}
 			logger.Error("failed to mark delivery failed for disabled webhook",
 				"delivery_id", delivery.ID,
 				"error", err)
@@ -154,6 +167,11 @@ func executeDeliveryAttempt(
 	logger *slog.Logger,
 ) bool {
 	success, responseStatus, responseBody, errMsg := deliverWebhook(ctx, deps.HTTPClient, webhook, delivery, deps.EncryptionKey, logger)
+	claimedLeaseUntil, err := claimedWebhookLease(delivery.NextRetryAt)
+	if err != nil {
+		logger.Error("claimed delivery is missing lease information", "delivery_id", delivery.ID, "error", err)
+		return false
+	}
 
 	// Calculate next retry time if failed.
 	var nextRetryAt *time.Time
@@ -166,13 +184,18 @@ func executeDeliveryAttempt(
 	defer cancel()
 
 	// Persist delivery outcome.
-	if err := deps.WebhookRepo.UpdateDeliveryAttempt(persistCtx, delivery.ID, success, responseStatus, responseBody, errMsg, nextRetryAt); err != nil {
-		logger.Error("failed to update delivery record", "delivery_id", delivery.ID, "error", err)
+	if persistErr := deps.WebhookRepo.UpdateDeliveryAttempt(persistCtx, delivery.ID, claimedLeaseUntil, success, responseStatus, responseBody, errMsg, nextRetryAt); persistErr != nil {
+		if isStaleDeliveryFinalization(persistErr) {
+			logger.Info("delivery lease lost before persistence, skipping stale update", "delivery_id", delivery.ID)
+			return true
+		}
+		logger.Error("failed to update delivery record", "delivery_id", delivery.ID, "error", persistErr)
 		return false
 	}
 
 	// Update aggregate delivery status on the parent webhook.
-	if err := deps.WebhookRepo.UpdateDeliveryStatus(persistCtx, webhook.ID, success); err != nil {
+	statusResult, err := deps.WebhookRepo.UpdateDeliveryStatus(persistCtx, webhook.ID, success)
+	if err != nil {
 		logger.Error("failed to update webhook delivery status", "webhook_id", webhook.ID, "error", err)
 		return false
 	}
@@ -189,26 +212,16 @@ func executeDeliveryAttempt(
 			"error", errMsg,
 			"next_retry_at", nextRetryAt)
 
-		newFailCount := webhook.FailCount + 1
-		if newFailCount >= MaxConsecutiveFailures {
-			disable := false
+		if statusResult != nil && statusResult.DisabledByUpdate {
 			sanitizedURL := audit.SanitizeURLForAudit(webhook.URL)
-			disableCtx, disableCancel := newWebhookPersistenceContext(ctx)
-			defer disableCancel()
-			if err := deps.WebhookRepo.Update(disableCtx, webhook.ID, nil, nil, &disable, nil); err != nil {
-				logger.Error("failed to persist webhook disable state",
-					"webhook_id", webhook.ID,
-					"error", err)
-			} else {
-				logger.Warn("webhook auto-disabled due to consecutive failures",
-					"webhook_id", webhook.ID,
-					"customer_id", webhook.CustomerID,
-					"url", sanitizedURL,
-					"fail_count", newFailCount)
+			logger.Warn("webhook auto-disabled due to consecutive failures",
+				"webhook_id", webhook.ID,
+				"customer_id", webhook.CustomerID,
+				"url", sanitizedURL,
+				"fail_count", statusResult.FailCount)
 
-				if deps.OnWebhookDisabled != nil {
-					deps.OnWebhookDisabled(webhook.CustomerID, webhook.ID, sanitizedURL, newFailCount)
-				}
+			if deps.OnWebhookDisabled != nil {
+				deps.OnWebhookDisabled(webhook.CustomerID, webhook.ID, sanitizedURL, statusResult.FailCount)
 			}
 		}
 	}
@@ -335,12 +348,12 @@ func ProcessPendingDeliveries(ctx context.Context, deps *WebhookDeliveryDeps, ba
 			continue
 		}
 
-		success, err := processClaimedDelivery(ctx, deps, delivery, logger)
-		if err != nil {
+		success, processErr := processClaimedDelivery(ctx, deps, delivery, logger)
+		if processErr != nil {
 			logger.Error("failed to process claimed delivery",
 				"delivery_id", delivery.ID,
 				"webhook_id", delivery.WebhookID,
-				"error", err)
+				"error", processErr)
 			failCount++
 			continue
 		}
@@ -364,11 +377,22 @@ func newWebhookPersistenceContext(ctx context.Context) (context.Context, context
 	return context.WithTimeout(context.WithoutCancel(ctx), webhookPersistenceUpdateTimeout)
 }
 
-func markDeliveryFailed(ctx context.Context, deps *WebhookDeliveryDeps, deliveryID, errMsg string) error {
+func markDeliveryFailed(ctx context.Context, deps *WebhookDeliveryDeps, deliveryID string, claimedLeaseUntil time.Time, errMsg string) error {
 	persistCtx, cancel := newWebhookPersistenceContext(ctx)
 	defer cancel()
 
-	return deps.WebhookRepo.MarkDeliveryFailed(persistCtx, deliveryID, errMsg)
+	return deps.WebhookRepo.MarkDeliveryFailed(persistCtx, deliveryID, claimedLeaseUntil, errMsg)
+}
+
+func claimedWebhookLease(nextRetryAt *time.Time) (time.Time, error) {
+	if nextRetryAt == nil {
+		return time.Time{}, fmt.Errorf("claimed delivery missing next_retry_at lease")
+	}
+	return nextRetryAt.UTC(), nil
+}
+
+func isStaleDeliveryFinalization(err error) bool {
+	return errors.Is(err, sharederrors.ErrNoRowsAffected)
 }
 
 // newSSRFSafeDialContext returns a DialContext function that resolves the target

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -34,6 +35,9 @@ type QCOWTemplateManager struct {
 	vmsPath string
 	// logger is the structured logger.
 	logger *slog.Logger
+	// importMu serializes publication per template ref so duplicate imports
+	// cannot clobber the final file.
+	importMu sync.Map
 }
 
 // NewQCOWTemplateManager creates a new QCOWTemplateManager.
@@ -111,6 +115,8 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, ref, sourcePat
 
 	// Generate target path
 	targetPath := m.templatePath(ref)
+	unlock := m.lockImport(ref)
+	defer unlock()
 
 	// Check if template already exists
 	if _, err := os.Stat(targetPath); err == nil {
@@ -121,18 +127,36 @@ func (m *QCOWTemplateManager) ImportTemplate(ctx context.Context, ref, sourcePat
 	ctx, cancel := context.WithTimeout(ctx, qemuImgTimeout)
 	defer cancel()
 
-	// Copy the source file to templates directory
-	if err := m.copyFile(sourcePath, targetPath); err != nil {
+	stagingDir, err := os.MkdirTemp(m.templatesPath, "."+ref+"-import-*")
+	if err != nil {
+		return "", 0, fmt.Errorf("importing template %s: creating staging dir: %w", ref, err)
+	}
+	defer func() {
+		if rmErr := os.RemoveAll(stagingDir); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to cleanup staging dir", "path", stagingDir, "error", rmErr)
+		}
+	}()
+
+	stagingPath := filepath.Join(stagingDir, ref+qcow2Extension)
+
+	// Copy the source file to a staging path first.
+	if err := m.copyFile(sourcePath, stagingPath); err != nil {
 		return "", 0, fmt.Errorf("importing template %s: copying file: %w", ref, err)
 	}
 
-	// Verify the copied image
-	if err := m.verifyImage(ctx, targetPath); err != nil {
-		// Cleanup on verification failure
-		if rmErr := os.Remove(targetPath); rmErr != nil {
-			logger.Warn("failed to cleanup template after verification failure", "path", targetPath, "error", rmErr)
-		}
+	// Verify the staged image before publishing it.
+	if err := m.verifyImage(ctx, stagingPath); err != nil {
 		return "", 0, fmt.Errorf("importing template %s: verification failed: %w", ref, err)
+	}
+
+	if err := os.Rename(stagingPath, targetPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", 0, fmt.Errorf("importing template %s: template already exists at %s", ref, targetPath)
+		}
+		if _, statErr := os.Stat(targetPath); statErr == nil {
+			return "", 0, fmt.Errorf("importing template %s: template already exists at %s", ref, targetPath)
+		}
+		return "", 0, fmt.Errorf("importing template %s: publishing template: %w", ref, err)
 	}
 
 	// Get the size of the imported template
@@ -314,6 +338,13 @@ func (m *QCOWTemplateManager) templatePath(name string) string {
 	return filepath.Join(m.templatesPath, name+qcow2Extension)
 }
 
+func (m *QCOWTemplateManager) lockImport(ref string) func() {
+	lockIface, _ := m.importMu.LoadOrStore(ref, &sync.Mutex{})
+	lock := lockIface.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
 // ensureDirectory creates a directory if it doesn't exist.
 func (m *QCOWTemplateManager) ensureDirectory(path string) error {
 	return os.MkdirAll(path, 0755)
@@ -348,7 +379,7 @@ func (m *QCOWTemplateManager) copyFile(src, dst string) (err error) {
 		}
 	}()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("create dest: %w", err)
 	}

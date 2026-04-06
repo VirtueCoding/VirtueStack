@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { adminNavGroups } from "@/lib/navigation";
+import { isAdminNavItemActive } from "@/lib/pathname";
 import { Button, ScrollArea } from "@virtuestack/ui";
 import {
   DropdownMenu,
@@ -78,7 +79,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               {collapsed && <div className="mx-auto my-1 h-px w-6 bg-sidebar-border" />}
               {group.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href;
+                const isActive = isAdminNavItemActive(pathname, item.href);
                 return (
                   <Link
                     key={item.href}
@@ -121,7 +122,6 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               )}
             >
               <Avatar className="h-8 w-8">
-                <AvatarImage src="/avatars/admin.png" alt={userEmail} />
                 <AvatarFallback className="bg-primary/10 text-primary text-xs">
                   {initials}
                 </AvatarFallback>

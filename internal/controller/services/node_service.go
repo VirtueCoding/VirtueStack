@@ -206,10 +206,10 @@ func (s *NodeService) DrainNode(ctx context.Context, nodeID string) error {
 
 	// Check if node can be drained
 	if node.Status == models.NodeStatusDraining {
-		return fmt.Errorf("node %s is already draining", nodeID)
+		return fmt.Errorf("node %s is already draining: %w", nodeID, sharederrors.ErrConflict)
 	}
 	if node.Status == models.NodeStatusFailed {
-		return fmt.Errorf("node %s is in failed state, cannot drain", nodeID)
+		return fmt.Errorf("node %s is in failed state, cannot drain: %w", nodeID, sharederrors.ErrConflict)
 	}
 
 	// Update status to draining
@@ -234,7 +234,8 @@ func (s *NodeService) UndrainNode(ctx context.Context, nodeID string) error {
 	}
 
 	if node.Status != models.NodeStatusDraining {
-		return fmt.Errorf("node %s is not in draining state (current: %s)", nodeID, node.Status)
+		return fmt.Errorf("node %s is not in draining state (current: %s): %w",
+			nodeID, node.Status, sharederrors.ErrConflict)
 	}
 
 	if err := s.nodeRepo.UpdateStatus(ctx, nodeID, models.NodeStatusOnline); err != nil {

@@ -1,94 +1,94 @@
 {
   "app": {
-    "[project]/webui/admin/app/_not-found/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/_not-found/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/audit-logs/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/audit-logs/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/backup-schedules/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/backup-schedules/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/backups/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/backups/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/billing/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/billing/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/customers/[id]/audit-logs/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/customers/[id]/audit-logs/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/customers/[id]/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/customers/[id]/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/customers/[id]/vms/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/customers/[id]/vms/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/customers/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/customers/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/dashboard/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/dashboard/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/failover-requests/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/failover-requests/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/invoices/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/invoices/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/ip-sets/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/ip-sets/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/login/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/login/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/nodes/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/nodes/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/plans/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/plans/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/provisioning-keys/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/provisioning-keys/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/settings/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/settings/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/settings/permissions/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/settings/permissions/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/storage-backends/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/storage-backends/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/templates/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/templates/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ],
-    "[project]/webui/admin/app/vms/page": [
+    "[project]/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin/app/vms/page": [
       "static/media/caa3a2e1cccd8315-s.p.16t1db8_9y2o~.woff2",
       "static/media/797e433ab948586e-s.p.0.q-h669a_dqa.woff2"
     ]

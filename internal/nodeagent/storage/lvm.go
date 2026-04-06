@@ -399,11 +399,30 @@ func (m *LVMManager) CreateSnapshot(ctx context.Context, imageName, snapName str
 
 // DeleteSnapshot removes a thin snapshot LV.
 func (m *LVMManager) DeleteSnapshot(ctx context.Context, imageName, snapName string) error {
-	if _, err := m.normalizeLVName(imageName); err != nil {
+	lvName, err := m.normalizeLVName(imageName)
+	if err != nil {
 		return fmt.Errorf("normalizing image identifier: %w", err)
 	}
 	if err := m.validateLVIdentifier(snapName); err != nil {
 		return fmt.Errorf("validating snapshot name: %w", err)
+	}
+
+	exists, err := m.ImageExists(ctx, snapName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s exists: %w", snapName, err)
+	}
+	if !exists {
+		m.logger.Debug("snapshot does not exist, nothing to delete", "snapshot", snapName)
+		return nil
+	}
+
+	snapshotBelongsToImage, err := m.snapshotBelongsToImage(ctx, lvName, snapName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s belongs to %s: %w", snapName, lvName, err)
+	}
+	if !snapshotBelongsToImage {
+		return NewStorageError(ErrCodeNotFound,
+			fmt.Sprintf("snapshot %s for image %s", snapName, lvName), nil)
 	}
 
 	snapPath := m.lvPath(snapName)
@@ -519,8 +538,10 @@ func (m *LVMManager) ImageExists(ctx context.Context, imageName string) (bool, e
 	// lvs /dev/{vg}/{imageName} - exit code 0 = exists, non-zero = does not exist
 	_, err = m.runLVMCommand(ctx, "lvs", lvPath)
 	if err != nil {
-		// Non-zero exit code means the LV doesn't exist
-		return false, nil
+		if strings.Contains(err.Error(), "Failed to find logical volume") {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking if LV %s exists: %w", lvName, err)
 	}
 	return true, nil
 }
@@ -645,6 +666,15 @@ func (m *LVMManager) Rollback(ctx context.Context, imageName, snapshotName strin
 			fmt.Sprintf("snapshot %s", snapshotName), nil)
 	}
 
+	snapshotBelongsToImage, err := m.snapshotBelongsToImage(ctx, lvName, snapshotName)
+	if err != nil {
+		return fmt.Errorf("checking if snapshot %s belongs to %s: %w", snapshotName, lvName, err)
+	}
+	if !snapshotBelongsToImage {
+		return NewStorageError(ErrCodeNotFound,
+			fmt.Sprintf("snapshot %s for image %s", snapshotName, lvName), nil)
+	}
+
 	lvPath := m.lvPath(lvName)
 	snapPath := m.lvPath(snapshotName)
 	oldPath := m.lvPath(lvName + "-old")
@@ -682,6 +712,21 @@ func (m *LVMManager) Rollback(ctx context.Context, imageName, snapshotName strin
 
 	logger.Info("LV rolled back to snapshot successfully")
 	return nil
+}
+
+func (m *LVMManager) snapshotBelongsToImage(ctx context.Context, imageName, snapshotName string) (bool, error) {
+	snapshots, err := m.ListSnapshots(ctx, imageName)
+	if err != nil {
+		return false, fmt.Errorf("listing snapshots for %s: %w", imageName, err)
+	}
+
+	for _, snapshot := range snapshots {
+		if snapshot.Name == snapshotName {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // GetStorageType returns the storage backend type.

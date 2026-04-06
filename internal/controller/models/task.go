@@ -81,19 +81,21 @@ const (
 
 // Task represents an async operation tracked in the database and NATS JetStream.
 type Task struct {
-	ID             string          `json:"id"`
-	Type           string          `json:"type"`
-	Status         TaskStatus      `json:"status"`
-	Payload        json.RawMessage `json:"payload"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	Progress       int             `json:"progress"`
-	RetryCount     int             `json:"retry_count"`
-	IdempotencyKey string          `json:"idempotency_key,omitempty"`
-	CreatedBy      string          `json:"created_by,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	ID              string          `json:"id"`
+	Type            string          `json:"type"`
+	Status          TaskStatus      `json:"status"`
+	Payload         json.RawMessage `json:"payload"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	ErrorMessage    string          `json:"error_message,omitempty"`
+	Progress        int             `json:"progress"`
+	ProgressMessage string          `json:"progress_message,omitempty"`
+	RetryCount      int             `json:"retry_count"`
+	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+	CreatedBy       string          `json:"created_by,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	StartedAt       *time.Time      `json:"started_at,omitempty"`
+	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // IsTerminal returns true if the task has reached a terminal state (completed, failed, or cancelled).

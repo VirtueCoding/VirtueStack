@@ -333,6 +333,20 @@ paths:
       summary: List audit logs
       tags:
       - Admin
+  /api/v1/admin/auth/csrf:
+    get:
+      description: Issues CSRF cookie/token pair for admin frontend authentication
+        flows.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Response'
+      summary: Get CSRF token
+      tags:
+      - Admin
   /api/v1/admin/auth/login:
     post:
       consumes:
@@ -4376,7 +4390,8 @@ paths:
       - Customer
   /api/v1/customer/vms/{id}/console-token:
     post:
-      description: Issues short-lived VNC console token for a customer VM.
+      description: Returns the direct authenticated VNC websocket URL for a customer
+        VM and a legacy-compatible short-lived token.
       parameters:
       - description: VM ID
         in: path
@@ -4405,7 +4420,7 @@ paths:
       security:
       - BearerAuth: []
       - APIKeyAuth: []
-      summary: Get VNC console token
+      summary: Get VNC console access details
       tags:
       - Customer
   /api/v1/customer/vms/{id}/force-stop:
@@ -4919,7 +4934,8 @@ paths:
       - Customer
   /api/v1/customer/vms/{id}/serial-token:
     post:
-      description: Issues short-lived serial console token for a customer VM.
+      description: Returns the direct authenticated serial websocket URL for a customer
+        VM and a legacy-compatible short-lived token.
       parameters:
       - description: VM ID
         in: path
@@ -4948,7 +4964,7 @@ paths:
       security:
       - BearerAuth: []
       - APIKeyAuth: []
-      summary: Get serial console token
+      summary: Get serial console access details
       tags:
       - Customer
   /api/v1/customer/vms/{id}/start:
@@ -5291,7 +5307,8 @@ paths:
   /api/v1/customer/ws/vnc/{vmId}:
     get:
       description: Upgrades connection to a VNC websocket stream for a customer VM
-        console.
+        console. Uses normal customer auth; query tokens are optional for legacy compatibility
+        only.
       parameters:
       - description: VM ID
         in: path

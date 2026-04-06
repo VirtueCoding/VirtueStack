@@ -462,7 +462,7 @@ func shouldClearLogoutCookies(sessionCleanupToken, targetSessionID, currentSessi
 	}
 
 	if currentSessionID == "" {
-		return false
+		return targetSessionID != ""
 	}
 
 	return targetSessionID == currentSessionID

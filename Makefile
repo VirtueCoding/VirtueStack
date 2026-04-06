@@ -1,4 +1,4 @@
-.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race load-test migrate-up migrate-down certs clean help backup-db
+.PHONY: all build build-controller build-node-agent proto swagger lint test test-integration test-native test-all test-race load-test migrate-up migrate-down certs clean help backup-db docker-build docker-up docker-down docker-dev-build docker-dev-up docker-dev-down
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -151,12 +151,24 @@ backup-db:
 
 ## docker-build: Build Docker images
 docker-build:
-	docker compose build
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 
 ## docker-up: Start all services
 docker-up:
-	docker compose up -d
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ## docker-down: Stop all services
 docker-down:
-	docker compose down
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+## docker-dev-build: Build development Docker images
+docker-dev-build:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+## docker-dev-up: Start development services
+docker-dev-up:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+## docker-dev-down: Stop development services
+docker-dev-down:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down

@@ -111,8 +111,7 @@ ensure_backup_dir() {
 
 prepare_temp_dir() {
     local parent_dir="$1"
-    TEMP_DIR="${parent_dir}/.backup-tmp-$(date -u +%Y%m%d_%H%M%S)-$$"
-    mkdir -p "${TEMP_DIR}"
+    TEMP_DIR="$(mktemp -d "${parent_dir}/.backup-tmp-XXXXXXXX")"
 }
 
 compute_hmac() {
@@ -165,6 +164,7 @@ encrypt_file() {
         echo "ERROR: Encryption failed" >&2
         exit 1
     fi
+    chmod 600 "${output_file}"
     echo "Encrypted backup: $(du -h "${output_file}" | cut -f1)"
 }
 
@@ -200,6 +200,7 @@ decrypt_file() {
         -out "${output_file}" \
         -K "${ENCRYPTION_SUBKEY}" \
         -iv "${iv_hex}"
+    chmod 600 "${output_file}"
 
     echo "Decrypted backup: $(du -h "${output_file}" | cut -f1)"
 }

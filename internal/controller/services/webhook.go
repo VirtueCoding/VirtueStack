@@ -24,6 +24,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
@@ -254,7 +255,10 @@ func (s *WebhookService) Create(ctx context.Context, req CreateWebhookRequest) (
 func (s *WebhookService) Get(ctx context.Context, id, customerID string) (*models.CustomerWebhook, error) {
 	webhook, err := s.webhookRepo.GetByIDAndCustomer(ctx, id, customerID)
 	if err != nil {
-		return nil, ErrWebhookNotFound
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, ErrWebhookNotFound
+		}
+		return nil, err
 	}
 	return webhook, nil
 }
@@ -269,7 +273,10 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 	// Verify webhook exists and belongs to customer
 	_, err := s.webhookRepo.GetByIDAndCustomer(ctx, id, customerID)
 	if err != nil {
-		return nil, ErrWebhookNotFound
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, ErrWebhookNotFound
+		}
+		return nil, err
 	}
 
 	var encryptedSecret string
@@ -320,7 +327,10 @@ func (s *WebhookService) Update(ctx context.Context, id, customerID string, req 
 func (s *WebhookService) Delete(ctx context.Context, id, customerID string) error {
 	err := s.webhookRepo.DeleteByCustomer(ctx, id, customerID)
 	if err != nil {
-		return ErrWebhookNotFound
+		if errors.Is(err, repository.ErrNoRowsAffected) {
+			return ErrWebhookNotFound
+		}
+		return err
 	}
 
 	s.logger.Info("webhook deleted",
@@ -468,7 +478,10 @@ func (s *WebhookService) ListDeliveries(ctx context.Context, webhookID, customer
 	// Verify webhook exists and belongs to customer
 	_, err := s.webhookRepo.GetByIDAndCustomer(ctx, webhookID, customerID)
 	if err != nil {
-		return nil, false, "", ErrWebhookNotFound
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return nil, false, "", ErrWebhookNotFound
+		}
+		return nil, false, "", err
 	}
 
 	return s.webhookRepo.ListDeliveriesByWebhook(ctx, webhookID, pagination.PerPage, pagination.Cursor)

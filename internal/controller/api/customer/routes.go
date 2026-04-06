@@ -95,8 +95,11 @@ func RegisterCustomerRoutes(
 	protected.GET("/tasks/:id", handler.GetTaskStatus)
 
 	protected.GET("/templates", handler.ListTemplates)
-	protected.GET("/ws/vnc/:vmId", middleware.RequireVMScope(), handler.HandleVNCWebSocket)
-	protected.GET("/ws/serial/:vmId", middleware.RequireVMScope(), handler.HandleSerialWebSocket)
+	consoleWS := protected.Group("/ws")
+	consoleWS.Use(middleware.RequirePermission(PermissionVMPower))
+	consoleWS.Use(middleware.RequireVMScope())
+	consoleWS.GET("/vnc/:vmId", handler.HandleVNCWebSocket)
+	consoleWS.GET("/serial/:vmId", handler.HandleSerialWebSocket)
 
 	if notifyHandler != nil {
 		registerNotificationReadRoutes(protected, notifyHandler)

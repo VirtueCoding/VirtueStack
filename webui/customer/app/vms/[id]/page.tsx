@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@virtuestack/ui";
 import { ResourceCharts } from "@/components/charts/resource-charts";
 import { SerialConsole } from "@/components/serial-console/serial-console";
-import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot, ApiClientError } from "@/lib/api-client";
+import { vmApi, backupApi, snapshotApi, VM, Backup, Snapshot } from "@/lib/api-client";
 import { getStatusBadgeVariant, getStatusLabel, formatMemory } from "@/lib/vm-utils";
 import { useVMAction } from "@/lib/hooks/useVMAction";
 import { VMControls } from "@/components/vm/VMControls";
@@ -35,53 +35,8 @@ import { VMSettingsTab } from "@/components/vm/VMSettingsTab";
 import { VMConsoleTab } from "@/components/vm/VMConsoleTab";
 import { VMISOTab } from "@/components/vm/VMISOTab";
 import { VMRDNSTab } from "@/components/vm/VMRDNSTab";
-
-function SerialConsoleWithToken({ vmId, vmName }: { vmId: string; vmName: string }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchToken() {
-      try {
-        const response = await vmApi.getSerialToken(vmId);
-        if (!cancelled) {
-          setToken(response.token);
-          setIsLoading(false);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = err instanceof ApiClientError
-            ? err.message
-            : "Failed to get serial console access token.";
-          setError(message);
-          setIsLoading(false);
-        }
-      }
-    }
-    fetchToken();
-    return () => { cancelled = true; };
-  }, [vmId]);
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-dashed bg-muted/50">
-        <Server className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border border-dashed bg-muted/50">
-        <p className="text-sm text-destructive">{error}</p>
-      </div>
-    );
-  }
-
-  return <SerialConsole vmId={vmId} vmName={vmName} token={token || undefined} />;
-}
+import { loadMutationRefreshData } from "@/lib/iso-refresh";
+import { completeMutationWithRefresh, MutationRefreshError } from "@/lib/mutation-refresh";
 
 export default function VMDetailPage() {
   const params = useParams();
@@ -98,6 +53,7 @@ export default function VMDetailPage() {
   // Backup state
   const [backups, setBackups] = useState<Backup[]>([]);
   const [isBackupsLoading, setIsBackupsLoading] = useState(false);
+  const [isBackupActionLoading, setIsBackupActionLoading] = useState(false);
   const [backupMethodFilter, setBackupMethodFilter] = useState<"all" | "full" | "snapshot">("all");
 
   // Snapshot state
@@ -120,6 +76,19 @@ export default function VMDetailPage() {
     }
   }, [vmId, toast]);
 
+  const refreshVMStrict = useCallback(async () => {
+    if (!vmId) {
+      return;
+    }
+
+    await loadMutationRefreshData(
+      () => vmApi.getVM(vmId),
+      (data) => {
+        setVm(data);
+      },
+    );
+  }, [vmId]);
+
   const fetchBackups = useCallback(async () => {
     if (!vmId) return;
     setIsBackupsLoading(true);
@@ -137,6 +106,20 @@ export default function VMDetailPage() {
     }
   }, [vmId, toast]);
 
+  const refreshBackupsStrict = useCallback(async () => {
+    await loadMutationRefreshData(
+      async () => {
+        if (!vmId) {
+          return [] as Backup[];
+        }
+        return backupApi.listBackups(vmId);
+      },
+      (data) => {
+        setBackups(data);
+      },
+    );
+  }, [vmId]);
+
   const fetchSnapshots = useCallback(async () => {
     if (!vmId) return;
     setIsSnapshotsLoading(true);
@@ -153,6 +136,20 @@ export default function VMDetailPage() {
       setIsSnapshotsLoading(false);
     }
   }, [vmId, toast]);
+
+  const refreshSnapshotsStrict = useCallback(async () => {
+    await loadMutationRefreshData(
+      async () => {
+        if (!vmId) {
+          return [] as Snapshot[];
+        }
+        return snapshotApi.listSnapshots(vmId);
+      },
+      (data) => {
+        setSnapshots(data);
+      },
+    );
+  }, [vmId]);
 
   useEffect(() => {
     if (!vmId) {
@@ -174,7 +171,7 @@ export default function VMDetailPage() {
     executeVMAction({
       action: "start",
       vmId,
-      onSuccess: fetchVM,
+      onSuccess: refreshVMStrict,
     });
   };
 
@@ -184,7 +181,7 @@ export default function VMDetailPage() {
     executeVMAction({
       action: "stop",
       vmId,
-      onSuccess: fetchVM,
+      onSuccess: refreshVMStrict,
     });
   };
 
@@ -194,7 +191,7 @@ export default function VMDetailPage() {
     executeVMAction({
       action: "forceStop",
       vmId,
-      onSuccess: fetchVM,
+      onSuccess: refreshVMStrict,
     });
   };
 
@@ -203,56 +200,146 @@ export default function VMDetailPage() {
     executeVMAction({
       action: "restart",
       vmId,
-      onSuccess: fetchVM,
+      onSuccess: refreshVMStrict,
     });
   };
 
   // Backup handlers
   const handleCreateBackup = async (name: string) => {
     if (!vmId) return;
-    await backupApi.createBackup({ vm_id: vmId, name });
-    toast({
-      title: "Backup Created",
-      description: "Backup creation initiated successfully.",
-    });
-    await fetchBackups();
+    setIsBackupActionLoading(true);
+    try {
+      await completeMutationWithRefresh(
+        async () => {
+          await backupApi.createBackup({ vm_id: vmId, name });
+        },
+        refreshBackupsStrict,
+        () => {
+          toast({
+            title: "Backup Created",
+            description: "Backup creation initiated successfully.",
+          });
+        },
+        "Backup creation succeeded but the backup list could not be refreshed.",
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof MutationRefreshError
+          ? error.message
+          : "Failed to create backup. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsBackupActionLoading(false);
+    }
   };
 
   const handleDeleteBackup = async (backupId: string) => {
-    await backupApi.deleteBackup(backupId);
-    toast({
-      title: "Backup Deleted",
-      description: "Backup deleted successfully.",
-    });
-    await fetchBackups();
+    setIsBackupActionLoading(true);
+    try {
+      await completeMutationWithRefresh(
+        async () => {
+          await backupApi.deleteBackup(backupId);
+        },
+        refreshBackupsStrict,
+        () => {
+          toast({
+            title: "Backup Deleted",
+            description: "Backup deleted successfully.",
+          });
+        },
+        "Backup deletion succeeded but the backup list could not be refreshed.",
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof MutationRefreshError
+          ? error.message
+          : "Failed to delete backup. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsBackupActionLoading(false);
+    }
   };
 
   const handleRestoreBackup = async (backupId: string) => {
-    await backupApi.restoreBackup(backupId);
-    toast({
-      title: "Backup Restore Initiated",
-      description: "The VM will be restored from the selected backup.",
-    });
+    setIsBackupActionLoading(true);
+    try {
+      await backupApi.restoreBackup(backupId);
+      toast({
+        title: "Backup Restore Initiated",
+        description: "The VM will be restored from the selected backup.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to restore backup. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsBackupActionLoading(false);
+    }
   };
 
   // Snapshot handlers
   const handleCreateSnapshot = async (name: string) => {
     if (!vmId) return;
-    await snapshotApi.createSnapshot({ vm_id: vmId, name });
-    toast({
-      title: "Snapshot Created",
-      description: "Snapshot creation initiated successfully.",
-    });
-    await fetchSnapshots();
+    try {
+      await completeMutationWithRefresh(
+        async () => {
+          await snapshotApi.createSnapshot({ vm_id: vmId, name });
+        },
+        refreshSnapshotsStrict,
+        () => {
+          toast({
+            title: "Snapshot Created",
+            description: "Snapshot creation initiated successfully.",
+          });
+        },
+        "Snapshot creation succeeded but the snapshot list could not be refreshed.",
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof MutationRefreshError
+          ? error.message
+          : "Failed to create snapshot. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    }
   };
 
   const handleDeleteSnapshot = async (snapshotId: string) => {
-    await snapshotApi.deleteSnapshot(snapshotId);
-    toast({
-      title: "Snapshot Deleted",
-      description: "Snapshot deleted successfully.",
-    });
-    await fetchSnapshots();
+    try {
+      await completeMutationWithRefresh(
+        async () => {
+          await snapshotApi.deleteSnapshot(snapshotId);
+        },
+        refreshSnapshotsStrict,
+        () => {
+          toast({
+            title: "Snapshot Deleted",
+            description: "Snapshot deleted successfully.",
+          });
+        },
+        "Snapshot deletion succeeded but the snapshot list could not be refreshed.",
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof MutationRefreshError
+          ? error.message
+          : "Failed to delete snapshot. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    }
   };
 
   const handleRevertSnapshot = async (snapshotId: string) => {
@@ -447,7 +534,7 @@ export default function VMDetailPage() {
                   </p>
                 </div>
               ) : (
-                <SerialConsoleWithToken vmId={vmId} vmName={vm.name} />
+                <SerialConsole vmId={vmId} vmName={vm.name} />
               )}
             </CardContent>
           </Card>
@@ -507,6 +594,7 @@ export default function VMDetailPage() {
             vmStatus={vm.status}
             attachedISOId={vm.attached_iso}
             maxISOSizeBytes={vm.max_iso_size_bytes}
+            onRefreshVM={refreshVMStrict}
           />
         </TabsContent>
 
@@ -517,7 +605,7 @@ export default function VMDetailPage() {
             vmName={vm.name}
             backups={backups}
             isLoading={isBackupsLoading}
-            isActionLoading={isVMActionLoading}
+            isActionLoading={isBackupActionLoading}
             onRefresh={fetchBackups}
             onCreateBackup={handleCreateBackup}
             onDeleteBackup={handleDeleteBackup}

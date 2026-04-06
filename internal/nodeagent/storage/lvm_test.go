@@ -391,6 +391,52 @@ func TestLVMQueryOperationsAcceptCanonicalDiskPaths(t *testing.T) {
 	}
 }
 
+func TestLVMRollbackRejectsSnapshotsOutsideTargetOrigin(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.Rollback(context.Background(), diskPath, "snap-foreign")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot snap-foreign")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs --noheadings --units b -o lv_name,lv_size --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool")
+	assert.NotContains(t, commandLog, "lvrename /dev/vgvs/vs-test-vm-123-disk0")
+	assert.NotContains(t, commandLog, "lvrename /dev/vgvs/snap-foreign")
+}
+
+func TestLVMDeleteSnapshotRejectsSnapshotsOutsideTargetOrigin(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.DeleteSnapshot(context.Background(), diskPath, "snap-foreign")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot snap-foreign")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs --noheadings --units b -o lv_name,lv_size --select origin=vs-test-vm-123-disk0 && pool_lv=thinpool")
+	assert.NotContains(t, commandLog, "lvremove -f /dev/vgvs/snap-foreign")
+}
+
+func TestLVMDeleteSnapshotPropagatesExistenceCheckFailures(t *testing.T) {
+	commandLogPath := installFakeLVMBinary(t)
+	manager := newTestLVMManager(t)
+	diskPath := manager.DiskIdentifier("test-vm-123")
+
+	err := manager.DeleteSnapshot(context.Background(), diskPath, "snap-error")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checking if snapshot snap-error exists")
+
+	commandLog := strings.Join(readFakeLVMCommands(t, commandLogPath), "\n")
+	assert.Contains(t, commandLog, "lvs /dev/vgvs/snap-error")
+	assert.NotContains(t, commandLog, "lvremove -f /dev/vgvs/snap-error")
+}
+
 func newTestLVMManager(t *testing.T) *LVMManager {
 	t.Helper()
 
@@ -413,6 +459,14 @@ printf '%s\n' "$*" >> "$LVM_LOG"
 case "$1" in
   lvs)
     case "$*" in
+      *"origin=vs-test-vm-123-disk0 && pool_lv=thinpool"*)
+        printf '%s\n' 'snap-existing 1073741824B'
+        exit 0
+        ;;
+      *"/dev/vgvs/snap-error"*)
+        printf '%s\n' 'lvmlockd unavailable' >&2
+        exit 4
+        ;;
       *"/dev/vgvs/snap-new"*)
         exit 5
         ;;

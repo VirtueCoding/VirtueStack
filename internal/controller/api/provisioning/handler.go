@@ -27,6 +27,7 @@ type ProvisioningHandler struct {
 	ssoTokenRepo     *repository.SSOTokenRepository
 	auditRepo        *repository.AuditRepository
 	planService      *services.PlanService
+	rdnsService      *services.RDNSService
 	authConfig       middleware.AuthConfig
 	encryptionKey    string
 	logger           *slog.Logger
@@ -45,6 +46,7 @@ type ProvisioningHandlerConfig struct {
 	SSOTokenRepo     *repository.SSOTokenRepository
 	AuditRepo        *repository.AuditRepository
 	PlanService      *services.PlanService
+	RDNSService      *services.RDNSService
 	JWTSecret        string
 	Issuer           string
 	EncryptionKey    string
@@ -65,6 +67,7 @@ func NewProvisioningHandler(cfg ProvisioningHandlerConfig) *ProvisioningHandler 
 		ssoTokenRepo:     cfg.SSOTokenRepo,
 		auditRepo:        cfg.AuditRepo,
 		planService:      cfg.PlanService,
+		rdnsService:      cfg.RDNSService,
 		authConfig:       middleware.AuthConfig{JWTSecret: cfg.JWTSecret, Issuer: cfg.Issuer},
 		encryptionKey:    cfg.EncryptionKey,
 		logger:           cfg.Logger.With("component", "provisioning-handler"),

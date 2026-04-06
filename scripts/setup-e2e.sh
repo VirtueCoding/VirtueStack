@@ -29,15 +29,19 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TEST_ADMIN_EMAIL="admin@test.virtuestack.local"
+TEST_ADMIN_2FA_EMAIL="2fa-admin@test.virtuestack.local"
 TEST_ADMIN_PASSWORD="AdminTest123!"
-TEST_ADMIN_TOTP_SECRET="JBSWY3DPEHPK3PXP"  # Base32 encoded test secret
+TEST_ADMIN_TOTP_SECRET="JBSWY3DPEHPK3PXP"
 
 TEST_CUSTOMER_EMAIL="customer@test.virtuestack.local"
+TEST_SECONDARY_CUSTOMER_EMAIL="test-customer@example.com"
+TEST_CUSTOMER_2FA_EMAIL="2fa-customer@test.virtuestack.local"
 TEST_CUSTOMER_PASSWORD="CustomerTest123!"
 TEST_CUSTOMER_TOTP_SECRET="KRSXG5DSN5XW4ZLP"
 
-TEST_CUSTOMER_2FA_EMAIL="2fa-customer@test.virtuestack.local"
-TEST_CUSTOMER_2FA_PASSWORD="Customer2FA123!"
+TEST_STORAGE_BACKEND_CEPH_ID="eeeeeeee-eeee-eeee-eeee-eeeeeeee0001"
+TEST_STORAGE_BACKEND_QCOW_ID="eeeeeeee-eeee-eeee-eeee-eeeeeeee0002"
+TEST_STORAGE_BACKEND_LVM_ID="eeeeeeee-eeee-eeee-eeee-eeeeeeee0003"
 
 # =============================================================================
 # Helper Functions
@@ -59,9 +63,24 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+require_commands() {
+    local missing=()
+
+    for cmd in "$@"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        log_error "Missing required tools: ${missing[*]}"
+        exit 1
+    fi
+}
+
 generate_random_string() {
     local length=${1:-32}
-    openssl rand -base64 "$length" | tr -d '\n' | head -c "$length"
+    openssl rand -base64 "$length" | tr -d '\n=' | cut -c1-"$length"
 }
 
 generate_random_hex() {
@@ -71,22 +90,37 @@ generate_random_hex() {
 
 check_dependencies() {
     log_info "Checking dependencies..."
+    require_commands openssl curl jq go
+    log_success "All dependencies available"
+}
 
-    local missing=()
+load_env_file() {
+    local env_file="${1:-${PROJECT_ROOT}/.env.test}"
 
-    # Check for required tools
-    for cmd in docker openssl curl jq; do
-        if ! command -v "$cmd" &> /dev/null; then
-            missing+=("$cmd")
-        fi
-    done
-
-    if [ ${#missing[@]} -ne 0 ]; then
-        log_error "Missing required tools: ${missing[*]}"
+    if [ ! -f "${env_file}" ]; then
+        log_error "Environment file not found: ${env_file}"
+        log_error "Run ./scripts/setup-e2e.sh first or create ${env_file} before using --seed-only"
         exit 1
     fi
 
-    log_success "All dependencies available"
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+}
+
+build_database_url() {
+    local host="${POSTGRES_HOST:-localhost}"
+    local port="${POSTGRES_PORT:-5432}"
+    local sslmode="${POSTGRES_SSLMODE:-disable}"
+
+    printf 'postgresql://%s:%s@%s:%s/%s?sslmode=%s' \
+        "${POSTGRES_USER:-virtuestack}" \
+        "${POSTGRES_PASSWORD}" \
+        "${host}" \
+        "${port}" \
+        "${POSTGRES_DB:-virtuestack}" \
+        "${sslmode}"
 }
 
 # =============================================================================
@@ -95,8 +129,11 @@ check_dependencies() {
 
 setup_env_file() {
     log_info "Creating .env.test file..."
+    local env_file="${PROJECT_ROOT}/.env.test"
 
-    cat > "${PROJECT_ROOT}/.env.test" << EOF
+    (
+        umask 077
+        cat > "${env_file}" << EOF
 # =============================================================================
 # VirtueStack E2E Test Environment
 # =============================================================================
@@ -106,11 +143,14 @@ setup_env_file() {
 
 # PostgreSQL
 POSTGRES_USER=virtuestack
-POSTGRES_PASSWORD=$(generate_random_string 32)
+POSTGRES_PASSWORD=$(generate_random_hex 24)
 POSTGRES_DB=virtuestack
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_SSLMODE=disable
 
 # NATS
-NATS_AUTH_TOKEN=$(generate_random_string 32)
+NATS_AUTH_TOKEN=$(generate_random_hex 24)
 
 # JWT Configuration (32+ character secret)
 JWT_SECRET=$(generate_random_string 64)
@@ -132,10 +172,12 @@ BASE_URL=http://localhost:8080
 
 # Test Credentials
 TEST_ADMIN_EMAIL=${TEST_ADMIN_EMAIL}
+TEST_ADMIN_2FA_EMAIL=${TEST_ADMIN_2FA_EMAIL}
 TEST_ADMIN_PASSWORD=${TEST_ADMIN_PASSWORD}
 TEST_ADMIN_TOTP_SECRET=${TEST_ADMIN_TOTP_SECRET}
 
 TEST_CUSTOMER_EMAIL=${TEST_CUSTOMER_EMAIL}
+TEST_CUSTOMER_2FA_EMAIL=${TEST_CUSTOMER_2FA_EMAIL}
 TEST_CUSTOMER_PASSWORD=${TEST_CUSTOMER_PASSWORD}
 TEST_CUSTOMER_TOTP_SECRET=${TEST_CUSTOMER_TOTP_SECRET}
 
@@ -148,6 +190,8 @@ CEPH_USER=virtuestack
 SSL_CERT_PATH=./ssl/cert.pem
 SSL_KEY_PATH=./ssl/key.pem
 EOF
+    )
+    chmod 600 "${PROJECT_ROOT}/.env.test"
 
     log_success "Created .env.test"
 }
@@ -170,7 +214,8 @@ generate_ssl_certs() {
         -addext "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1" \
         2>/dev/null
 
-    # Set permissions
+    # Keep the private key owner-only. The nginx master process loads the key
+    # before dropping privileges to its worker user.
     chmod 600 "${ssl_dir}/key.pem"
     chmod 644 "${ssl_dir}/cert.pem"
 
@@ -235,272 +280,569 @@ create_seed_sql() {
     log_info "Creating database seed SQL..."
 
     local seed_file="${PROJECT_ROOT}/migrations/test_seed.sql"
+    local seed_materials_file
+    local admin_password_hash
+    local customer_password_hash
+    local admin_totp_encrypted
+    local customer_totp_encrypted
+    local webhook_secret_encrypted
+    local primary_api_key_hash
+    local secondary_api_key_hash
 
-    # Password hashes (Argon2id - these are pre-computed for the test passwords)
-    # In production, these would be generated by the application
-    # Format: $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>
-    local admin_password_hash='$argon2id$v=19$m=65536,t=3,p=4$testadminsalt1234567890abcdefghijklm$testadminhash1234567890abcdefghijklmnopqrstuv'
-    local customer_password_hash='$argon2id$v=19$m=65536,t=3,p=4$testcustsalt1234567890abcdefghijklm$testcusthash1234567890abcdefghijklmnopqrstu'
+    load_env_file
+    seed_materials_file="$(mktemp "${PROJECT_ROOT}/migrations/test_seed_materials.XXXXXX.json")"
 
-    cat > "$seed_file" << 'EOF'
+    local generator_file
+    generator_file="$(mktemp "${PROJECT_ROOT}/.e2e-seed-generator-XXXXXX.go")"
+
+    cat > "${generator_file}" <<'EOF'
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"os"
+
+	"github.com/alexedwards/argon2id"
+
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+)
+
+type seedMaterials struct {
+	AdminPasswordHash     string `json:"admin_password_hash"`
+	CustomerPasswordHash  string `json:"customer_password_hash"`
+	AdminTOTPEncrypted    string `json:"admin_totp_encrypted"`
+	CustomerTOTPEncrypted string `json:"customer_totp_encrypted"`
+	WebhookSecretEncrypted string `json:"webhook_secret_encrypted"`
+	PrimaryAPIKeyHash     string `json:"primary_api_key_hash"`
+	SecondaryAPIKeyHash   string `json:"secondary_api_key_hash"`
+}
+
+func envOrDie(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("%s must be set", key)
+	}
+	return value
+}
+
+func mustHash(password string) string {
+	hash, err := argon2id.CreateHash(password, &argon2id.Params{
+		Memory:      64 * 1024,
+		Iterations:  3,
+		Parallelism: 4,
+		SaltLength:  16,
+		KeyLength:   32,
+	})
+	if err != nil {
+		log.Fatalf("hash password: %v", err)
+	}
+	return hash
+}
+
+func mustEncrypt(plaintext, hexKey string) string {
+	ciphertext, err := sharedcrypto.Encrypt(plaintext, hexKey)
+	if err != nil {
+		log.Fatalf("encrypt secret: %v", err)
+	}
+	return ciphertext
+}
+
+func main() {
+	encryptionKey := envOrDie("ENCRYPTION_KEY")
+	adminPassword := envOrDie("TEST_ADMIN_PASSWORD")
+	customerPassword := envOrDie("TEST_CUSTOMER_PASSWORD")
+	adminTOTP := envOrDie("TEST_ADMIN_TOTP_SECRET")
+	customerTOTP := envOrDie("TEST_CUSTOMER_TOTP_SECRET")
+
+	materials := seedMaterials{
+		AdminPasswordHash:      mustHash(adminPassword),
+		CustomerPasswordHash:   mustHash(customerPassword),
+		AdminTOTPEncrypted:     mustEncrypt(adminTOTP, encryptionKey),
+		CustomerTOTPEncrypted:  mustEncrypt(customerTOTP, encryptionKey),
+		WebhookSecretEncrypted: mustEncrypt("vs-e2e-webhook-secret", encryptionKey),
+		PrimaryAPIKeyHash:      sharedcrypto.GenerateHMACSignature(encryptionKey, []byte("vs-e2e-key-primary")),
+		SecondaryAPIKeyHash:    sharedcrypto.GenerateHMACSignature(encryptionKey, []byte("vs-e2e-key-secondary")),
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(materials); err != nil {
+		log.Fatalf("encode seed materials: %v", err)
+	}
+}
+EOF
+
+    (
+        cd "${PROJECT_ROOT}"
+        go run "${generator_file}" > "${seed_materials_file}"
+    )
+    rm -f "${generator_file}"
+
+    admin_password_hash="$(jq -r '.admin_password_hash' "${seed_materials_file}")"
+    customer_password_hash="$(jq -r '.customer_password_hash' "${seed_materials_file}")"
+    admin_totp_encrypted="$(jq -r '.admin_totp_encrypted' "${seed_materials_file}")"
+    customer_totp_encrypted="$(jq -r '.customer_totp_encrypted' "${seed_materials_file}")"
+    webhook_secret_encrypted="$(jq -r '.webhook_secret_encrypted' "${seed_materials_file}")"
+    primary_api_key_hash="$(jq -r '.primary_api_key_hash' "${seed_materials_file}")"
+    secondary_api_key_hash="$(jq -r '.secondary_api_key_hash' "${seed_materials_file}")"
+    rm -f "${seed_materials_file}"
+
+    cat > "${seed_file}" <<EOF
 -- =============================================================================
 -- VirtueStack E2E Test Seed Data
 -- =============================================================================
--- This file creates test data for E2E testing.
--- Run with: psql -f migrations/test_seed.sql
+-- Generated by scripts/setup-e2e.sh against the current schema contract.
+-- Uses node_storage + explicit storage_backend_id, encrypted secrets, and
+-- HMAC-hashed customer API keys to match production behavior.
 -- =============================================================================
 
 BEGIN;
+SET lock_timeout = '5s';
 
--- Clear existing test data (if any)
-DELETE FROM customers WHERE email LIKE '%@test.virtuestack.local';
-DELETE FROM admins WHERE email LIKE '%@test.virtuestack.local';
-DELETE FROM vms WHERE hostname LIKE 'test-vm-%';
-DELETE FROM nodes WHERE hostname LIKE 'test-node-%';
-DELETE FROM plans WHERE slug LIKE 'test-%';
-DELETE FROM templates WHERE name LIKE 'Test %';
-DELETE FROM ip_sets WHERE name LIKE 'Test %';
+DELETE FROM webhook_deliveries
+WHERE webhook_id IN (
+    SELECT id FROM webhooks
+    WHERE customer_id IN (
+        '88888888-8888-8888-8888-888888888001',
+        '88888888-8888-8888-8888-888888888002',
+        '88888888-8888-8888-8888-888888888003'
+    )
+);
+DELETE FROM webhooks
+WHERE customer_id IN (
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+);
+DELETE FROM customer_api_keys
+WHERE customer_id IN (
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+);
+DELETE FROM snapshots WHERE id IN (
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb01',
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb02',
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb03'
+);
+DELETE FROM backups WHERE id IN (
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa03'
+);
+DELETE FROM ip_addresses WHERE ip_set_id IN (
+    '44444444-4444-4444-4444-444444444001',
+    '44444444-4444-4444-4444-444444444002'
+);
+DELETE FROM vms WHERE id IN (
+    '99999999-9999-9999-9999-999999999001',
+    '99999999-9999-9999-9999-999999999002',
+    '99999999-9999-9999-9999-999999999003'
+);
+DELETE FROM node_storage WHERE node_id IN (
+    '33333333-3333-3333-3333-333333333001',
+    '33333333-3333-3333-3333-333333333002',
+    '33333333-3333-3333-3333-333333333003',
+    '33333333-3333-3333-3333-333333333004',
+    '33333333-3333-3333-3333-333333333005'
+) OR storage_backend_id IN (
+    '${TEST_STORAGE_BACKEND_CEPH_ID}',
+    '${TEST_STORAGE_BACKEND_QCOW_ID}',
+    '${TEST_STORAGE_BACKEND_LVM_ID}'
+);
+DELETE FROM storage_backends WHERE id IN (
+    '${TEST_STORAGE_BACKEND_CEPH_ID}',
+    '${TEST_STORAGE_BACKEND_QCOW_ID}',
+    '${TEST_STORAGE_BACKEND_LVM_ID}'
+);
+DELETE FROM templates WHERE id IN (
+    '66666666-6666-6666-6666-666666666001',
+    '66666666-6666-6666-6666-666666666002',
+    '66666666-6666-6666-6666-666666666003',
+    '66666666-6666-6666-6666-666666666004',
+    '66666666-6666-6666-6666-666666666005'
+);
+DELETE FROM ip_sets WHERE id IN (
+    '44444444-4444-4444-4444-444444444001',
+    '44444444-4444-4444-4444-444444444002'
+);
+DELETE FROM nodes WHERE id IN (
+    '33333333-3333-3333-3333-333333333001',
+    '33333333-3333-3333-3333-333333333002',
+    '33333333-3333-3333-3333-333333333003',
+    '33333333-3333-3333-3333-333333333004',
+    '33333333-3333-3333-3333-333333333005'
+);
+DELETE FROM email_verification_tokens WHERE customer_id IN (
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+);
+DELETE FROM password_resets WHERE user_id IN (
+    '77777777-7777-7777-7777-777777777001',
+    '77777777-7777-7777-7777-777777777002',
+    '77777777-7777-7777-7777-777777777003',
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+);
+DELETE FROM sessions WHERE user_id IN (
+    '77777777-7777-7777-7777-777777777001',
+    '77777777-7777-7777-7777-777777777002',
+    '77777777-7777-7777-7777-777777777003'
+) AND user_type = 'admin';
+DELETE FROM sessions WHERE user_id IN (
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+) AND user_type = 'customer';
+DELETE FROM customers WHERE id IN (
+    '88888888-8888-8888-8888-888888888001',
+    '88888888-8888-8888-8888-888888888002',
+    '88888888-8888-8888-8888-888888888003'
+);
+DELETE FROM admins WHERE id IN (
+    '77777777-7777-7777-7777-777777777001',
+    '77777777-7777-7777-7777-777777777002',
+    '77777777-7777-7777-7777-777777777003'
+);
+DELETE FROM plans WHERE id IN (
+    '11111111-1111-1111-1111-111111111001',
+    '11111111-1111-1111-1111-111111111002',
+    '11111111-1111-1111-1111-111111111003',
+    '11111111-1111-1111-1111-111111111004'
+);
+DELETE FROM locations WHERE id IN (
+    '22222222-2222-2222-2222-222222222001',
+    '22222222-2222-2222-2222-222222222002'
+);
 
--- =============================================================================
--- Test Plans
--- =============================================================================
-INSERT INTO plans (id, name, slug, vcpu, memory_mb, disk_gb, port_speed_mbps, storage_backend, snapshot_limit, backup_limit, iso_upload_limit, created_at, updated_at)
-VALUES
-    ('11111111-1111-1111-1111-111111111001', 'Test Basic', 'test-basic', 1, 1024, 10, 100, 'ceph', 2, 2, 2, NOW(), NOW()),
-    ('11111111-1111-1111-1111-111111111002', 'Test Standard', 'test-standard', 2, 2048, 25, 500, 'ceph', 3, 3, 3, NOW(), NOW()),
-    ('11111111-1111-1111-1111-111111111003', 'Test Premium', 'test-premium', 4, 4096, 50, 1000, 'ceph', 5, 5, 5, NOW(), NOW()),
-    ('11111111-1111-1111-1111-111111111004', 'Test QCOW Basic', 'test-qcow-basic', 1, 1024, 10, 100, 'qcow', 2, 2, 2, NOW(), NOW());
-
--- =============================================================================
--- Test Locations
--- =============================================================================
 INSERT INTO locations (id, name, region, country, created_at)
 VALUES
-    ('22222222-2222-2222-2222-222222222001', 'Test US East', 'us-east', 'US', NOW()),
-    ('22222222-2222-2222-2222-222222222002', 'Test EU West', 'eu-west', 'DE', NOW());
+    ('22222222-2222-2222-2222-222222222001', 'US East', 'us-east', 'US', NOW()),
+    ('22222222-2222-2222-2222-222222222002', 'US West', 'us-west', 'US', NOW());
 
--- =============================================================================
--- Test Nodes
--- =============================================================================
-INSERT INTO nodes (id, hostname, grpc_address, management_ip, status, storage_backend, location_id, created_at, updated_at)
+INSERT INTO plans (
+    id, name, slug, vcpu, memory_mb, disk_gb, bandwidth_limit_gb, port_speed_mbps,
+    price_monthly, price_hourly, price_hourly_stopped, currency,
+    storage_backend, is_active, sort_order, snapshot_limit, backup_limit, iso_upload_limit,
+    created_at, updated_at
+) VALUES
+    ('11111111-1111-1111-1111-111111111001', 'Basic Plan', 'basic-plan', 1, 1024, 20, 1000, 100, 500, 1, 0, 'USD', 'ceph', TRUE, 0, 2, 2, 2, NOW(), NOW()),
+    ('11111111-1111-1111-1111-111111111002', 'Standard Plan', 'standard-plan', 2, 2048, 40, 2000, 500, 1000, 2, 1, 'USD', 'ceph', TRUE, 1, 3, 3, 3, NOW(), NOW()),
+    ('11111111-1111-1111-1111-111111111003', 'Premium Plan', 'premium-plan', 4, 4096, 80, 4000, 1000, 2500, 4, 2, 'USD', 'ceph', TRUE, 2, 5, 5, 5, NOW(), NOW()),
+    ('11111111-1111-1111-1111-111111111004', 'Enterprise Plan', 'enterprise-plan', 4, 4096, 80, 4000, 1000, 3000, 5, 2, 'USD', 'qcow', TRUE, 3, 5, 5, 5, NOW(), NOW());
+
+INSERT INTO storage_backends (
+    id, name, type, ceph_pool, ceph_user, ceph_monitors,
+    storage_path, lvm_volume_group, lvm_thin_pool, health_status,
+    created_at, updated_at
+) VALUES
+    ('${TEST_STORAGE_BACKEND_CEPH_ID}', 'Primary Ceph Cluster', 'ceph', 'vs-vms', 'virtuestack', 'ceph-mon-1:6789,ceph-mon-2:6789', NULL, NULL, NULL, 'healthy', NOW(), NOW()),
+    ('${TEST_STORAGE_BACKEND_QCOW_ID}', 'Local QCOW Storage', 'qcow', NULL, NULL, NULL, '/var/lib/virtuestack/qcow', NULL, NULL, 'healthy', NOW(), NOW()),
+    ('${TEST_STORAGE_BACKEND_LVM_ID}', 'LVM Thin Storage', 'lvm', NULL, NULL, NULL, NULL, 'vs-vg', 'thinpool', 'healthy', NOW(), NOW());
+
+INSERT INTO nodes (
+    id, hostname, grpc_address, management_ip, location_id, status,
+    total_vcpu, total_memory_mb, allocated_vcpu, allocated_memory_mb,
+    ceph_pool, storage_backend, storage_path, created_at
+) VALUES
+    ('33333333-3333-3333-3333-333333333001', 'test-node-1', 'mock-node-agent:50051', '10.0.0.101', '22222222-2222-2222-2222-222222222001', 'online', 32, 65536, 0, 0, 'vs-vms', 'ceph', NULL, NOW()),
+    ('33333333-3333-3333-3333-333333333002', 'test-node-2', 'mock-node-agent:50051', '10.0.0.102', '22222222-2222-2222-2222-222222222001', 'online', 32, 65536, 0, 0, 'vs-vms', 'ceph', NULL, NOW()),
+    ('33333333-3333-3333-3333-333333333003', 'test-node-3', 'mock-node-agent:50051', '10.0.0.103', '22222222-2222-2222-2222-222222222002', 'online', 24, 49152, 0, 0, NULL, 'qcow', '/var/lib/virtuestack/qcow', NOW()),
+    ('33333333-3333-3333-3333-333333333004', 'test-node-4', 'mock-node-agent:50051', '10.0.0.104', '22222222-2222-2222-2222-222222222001', 'offline', 16, 32768, 0, 0, 'vs-vms', 'ceph', NULL, NOW()),
+    ('33333333-3333-3333-3333-333333333005', 'test-node-5', 'mock-node-agent:50051', '10.0.0.105', '22222222-2222-2222-2222-222222222001', 'draining', 16, 32768, 0, 0, 'vs-vms', 'ceph', NULL, NOW());
+
+INSERT INTO node_storage (node_id, storage_backend_id, enabled, preferred, created_at)
 VALUES
-    ('33333333-3333-3333-3333-333333333001', 'test-node-1', '10.0.0.101:50051', '10.0.0.101', 'online', 'ceph', '22222222-2222-2222-2222-222222222001', NOW(), NOW()),
-    ('33333333-3333-3333-3333-333333333002', 'test-node-2', '10.0.0.102:50051', '10.0.0.102', 'online', 'ceph', '22222222-2222-2222-2222-222222222001', NOW(), NOW()),
-    ('33333333-3333-3333-3333-333333333003', 'test-node-qcow', '10.0.0.103:50051', '10.0.0.103', 'online', 'qcow', '22222222-2222-2222-2222-222222222002', NOW(), NOW()),
-    ('33333333-3333-3333-3333-333333333004', 'test-node-offline', '10.0.0.104:50051', '10.0.0.104', 'offline', 'ceph', '22222222-2222-2222-2222-222222222001', NOW(), NOW()),
-    ('33333333-3333-3333-3333-333333333005', 'test-node-draining', '10.0.0.105:50051', '10.0.0.105', 'draining', 'ceph', '22222222-2222-2222-2222-222222222001', NOW(), NOW());
+    ('33333333-3333-3333-3333-333333333001', '${TEST_STORAGE_BACKEND_CEPH_ID}', TRUE, TRUE, NOW()),
+    ('33333333-3333-3333-3333-333333333002', '${TEST_STORAGE_BACKEND_CEPH_ID}', TRUE, TRUE, NOW()),
+    ('33333333-3333-3333-3333-333333333003', '${TEST_STORAGE_BACKEND_QCOW_ID}', TRUE, TRUE, NOW()),
+    ('33333333-3333-3333-3333-333333333004', '${TEST_STORAGE_BACKEND_CEPH_ID}', TRUE, TRUE, NOW()),
+    ('33333333-3333-3333-3333-333333333005', '${TEST_STORAGE_BACKEND_CEPH_ID}', TRUE, TRUE, NOW());
 
--- =============================================================================
--- Test IP Sets
--- =============================================================================
-INSERT INTO ip_sets (id, name, location_id, network, gateway, created_at)
+INSERT INTO ip_sets (id, name, location_id, network, gateway, ip_version, node_ids, created_at)
 VALUES
-    ('44444444-4444-4444-4444-444444444001', 'Test Public IPv4', '22222222-2222-2222-2222-222222222001', '192.168.100.0/24', '192.168.100.1', NOW()),
-    ('44444444-4444-4444-4444-444444444002', 'Test Private IPv4', '22222222-2222-2222-2222-222222222001', '10.10.0.0/24', '10.10.0.1', NOW());
+    (
+        '44444444-4444-4444-4444-444444444001',
+        'Public IPv4 Pool',
+        '22222222-2222-2222-2222-222222222001',
+        '198.51.100.0/24',
+        '198.51.100.1',
+        4,
+        ARRAY[
+            '33333333-3333-3333-3333-333333333001',
+            '33333333-3333-3333-3333-333333333002',
+            '33333333-3333-3333-3333-333333333004',
+            '33333333-3333-3333-3333-333333333005'
+        ]::uuid[],
+        NOW()
+    ),
+    (
+        '44444444-4444-4444-4444-444444444002',
+        'Private IPv4 Pool',
+        '22222222-2222-2222-2222-222222222001',
+        '10.10.0.0/24',
+        '10.10.0.1',
+        4,
+        ARRAY[
+            '33333333-3333-3333-3333-333333333001',
+            '33333333-3333-3333-3333-333333333002'
+        ]::uuid[],
+        NOW()
+    );
 
--- Insert test IP addresses
-INSERT INTO ip_addresses (id, ip_set_id, address, status, created_at)
+INSERT INTO ip_addresses (id, ip_set_id, address, ip_version, status, created_at)
 SELECT
-    '55555555-5555-5555-5555-' || LPAD(i::text, 12, '0'),
+    '55555555-5555-5555-5555-' || LPAD((i + 1)::text, 12, '0'),
     '44444444-4444-4444-4444-444444444001',
-    '192.168.100.' || (10 + i)::text,
-    CASE WHEN i < 5 THEN 'used' ELSE 'available' END,
+    ('198.51.100.' || (10 + i)::text)::inet,
+    4,
+    'available',
     NOW()
-FROM generate_series(0, 19) AS i;
+FROM generate_series(0, 9) AS i;
 
--- =============================================================================
--- Test Templates
--- =============================================================================
-INSERT INTO templates (id, name, os_family, os_version, rbd_image, rbd_snapshot, storage_backend, created_at, updated_at)
+INSERT INTO ip_addresses (id, ip_set_id, address, ip_version, status, created_at)
+SELECT
+    '55555555-5555-5555-5556-' || LPAD((i + 1)::text, 12, '0'),
+    '44444444-4444-4444-4444-444444444002',
+    ('10.10.0.' || (10 + i)::text)::inet,
+    4,
+    'available',
+    NOW()
+FROM generate_series(0, 4) AS i;
+
+INSERT INTO templates (
+    id, name, os_family, os_version, rbd_image, rbd_snapshot,
+    min_disk_gb, supports_cloudinit, is_active, sort_order,
+    version, description, storage_backend, created_at, updated_at
+) VALUES
+    ('66666666-6666-6666-6666-666666666001', 'Ubuntu 22.04', 'ubuntu', '22.04', 'ubuntu-22.04-server', 'stable', 20, TRUE, TRUE, 0, 1, 'Ubuntu 22.04 LTS cloud image', 'ceph', NOW(), NOW()),
+    ('66666666-6666-6666-6666-666666666002', 'Ubuntu 24.04', 'ubuntu', '24.04', 'ubuntu-24.04-server', 'stable', 20, TRUE, TRUE, 1, 1, 'Ubuntu 24.04 LTS cloud image', 'ceph', NOW(), NOW()),
+    ('66666666-6666-6666-6666-666666666003', 'Debian 12', 'debian', '12', 'debian-12-server', 'stable', 20, TRUE, TRUE, 2, 1, 'Debian 12 cloud image', 'ceph', NOW(), NOW()),
+    ('66666666-6666-6666-6666-666666666004', 'Rocky Linux 9', 'rocky', '9', 'rocky-9-server', 'stable', 20, TRUE, TRUE, 3, 1, 'Rocky Linux 9 cloud image', 'ceph', NOW(), NOW()),
+    ('66666666-6666-6666-6666-666666666005', 'AlmaLinux 9', 'almalinux', '9', 'almalinux-9-server', 'stable', 20, TRUE, TRUE, 4, 1, 'AlmaLinux 9 cloud image', 'ceph', NOW(), NOW());
+
+INSERT INTO admins (
+    id, email, password_hash, name,
+    totp_secret_encrypted, totp_enabled, totp_backup_codes_hash,
+    role, max_sessions, permissions, created_at, updated_at
+) VALUES
+    ('77777777-7777-7777-7777-777777777001', '${TEST_ADMIN_EMAIL}', '${admin_password_hash}', 'Primary Admin', '${admin_totp_encrypted}', FALSE, ARRAY[]::text[], 'admin', 3, NULL, NOW(), NOW()),
+    ('77777777-7777-7777-7777-777777777002', 'secondary-admin@test.virtuestack.local', '${admin_password_hash}', 'Secondary Admin', '${admin_totp_encrypted}', FALSE, ARRAY[]::text[], 'super_admin', 5, NULL, NOW(), NOW()),
+    ('77777777-7777-7777-7777-777777777003', '${TEST_ADMIN_2FA_EMAIL}', '${admin_password_hash}', 'Admin With 2FA', '${admin_totp_encrypted}', TRUE, ARRAY[]::text[], 'admin', 3, NULL, NOW(), NOW());
+
+INSERT INTO customers (
+    id, email, password_hash, name, external_client_id, billing_provider, auth_provider,
+    totp_secret_encrypted, totp_enabled, totp_backup_codes_hash, totp_backup_codes_shown,
+    status, created_at, updated_at
+) VALUES
+    ('88888888-8888-8888-8888-888888888001', '${TEST_CUSTOMER_EMAIL}', '${customer_password_hash}', 'Primary Test Customer', 1001, 'native', 'local', NULL, FALSE, ARRAY[]::text[], FALSE, 'active', NOW(), NOW()),
+    ('88888888-8888-8888-8888-888888888002', '${TEST_SECONDARY_CUSTOMER_EMAIL}', '${customer_password_hash}', 'Provisioning Test Customer', 1002, 'native', 'local', NULL, FALSE, ARRAY[]::text[], FALSE, 'active', NOW(), NOW()),
+    ('88888888-8888-8888-8888-888888888003', '${TEST_CUSTOMER_2FA_EMAIL}', '${customer_password_hash}', 'Customer With 2FA', 1003, 'native', 'local', '${customer_totp_encrypted}', TRUE, ARRAY[]::text[], FALSE, 'active', NOW(), NOW());
+
+INSERT INTO vms (
+    id, customer_id, node_id, plan_id, hostname, status,
+    vcpu, memory_mb, disk_gb, port_speed_mbps, bandwidth_limit_gb,
+    bandwidth_used_bytes, bandwidth_reset_at, mac_address, template_id,
+    libvirt_domain_name, root_password_encrypted, external_service_id,
+    storage_backend, disk_path, ceph_pool, rbd_image, storage_backend_id,
+    created_at, updated_at
+) VALUES
+    (
+        '99999999-9999-9999-9999-999999999001',
+        '88888888-8888-8888-8888-888888888001',
+        '33333333-3333-3333-3333-333333333001',
+        '11111111-1111-1111-1111-111111111002',
+        'test-vm-running',
+        'running',
+        2, 2048, 40, 500, 2000,
+        0, NOW(), '52:54:00:00:00:11', '66666666-6666-6666-6666-666666666001',
+        'vs-test-vm1', NULL, 5001,
+        'ceph', NULL, 'vs-vms', 'vm-99999999-9999-9999-9999-999999999001-disk0', '${TEST_STORAGE_BACKEND_CEPH_ID}',
+        NOW(), NOW()
+    ),
+    (
+        '99999999-9999-9999-9999-999999999002',
+        '88888888-8888-8888-8888-888888888001',
+        '33333333-3333-3333-3333-333333333001',
+        '11111111-1111-1111-1111-111111111001',
+        'test-vm-stopped',
+        'stopped',
+        1, 1024, 20, 100, 1000,
+        0, NOW(), '52:54:00:00:00:12', '66666666-6666-6666-6666-666666666003',
+        'vs-test-vm2', NULL, 5002,
+        'ceph', NULL, 'vs-vms', 'vm-99999999-9999-9999-9999-999999999002-disk0', '${TEST_STORAGE_BACKEND_CEPH_ID}',
+        NOW(), NOW()
+    ),
+    (
+        '99999999-9999-9999-9999-999999999003',
+        '88888888-8888-8888-8888-888888888002',
+        '33333333-3333-3333-3333-333333333003',
+        '11111111-1111-1111-1111-111111111004',
+        'test-vm-provisioning',
+        'provisioning',
+        4, 4096, 80, 1000, 4000,
+        0, NOW(), '52:54:00:00:00:13', '66666666-6666-6666-6666-666666666002',
+        'vs-test-vm3', NULL, 5003,
+        'qcow', '/var/lib/virtuestack/qcow/99999999-9999-9999-9999-999999999003.qcow2', NULL, NULL, '${TEST_STORAGE_BACKEND_QCOW_ID}',
+        NOW(), NOW()
+    );
+
+INSERT INTO backups (id, vm_id, method, name, source, admin_schedule_id, storage_backend,
+    rbd_snapshot, file_path, snapshot_name, storage_path, size_bytes,
+    status, expires_at, created_at
+) VALUES
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01', '99999999-9999-9999-9999-999999999001', 'full', 'Nightly Full Backup', 'manual', NULL, 'ceph', 'vm1-full-backup-1', NULL, NULL, 'vs-backups/backup-01', 10737418240, 'completed', NOW() + INTERVAL '14 days', NOW() - INTERVAL '1 day'),
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02', '99999999-9999-9999-9999-999999999001', 'full', 'Manual Restore Point', 'manual', NULL, 'ceph', 'vm1-full-backup-2', NULL, NULL, 'vs-backups/backup-02', 2147483648, 'completed', NOW() + INTERVAL '7 days', NOW() - INTERVAL '12 hours'),
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa03', '99999999-9999-9999-9999-999999999001', 'full', 'In Progress Backup', 'manual', NULL, 'ceph', NULL, NULL, NULL, NULL, NULL, 'creating', NULL, NOW() - INTERVAL '5 minutes');
+
+INSERT INTO snapshots (id, vm_id, name, rbd_snapshot, size_bytes, created_at)
 VALUES
-    ('66666666-6666-6666-6666-666666666001', 'Test Ubuntu 22.04', 'Linux', '22.04', 'ubuntu-22.04-server', 'v1', 'ceph', NOW(), NOW()),
-    ('66666666-6666-6666-6666-666666666002', 'Test Debian 12', 'Linux', '12', 'debian-12-server', 'v1', 'ceph', NOW(), NOW()),
-    ('66666666-6666-6666-6666-666666666003', 'Test CentOS 9', 'Linux', '9', 'centos-9-stream', 'v1', 'ceph', NOW(), NOW()),
-    ('66666666-6666-6666-6666-666666666004', 'Test Windows Server 2022', 'Windows', '2022', 'windows-server-2022', 'v1', 'ceph', NOW(), NOW()),
-    ('66666666-6666-6666-6666-666666666005', 'Test FreeBSD 14', 'BSD', '14', 'freebsd-14', 'v1', 'ceph', NOW(), NOW());
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb01', '99999999-9999-9999-9999-999999999001', 'before-update', 'snap-before-update', 536870912, NOW() - INTERVAL '2 days'),
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb02', '99999999-9999-9999-9999-999999999001', 'daily-backup', 'snap-daily-backup', 268435456, NOW() - INTERVAL '1 day'),
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb03', '99999999-9999-9999-9999-999999999002', 'initial', 'snap-initial', 134217728, NOW() - INTERVAL '3 days');
 
--- =============================================================================
--- Test Admin Users
--- =============================================================================
--- Admin without 2FA (password: AdminTest123!)
-INSERT INTO admins (id, email, password_hash, role, status, created_at, updated_at)
-VALUES (
-    '77777777-7777-7777-7777-777777777001',
-    'admin@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdEFkbWluU2FsdDEyMw$q5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'admin',
-    'active',
-    NOW(),
-    NOW()
-);
+INSERT INTO customer_api_keys (
+    id, customer_id, name, key_hash, allowed_ips, vm_ids,
+    permissions, last_used_at, created_at, revoked_at, expires_at
+) VALUES
+    (
+        'cccccccc-cccc-cccc-cccc-cccccccccc01',
+        '88888888-8888-8888-8888-888888888001',
+        'Primary automation key',
+        '${primary_api_key_hash}',
+        ARRAY['127.0.0.1/32']::cidr[],
+        ARRAY['99999999-9999-9999-9999-999999999001', '99999999-9999-9999-9999-999999999002']::uuid[],
+        ARRAY['vm:read', 'vm:write', 'vm:power']::text[],
+        NOW() - INTERVAL '1 hour',
+        NOW() - INTERVAL '7 days',
+        NULL,
+        NOW() + INTERVAL '30 days'
+    ),
+    (
+        'cccccccc-cccc-cccc-cccc-cccccccccc02',
+        '88888888-8888-8888-8888-888888888001',
+        'Read-only expired key',
+        '${secondary_api_key_hash}',
+        ARRAY['10.0.0.0/24']::cidr[],
+        ARRAY['99999999-9999-9999-9999-999999999001']::uuid[],
+        ARRAY['vm:read', 'backup:read']::text[],
+        NOW() - INTERVAL '30 days',
+        NOW() - INTERVAL '60 days',
+        NULL,
+        NOW() - INTERVAL '1 day'
+    );
 
--- Admin with 2FA enabled (TOTP secret: JBSWY3DPEHPK3PXP)
-INSERT INTO admins (id, email, password_hash, role, status, totp_secret_encrypted, created_at, updated_at)
-VALUES (
-    '77777777-7777-7777-7777-777777777002',
-    '2fa-admin@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdEFkbWluU2FsdDEyMw$q5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'admin',
-    'active',
-    'JBSWY3DPEHPK3PXP',  -- In real app, this would be encrypted
-    NOW(),
-    NOW()
-);
+INSERT INTO webhooks (
+    id, customer_id, url, secret_hash, events, active,
+    fail_count, last_success_at, last_failure_at, created_at, updated_at
+) VALUES
+    (
+        'dddddddd-dddd-dddd-dddd-dddddddddd01',
+        '88888888-8888-8888-8888-888888888001',
+        'https://webhook.example.com/test',
+        '${webhook_secret_encrypted}',
+        ARRAY['vm.created', 'vm.deleted', 'backup.completed']::text[],
+        TRUE,
+        0,
+        NOW() - INTERVAL '1 day',
+        NULL,
+        NOW() - INTERVAL '7 days',
+        NOW()
+    );
 
--- Super Admin
-INSERT INTO admins (id, email, password_hash, role, status, created_at, updated_at)
-VALUES (
-    '77777777-7777-7777-7777-777777777003',
-    'superadmin@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdFN1cGVyQWRtaW4$k5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'super_admin',
-    'active',
-    NOW(),
-    NOW()
-);
+UPDATE ip_addresses
+SET vm_id = '99999999-9999-9999-9999-999999999001',
+    customer_id = '88888888-8888-8888-8888-888888888001',
+    is_primary = TRUE,
+    rdns_hostname = 'vm1.test.virtuestack.local',
+    status = 'assigned',
+    assigned_at = NOW(),
+    released_at = NULL,
+    cooldown_until = NULL
+WHERE address = '198.51.100.10';
 
--- =============================================================================
--- Test Customer Users
--- =============================================================================
--- Customer without 2FA (password: CustomerTest123!)
-INSERT INTO customers (id, email, password_hash, status, created_at, updated_at)
-VALUES (
-    '88888888-8888-8888-8888-888888888001',
-    'customer@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdEN1c3RvbWVyU2FsdDEyMw$y5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'active',
-    NOW(),
-    NOW()
-);
+UPDATE ip_addresses
+SET vm_id = '99999999-9999-9999-9999-999999999001',
+    customer_id = '88888888-8888-8888-8888-888888888001',
+    is_primary = FALSE,
+    rdns_hostname = NULL,
+    status = 'assigned',
+    assigned_at = NOW(),
+    released_at = NULL,
+    cooldown_until = NULL
+WHERE address = '198.51.100.11';
 
--- Customer with 2FA enabled (TOTP secret: KRSXG5DSN5XW4ZLP)
-INSERT INTO customers (id, email, password_hash, status, totp_secret_encrypted, created_at, updated_at)
-VALUES (
-    '88888888-8888-8888-8888-888888888002',
-    '2fa-customer@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdEN1c3RvbWVyU2FsdDEyMw$y5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'active',
-    'KRSXG5DSN5XW4ZLP',
-    NOW(),
-    NOW()
-);
-
--- Suspended customer
-INSERT INTO customers (id, email, password_hash, status, created_at, updated_at)
-VALUES (
-    '88888888-8888-8888-8888-888888888003',
-    'suspended@test.virtuestack.local',
-    '$argon2id$v=19$m=65536,t=3,p=4$VGVzdFN1c3BlbmRlZA$z5ZtVW9xY3JlYXRlZGZvcnRlc3RpbmdwdXJwb3Nlcw',
-    'suspended',
-    NOW(),
-    NOW()
-);
-
--- =============================================================================
--- Test VMs for Customer
--- =============================================================================
--- Running VM
-INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, storage_backend, disk_path, created_at, updated_at)
-VALUES (
-    '99999999-9999-9999-9999-999999999001',
-    '88888888-8888-8888-8888-888888888001',
-    '33333333-3333-3333-3333-333333333001',
-    '11111111-1111-1111-1111-111111111002',
-    'test-vm-running',
-    'running',
-    'ceph',
-    'vs-vms/vs-99999999-9999-9999-9999-999999999001-disk0',
-    NOW(),
-    NOW()
-);
-
--- Stopped VM
-INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, storage_backend, disk_path, created_at, updated_at)
-VALUES (
-    '99999999-9999-9999-9999-999999999002',
-    '88888888-8888-8888-8888-888888888001',
-    '33333333-3333-3333-3333-333333333001',
-    '11111111-1111-1111-1111-111111111001',
-    'test-vm-stopped',
-    'stopped',
-    'ceph',
-    'vs-vms/vs-99999999-9999-9999-9999-999999999002-disk0',
-    NOW(),
-    NOW()
-);
-
--- Provisioning VM
-INSERT INTO vms (id, customer_id, node_id, plan_id, hostname, status, storage_backend, created_at, updated_at)
-VALUES (
-    '99999999-9999-9999-9999-999999999003',
-    '88888888-8888-8888-8888-888888888001',
-    '33333333-3333-3333-3333-333333333002',
-    '11111111-1111-1111-1111-111111111003',
-    'test-vm-provisioning',
-    'provisioning',
-    'ceph',
-    NOW(),
-    NOW()
-);
-
--- =============================================================================
--- Test Backups
--- =============================================================================
-INSERT INTO backups (id, vm_id, type, status, storage_path, size_bytes, created_at)
-VALUES
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01', '99999999-9999-9999-9999-999999999001', 'full', 'completed', 'vs-backups/backup-01', 10737418240, NOW() - INTERVAL '1 day'),
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02', '99999999-9999-9999-9999-999999999001', 'full', 'completed', 'vs-backups/backup-02', 1073741824, NOW() - INTERVAL '12 hours'),
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa03', '99999999-9999-9999-9999-999999999001', 'full', 'creating', NULL, NULL, NOW());
-
--- =============================================================================
--- Test Snapshots
--- =============================================================================
-INSERT INTO snapshots (id, vm_id, name, rbd_snapshot, created_at)
-VALUES
-    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb01', '99999999-9999-9999-9999-999999999001', 'before-update', 'snap-before-update', NOW() - INTERVAL '2 days'),
-    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb02', '99999999-9999-9999-9999-999999999001', 'daily-backup', 'snap-daily-' || to_char(NOW() - INTERVAL '1 day', 'YYYYMMDD'), NOW() - INTERVAL '1 day'),
-    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb03', '99999999-9999-9999-9999-999999999002', 'initial', 'snap-initial', NOW() - INTERVAL '3 days');
-
--- =============================================================================
--- Test API Keys for Customer
--- =============================================================================
-INSERT INTO customer_api_keys (id, customer_id, name, key_hash, permissions, expires_at, created_at)
-VALUES
-    ('cccccccc-cccc-cccc-cccc-cccccccccc01', '88888888-8888-8888-8888-888888888001', 'Test API Key', '$argon2id$v=19$m=65536,t=3,p=4$YXBpa2V5c2FsdA$apikeyhashfortesting1234567890abcdef', '["vm:read","vm:start","vm:stop"]', NOW() + INTERVAL '30 days', NOW()),
-    ('cccccccc-cccc-cccc-cccc-cccccccccc02', '88888888-8888-8888-8888-888888888001', 'Expired Key', '$argon2id$v=19$m=65536,t=3,p=4$ZXhwaXJlZGtleQ$expiredkeyhash1234567890abcdef', '["vm:read"]', NOW() - INTERVAL '1 day', NOW() - INTERVAL '31 days');
-
--- =============================================================================
--- Assign IP addresses to test VMs
--- =============================================================================
-UPDATE ip_addresses SET vm_id = '99999999-9999-9999-9999-999999999001', customer_id = '88888888-8888-8888-8888-888888888001', status = 'used'
-WHERE address IN ('192.168.100.10', '192.168.100.11');
-
-UPDATE ip_addresses SET vm_id = '99999999-9999-9999-9999-999999999002', customer_id = '88888888-8888-8888-8888-888888888001', status = 'used'
-WHERE address = '192.168.100.12';
-
--- =============================================================================
--- Test Webhooks
--- =============================================================================
-INSERT INTO customer_webhooks (id, customer_id, name, url, secret, events, created_at)
-VALUES
-    ('dddddddd-dddd-dddd-dddd-dddddddddd01', '88888888-8888-8888-8888-888888888001', 'Test Webhook', 'https://webhook.example.com/test', 'test-webhook-secret', '["vm.created","vm.deleted","vm.status_changed"]', NOW());
+UPDATE ip_addresses
+SET vm_id = '99999999-9999-9999-9999-999999999002',
+    customer_id = '88888888-8888-8888-8888-888888888001',
+    is_primary = TRUE,
+    rdns_hostname = 'vm2.test.virtuestack.local',
+    status = 'assigned',
+    assigned_at = NOW(),
+    released_at = NULL,
+    cooldown_until = NULL
+WHERE address = '198.51.100.12';
 
 COMMIT;
 
--- =============================================================================
--- Summary
--- =============================================================================
 SELECT 'E2E Test Seed Data Loaded' AS status;
 SELECT
-    'Test Plans: ' || (SELECT COUNT(*) FROM plans WHERE slug LIKE 'test-%') ||
-    ', Test Nodes: ' || (SELECT COUNT(*) FROM nodes WHERE hostname LIKE 'test-node-%') ||
-    ', Test VMs: ' || (SELECT COUNT(*) FROM vms WHERE hostname LIKE 'test-vm-%') ||
-    ', Test Customers: ' || (SELECT COUNT(*) FROM customers WHERE email LIKE '%@test.virtuestack.local') ||
-    ', Test Admins: ' || (SELECT COUNT(*) FROM admins WHERE email LIKE '%@test.virtuestack.local')
-    AS summary;
+    (SELECT COUNT(*) FROM plans WHERE id IN (
+        '11111111-1111-1111-1111-111111111001',
+        '11111111-1111-1111-1111-111111111002',
+        '11111111-1111-1111-1111-111111111003',
+        '11111111-1111-1111-1111-111111111004'
+    )) AS seeded_plans,
+    (SELECT COUNT(*) FROM nodes WHERE id IN (
+        '33333333-3333-3333-3333-333333333001',
+        '33333333-3333-3333-3333-333333333002',
+        '33333333-3333-3333-3333-333333333003',
+        '33333333-3333-3333-3333-333333333004',
+        '33333333-3333-3333-3333-333333333005'
+    )) AS seeded_nodes,
+    (SELECT COUNT(*) FROM vms WHERE id IN (
+        '99999999-9999-9999-9999-999999999001',
+        '99999999-9999-9999-9999-999999999002',
+        '99999999-9999-9999-9999-999999999003'
+    )) AS seeded_vms,
+    (SELECT COUNT(*) FROM customers WHERE id IN (
+        '88888888-8888-8888-8888-888888888001',
+        '88888888-8888-8888-8888-888888888002',
+        '88888888-8888-8888-8888-888888888003'
+    )) AS seeded_customers,
+    (SELECT COUNT(*) FROM admins WHERE id IN (
+        '77777777-7777-7777-7777-777777777001',
+        '77777777-7777-7777-7777-777777777002',
+        '77777777-7777-7777-7777-777777777003'
+    )) AS seeded_admins;
 EOF
 
     log_success "Created seed SQL: $seed_file"
+}
+
+run_seed_sql() {
+    local seed_path="${1:-${PROJECT_ROOT}/migrations/test_seed.sql}"
+    local database_url
+    local container_database_url
+
+    load_env_file
+    database_url="$(build_database_url)"
+
+    if command -v psql >/dev/null 2>&1; then
+        psql "${database_url}" -v ON_ERROR_STOP=1 -f "${seed_path}"
+        return
+    fi
+
+    require_commands docker
+    container_database_url="postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable"
+    docker run --rm \
+        --network virtuestack-test-network \
+        -v "${PROJECT_ROOT}/migrations:/migrations:ro" \
+        postgres:18-alpine \
+        psql "${container_database_url}" -v ON_ERROR_STOP=1 -f "/migrations/$(basename "${seed_path}")"
 }
 
 # =============================================================================
@@ -509,6 +851,8 @@ EOF
 
 start_docker_services() {
     log_info "Starting Docker services..."
+    require_commands docker
+    load_env_file
 
     cd "$PROJECT_ROOT"
 
@@ -560,14 +904,16 @@ start_docker_services() {
 
     # Seed test data
     log_info "Seeding test data..."
-    "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" -f /docker-entrypoint-initdb.d/../migrations/test_seed.sql 2>/dev/null || \
-        "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" < "${PROJECT_ROOT}/migrations/test_seed.sql"
+    "${DOCKER_COMPOSE[@]}" exec -T postgres \
+        psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" \
+        -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/migrations/test_seed.sql
 
     log_success "All services started and healthy"
 }
 
 stop_docker_services() {
     log_info "Stopping Docker services..."
+    require_commands docker
 
     cd "$PROJECT_ROOT"
     "${DOCKER_COMPOSE[@]}" down -v
@@ -586,8 +932,9 @@ setup_playwright() {
 
     # Install dependencies
     if [ -f package.json ]; then
-        npm ci
-        npx playwright install --with-deps
+        corepack enable
+        pnpm install --frozen-lockfile
+        pnpm exec playwright install --with-deps
     fi
 
     # Create auth directory
@@ -640,14 +987,17 @@ main() {
             echo "  Admin: ${TEST_ADMIN_EMAIL} / ${TEST_ADMIN_PASSWORD}"
             echo "  Customer: ${TEST_CUSTOMER_EMAIL} / ${TEST_CUSTOMER_PASSWORD}"
             echo ""
-            echo "Run tests with: cd tests/e2e && npm test"
+            echo "Run tests with: cd tests/e2e && pnpm test"
             ;;
         --clean)
             cleanup
             ;;
         --seed-only)
             create_seed_sql
-            "${DOCKER_COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-virtuestack}" -d "${POSTGRES_DB:-virtuestack}" < "${PROJECT_ROOT}/migrations/test_seed.sql"
+            # Seed-only intentionally uses direct psql execution via run_seed_sql
+            # instead of docker compose exec, so it can target any reachable
+            # Postgres configured by .env.test or fall back to a one-shot psql container.
+            run_seed_sql "${PROJECT_ROOT}/migrations/test_seed.sql"
             log_success "Test data seeded"
             ;;
         setup|*)

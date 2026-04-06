@@ -391,7 +391,7 @@ func (s *StorageBackendService) validateTypeConfig(req *models.StorageBackendCre
 //     containing node health metrics (CPU, memory, disk, VM count). This is implemented in
 //     internal/controller/services/heartbeat_checker.go.
 //
-//  2. Storage Metrics: For nodes assigned storage backends (via node_storage_backends junction),
+//  2. Storage Metrics: For nodes assigned storage backends (via node_storage junction),
 //     the heartbeat includes storage backend health metrics:
 //     - Ceph: Output of 'ceph df' (total_gb, used_gb, available_gb, health_status)
 //     - QCOW: Disk usage of storage_path directory

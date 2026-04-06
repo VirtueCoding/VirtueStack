@@ -135,6 +135,7 @@ type CustomerHandler struct {
 	invoiceService                *services.BillingInvoiceService
 	nodeAgent                     nodeAgentConnPool
 	authConfig                    middleware.AuthConfig
+	guestOpHMACSecret             string
 	encryptionKey                 string
 	consoleBaseURL                string
 	isoStoragePath                string
@@ -199,6 +200,7 @@ type CustomerHandlerConfig struct {
 	NodeAgent                     nodeAgentConnPool
 	JWTSecret                     string
 	Issuer                        string
+	GuestOpHMACSecret             string
 	EncryptionKey                 string
 	ConsoleBaseURL                string
 	ISOStoragePath                string
@@ -242,6 +244,7 @@ func NewCustomerHandler(cfg CustomerHandlerConfig) *CustomerHandler {
 		invoiceService:                cfg.InvoiceService,
 		nodeAgent:                     cfg.NodeAgent,
 		authConfig:                    authConfig,
+		guestOpHMACSecret:             cfg.GuestOpHMACSecret,
 		encryptionKey:                 cfg.EncryptionKey,
 		consoleBaseURL:                cfg.ConsoleBaseURL,
 		isoStoragePath:                cfg.ISOStoragePath,

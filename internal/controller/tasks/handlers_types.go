@@ -24,6 +24,7 @@ type HandlerDeps struct {
 	TaskRepo          *repository.TaskRepository
 	WebhookRepo       *repository.WebhookRepository
 	SystemWebhookRepo *repository.SystemWebhookRepository
+	SystemDeliveryRepo *repository.SystemWebhookDeliveryRepository
 	TemplateRepo      *repository.TemplateRepository
 	TemplateCacheRepo *repository.TemplateCacheRepository
 	IPAMService       IPAMService
@@ -186,12 +187,13 @@ type CloudInitConfig struct {
 	Nameservers      []string
 }
 
-// MigrateVMOptions contains options for VM live migration.
+// MigrateVMOptions contains options for shared-storage VM migration.
 type MigrateVMOptions struct {
 	TargetNodeAddress  string // gRPC address of the target node
 	BandwidthLimitMbps int    // Bandwidth limit for migration traffic
 	Compression        bool   // Enable compression during migration
 	AutoConverge       bool   // Force convergence if migration stalls
+	Live               *bool  // Optional live migration override; nil preserves the default live behavior
 }
 
 // DiskTransferOptions contains options for disk transfer between nodes.
@@ -247,8 +249,8 @@ type VMDeletePayload struct {
 type MigrationStrategy string
 
 const (
-	// MigrationStrategyLiveSharedStorage indicates live migration with shared storage (Ceph).
-	// No disk copy needed, VM remains running during migration.
+	// MigrationStrategyLiveSharedStorage indicates shared-storage migration (Ceph).
+	// No disk copy is needed; the node agent uses the payload's live flag to run either live or offline migration.
 	MigrationStrategyLiveSharedStorage MigrationStrategy = "live_shared"
 	// MigrationStrategyDiskCopy indicates migration requiring disk copy between nodes (QCOW).
 	// For running VMs: copy disk, sync delta, switchover.

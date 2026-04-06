@@ -102,18 +102,7 @@ func ensureTemplateCachedOnNode(ctx context.Context, deps *HandlerDeps, template
 		return fmt.Errorf("creating cache entry: %w", err)
 	}
 
-	var expectedSize int64
-	if template.FilePath != nil {
-		expectedSize = int64(template.MinDiskGB) * 1024 * 1024 * 1024
-	}
-
-	resp, err := deps.NodeClient.EnsureTemplateCached(ctx, nodeID, &EnsureTemplateCachedRequest{
-		TemplateID:        template.ID,
-		TemplateName:      template.Name,
-		StorageBackend:    template.StorageBackend,
-		SourceURL:         sourceURL,
-		ExpectedSizeBytes: expectedSize,
-	})
+	resp, err := deps.NodeClient.EnsureTemplateCached(ctx, nodeID, buildEnsureTemplateCachedRequest(template, sourceURL))
 	if err != nil {
 		errMsg := err.Error()
 		_ = deps.TemplateCacheRepo.UpdateStatus(ctx, template.ID, nodeID,
@@ -125,6 +114,19 @@ func ensureTemplateCachedOnNode(ctx context.Context, deps *HandlerDeps, template
 	sizeBytes := resp.SizeBytes
 	return deps.TemplateCacheRepo.UpdateStatus(ctx, template.ID, nodeID,
 		models.TemplateCacheStatusReady, &localPath, &sizeBytes, nil)
+}
+
+func buildEnsureTemplateCachedRequest(template *models.Template, sourceURL string) *EnsureTemplateCachedRequest {
+	return &EnsureTemplateCachedRequest{
+		TemplateID:     template.ID,
+		TemplateName:   template.Name,
+		StorageBackend: template.StorageBackend,
+		SourceURL:      sourceURL,
+		// The controller does not currently persist the actual downloadable artifact
+		// size for distributed templates. Sending MinDiskGB here is incorrect because
+		// it is the guest's virtual minimum disk size, not the QCOW/LVM image size.
+		ExpectedSizeBytes: 0,
+	}
 }
 
 // buildTemplateSourceURL constructs the download URL for a template.

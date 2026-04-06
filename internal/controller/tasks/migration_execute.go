@@ -236,22 +236,24 @@ func migrationTargetDiskPath(payload *VMMigratePayload) *string {
 	return &payload.TargetDiskPath
 }
 
-// executeLiveSharedStorageMigration performs live migration with shared Ceph storage.
+// executeLiveSharedStorageMigration performs shared-storage migration with Ceph.
 // No disk copy is needed as both nodes have access to the same Ceph cluster.
 func executeLiveSharedStorageMigration(mc *MigrationContext) error {
-	mc.Logger.Info("executing live migration with shared storage")
+	mc.Logger.Info("executing shared-storage migration", "live", mc.Payload.Live)
 
 	// Update task progress
-	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 20, "Executing live migration..."); err != nil {
+	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 20, "Executing shared-storage migration..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
 	// Prepare migration options
+	live := mc.Payload.Live
 	migrateOpts := &MigrateVMOptions{
 		TargetNodeAddress:  mc.TargetNode.GRPCAddress,
 		BandwidthLimitMbps: defaultMigrationBandwidthMbps,
 		Compression:        true,
 		AutoConverge:       true,
+		Live:               &live,
 	}
 
 	// Initiate live migration via gRPC on source node

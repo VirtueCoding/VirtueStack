@@ -9,7 +9,7 @@ self.__SERVER_FILES_MANIFEST={
     "typedRoutes": false,
     "distDir": ".next",
     "cleanDistDir": true,
-    "assetPrefix": "",
+    "assetPrefix": "/admin",
     "cacheMaxMemorySize": 52428800,
     "configOrigin": "next.config.js",
     "useFileSystemPublicRoutes": true,
@@ -42,7 +42,7 @@ self.__SERVER_FILES_MANIFEST={
         256,
         384
       ],
-      "path": "/_next/image",
+      "path": "/admin/_next/image",
       "loader": "default",
       "loaderFile": "",
       "domains": [],
@@ -77,7 +77,7 @@ self.__SERVER_FILES_MANIFEST={
       "maxInactiveAge": 60000,
       "pagesBufferLength": 5
     },
-    "basePath": "",
+    "basePath": "/admin",
     "sassOptions": {},
     "trailingSlash": false,
     "i18n": null,
@@ -105,7 +105,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit",
+    "outputFileTracingRoot": "/home/hiron",
     "cacheComponents": false,
     "cacheLife": {
       "default": {
@@ -305,12 +305,12 @@ self.__SERVER_FILES_MANIFEST={
     "bundlePagesRouterDependencies": false,
     "configFileName": "next.config.js",
     "turbopack": {
-      "root": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit"
+      "root": "/home/hiron"
     },
     "distDirRoot": ".next"
   },
   "appDir": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin",
-  "relativeAppDir": "webui/admin",
+  "relativeAppDir": ".config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/admin",
   "files": [
     ".next/routes-manifest.json",
     ".next/server/pages-manifest.json",

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -205,6 +206,86 @@ func TestGetSerialToken_InvalidUUID(t *testing.T) {
 	require.NoError(t, err)
 	errorObj := resp["error"].(map[string]interface{})
 	assert.Equal(t, "INVALID_VM_ID", errorObj["code"])
+}
+
+func TestGetConsoleToken_ReturnsDirectWebSocketURLWithoutQueryToken(t *testing.T) {
+	testGetConsoleURLWithoutQueryToken(t, consoleTypeVNC)
+}
+
+func TestGetSerialToken_ReturnsDirectWebSocketURLWithoutQueryToken(t *testing.T) {
+	testGetConsoleURLWithoutQueryToken(t, consoleTypeSerial)
+}
+
+func testGetConsoleURLWithoutQueryToken(t *testing.T, ct consoleType) {
+	t.Helper()
+
+	vmID := "550e8400-e29b-41d4-a716-446655440000"
+	nodeID := "550e8400-e29b-41d4-a716-446655440001"
+	now := time.Date(2026, time.April, 2, 9, 0, 0, 0, time.UTC)
+
+	router := setupTestRouter()
+	handler := &CustomerHandler{
+		vmService: newWebSocketVMService(t, models.VM{
+			ID:                 vmID,
+			CustomerID:         "customer-123",
+			NodeID:             &nodeID,
+			PlanID:             "550e8400-e29b-41d4-a716-446655440002",
+			Hostname:           "vm-test",
+			Status:             models.VMStatusRunning,
+			VCPU:               2,
+			MemoryMB:           2048,
+			DiskGB:             40,
+			PortSpeedMbps:      1000,
+			BandwidthLimitGB:   1000,
+			BandwidthUsedBytes: 0,
+			BandwidthResetAt:   now,
+			MACAddress:         "52:54:00:12:34:56",
+			StorageBackend:     "qcow",
+			Timestamps: models.Timestamps{
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		}),
+		consoleBaseURL: "https://console.example.test",
+		tokenStore:     newConsoleTokenStore(),
+		logger:         testPowerLogger(),
+	}
+	t.Cleanup(handler.tokenStore.Stop)
+
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", "customer-123")
+		c.Next()
+	})
+
+	endpoint := "/vms/:id/console-token"
+	requestPath := "/vms/" + vmID + "/console-token"
+	wantURL := "wss://console.example.test/api/v1/customer/ws/vnc/" + vmID
+	register := handler.GetConsoleToken
+	if ct == consoleTypeSerial {
+		endpoint = "/vms/:id/serial-token"
+		requestPath = "/vms/" + vmID + "/serial-token"
+		wantURL = "wss://console.example.test/api/v1/customer/ws/serial/" + vmID
+		register = handler.GetSerialToken
+	}
+	router.POST(endpoint, register)
+
+	req := httptest.NewRequest(http.MethodPost, requestPath, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Data struct {
+			Token string `json:"token"`
+			URL   string `json:"url"`
+		} `json:"data"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Data.Token)
+	assert.Equal(t, wantURL, resp.Data.URL)
+	assert.NotContains(t, resp.Data.URL, "?token=")
 }
 
 // TestGenerateConsoleToken_Uniqueness verifies that each call to

@@ -106,14 +106,17 @@ func (h *grpcHandler) DeleteDiskSnapshot(ctx context.Context, req *nodeagentpb.D
 		}
 
 		if err := h.server.storageBackend.DeleteSnapshot(ctx, diskPath, req.GetSnapshotName()); err != nil {
-			logger.Warn("failed to delete QCOW snapshot", "error", err)
+			return nil, mapDeleteDiskSnapshotError(storageBackend, err)
 		}
 
 	case "ceph":
 		diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
 		if err := h.server.storageBackend.DeleteSnapshot(ctx, diskName, req.GetSnapshotName()); err != nil {
-			logger.Warn("failed to delete RBD snapshot", "error", err)
+			return nil, mapDeleteDiskSnapshotError(storageBackend, err)
 		}
+
+	default:
+		return nil, mapDeleteDiskSnapshotError(storageBackend, nil)
 	}
 
 	return &nodeagentpb.VMOperationResponse{
@@ -552,6 +555,7 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 	if storageBackend == "" {
 		storageBackend = string(h.server.storageType)
 	}
+	var cleanupStorage storageCleanupFunc
 
 	resolvedDisk, err := transferutil.ResolvePreparedVMDisk(
 		storageBackend,
@@ -562,6 +566,19 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
 	}
+	ownedDiskID := resolvedDisk.DiskPath
+	if storageBackend == vm.StorageBackendLVM {
+		ownedDiskID = resolvedDisk.LVMDiskPath
+	}
+	cleanupStorage = ownedPrepareCleanupForBackend(
+		storageBackend,
+		req.GetDiskPath(),
+		h.server.storageBackend.DiskIdentifier(req.GetVmId()),
+		ownedDiskID,
+		func(ctx context.Context, diskID string) error {
+			return h.server.storageBackend.Delete(ctx, diskID)
+		},
+	)
 
 	// Build domain config from the request
 	cfg := &vm.DomainConfig{
@@ -590,9 +607,30 @@ func (h *grpcHandler) PrepareMigratedVM(ctx context.Context, req *nodeagentpb.Pr
 	}
 
 	// Create the VM definition (without cloning template since disk exists)
-	result, err := h.server.vmManager.CreateVM(ctx, cfg)
-	if err != nil {
+	var result *vm.CreateResult
+	if err := createVMWithRollbackCleanup(ctx, func(ctx context.Context) error {
+		var createErr error
+		result, createErr = h.server.vmManager.CreateVM(ctx, cfg)
+		return createErr
+	}, func(ctx context.Context) error {
+		if cleanupStorage == nil {
+			return nil
+		}
+		return cleanupStorage(ctx, req.GetVmId())
+	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "creating VM definition: %v", err)
+	}
+
+	if err := ensureAbusePreventionAfterCreate(
+		ctx,
+		req.GetVmId(),
+		logger,
+		h.server.getVMTapInterface,
+		h.server.abusePreventionMgr,
+		h.server.vmManager.DeleteVM,
+		cleanupStorage,
+	); err != nil {
+		return nil, h.mapError(err, "applying abuse prevention")
 	}
 
 	logger.Info("migrated VM prepared successfully", "domain_name", result.DomainName)

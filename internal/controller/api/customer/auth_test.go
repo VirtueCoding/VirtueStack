@@ -39,6 +39,15 @@ func setupTestRouter() *gin.Engine {
 	return gin.New()
 }
 
+func findResponseCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}
+
 func TestChangePassword_InvalidRequestBody(t *testing.T) {
 	router := setupTestRouter()
 	logger := testAuthHandlerLogger()
@@ -485,6 +494,56 @@ func TestCustomerLogout_RejectsMalformedJSON(t *testing.T) {
 	assert.Equal(t, "INVALID_REQUEST_BODY", errorObj["code"])
 }
 
+func TestCustomerLogout_CleanupTokenWithoutCurrentSessionClearsCookies(t *testing.T) {
+	router := setupTestRouter()
+	logger := testAuthHandlerLogger()
+	authConfig := middleware.AuthConfig{JWTSecret: "test-secret", Issuer: "virtuestack"}
+	authService := services.NewAuthService(
+		&logoutCustomerRepoStub{},
+		nil,
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	cleanupToken, err := middleware.GenerateSessionCleanupToken(
+		authConfig,
+		"customer-123",
+		"customer",
+		"",
+		"session-123",
+	)
+	require.NoError(t, err)
+
+	handler := &CustomerHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+	router.POST("/logout", handler.Logout)
+
+	body, err := json.Marshal(LogoutRequest{SessionCleanupToken: cleanupToken})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	accessCookie := findResponseCookie(w.Result().Cookies(), middleware.AccessTokenCookieName)
+	require.NotNil(t, accessCookie)
+	assert.Equal(t, -1, accessCookie.MaxAge)
+
+	refreshCookie := findResponseCookie(w.Result().Cookies(), middleware.RefreshTokenCookieName)
+	require.NotNil(t, refreshCookie)
+	assert.Equal(t, -1, refreshCookie.MaxAge)
+}
+
 func TestCustomerLogout_LogsFailedSessionAuditEventWhenInvalidationFails(t *testing.T) {
 	logger := testAuthHandlerLogger()
 	authConfig := middleware.AuthConfig{JWTSecret: "test-secret", Issuer: "virtuestack"}
@@ -569,11 +628,11 @@ func TestCustomerShouldClearLogoutCookies(t *testing.T) {
 			want:                false,
 		},
 		{
-			name:                "cleanup token without current session preserves cookies",
+			name:                "cleanup token without current session clears cookies",
 			sessionCleanupToken: "cleanup-token",
 			targetSessionID:     "stale-session",
 			currentSessionID:    "",
-			want:                false,
+			want:                true,
 		},
 	}
 

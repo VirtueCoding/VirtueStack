@@ -2,12 +2,20 @@ package customer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	"github.com/AbuGosok/VirtueStack/internal/controller/services"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -217,5 +225,105 @@ func TestBackupUUIDValidation_TableDriven(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, tt.code, errObj["code"])
 		})
+	}
+}
+
+func TestCreateBackup_UnsupportedSyncBackendReturnsConflict(t *testing.T) {
+	db := newCustomerAuditUnsupportedBackupBackendDB()
+	router := setupTestRouter()
+	handler := &CustomerHandler{
+		vmService: newCustomerAuditVMService(db, nil),
+		backupService: services.NewBackupService(services.BackupServiceConfig{
+			BackupRepo:   repository.NewBackupRepository(db),
+			SnapshotRepo: repository.NewBackupRepository(db),
+			VMRepo:       repository.NewVMRepository(db),
+			NodeAgent:    &customerAuditBackupNodeAgent{},
+			Logger:       testAuthHandlerLogger(),
+		}),
+		planRepo: repository.NewPlanRepository(db),
+		logger:   testAuthHandlerLogger(),
+	}
+
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", customerAuditTestCustomerID)
+		c.Next()
+	})
+	router.POST("/backups", handler.CreateBackup)
+
+	body := `{"vm_id":"` + customerAuditTestVMID + `","name":"backup-1"}`
+	req := httptest.NewRequest(http.MethodPost, "/backups", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	errObj, ok := resp["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "BACKUP_BACKEND_UNSUPPORTED", errObj["code"])
+}
+
+func newCustomerAuditUnsupportedBackupBackendDB() repository.DB {
+	return &customerAuditTestDB{
+		queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+			switch {
+			case strings.Contains(sql, "FROM vms WHERE id = $1 AND deleted_at IS NULL"):
+				return customerAuditTestRow{
+					values: customerAuditVMRow(
+						customerAuditTestVMID,
+						customerAuditTestCustomerID,
+						customerAuditTestNodeID,
+						customerAuditTestPlanID,
+						models.VMStatusRunning,
+					),
+				}
+			case strings.Contains(sql, "FROM plans WHERE id = $1"):
+				return customerAuditTestRow{
+					values: customerAuditPlanRow(customerAuditTestPlanID, 3),
+				}
+			default:
+				return customerAuditTestRow{scanErr: fmt.Errorf("unexpected query: %s", sql)}
+			}
+		},
+		execFunc: func(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			if strings.Contains(sql, "UPDATE backups SET status = $1 WHERE id = $2") {
+				return pgconn.NewCommandTag("UPDATE 1"), nil
+			}
+			return pgconn.CommandTag{}, fmt.Errorf("unexpected exec: %s", sql)
+		},
+		beginFunc: func(context.Context) (pgx.Tx, error) {
+			return &customerAuditTestTx{
+				execFunc: func(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+					if strings.Contains(sql, "SELECT id FROM vms WHERE id = $1 FOR UPDATE") {
+						return pgconn.NewCommandTag("SELECT 1"), nil
+					}
+					return pgconn.CommandTag{}, fmt.Errorf("unexpected tx exec: %s", sql)
+				},
+				queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+					switch {
+					case strings.Contains(sql, "SELECT COUNT(*) FROM backups WHERE vm_id = $1 AND status != 'deleted'"):
+						return customerAuditTestRow{values: []any{0}}
+					case strings.Contains(sql, "INSERT INTO backups"):
+						name := "backup-1"
+						return customerAuditTestRow{
+							values: customerAuditBackupRow(
+								customerAuditCreatedBackupID,
+								customerAuditTestVMID,
+								&name,
+								models.BackupStatusCreating,
+								models.StorageBackendCeph,
+								nil,
+								nil,
+								nil,
+							),
+						}
+					default:
+						return customerAuditTestRow{scanErr: fmt.Errorf("unexpected tx query: %s", sql)}
+					}
+				},
+			}, nil
+		},
 	}
 }

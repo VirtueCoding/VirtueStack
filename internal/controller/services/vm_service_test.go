@@ -191,6 +191,21 @@ func (m *mockTaskPublisher) PublishTask(ctx context.Context, taskType string, pa
 	return "task-1", nil
 }
 
+type recordingTaskPublisher struct {
+	taskType string
+	payload  map[string]any
+	err      error
+}
+
+func (r *recordingTaskPublisher) PublishTask(_ context.Context, taskType string, payload map[string]any) (string, error) {
+	r.taskType = taskType
+	r.payload = payload
+	if r.err != nil {
+		return "", r.err
+	}
+	return "task-1", nil
+}
+
 func testVMServiceLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -306,6 +321,53 @@ func TestVMService_CreateVMValidationErrors(t *testing.T) {
 			assert.Equal(t, "", taskID)
 		})
 	}
+}
+
+func TestVMService_PublishVMCreateTaskIncludesIdempotencyKey(t *testing.T) {
+	t.Parallel()
+
+	publisher := &recordingTaskPublisher{}
+	svc := NewVMService(VMServiceConfig{
+		TaskPublisher: publisher,
+		Logger:        testVMServiceLogger(),
+	})
+
+	req := &models.VMCreateRequest{
+		IdempotencyKey: "idem-create-123",
+		SSHKeys:        []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKey"},
+	}
+	vm := &models.VM{
+		ID:               "vm-1",
+		Hostname:         "vm-host",
+		VCPU:             2,
+		MemoryMB:         2048,
+		DiskGB:           40,
+		MACAddress:       "52:54:00:12:34:56",
+		PortSpeedMbps:    1000,
+		BandwidthLimitGB: 1000,
+	}
+	deps := vmCreateDeps{
+		plan: &models.Plan{
+			StorageBackend: models.StorageBackendCeph,
+		},
+		template: &models.Template{
+			ID:          "template-1",
+			RBDImage:    "template-image",
+			RBDSnapshot: "template-snapshot",
+		},
+		node: &models.Node{
+			ID:          "node-1",
+			CephPool:    "vs-vms",
+			StoragePath: "/var/lib/virtuestack/vms",
+		},
+	}
+
+	taskID, err := svc.publishVMCreateTask(context.Background(), req, vm, deps, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "task-1", taskID)
+	assert.Equal(t, models.TaskTypeVMCreate, publisher.taskType)
+	require.NotNil(t, publisher.payload)
+	assert.Equal(t, req.IdempotencyKey, publisher.payload["idempotency_key"])
 }
 
 func TestVMService_PowerAndDeleteConflictPaths(t *testing.T) {

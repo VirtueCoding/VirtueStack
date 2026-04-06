@@ -5,10 +5,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
@@ -112,42 +114,17 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) (s
 func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword string) error {
 	tokenHash := crypto.HashSHA256(token)
 
-	reset, err := s.customerRepo.GetPasswordResetByTokenHash(ctx, tokenHash)
-	if err != nil {
-		if sharederrors.Is(err, sharederrors.ErrNotFound) {
-			return sharederrors.ErrUnauthorized
-		}
-		return fmt.Errorf("getting password reset: %w", err)
-	}
-
-	if time.Now().After(reset.ExpiresAt) {
-		return fmt.Errorf("reset token has expired")
-	}
-
-	if reset.UsedAt != nil {
-		return fmt.Errorf("reset token has already been used")
-	}
-
 	newHash, err := s.hashPassword(newPassword)
 	if err != nil {
 		return fmt.Errorf("hashing new password: %w", err)
 	}
 
-	switch reset.UserType {
-	case "customer":
-		if err := s.customerRepo.UpdateCustomerPasswordHash(ctx, reset.UserID, newHash); err != nil {
-			return fmt.Errorf("updating customer password: %w", err)
+	reset, err := s.customerRepo.ResetPasswordWithToken(ctx, tokenHash, newHash)
+	if err != nil {
+		if errors.Is(err, repository.ErrNoRowsAffected) || sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return sharederrors.ErrUnauthorized
 		}
-	case "admin":
-		if err := s.adminRepo.UpdatePasswordHash(ctx, reset.UserID, newHash); err != nil {
-			return fmt.Errorf("updating admin password: %w", err)
-		}
-	default:
-		return fmt.Errorf("invalid user type: %s", reset.UserType)
-	}
-
-	if err := s.customerRepo.MarkPasswordResetUsed(ctx, reset.ID); err != nil {
-		s.logger.Warn("failed to mark password reset as used", "reset_id", reset.ID, "error", err)
+		return fmt.Errorf("resetting password with token: %w", err)
 	}
 
 	if err := s.LogoutAll(ctx, reset.UserID, reset.UserType); err != nil {

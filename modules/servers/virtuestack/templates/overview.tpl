@@ -8,11 +8,16 @@
  * @author  VirtueStack Team
  *}
 
-{if $status eq 'provisioning'}
+{if $status eq 'provisioning' || $status eq 'resizing'}
     <div class="virtuestack-provisioning">
         <div class="alert alert-info">
+            {if $status eq 'resizing'}
+            <h4><i class="fas fa-spinner fa-spin"></i> Your VPS is being resized</h4>
+            <p>Your virtual server is currently applying its new package resources. This usually takes 30-60 seconds.</p>
+            {else}
             <h4><i class="fas fa-spinner fa-spin"></i> Your VPS is being provisioned</h4>
             <p>Your virtual server is currently being created. This usually takes 30-60 seconds.</p>
+            {/if}
             {if $task_id}
             <p><strong>Task ID:</strong> <code>{$task_id|escape:'htmlall'}</code></p>
             {/if}
@@ -21,7 +26,7 @@
         <div class="provisioning-progress">
             <div class="progress">
                 <div class="progress-bar progress-bar-striped active" role="progressbar" style="width: 100%;">
-                    <span>Provisioning in progress...</span>
+                    <span>{if $status eq 'resizing'}Resizing in progress...{else}Provisioning in progress...{/if}</span>
                 </div>
             </div>
         </div>

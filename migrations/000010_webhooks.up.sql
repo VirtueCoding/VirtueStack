@@ -9,7 +9,7 @@
 --
 -- WHY: Migration 001 created customer_webhooks + webhook_deliveries with an
 -- initial schema. This migration replaces them with a fully redesigned webhook
--- system (renamed table, hashed secrets, GIN-indexed events array, idempotency
+-- system (renamed table, encrypted secrets, GIN-indexed events array, idempotency
 -- keys, auto-updated timestamps, RLS policies, and delivery statistics views).
 --
 -- IRREVERSIBILITY: The schema can be rolled back via the .down.sql file, but
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     url VARCHAR(2048) NOT NULL,
-    secret_hash VARCHAR(128) NOT NULL,  -- Hashed secret for signature verification
+    secret_hash VARCHAR(128) NOT NULL,  -- Encrypted secret for signature verification
     events TEXT[] NOT NULL DEFAULT '{}',  -- Array of event types to subscribe to
     active BOOLEAN DEFAULT TRUE NOT NULL,
     fail_count INTEGER DEFAULT 0 NOT NULL,  -- Consecutive failure count for auto-disable
@@ -224,7 +224,7 @@ CREATE TRIGGER enforce_webhook_limit
 COMMENT ON TABLE webhooks IS 'Webhook endpoint configurations for event notifications';
 COMMENT ON TABLE webhook_deliveries IS 'Individual webhook delivery attempts with retry tracking';
 
-COMMENT ON COLUMN webhooks.secret_hash IS 'Hashed secret used for HMAC-SHA256 signature generation';
+COMMENT ON COLUMN webhooks.secret_hash IS 'Encrypted secret used for HMAC-SHA256 signature generation';
 COMMENT ON COLUMN webhooks.events IS 'Array of event types this webhook subscribes to (e.g., {vm.created,vm.deleted})';
 COMMENT ON COLUMN webhooks.fail_count IS 'Consecutive delivery failures; auto-disables after 50';
 

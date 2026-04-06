@@ -38,7 +38,8 @@ func (h *grpcHandler) CreateLVMBackup(ctx context.Context, req *nodeagentpb.Crea
 	// Validate backup file path to prevent traversal attacks
 	backupDir := filepath.Dir(req.GetBackupFilePath())
 	if err := validatePath(req.GetBackupFilePath(), h.server.config.StoragePath); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid backup_file_path: %v", err)
+		logger.Warn("invalid backup file path", "error", err, "backup_file", req.GetBackupFilePath())
+		return nil, status.Error(codes.InvalidArgument, "invalid backup_file_path")
 	}
 
 	// Get the LVM manager
@@ -56,39 +57,51 @@ func (h *grpcHandler) CreateLVMBackup(ctx context.Context, req *nodeagentpb.Crea
 	// Verify the snapshot exists
 	snapExists, err := lvmMgr.ImageExists(ctx, req.GetSnapshotName())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "checking if snapshot exists: %v", err)
+		logger.Error("failed to check snapshot existence", "error", err, "snapshot_name", req.GetSnapshotName())
+		return nil, mapBackupOperationError("checking snapshot", err)
 	}
 	if !snapExists {
-		return nil, status.Errorf(codes.NotFound, "snapshot %s does not exist", req.GetSnapshotName())
+		return nil, status.Error(codes.NotFound, "snapshot not found")
 	}
 
 	// Create the backup directory if it doesn't exist
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return nil, status.Errorf(codes.Internal, "creating backup directory: %v", err)
+		logger.Error("failed to create backup directory", "error", err, "backup_dir", backupDir)
+		return nil, mapBackupOperationError("creating backup artifact", err)
 	}
+
+	stagingPath := backupArtifactPathForWrite(req.GetBackupFilePath())
+	defer cleanupBackupArtifact(stagingPath)
 
 	// Use dd with conv=sparse to create the backup
 	// dd if=/dev/{vg}/{snapName} of={backupFilePath} bs=4M conv=sparse
 	ddCmd := exec.CommandContext(ctx, "dd",
 		"if="+snapDevicePath,
-		"of="+req.GetBackupFilePath(),
+		"of="+stagingPath,
 		"bs=4M",
 		"conv=sparse")
 
 	logger.Info("executing dd command for backup creation",
 		"source", snapDevicePath,
-		"target", req.GetBackupFilePath())
+		"target", stagingPath,
+		"final_target", req.GetBackupFilePath())
 
 	output, err := ddCmd.CombinedOutput()
 	if err != nil {
 		logger.Error("dd command failed", "error", err, "output", string(output))
-		return nil, status.Errorf(codes.Internal, "creating backup file: %v (output: %s)", err, string(output))
+		return nil, mapBackupOperationError("creating backup artifact", err)
+	}
+
+	if err := finalizeBackupArtifact(stagingPath, req.GetBackupFilePath()); err != nil {
+		logger.Error("failed to finalize backup artifact", "error", err, "staging_path", stagingPath, "backup_file", req.GetBackupFilePath())
+		return nil, mapBackupOperationError("creating backup artifact", err)
 	}
 
 	// Get the backup file size
 	fileInfo, err := os.Stat(req.GetBackupFilePath())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "getting backup file info: %v", err)
+		logger.Error("failed to stat backup artifact", "error", err, "backup_file", req.GetBackupFilePath())
+		return nil, mapBackupOperationError("creating backup artifact", err)
 	}
 	sizeBytes := fileInfo.Size()
 
@@ -129,13 +142,15 @@ func (h *grpcHandler) RestoreLVMBackup(ctx context.Context, req *nodeagentpb.Res
 
 	// Validate backup file path to prevent traversal attacks
 	if err := validatePath(req.GetBackupFilePath(), h.server.config.StoragePath); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid backup_file_path: %v", err)
+		logger.Warn("invalid backup file path", "error", err, "backup_file", req.GetBackupFilePath())
+		return nil, status.Error(codes.InvalidArgument, "invalid backup_file_path")
 	}
 
 	// Verify the VM is stopped
 	vmStatus, err := h.server.vmManager.GetStatus(ctx, req.GetVmId())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "getting VM status: %v", err)
+		logger.Error("failed to get VM status for restore", "error", err)
+		return nil, mapBackupOperationError("checking VM status", err)
 	}
 	if vmStatus.Status == "running" {
 		return nil, status.Error(codes.FailedPrecondition, "VM must be stopped before restoring backup")
@@ -153,15 +168,19 @@ func (h *grpcHandler) RestoreLVMBackup(ctx context.Context, req *nodeagentpb.Res
 	// Verify the thin LV exists
 	exists, err := lvmMgr.ImageExists(ctx, diskID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "checking if LV exists: %v", err)
+		logger.Error("failed to check LV existence", "error", err, "disk_id", diskID)
+		return nil, mapBackupOperationError("checking destination volume", err)
 	}
 	if !exists {
-		return nil, status.Errorf(codes.NotFound, "LV %s does not exist", diskID)
+		return nil, status.Error(codes.NotFound, "destination volume not found")
 	}
 
 	// Verify the backup file exists
 	if _, err := os.Stat(req.GetBackupFilePath()); os.IsNotExist(err) {
-		return nil, status.Errorf(codes.NotFound, "backup file %s does not exist", req.GetBackupFilePath())
+		return nil, status.Error(codes.NotFound, "backup file not found")
+	} else if err != nil {
+		logger.Error("failed to stat backup file", "error", err, "backup_file", req.GetBackupFilePath())
+		return nil, mapBackupOperationError("checking backup artifact", err)
 	}
 
 	// Use dd to restore the backup to the LV
@@ -178,7 +197,7 @@ func (h *grpcHandler) RestoreLVMBackup(ctx context.Context, req *nodeagentpb.Res
 	output, err := ddCmd.CombinedOutput()
 	if err != nil {
 		logger.Error("dd command failed", "error", err, "output", string(output))
-		return nil, status.Errorf(codes.Internal, "restoring backup: %v (output: %s)", err, string(output))
+		return nil, mapBackupOperationError("restoring backup artifact", err)
 	}
 
 	logger.Info("backup restored successfully", "vm_id", req.GetVmId())

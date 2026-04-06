@@ -59,6 +59,7 @@ check_required "NATS_URL"
 check_required "NATS_AUTH_TOKEN"
 check_required "JWT_SECRET"
 check_required "ENCRYPTION_KEY"
+check_required "GUEST_OP_HMAC_SECRET"
 check_hex "ENCRYPTION_KEY" 64
 
 # Validate optional values when present.

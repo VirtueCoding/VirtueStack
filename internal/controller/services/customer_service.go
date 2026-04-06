@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
@@ -133,6 +134,11 @@ func (s *CustomerService) logAudit(ctx context.Context, actorID, customerID, act
 	if errMsg != "" {
 		errMsgPtr = &errMsg
 	}
+	correlationID := middleware.GetCorrelationIDFromContext(ctx)
+	correlationIDPtr := (*string)(nil)
+	if correlationID != "" {
+		correlationIDPtr = &correlationID
+	}
 
 	audit := &models.AuditLog{
 		ActorID:      auditActorID,
@@ -142,6 +148,7 @@ func (s *CustomerService) logAudit(ctx context.Context, actorID, customerID, act
 		ResourceType: "customer",
 		ResourceID:   &resourceID,
 		Changes:      changesJSON,
+		CorrelationID: correlationIDPtr,
 		Success:      success,
 		ErrorMessage: errMsgPtr,
 	}

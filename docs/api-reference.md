@@ -2352,7 +2352,7 @@ Restart a running VM (graceful shutdown + start).
 
 #### `POST /customer/vms/:id/console-token`
 
-Generate a NoVNC access token for graphical (VNC) console access.
+Return direct VNC console access details for graphical (NoVNC) console access.
 
 **Prerequisites:** VM must be running and have a node assigned.
 
@@ -2362,13 +2362,14 @@ Generate a NoVNC access token for graphical (VNC) console access.
 {
   "data": {
     "token": "hex-encoded-32-byte-token",
-    "url": "https://controller/vnc?token=hex-encoded-32-byte-token",
+    "url": "wss://controller.example.com/api/v1/customer/ws/vnc/<vm-id>",
     "expires_at": "2026-03-15T11:30:00Z"
   }
 }
 ```
 
-Token is valid for 1 hour and is single-use.
+The returned `url` is the preferred first-party connection target and does not embed the token.
+The token remains valid for 1 hour and single-use for legacy clients that still send it as a query parameter.
 
 **Error Responses:**
 - `409` — `VM_NOT_RUNNING`: VM must be running to access console
@@ -2378,7 +2379,7 @@ Token is valid for 1 hour and is single-use.
 
 #### `POST /customer/vms/:id/serial-token`
 
-Generate a serial console access token (text-based, xterm.js).
+Return direct serial console access details (text-based, xterm.js).
 
 **Prerequisites:** VM must be running and have a node assigned.
 
@@ -2388,11 +2389,13 @@ Generate a serial console access token (text-based, xterm.js).
 {
   "data": {
     "token": "hex-encoded-32-byte-token",
-    "url": "https://controller/serial?token=hex-encoded-32-byte-token",
+    "url": "wss://controller.example.com/api/v1/customer/ws/serial/<vm-id>",
     "expires_at": "2026-03-15T11:30:00Z"
   }
 }
 ```
+
+As with VNC, the direct websocket `url` is preferred and the token is retained only for backward compatibility.
 
 Token is valid for 1 hour.
 
@@ -2964,33 +2967,33 @@ Remove reverse DNS for an IP address.
 
 #### `GET /customer/ws/vnc/:vmId`
 
-WebSocket endpoint for VNC console access. Requires a valid console token.
+WebSocket endpoint for VNC console access.
 
 **Protocol:** `wss://`  
-**Authentication:** Console token (from `POST /vms/:id/console-token`)  
+**Authentication:** Normal customer authentication (JWT or scoped API key with `vm:power` + VM scope). Optional legacy query token from `POST /vms/:id/console-token`.  
 **Message format:** Binary frames (VNC protocol proxied through WebSocket)
 
 **Connection lifecycle:**
-1. Obtain a console token via REST API
-2. Connect to WebSocket with `?token=<token>`
+1. Ensure the VM is running
+2. Connect to `/api/v1/customer/ws/vnc/:vmId` with the existing authenticated customer session or scoped API key
 3. VNC frames are bidirectionally proxied
-4. Connection auto-closes after 1 hour (token expiry)
+4. Optional legacy clients may still include `?token=<token>`
 
 ---
 
 #### `GET /customer/ws/serial/:vmId`
 
-WebSocket endpoint for serial console access. Requires a valid serial token.
+WebSocket endpoint for serial console access.
 
 **Protocol:** `wss://`  
-**Authentication:** Serial token (from `POST /vms/:id/serial-token`)  
+**Authentication:** Normal customer authentication (JWT or scoped API key with `vm:power` + VM scope). Optional legacy query token from `POST /vms/:id/serial-token`.  
 **Message format:** Text frames (terminal data)
 
 **Connection lifecycle:**
-1. Obtain a serial token via REST API
-2. Connect to WebSocket with `?token=<token>`
+1. Ensure the VM is running
+2. Connect to `/api/v1/customer/ws/serial/:vmId` with the existing authenticated customer session or scoped API key
 3. Terminal data is bidirectionally proxied
-4. Connection auto-closes after 1 hour (token expiry)
+4. Optional legacy clients may still include `?token=<token>`
 
 ---
 
@@ -3707,10 +3710,10 @@ Extends `VM` with:
 | Aspect | Detail |
 |--------|--------|
 | Protocol | WebSocket over TLS (`wss://`) |
-| Authentication | Console token via `?token=` query parameter |
+| Authentication | Customer session or scoped API key with `vm:power`; optional legacy `?token=` query parameter |
 | Frame Type | Binary |
 | Direction | Bidirectional (client ↔ server) |
-| Timeout | 1 hour (token expiry) |
+| Timeout | Session-controlled; legacy query tokens expire after 1 hour |
 | Proxy | Controller proxies to Node Agent gRPC `StreamVNCConsole` |
 
 ### Serial Console (`wss://<host>/api/v1/customer/ws/serial/:vmId`)
@@ -3718,10 +3721,10 @@ Extends `VM` with:
 | Aspect | Detail |
 |--------|--------|
 | Protocol | WebSocket over TLS (`wss://`) |
-| Authentication | Serial token via `?token=` query parameter |
+| Authentication | Customer session or scoped API key with `vm:power`; optional legacy `?token=` query parameter |
 | Frame Type | Text |
 | Direction | Bidirectional (client ↔ server) |
-| Timeout | 1 hour (token expiry) |
+| Timeout | Session-controlled; legacy query tokens expire after 1 hour |
 | Proxy | Controller proxies to Node Agent gRPC `StreamSerialConsole` |
 
 ---

@@ -337,6 +337,10 @@ func (h *AdminHandler) DrainNode(c *gin.Context) {
 		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
 			return
 		}
+		if errors.Is(err, sharederrors.ErrConflict) {
+			middleware.RespondWithError(c, http.StatusConflict, "NODE_DRAIN_CONFLICT", err.Error())
+			return
+		}
 		h.logger.Error("failed to drain node",
 			"node_id", nodeID,
 			"error", err,
@@ -422,6 +426,10 @@ func (h *AdminHandler) UndrainNode(c *gin.Context) {
 	err := h.nodeService.UndrainNode(c.Request.Context(), nodeID)
 	if err != nil {
 		if handleNotFoundError(c, err, "NODE_NOT_FOUND", "Node not found") {
+			return
+		}
+		if errors.Is(err, sharederrors.ErrConflict) {
+			middleware.RespondWithError(c, http.StatusConflict, "NODE_UNDRAIN_CONFLICT", err.Error())
 			return
 		}
 		h.logger.Error("failed to undrain node",

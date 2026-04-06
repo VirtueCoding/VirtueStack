@@ -90,6 +90,10 @@ func (r *InAppNotificationRepository) listByRecipient(
 		q += ` AND NOT read`
 	}
 	if cursor != "" {
+		decodedCursor := models.PaginationParams{Cursor: cursor}.DecodeCursor()
+		if decodedCursor.LastID != "" {
+			cursor = decodedCursor.LastID
+		}
 		q += fmt.Sprintf(` AND created_at < $%d`, argIdx)
 		args = append(args, cursor)
 		argIdx++

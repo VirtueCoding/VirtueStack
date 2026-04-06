@@ -7,9 +7,9 @@ import { defineConfig, devices } from '@playwright/test';
  * - Admin Web UI (http://localhost:3000)
  * - Customer Web UI (http://localhost:3001)
  * 
- * Run tests with: npx playwright test
- * Run specific browser: npx playwright test --project=chromium
- * Run in UI mode: npx playwright test --ui
+ * Run tests with: pnpm test
+ * Run chromium suite: pnpm run test:chromium
+ * Run in UI mode: pnpm run test:ui
  */
 
 export default defineConfig({
@@ -58,10 +58,32 @@ export default defineConfig({
   
   // Configure projects for different browsers and environments
   projects: [
+    {
+      name: 'setup-admin',
+      testMatch: /auth\.setup\.ts/,
+      grep: /authenticate as admin/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.ADMIN_URL || 'http://localhost:3000',
+        storageState: { cookies: [], origins: [] },
+      },
+    },
+    {
+      name: 'setup-customer',
+      testMatch: /auth\.setup\.ts/,
+      grep: /authenticate as customer/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
+        storageState: { cookies: [], origins: [] },
+      },
+    },
+
     // Admin UI Tests
     {
       name: 'admin-chromium',
       testMatch: /admin.*\.spec\.ts/,
+      dependencies: ['setup-admin'],
       use: {
         ...devices['Desktop Chrome'],
         baseURL: process.env.ADMIN_URL || 'http://localhost:3000',
@@ -71,6 +93,7 @@ export default defineConfig({
     {
       name: 'admin-firefox',
       testMatch: /admin.*\.spec\.ts/,
+      dependencies: ['setup-admin'],
       use: {
         ...devices['Desktop Firefox'],
         baseURL: process.env.ADMIN_URL || 'http://localhost:3000',
@@ -80,6 +103,7 @@ export default defineConfig({
     {
       name: 'admin-webkit',
       testMatch: /admin.*\.spec\.ts/,
+      dependencies: ['setup-admin'],
       use: {
         ...devices['Desktop Safari'],
         baseURL: process.env.ADMIN_URL || 'http://localhost:3000',
@@ -91,6 +115,7 @@ export default defineConfig({
     {
       name: 'customer-chromium',
       testMatch: /customer.*\.spec\.ts/,
+      dependencies: ['setup-customer'],
       use: {
         ...devices['Desktop Chrome'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
@@ -100,6 +125,7 @@ export default defineConfig({
     {
       name: 'customer-firefox',
       testMatch: /customer.*\.spec\.ts/,
+      dependencies: ['setup-customer'],
       use: {
         ...devices['Desktop Firefox'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
@@ -109,6 +135,7 @@ export default defineConfig({
     {
       name: 'customer-webkit',
       testMatch: /customer.*\.spec\.ts/,
+      dependencies: ['setup-customer'],
       use: {
         ...devices['Desktop Safari'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
@@ -143,17 +170,21 @@ export default defineConfig({
     {
       name: 'mobile-chrome',
       testMatch: /customer.*\.spec\.ts/,
+      dependencies: ['setup-customer'],
       use: {
         ...devices['Pixel 5'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
+        storageState: '.auth/customer-storage.json',
       },
     },
     {
       name: 'mobile-safari',
       testMatch: /customer.*\.spec\.ts/,
+      dependencies: ['setup-customer'],
       use: {
         ...devices['iPhone 12'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
+        storageState: '.auth/customer-storage.json',
       },
     },
   ],
@@ -163,13 +194,13 @@ export default defineConfig({
     {
       command: 'npm run dev --prefix ../../webui/admin',
       url: 'http://localhost:3000',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: !!process.env.CI,
       timeout: 120000,
     },
     {
       command: 'npm run dev --prefix ../../webui/customer',
       url: 'http://localhost:3001',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: !!process.env.CI,
       timeout: 120000,
     },
   ],

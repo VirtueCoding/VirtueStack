@@ -137,10 +137,14 @@ func (c *NodeAgentGRPCClient) MigrateVM(ctx context.Context, sourceNodeID, targe
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	live := true
+	if opts != nil && opts.Live != nil {
+		live = *opts.Live
+	}
 	resp, err := client.MigrateVM(ctx, &nodeagentpb.MigrateVMRequest{
 		VmId:                   vmID,
 		DestinationNodeAddress: targetNode.GRPCAddress,
-		Live:                   true,
+		Live:                   live,
 	})
 	if err != nil {
 		return fmt.Errorf("migrating VM: %w", err)

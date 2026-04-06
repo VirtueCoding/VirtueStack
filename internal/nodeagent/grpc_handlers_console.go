@@ -38,6 +38,9 @@ func (h *grpcHandler) StreamVNCConsole(stream nodeagentpb.NodeAgentService_Strea
 	if _, err := uuid.Parse(vmID); err != nil {
 		return status.Errorf(codes.InvalidArgument, "vm_id must be a valid UUID: %v", err)
 	}
+	if err := h.verifyGuestOpToken(stream.Context(), vmID); err != nil {
+		return err
+	}
 
 	logger := h.server.logger.With("vm_id", vmID, "operation", "vnc-console")
 
@@ -145,6 +148,9 @@ func (h *grpcHandler) StreamSerialConsole(stream nodeagentpb.NodeAgentService_St
 	}
 	if _, err := uuid.Parse(vmID); err != nil {
 		return status.Errorf(codes.InvalidArgument, "vm_id must be a valid UUID: %v", err)
+	}
+	if err := h.verifyGuestOpToken(stream.Context(), vmID); err != nil {
+		return err
 	}
 
 	logger := h.server.logger.With("vm_id", vmID, "operation", "serial-console")

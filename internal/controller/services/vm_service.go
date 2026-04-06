@@ -342,6 +342,9 @@ func (s *VMService) publishVMCreateTask(ctx context.Context, req *models.VMCreat
 		taskPayload["ceph_pool"] = deps.node.CephPool
 		taskPayload["storage_path"] = deps.node.StoragePath
 	}
+	if req.IdempotencyKey != "" {
+		taskPayload["idempotency_key"] = req.IdempotencyKey
+	}
 
 	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMCreate, taskPayload)
 	if err != nil {
@@ -989,6 +992,14 @@ func NewWorkerTaskPublisher(taskRepo *repository.TaskRepository, queue TaskQueue
 	}
 }
 
+func taskPayloadIdempotencyKey(payload map[string]any) string {
+	key, ok := payload["idempotency_key"].(string)
+	if !ok {
+		return ""
+	}
+	return key
+}
+
 // PublishTask creates a task record in the database.
 func (p *DefaultTaskPublisher) PublishTask(ctx context.Context, taskType string, payload map[string]any) (string, error) {
 	taskID := uuid.New().String()
@@ -999,12 +1010,13 @@ func (p *DefaultTaskPublisher) PublishTask(ctx context.Context, taskType string,
 	}
 
 	task := &models.Task{
-		ID:        taskID,
-		Type:      taskType,
-		Status:    models.TaskStatusPending,
-		Payload:   payloadJSON,
-		Progress:  0,
-		CreatedAt: time.Now().UTC(),
+		ID:             taskID,
+		Type:           taskType,
+		Status:         models.TaskStatusPending,
+		Payload:        payloadJSON,
+		Progress:       0,
+		IdempotencyKey: taskPayloadIdempotencyKey(payload),
+		CreatedAt:      time.Now().UTC(),
 	}
 
 	if err := p.taskRepo.Create(ctx, task); err != nil {
@@ -1025,12 +1037,13 @@ func (p *WorkerTaskPublisher) PublishTask(ctx context.Context, taskType string, 
 	}
 
 	task := &models.Task{
-		ID:        taskID,
-		Type:      taskType,
-		Status:    models.TaskStatusPending,
-		Payload:   payloadJSON,
-		Progress:  0,
-		CreatedAt: time.Now().UTC(),
+		ID:             taskID,
+		Type:           taskType,
+		Status:         models.TaskStatusPending,
+		Payload:        payloadJSON,
+		Progress:       0,
+		IdempotencyKey: taskPayloadIdempotencyKey(payload),
+		CreatedAt:      time.Now().UTC(),
 	}
 
 	if err := p.taskRepo.Create(ctx, task); err != nil {

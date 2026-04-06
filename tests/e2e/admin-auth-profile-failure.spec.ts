@@ -47,7 +47,7 @@ test.describe('Admin authentication profile loading', () => {
     });
 
     await page.goto('/login');
-    await page.fill('input[name="email"]', 'admin@virtuestack.local');
+    await page.fill('input[name="email"]', 'admin@test.virtuestack.local');
     await page.fill('input[name="password"]', 'AdminTest123!');
     await page.click('button[type="submit"]');
 
@@ -103,7 +103,7 @@ test.describe('Admin authentication profile loading', () => {
     });
 
     await page.goto('/login');
-    await page.fill('input[name="email"]', 'admin@virtuestack.local');
+    await page.fill('input[name="email"]', 'admin@test.virtuestack.local');
     await page.fill('input[name="password"]', 'AdminTest123!');
     await page.click('button[type="submit"]');
 

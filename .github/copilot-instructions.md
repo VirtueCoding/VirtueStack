@@ -98,9 +98,10 @@ Migrations use `golang-migrate/migrate` with sequential numbering (000001, 00000
 ### Docker
 
 ```bash
-docker compose up -d      # Start full stack (postgres, nats, controller, UIs, nginx)
-docker compose build      # Rebuild images
-docker compose down       # Stop all services
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d   # Start production stack
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build   # Rebuild production images
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down    # Stop production stack
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d    # Start development stack
 ```
 
 ## Critical Build Gotchas

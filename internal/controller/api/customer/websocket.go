@@ -14,12 +14,14 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var wsLogger = slog.Default()
@@ -177,7 +179,7 @@ func (h *CustomerHandler) getNodeConnection(ctx context.Context, nodeID string) 
 
 // @Tags Customer
 // @Summary Open VNC websocket
-// @Description Upgrades connection to a VNC websocket stream for a customer VM console.
+// @Description Upgrades connection to a VNC websocket stream for a customer VM console. Uses normal customer auth; query tokens are optional for legacy compatibility only.
 // @Security BearerAuth
 // @Security APIKeyAuth
 // @Param vmId path string true "VM ID"
@@ -208,16 +210,6 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 		return
 	}
 
-	token := c.Query("token")
-	if token == "" {
-		h.logger.Warn("missing console token in WebSocket request",
-			"vm_id", vmID,
-			"correlation_id", correlationID,
-			"client_ip", clientIP)
-		middleware.RespondWithError(c, http.StatusUnauthorized, "MISSING_TOKEN", "console token is required")
-		return
-	}
-
 	customerID := middleware.GetUserID(c)
 	if customerID == "" {
 		h.logger.Warn("unauthenticated WebSocket connection attempt",
@@ -228,11 +220,11 @@ func (h *CustomerHandler) handleConsoleWebSocket(c *gin.Context, ct consoleType)
 		return
 	}
 
-	// Validate the console token server-side: it must have been issued for this
-	// exact VM and customer, must not be expired, and is invalidated on first use.
-	if !h.tokenStore.Validate(token, vmID, customerID) {
+	token := c.Query("token")
+	if token != "" && !h.tokenStore.Validate(token, vmID, customerID) {
 		h.logger.Warn("invalid or expired console token in WebSocket request",
 			"vm_id", vmID,
+			"console_type", ct,
 			"correlation_id", correlationID,
 			"client_ip", clientIP)
 		middleware.RespondWithError(c, http.StatusUnauthorized, "INVALID_TOKEN", "console token is invalid or expired")
@@ -389,7 +381,7 @@ func (h *CustomerHandler) proxyConsoleStream(ctx context.Context, ws *websocket.
 	config := h.getConsoleConfig(ct)
 	// F-027: Receive and defer the cancel function from createConsoleStream so the
 	// stream context lives for the duration of the proxy, not just until createConsoleStream returns.
-	stream, streamCancel, err := h.createConsoleStream(ctx, conn, ct)
+	stream, streamCancel, err := h.createConsoleStream(ctx, conn, ct, vmID)
 	if err != nil {
 		h.logger.Error("failed to create "+string(ct)+" stream",
 			"vm_id", vmID,
@@ -448,9 +440,14 @@ func (h *CustomerHandler) getConsoleConfig(ct consoleType) consoleStreamConfig {
 // deferred in the long-running proxy goroutine. Previously, cancel() was
 // deferred inside this function and fired immediately on return, which
 // cancelled the stream context before any proxying occurred.
-func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType) (consoleStream, context.CancelFunc, error) {
+func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.ClientConn, ct consoleType, vmID string) (consoleStream, context.CancelFunc, error) {
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
 	streamCtx, cancel := context.WithTimeout(ctx, webSocketTotalTimeout)
+	streamCtx, err := h.consoleGuestOpContext(streamCtx, vmID)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
 
 	if ct == consoleTypeVNC {
 		stream, err := client.StreamVNCConsole(streamCtx)
@@ -467,6 +464,15 @@ func (h *CustomerHandler) createConsoleStream(ctx context.Context, conn *grpc.Cl
 		return nil, nil, err
 	}
 	return &serialStream{stream: stream}, cancel, nil
+}
+
+func (h *CustomerHandler) consoleGuestOpContext(ctx context.Context, vmID string) (context.Context, error) {
+	token, err := sharedcrypto.GenerateGuestOpToken(h.guestOpHMACSecret, vmID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	return metadata.AppendToOutgoingContext(ctx, "x-guest-op-token", token), nil
 }
 
 // runStreamProxy runs the bidirectional proxy between WebSocket and gRPC stream.

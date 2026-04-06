@@ -39,6 +39,44 @@ func validateLVMLVName(id string) error {
 	return nil
 }
 
+// NormalizeLVMTemplateRef accepts either a bare template ref or the canonical
+// /dev/{vg}/{lv} device path and returns the normalized LV name.
+func NormalizeLVMTemplateRef(vgName, ref string) (string, error) {
+	if !strings.HasPrefix(ref, "/") {
+		lvName := ref
+		if !strings.HasSuffix(lvName, lvmTemplateSuffix) {
+			lvName += lvmTemplateSuffix
+		}
+		if err := validateLVMLVName(lvName); err != nil {
+			return "", fmt.Errorf("validating template ref: %w", err)
+		}
+		return lvName, nil
+	}
+
+	expectedPrefix := fmt.Sprintf("/dev/%s/", vgName)
+	if !strings.HasPrefix(ref, expectedPrefix) {
+		return "", fmt.Errorf("validating template ref: expected volume group %q in %q", vgName, ref)
+	}
+
+	lvName := strings.TrimPrefix(ref, expectedPrefix)
+	if lvName == "" {
+		return "", fmt.Errorf("validating template ref: missing logical volume name in %q", ref)
+	}
+	if err := validateLVMLVName(lvName); err != nil {
+		return "", fmt.Errorf("validating template ref: %w", err)
+	}
+	return lvName, nil
+}
+
+// CanonicalLVMTemplatePath returns the canonical device path for a template ref.
+func CanonicalLVMTemplatePath(vgName, ref string) (string, error) {
+	lvName, err := NormalizeLVMTemplateRef(vgName, ref)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("/dev/%s/%s", vgName, lvName), nil
+}
+
 // LVMTemplateManager handles OS template import and management for LVM thin-provisioned
 // storage. Templates are stored as thin logical volumes and cloned using thin snapshots
 // for instant copy-on-write VM disk creation.
@@ -151,7 +189,7 @@ func (m *LVMTemplateManager) ImportTemplate(ctx context.Context, ref, sourcePath
 		return "", 0, fmt.Errorf("importing template %s: %w", ref, err)
 	}
 
-	logger.Info("template imported successfully", "lv_path", lvPath, "size_bytes", virtualSize)
+	logger.Info("template imported successfully", "lv_path", lvPath, "template_ref", ref, "size_bytes", virtualSize)
 	return lvPath, virtualSize, nil
 }
 
@@ -201,18 +239,12 @@ func (m *LVMTemplateManager) DeleteTemplate(ctx context.Context, ref string) err
 //
 // Returns the LV path for the VM disk.
 func (m *LVMTemplateManager) CloneForVM(ctx context.Context, templateRef, vmID string, sizeGB int) (string, error) {
-	// Validate identifiers to prevent injection
-	if err := validateLVMLVName(templateRef); err != nil {
-		return "", fmt.Errorf("validating template ref: %w", err)
+	templateLVName, err := NormalizeLVMTemplateRef(m.vgName, templateRef)
+	if err != nil {
+		return "", err
 	}
 	if err := validateLVMLVName(vmID); err != nil {
 		return "", fmt.Errorf("validating vmID: %w", err)
-	}
-
-	// Normalize template ref to include -base suffix if not present
-	templateLVName := templateRef
-	if !strings.HasSuffix(templateRef, lvmTemplateSuffix) {
-		templateLVName = templateRef + lvmTemplateSuffix
 	}
 
 	vmDiskName := fmt.Sprintf(VMDiskNameFmt, vmID)
@@ -256,13 +288,10 @@ func (m *LVMTemplateManager) CloneForVM(ctx context.Context, templateRef, vmID s
 //   - ctx: Context for cancellation
 //   - ref: Template LV name or template name
 func (m *LVMTemplateManager) TemplateExists(ctx context.Context, ref string) (bool, error) {
-	// Normalize ref to include -base suffix if not present
-	lvName := ref
-	if !strings.HasSuffix(ref, lvmTemplateSuffix) {
-		lvName = ref + lvmTemplateSuffix
+	lvPath, err := CanonicalLVMTemplatePath(m.vgName, ref)
+	if err != nil {
+		return false, err
 	}
-
-	lvPath := fmt.Sprintf("/dev/%s/%s", m.vgName, lvName)
 	cmd := exec.CommandContext(ctx, "lvs", lvPath)
 	if err := cmd.Run(); err != nil {
 		// lvs returns non-zero exit code if LV doesn't exist
@@ -277,10 +306,9 @@ func (m *LVMTemplateManager) TemplateExists(ctx context.Context, ref string) (bo
 //   - ctx: Context for cancellation
 //   - ref: Template LV name or template name
 func (m *LVMTemplateManager) GetTemplateSize(ctx context.Context, ref string) (int64, error) {
-	// Normalize ref to include -base suffix if not present
-	lvName := ref
-	if !strings.HasSuffix(ref, lvmTemplateSuffix) {
-		lvName = ref + lvmTemplateSuffix
+	lvName, err := NormalizeLVMTemplateRef(m.vgName, ref)
+	if err != nil {
+		return 0, err
 	}
 
 	size, err := m.getLVSize(lvName)
@@ -348,7 +376,7 @@ func (m *LVMTemplateManager) convertToRaw(ctx context.Context, sourcePath, rawPa
 	logger.Info("converting qcow2 to raw", "source", sourcePath, "dest", rawPath)
 
 	// Use independent timeout for this long-running operation
-	stepCtx, cancel := context.WithTimeout(context.Background(), lvmTemplateStepTimeout)
+	stepCtx, cancel := newLVMTemplateStepContext(ctx)
 	defer cancel()
 
 	cmd := exec.CommandContext(stepCtx,
@@ -401,7 +429,7 @@ func (m *LVMTemplateManager) writeRawToLV(ctx context.Context, rawPath, lvPath s
 	logger.Info("writing raw image to LV", "source", rawPath, "dest", lvPath)
 
 	// Use independent timeout for this long-running operation
-	stepCtx, cancel := context.WithTimeout(context.Background(), lvmTemplateStepTimeout)
+	stepCtx, cancel := newLVMTemplateStepContext(ctx)
 	defer cancel()
 
 	// dd if=tmp.raw of=/dev/{vg}/{lv} bs=4M
@@ -532,6 +560,13 @@ func (m *LVMTemplateManager) getLVSize(lvName string) (int64, error) {
 	}
 
 	return size, nil
+}
+
+func newLVMTemplateStepContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, lvmTemplateStepTimeout)
 }
 
 // parseLVSOutput parses the output of lvs command into TemplateInfo structs.

@@ -53,10 +53,15 @@ func RegisterAllHandlers(worker *Worker, deps *HandlerDeps) {
 		Logger:        deps.Logger,
 		EncryptionKey: deps.EncryptionKey,
 	})
+	systemWebhookRepo := deps.SystemWebhookRepo
+	if systemWebhookRepo != nil && deps.EncryptionKey != "" {
+		systemWebhookRepo = systemWebhookRepo.WithEncryptionKey(deps.EncryptionKey)
+	}
 	RegisterSystemWebhookDeliveryHandler(worker, &SystemWebhookDeliveryDeps{
-		SystemWebhookRepo: deps.SystemWebhookRepo,
-		HTTPClient:        DefaultHTTPClient(),
-		Logger:            deps.Logger,
+		SystemWebhookRepo:  systemWebhookRepo,
+		SystemDeliveryRepo: deps.SystemDeliveryRepo,
+		HTTPClient:         DefaultHTTPClient(),
+		Logger:             deps.Logger,
 	})
 
 	deps.Logger.Info("all task handlers registered",

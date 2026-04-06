@@ -10,7 +10,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 )
 
-// NodeStorageRepository provides database operations for the node_storage_backends junction table.
+// NodeStorageRepository provides database operations for the node_storage junction table.
 type NodeStorageRepository struct {
 	db DB
 }
@@ -30,7 +30,7 @@ type NodeStorageAssignment struct {
 // CreateAssignment creates a new node-to-storage-backend assignment.
 func (r *NodeStorageRepository) CreateAssignment(ctx context.Context, nodeID, storageBackendID string, enabled bool) error {
 	const q = `
-		INSERT INTO node_storage_backends (node_id, storage_backend_id, enabled)
+		INSERT INTO node_storage (node_id, storage_backend_id, enabled)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (node_id, storage_backend_id) DO UPDATE SET enabled = $3`
 
@@ -43,7 +43,7 @@ func (r *NodeStorageRepository) CreateAssignment(ctx context.Context, nodeID, st
 
 // DeleteAssignment removes a node-to-storage-backend assignment.
 func (r *NodeStorageRepository) DeleteAssignment(ctx context.Context, nodeID, storageBackendID string) error {
-	const q = `DELETE FROM node_storage_backends WHERE node_id = $1 AND storage_backend_id = $2`
+	const q = `DELETE FROM node_storage WHERE node_id = $1 AND storage_backend_id = $2`
 	_, err := r.db.Exec(ctx, q, nodeID, storageBackendID)
 	if err != nil {
 		return fmt.Errorf("deleting node storage assignment: %w", err)
@@ -53,7 +53,7 @@ func (r *NodeStorageRepository) DeleteAssignment(ctx context.Context, nodeID, st
 
 // SetEnabled updates the enabled status of a node-to-storage-backend assignment.
 func (r *NodeStorageRepository) SetEnabled(ctx context.Context, nodeID, storageBackendID string, enabled bool) error {
-	const q = `UPDATE node_storage_backends SET enabled = $1 WHERE node_id = $2 AND storage_backend_id = $3`
+	const q = `UPDATE node_storage SET enabled = $1 WHERE node_id = $2 AND storage_backend_id = $3`
 	tag, err := r.db.Exec(ctx, q, enabled, nodeID, storageBackendID)
 	if err != nil {
 		return fmt.Errorf("setting node storage enabled: %w", err)
@@ -68,7 +68,7 @@ func (r *NodeStorageRepository) SetEnabled(ctx context.Context, nodeID, storageB
 func (r *NodeStorageRepository) GetAssignment(ctx context.Context, nodeID, storageBackendID string) (*NodeStorageAssignment, error) {
 	const q = `
 		SELECT node_id, storage_backend_id, enabled
-		FROM node_storage_backends
+		FROM node_storage
 		WHERE node_id = $1 AND storage_backend_id = $2`
 
 	assignment, err := ScanRow(ctx, r.db, q, []any{nodeID, storageBackendID}, func(row pgx.Row) (NodeStorageAssignment, error) {
@@ -86,7 +86,7 @@ func (r *NodeStorageRepository) GetAssignment(ctx context.Context, nodeID, stora
 func (r *NodeStorageRepository) ListAssignmentsForNode(ctx context.Context, nodeID string) ([]NodeStorageAssignment, error) {
 	const q = `
 		SELECT node_id, storage_backend_id, enabled
-		FROM node_storage_backends
+		FROM node_storage
 		WHERE node_id = $1
 		ORDER BY storage_backend_id`
 
@@ -105,7 +105,7 @@ func (r *NodeStorageRepository) ListAssignmentsForNode(ctx context.Context, node
 func (r *NodeStorageRepository) ListAssignmentsForBackend(ctx context.Context, storageBackendID string) ([]NodeStorageAssignment, error) {
 	const q = `
 		SELECT node_id, storage_backend_id, enabled
-		FROM node_storage_backends
+		FROM node_storage
 		WHERE storage_backend_id = $1
 		ORDER BY node_id`
 
@@ -122,7 +122,7 @@ func (r *NodeStorageRepository) ListAssignmentsForBackend(ctx context.Context, s
 
 // CountNodesForBackend returns the number of nodes assigned to a storage backend.
 func (r *NodeStorageRepository) CountNodesForBackend(ctx context.Context, storageBackendID string) (int, error) {
-	const q = `SELECT COUNT(*) FROM node_storage_backends WHERE storage_backend_id = $1`
+	const q = `SELECT COUNT(*) FROM node_storage WHERE storage_backend_id = $1`
 	count, err := CountRows(ctx, r.db, q, storageBackendID)
 	if err != nil {
 		return 0, fmt.Errorf("counting nodes for backend: %w", err)
@@ -132,7 +132,7 @@ func (r *NodeStorageRepository) CountNodesForBackend(ctx context.Context, storag
 
 // CountBackendsForNode returns the number of storage backends assigned to a node.
 func (r *NodeStorageRepository) CountBackendsForNode(ctx context.Context, nodeID string) (int, error) {
-	const q = `SELECT COUNT(*) FROM node_storage_backends WHERE node_id = $1`
+	const q = `SELECT COUNT(*) FROM node_storage WHERE node_id = $1`
 	count, err := CountRows(ctx, r.db, q, nodeID)
 	if err != nil {
 		return 0, fmt.Errorf("counting backends for node: %w", err)
@@ -143,7 +143,7 @@ func (r *NodeStorageRepository) CountBackendsForNode(ctx context.Context, nodeID
 // DeleteAllAssignmentsForNode removes all storage backend assignments for a node.
 // This is typically used when deleting a node.
 func (r *NodeStorageRepository) DeleteAllAssignmentsForNode(ctx context.Context, nodeID string) error {
-	const q = `DELETE FROM node_storage_backends WHERE node_id = $1`
+	const q = `DELETE FROM node_storage WHERE node_id = $1`
 	_, err := r.db.Exec(ctx, q, nodeID)
 	if err != nil {
 		return fmt.Errorf("deleting all node storage assignments: %w", err)
@@ -154,7 +154,7 @@ func (r *NodeStorageRepository) DeleteAllAssignmentsForNode(ctx context.Context,
 // DeleteAllAssignmentsForBackend removes all node assignments for a storage backend.
 // This is typically used when deleting a storage backend.
 func (r *NodeStorageRepository) DeleteAllAssignmentsForBackend(ctx context.Context, storageBackendID string) error {
-	const q = `DELETE FROM node_storage_backends WHERE storage_backend_id = $1`
+	const q = `DELETE FROM node_storage WHERE storage_backend_id = $1`
 	_, err := r.db.Exec(ctx, q, storageBackendID)
 	if err != nil {
 		return fmt.Errorf("deleting all backend storage assignments: %w", err)
@@ -172,7 +172,7 @@ func (r *NodeStorageRepository) GetEnabledBackendsForNode(ctx context.Context, n
 			sb.lvm_data_percent, sb.lvm_metadata_percent,
 			sb.created_at, sb.updated_at
 		FROM storage_backends sb
-		JOIN node_storage_backends nsb ON nsb.storage_backend_id = sb.id
+		JOIN node_storage nsb ON nsb.storage_backend_id = sb.id
 		WHERE nsb.node_id = $1 AND nsb.enabled = true
 		ORDER BY sb.name`
 
@@ -207,7 +207,7 @@ func (r *NodeStorageRepository) BatchAssignToNodes(ctx context.Context, storageB
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	const q = `
-		INSERT INTO node_storage_backends (node_id, storage_backend_id, enabled)
+		INSERT INTO node_storage (node_id, storage_backend_id, enabled)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (node_id, storage_backend_id) DO UPDATE SET enabled = $3`
 

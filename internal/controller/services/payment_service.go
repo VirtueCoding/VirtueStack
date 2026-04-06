@@ -172,6 +172,10 @@ func (s *PaymentService) routeWebhookEvent(
 func (s *PaymentService) handlePaymentCompleted(
 	ctx context.Context, gateway string, event *payments.WebhookEvent,
 ) error {
+	if gateway == models.PaymentGatewayPayPal {
+		return s.handlePayPalPaymentCompleted(ctx, event)
+	}
+
 	customerID := event.Metadata["customer_id"]
 	paymentID := event.Metadata["payment_id"]
 
@@ -201,6 +205,68 @@ func (s *PaymentService) handlePaymentCompleted(
 		"customer_id", customerID,
 		"amount_cents", event.AmountCents,
 		"gateway", gateway,
+	)
+	return nil
+}
+
+func (s *PaymentService) handlePayPalPaymentCompleted(
+	ctx context.Context, event *payments.WebhookEvent,
+) error {
+	orderID := event.Metadata["payment_id"]
+	if orderID == "" {
+		return sharederrors.NewValidationError("payment_id",
+			"paypal webhook missing order reference")
+	}
+
+	payment, err := s.paymentRepo.GetByGatewayPaymentID(
+		ctx, models.PaymentGatewayPayPal, orderID,
+	)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrNotFound) {
+			return sharederrors.NewValidationError("payment_id",
+				"paypal webhook order reference not found")
+		}
+		return fmt.Errorf("resolve paypal payment %s: %w", orderID, err)
+	}
+
+	if payloadCustomerID := event.Metadata["customer_id"]; payloadCustomerID != "" &&
+		payloadCustomerID != payment.CustomerID {
+		return sharederrors.NewValidationError("customer_id",
+			"paypal webhook customer mismatch")
+	}
+
+	if event.AmountCents != payment.Amount {
+		return sharederrors.NewValidationError("amount",
+			"paypal webhook amount mismatch")
+	}
+
+	if !strings.EqualFold(event.Currency, payment.Currency) {
+		return sharederrors.NewValidationError("currency",
+			"paypal webhook currency mismatch")
+	}
+
+	captureID := event.PaymentID
+	if updateErr := s.paymentRepo.UpdateStatus(
+		ctx, payment.ID, models.PaymentStatusCompleted, &captureID,
+	); updateErr != nil {
+		return fmt.Errorf("update paypal payment status: %w", updateErr)
+	}
+
+	_, err = s.ledger.CreditAccount(
+		ctx, payment.CustomerID, event.AmountCents,
+		"Top-up via paypal",
+		&event.IdempotencyKey,
+	)
+	if err != nil {
+		return fmt.Errorf("credit account: %w", err)
+	}
+
+	s.logger.Info("paypal payment completed and ledger credited",
+		"payment_id", payment.ID,
+		"customer_id", payment.CustomerID,
+		"gateway_order_id", orderID,
+		"capture_id", captureID,
+		"amount_cents", event.AmountCents,
 	)
 	return nil
 }
@@ -485,9 +551,9 @@ func (s *PaymentService) CapturePayPalOrder(
 		return nil, fmt.Errorf("paypal provider missing capture support")
 	}
 
-	capID, status, currency, cents, err := capturer.CaptureOrder(ctx, orderID)
-	if err != nil {
-		return nil, fmt.Errorf("capture paypal order: %w", err)
+	capID, status, currency, cents, captureErr := capturer.CaptureOrder(ctx, orderID)
+	if captureErr != nil {
+		return nil, fmt.Errorf("capture paypal order: %w", captureErr)
 	}
 
 	result := &PayPalCaptureResult{

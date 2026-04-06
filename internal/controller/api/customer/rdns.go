@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -253,29 +254,20 @@ func (h *CustomerHandler) UpdateRDNS(c *gin.Context) {
 		return
 	}
 
-	// Update rDNS in the database
-	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, req.Hostname); err != nil {
-		h.logger.Error("failed to update rDNS in database",
+	if err := common.UpdateRDNSRecord(c.Request.Context(), h.ipRepo, h.rdnsService, *ip, req.Hostname); err != nil {
+		h.logger.Error("failed to update rDNS",
 			"ip_id", ipID,
+			"ip_address", ip.Address,
 			"customer_id", customerID,
 			"hostname", req.Hostname,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
+		if sharederrors.Is(err, sharederrors.ErrServiceDown) {
+			middleware.RespondWithError(c, http.StatusBadGateway, "RDNS_UPDATE_FAILED", "Failed to update authoritative rDNS")
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
-	}
-
-	// Update rDNS in PowerDNS if the service is available
-	if h.rdnsService != nil {
-		if err := h.rdnsService.SetReverseDNS(c.Request.Context(), ip.Address, req.Hostname); err != nil {
-			h.logger.Error("failed to update rDNS in PowerDNS",
-				"ip_id", ipID,
-				"ip_address", ip.Address,
-				"customer_id", customerID,
-				"hostname", req.Hostname,
-				"error", err,
-				"correlation_id", middleware.GetCorrelationID(c))
-		}
 	}
 
 	h.logAudit(c, "rdns.update", "ip_address", ipID, map[string]any{
@@ -370,27 +362,19 @@ func (h *CustomerHandler) DeleteRDNS(c *gin.Context) {
 		return
 	}
 
-	// Clear rDNS in the database
-	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, ""); err != nil {
-		h.logger.Error("failed to clear rDNS in database",
+	if err := common.DeleteRDNSRecord(c.Request.Context(), h.ipRepo, h.rdnsService, *ip); err != nil {
+		h.logger.Error("failed to delete rDNS",
 			"ip_id", ipID,
+			"ip_address", ip.Address,
 			"customer_id", customerID,
 			"error", err,
 			"correlation_id", middleware.GetCorrelationID(c))
+		if sharederrors.Is(err, sharederrors.ErrServiceDown) {
+			middleware.RespondWithError(c, http.StatusBadGateway, "RDNS_DELETE_FAILED", "Failed to delete authoritative rDNS")
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_DELETE_FAILED", "Failed to delete rDNS")
 		return
-	}
-
-	// Delete rDNS from PowerDNS if the service is available
-	if h.rdnsService != nil {
-		if err := h.rdnsService.DeleteReverseDNS(c.Request.Context(), ip.Address); err != nil {
-			h.logger.Error("failed to delete rDNS from PowerDNS",
-				"ip_id", ipID,
-				"ip_address", ip.Address,
-				"customer_id", customerID,
-				"error", err,
-				"correlation_id", middleware.GetCorrelationID(c))
-		}
 	}
 
 	h.logAudit(c, "rdns.delete", "ip_address", ipID, nil, true)

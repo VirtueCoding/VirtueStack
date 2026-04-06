@@ -42,6 +42,7 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 	apiKeyRepo := repository.NewCustomerAPIKeyRepository(s.dbPool)
 	webhookRepo := repository.NewWebhookRepository(s.dbPool)
 	systemWebhookRepo := repository.NewEncryptedSystemWebhookRepository(s.dbPool, s.config.EncryptionKey.Value())
+	systemDeliveryRepo := repository.NewSystemWebhookDeliveryRepository(s.dbPool)
 	preActionWebhookRepo := repository.NewEncryptedPreActionWebhookRepository(s.dbPool, s.config.EncryptionKey.Value())
 	bandwidthRepo := repository.NewBandwidthRepository(s.dbPool)
 	settingsRepo := repository.NewSettingsRepository(s.dbPool)
@@ -92,7 +93,13 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 	nodeStorageRepo := repository.NewNodeStorageRepository(s.dbPool)
 	systemEventService := services.NewSystemEventService(
 		systemWebhookRepo,
+		systemDeliveryRepo,
 		taskPublisher,
+		s.logger,
+	)
+	systemWebhookService := services.NewSystemWebhookService(
+		systemWebhookRepo,
+		systemDeliveryRepo,
 		s.logger,
 	)
 
@@ -273,6 +280,7 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 		SettingsRepo: settingsRepo,
 		StoragePath:  s.config.Billing.InvoiceStoragePath,
 	})
+	invoiceAdvisoryLockDB := repository.NewAdvisoryLockDB(s.dbPool)
 	billingInvoiceService := services.NewBillingInvoiceService(services.BillingInvoiceServiceConfig{
 		InvoiceRepo:     billingInvoiceRepo,
 		TransactionRepo: billingTxRepo,
@@ -283,6 +291,8 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 		Logger:          s.logger,
 	})
 	s.invoiceService = billingInvoiceService
+	s.invoiceSchedulerLock = invoiceAdvisoryLockDB
+	s.generateMonthlyInvoices = billingInvoiceService.GenerateAllMonthlyInvoices
 
 	s.vmService = services.NewVMService(services.VMServiceConfig{
 		VMRepo:              vmRepo,
@@ -404,7 +414,7 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 		s.logger,
 		s.config.EncryptionKey.Value(),
 	)
-	s.webhookScheduler = webhookService
+	s.webhookScheduler = services.NewCombinedWebhookScheduler(webhookService, systemWebhookService)
 
 	// Initialize PowerDNS rDNS service if MySQL connection is configured
 	if s.config.PowerDNS.MySQLURL != "" {
@@ -433,6 +443,7 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 		SSOTokenRepo:     ssoTokenRepo,
 		AuditRepo:        auditRepo,
 		PlanService:      s.planService,
+		RDNSService:      s.rdnsService,
 		JWTSecret:        s.config.JWTSecret.Value(),
 		Issuer:           "virtuestack",
 		EncryptionKey:    s.config.EncryptionKey.Value(),
@@ -472,6 +483,7 @@ func (s *Server) InitializeServices(ctx context.Context) error {
 		NodeAgent:                     s.nodeClient,
 		JWTSecret:                     s.config.JWTSecret.Value(),
 		Issuer:                        "virtuestack",
+		GuestOpHMACSecret:             s.config.GuestOpHMACSecret.Value(),
 		EncryptionKey:                 s.config.EncryptionKey.Value(),
 		ConsoleBaseURL:                s.config.ConsoleBaseURL,
 		ISOStoragePath:                isoStoragePath,

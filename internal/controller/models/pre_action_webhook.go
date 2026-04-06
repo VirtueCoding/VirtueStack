@@ -23,7 +23,7 @@ type PreActionWebhook struct {
 // PreActionWebhookCreateRequest is the request body for creating a pre-action webhook.
 type PreActionWebhookCreateRequest struct {
 	Name      string   `json:"name" validate:"required,min=1,max=255"`
-	URL       string   `json:"url" validate:"required,url,max=2048"`
+	URL       string   `json:"url" validate:"required,https_url,max=2048"`
 	Secret    string   `json:"secret" validate:"required,min=16,max=128"`
 	Events    []string `json:"events" validate:"required,min=1,dive,required"`
 	TimeoutMs *int     `json:"timeout_ms,omitempty" validate:"omitempty,min=500,max=30000"`
@@ -47,7 +47,7 @@ func (r PreActionWebhookCreateRequest) MarshalJSON() ([]byte, error) {
 // PreActionWebhookUpdateRequest is the request body for updating a pre-action webhook.
 type PreActionWebhookUpdateRequest struct {
 	Name      *string  `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
-	URL       *string  `json:"url,omitempty" validate:"omitempty,url,max=2048"`
+	URL       *string  `json:"url,omitempty" validate:"omitempty,https_url,max=2048"`
 	Secret    *string  `json:"secret,omitempty" validate:"omitempty,min=16,max=128"`
 	Events    []string `json:"events,omitempty" validate:"omitempty,min=1,dive,required"`
 	TimeoutMs *int     `json:"timeout_ms,omitempty" validate:"omitempty,min=500,max=30000"`

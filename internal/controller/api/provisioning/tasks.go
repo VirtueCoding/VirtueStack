@@ -64,12 +64,16 @@ func (h *ProvisioningHandler) handleTaskGetError(c *gin.Context, err error, task
 
 // buildTaskStatusResponse builds a TaskStatusResponse from a Task.
 func buildTaskStatusResponse(task *models.Task) TaskStatusResponse {
+	message := task.ProgressMessage
+	if message == "" {
+		message = getTaskMessage(task)
+	}
 	resp := TaskStatusResponse{
 		ID:        task.ID,
 		Type:      task.Type,
 		Status:    task.Status,
 		Progress:  task.Progress,
-		Message:   getTaskMessage(task),
+		Message:   message,
 		CreatedAt: task.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 

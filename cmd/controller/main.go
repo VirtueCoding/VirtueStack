@@ -168,6 +168,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		TaskRepo:          repository.NewTaskRepository(infra.dbPool),
 		WebhookRepo:       repository.NewWebhookRepository(infra.dbPool),
 		SystemWebhookRepo: repository.NewSystemWebhookRepository(infra.dbPool),
+		SystemDeliveryRepo: repository.NewSystemWebhookDeliveryRepository(infra.dbPool),
 		TemplateRepo:      repository.NewTemplateRepository(infra.dbPool),
 		TemplateCacheRepo: repository.NewTemplateCacheRepository(infra.dbPool),
 		IPAMService:       server.GetIPAMService(),

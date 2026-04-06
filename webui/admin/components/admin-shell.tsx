@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { MobileNav } from "@/components/mobile-nav";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sidebar } from "@/components/sidebar";
+import { isAdminLoginPath } from "@/lib/pathname";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RequireAuth } from "@/lib/require-auth";
 
@@ -13,7 +14,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  if (pathname === "/login") {
+  if (isAdminLoginPath(pathname)) {
     return <>{children}</>;
   }
 

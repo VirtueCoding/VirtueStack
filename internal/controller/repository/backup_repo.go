@@ -339,6 +339,32 @@ func (r *BackupRepository) SetBackupExpiration(ctx context.Context, id string, e
 	return nil
 }
 
+// CompleteBackup persists the final storage metadata for a successfully created backup.
+func (r *BackupRepository) CompleteBackup(ctx context.Context, backup *models.Backup) error {
+	const q = `
+		UPDATE backups SET
+			file_path = $1,
+			snapshot_name = $2,
+			storage_path = $3,
+			size_bytes = $4,
+			rbd_snapshot = $5,
+			status = $6,
+			expires_at = $7
+		WHERE id = $8`
+
+	tag, err := r.db.Exec(ctx, q,
+		backup.FilePath, backup.SnapshotName, backup.StoragePath, backup.SizeBytes,
+		backup.RBDSnapshot, backup.Status, backup.ExpiresAt, backup.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("completing backup %s: %w", backup.ID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("completing backup %s: %w", backup.ID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // DeleteBackup permanently removes a backup record from the database.
 func (r *BackupRepository) DeleteBackup(ctx context.Context, id string) error {
 	const q = `DELETE FROM backups WHERE id = $1`
@@ -372,27 +398,27 @@ func (r *BackupRepository) ListExpiredBackups(ctx context.Context, now time.Time
 func scanSnapshot(row pgx.Row) (models.Snapshot, error) {
 	var s models.Snapshot
 	err := row.Scan(
-		&s.ID, &s.VMID, &s.Name, &s.RBDSnapshot,
-		&s.SizeBytes, &s.CreatedAt,
+		&s.ID, &s.VMID, &s.Name, &s.StorageBackend, &s.RBDSnapshot,
+		&s.QCOWSnapshot, &s.SizeBytes, &s.CreatedAt,
 	)
 	return s, err
 }
 
 const snapshotSelectCols = `
-	id, vm_id, name, rbd_snapshot,
-	size_bytes, created_at`
+	id, vm_id, name, storage_backend, rbd_snapshot,
+	qcow_snapshot, size_bytes, created_at`
 
 // CreateSnapshot inserts a new snapshot record into the database.
 // The snapshot's ID and CreatedAt are populated by the database.
 func (r *BackupRepository) CreateSnapshot(ctx context.Context, snapshot *models.Snapshot) error {
 	const q = `
 		INSERT INTO snapshots (
-			vm_id, name, rbd_snapshot, size_bytes
-		) VALUES ($1,$2,$3,$4)
+			vm_id, name, storage_backend, rbd_snapshot, qcow_snapshot, size_bytes
+		) VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING ` + snapshotSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		snapshot.VMID, snapshot.Name, snapshot.RBDSnapshot, snapshot.SizeBytes,
+		snapshot.VMID, snapshot.Name, snapshot.StorageBackend, snapshot.RBDSnapshot, snapshot.QCOWSnapshot, snapshot.SizeBytes,
 	)
 	created, err := scanSnapshot(row)
 	if err != nil {
@@ -438,12 +464,12 @@ func (r *BackupRepository) CreateSnapshotWithLimitCheck(ctx context.Context, sna
 	// Create the snapshot
 	const q = `
 		INSERT INTO snapshots (
-			vm_id, name, rbd_snapshot, size_bytes
-		) VALUES ($1,$2,$3,$4)
+			vm_id, name, storage_backend, rbd_snapshot, qcow_snapshot, size_bytes
+		) VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING ` + snapshotSelectCols
 
 	row := tx.QueryRow(ctx, q,
-		snapshot.VMID, snapshot.Name, snapshot.RBDSnapshot, snapshot.SizeBytes,
+		snapshot.VMID, snapshot.Name, snapshot.StorageBackend, snapshot.RBDSnapshot, snapshot.QCOWSnapshot, snapshot.SizeBytes,
 	)
 	created, err := scanSnapshot(row)
 	if err != nil {
@@ -594,13 +620,15 @@ func (r *BackupRepository) UpdateSnapshot(ctx context.Context, snapshot *models.
 		UPDATE snapshots SET
 			vm_id = $1,
 			name = $2,
-			rbd_snapshot = $3,
-			size_bytes = $4
-		WHERE id = $5
+			storage_backend = $3,
+			rbd_snapshot = $4,
+			qcow_snapshot = $5,
+			size_bytes = $6
+		WHERE id = $7
 		RETURNING ` + snapshotSelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		snapshot.VMID, snapshot.Name, snapshot.RBDSnapshot, snapshot.SizeBytes, snapshot.ID,
+		snapshot.VMID, snapshot.Name, snapshot.StorageBackend, snapshot.RBDSnapshot, snapshot.QCOWSnapshot, snapshot.SizeBytes, snapshot.ID,
 	)
 	updated, err := scanSnapshot(row)
 	if err != nil {

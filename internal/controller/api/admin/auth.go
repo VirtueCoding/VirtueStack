@@ -329,8 +329,10 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		middleware.AccessTokenMaxAge, middleware.RefreshTokenMaxAgeAdmin, adminRefreshCookiePath)
 
 	resp := AuthResponse{
-		TokenType: tokens.TokenType,
-		ExpiresIn: tokens.ExpiresIn,
+		TokenType:           tokens.TokenType,
+		ExpiresIn:           tokens.ExpiresIn,
+		SessionID:           tokens.SessionID,
+		SessionCleanupToken: tokens.SessionCleanupToken,
 	}
 
 	c.JSON(http.StatusOK, models.Response{Data: resp})
@@ -545,7 +547,7 @@ func shouldClearLogoutCookies(sessionCleanupToken, targetSessionID, currentSessi
 	}
 
 	if currentSessionID == "" {
-		return false
+		return targetSessionID != ""
 	}
 
 	return targetSessionID == currentSessionID

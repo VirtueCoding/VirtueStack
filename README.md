@@ -193,14 +193,14 @@ cd VirtueStack
 # Copy and edit environment file
 cp .env.example .env
 
-# Start all services
-docker compose up -d
+# Start all development services
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # View logs
-docker compose logs -f
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 
 # Stop
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
 ### Access Points
@@ -219,7 +219,7 @@ docker compose down
 
 VirtueStack uses a hybrid testing approach:
 
-- **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `docker compose up -d`. This replicates the production runtime environment.
+- **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` or `make docker-dev-up`. This uses the explicit development override instead of the production stack.
 - **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent requires direct access to the host's KVM/libvirt daemon and is not containerized during testing.
 
 For integration testing, start the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node.
@@ -249,14 +249,14 @@ make test-native
 ### Docker Stack
 
 ```bash
-# Build and start Controller, PostgreSQL, NATS, UIs, Nginx
-make docker-build && make docker-up
+# Build and start the development stack
+make docker-dev-build && make docker-dev-up
 
 # View logs
-docker compose logs -f
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 
 # Stop
-docker compose down
+make docker-dev-down
 ```
 
 ### Frontend

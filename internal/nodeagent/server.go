@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/nodeagent/healthstatus"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/network"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
-	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage/downloadutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/transferutil"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
@@ -435,18 +435,9 @@ func vmMapLibvirtState(state libvirt.DomainState) string {
 	}
 }
 
-// closeStorage closes the storage backend if it has a Close method.
+// closeStorage closes storage and template resources that expose a Close method.
 func (s *Server) closeStorage() {
-	if s.storageBackend == nil {
-		return
-	}
-
-	// RBDManager has a Close method, QCOWManager doesn't need one
-	if closer, ok := s.storageBackend.(interface{ Close() error }); ok {
-		if err := closer.Close(); err != nil {
-			s.logger.Error("error closing storage backend", "error", err)
-		}
-	}
+	closeManagedComponents(s.logger, "error closing storage resources", s.storageBackend, s.templateMgr)
 }
 
 // trackBackgroundGoroutine tracks a background goroutine for graceful shutdown.
@@ -613,6 +604,9 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
 	}
 
+	libvirtConnected := h.server.libvirtConn != nil && h.server.isLibvirtAlive()
+	storageConnected := h.server.isStorageConnected()
+
 	// Calculate percentages
 	var cpuPercent, memoryPercent float64
 	if resources.TotalVCPU > 0 {
@@ -630,15 +624,15 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 
 	return &nodeagentpb.NodeHealthResponse{
 		NodeId:             h.server.config.NodeID,
-		Healthy:            true,
+		Healthy:            healthstatus.OverallNodeHealthy(libvirtConnected, storageConnected),
 		CpuPercent:         cpuPercent,
 		MemoryPercent:      memoryPercent,
 		DiskPercent:        diskPercent,
 		VmCount:            resources.VMCount,
 		LoadAverage:        resources.LoadAverage[:],
 		UptimeSeconds:      resources.UptimeSeconds,
-		LibvirtConnected:   h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:      h.server.isStorageConnected(),
+		LibvirtConnected:   libvirtConnected,
+		CephConnected:      storageConnected,
 		LvmDataPercent:     lvmDataPercent,
 		LvmMetadataPercent: lvmMetadataPercent,
 	}, nil
@@ -753,6 +747,7 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		IPv6Address:    req.GetIpv6Address(),
 		PortSpeedKbps:  int(req.GetPortSpeedMbps()) * 1000,
 	}
+	var cleanupStorage storageCleanupFunc
 
 	switch storageBackend {
 	case vm.StorageBackendQcow:
@@ -774,6 +769,9 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 			return nil, status.Errorf(codes.Internal, "cloning QCOW template: %v", err)
 		}
 		cfg.DiskPath = diskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned QCOW template", "template", templatePath, "disk_path", diskPath)
 
 	case vm.StorageBackendCeph:
@@ -793,6 +791,9 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 			diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
 			if err := h.server.storageBackend.CloneFromTemplate(ctx, req.GetCephPool(), req.GetTemplateRbdImage(), req.GetTemplateRbdSnapshot(), diskName); err != nil {
 				return nil, status.Errorf(codes.Internal, "cloning RBD template: %v", err)
+			}
+			cleanupStorage = func(ctx context.Context, _ string) error {
+				return h.server.storageBackend.Delete(ctx, diskName)
 			}
 			logger.Info("cloned RBD template", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
 		}
@@ -822,22 +823,39 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 			return nil, status.Errorf(codes.Internal, "cloning LVM template: %v", err)
 		}
 		cfg.LVMDiskPath = diskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned LVM template", "template", templatePath, "disk_path", diskPath)
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported storage backend: %s", storageBackend)
 	}
 
-	result, err := h.server.vmManager.CreateVM(ctx, cfg)
-	if err != nil {
+	var result *vm.CreateResult
+	if err := createVMWithRollbackCleanup(ctx, func(ctx context.Context) error {
+		var createErr error
+		result, createErr = h.server.vmManager.CreateVM(ctx, cfg)
+		return createErr
+	}, func(ctx context.Context) error {
+		if cleanupStorage == nil {
+			return nil
+		}
+		return cleanupStorage(ctx, req.GetVmId())
+	}); err != nil {
 		return nil, h.mapError(err, "creating VM")
 	}
 
-	// Apply abuse prevention nftables rules (block SMTP, block metadata endpoint)
-	if tapIface, tapErr := h.server.getVMTapInterface(ctx, req.GetVmId()); tapErr != nil {
-		logger.Warn("failed to get tap interface for abuse prevention", "error", tapErr)
-	} else if tapErr := h.server.abusePreventionMgr.ApplyVMRules(ctx, tapIface); tapErr != nil {
-		logger.Warn("failed to apply abuse prevention rules", "error", tapErr, "tap", tapIface)
+	if err := ensureAbusePreventionAfterCreate(
+		ctx,
+		req.GetVmId(),
+		logger,
+		h.server.getVMTapInterface,
+		h.server.abusePreventionMgr,
+		h.server.vmManager.DeleteVM,
+		cleanupStorage,
+	); err != nil {
+		return nil, h.mapError(err, "applying abuse prevention")
 	}
 
 	return &nodeagentpb.CreateVMResponse{
@@ -910,14 +928,14 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete")
 	logger.Info("deleting VM")
 
-	// Remove abuse prevention nftables rules before deletion
-	if tapIface, tapErr := h.server.getVMTapInterface(ctx, req.GetVmId()); tapErr != nil {
-		logger.Warn("failed to get tap interface for abuse prevention cleanup", "error", tapErr)
-	} else if tapErr := h.server.abusePreventionMgr.RemoveVMRules(ctx, tapIface); tapErr != nil {
-		logger.Warn("failed to remove abuse prevention rules", "error", tapErr, "tap", tapIface)
-	}
-
-	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
+	if err := deleteVMWithAbusePreventionCleanup(
+		ctx,
+		req.GetVmId(),
+		logger,
+		h.server.getVMTapInterface,
+		h.server.abusePreventionMgr,
+		h.server.vmManager.DeleteVM,
+	); err != nil {
 		return nil, h.mapError(err, "deleting VM domain")
 	}
 
@@ -1004,18 +1022,26 @@ func (h *grpcHandler) BuildTemplateFromISO(ctx context.Context, req *nodeagentpb
 		CustomInstallConfig: req.CustomInstallConfig,
 	})
 	if err != nil {
+		h.server.logger.Error("template build failed",
+			"template_name", req.TemplateName,
+			"error", err,
+			"storage_backend", req.StorageBackend)
 		return &nodeagentpb.BuildTemplateFromISOResponse{
 			Success:      false,
-			ErrorMessage: err.Error(),
+			ErrorMessage: templateBuildClientMessage(err),
 		}, nil
 	}
 	defer builder.Cleanup(filepath.Dir(result.DiskPath))
 
 	templateRef, snapshotRef, importErr := h.importBuiltDisk(ctx, req, result)
 	if importErr != nil {
+		h.server.logger.Error("template import failed",
+			"template_name", req.TemplateName,
+			"error", importErr,
+			"storage_backend", req.StorageBackend)
 		return &nodeagentpb.BuildTemplateFromISOResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("importing built disk: %v", importErr),
+			ErrorMessage: templateImportClientMessage(),
 		}, nil
 	}
 
@@ -1031,13 +1057,17 @@ func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.Buil
 	if h.server.templateMgr == nil {
 		return "", "", fmt.Errorf("template manager not configured")
 	}
+	storageBackend := effectiveTemplateStorageBackend(req.StorageBackend, string(h.server.storageType))
+	if err := validateTemplateRequestBackend(req.StorageBackend, string(h.server.storageType)); err != nil {
+		return "", "", err
+	}
 
 	meta := storage.TemplateMeta{
 		OSFamily:  req.OsFamily,
 		OSVersion: req.OsVersion,
 	}
 
-	ref := storage.SanitizeTemplateName(req.TemplateName)
+	ref := buildTemplateCacheRef("", req.TemplateName)
 
 	filePath, _, err := h.server.templateMgr.ImportTemplate(ctx, ref, result.DiskPath, meta)
 	if err != nil {
@@ -1045,7 +1075,7 @@ func (h *grpcHandler) importBuiltDisk(ctx context.Context, req *nodeagentpb.Buil
 	}
 
 	snapshotRef := ""
-	if req.StorageBackend == "ceph" {
+	if storageBackend == "ceph" {
 		snapshotRef = ref + "-snap"
 	}
 
@@ -1067,11 +1097,29 @@ func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb
 			ErrorMessage: "template manager not configured",
 		}, nil
 	}
+	storageBackend := effectiveTemplateStorageBackend(req.StorageBackend, string(h.server.storageType))
+	if err := validateTemplateRequestBackend(req.StorageBackend, string(h.server.storageType)); err != nil {
+		h.server.logger.Warn("invalid template cache backend request",
+			"requested_backend", req.StorageBackend,
+			"configured_backend", h.server.storageType,
+			"error", err)
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:      false,
+			ErrorMessage: templateCacheRequestClientMessage(err),
+		}, nil
+	}
 
-	ref := storage.SanitizeTemplateName(req.TemplateName)
-	templateRef := ref
-	if req.StorageBackend == "qcow" {
-		templateRef = h.resolveTemplatePath(ref, req.StorageBackend)
+	ref := buildTemplateCacheRef(req.TemplateId, req.TemplateName)
+	templateRef, err := resolveTemplateLocalPath(storageBackend, h.server.config.StoragePath, h.server.config.LVMVolumeGroup, ref)
+	if err != nil {
+		h.server.logger.Warn("invalid template cache path",
+			"storage_backend", storageBackend,
+			"template_ref", ref,
+			"error", err)
+		return &nodeagentpb.EnsureTemplateCachedResponse{
+			Success:      false,
+			ErrorMessage: templateCacheRequestClientMessage(err),
+		}, nil
 	}
 
 	exists, err := h.server.templateMgr.TemplateExists(ctx, templateRef)
@@ -1080,12 +1128,21 @@ func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb
 	}
 	if exists {
 		size, _ := h.server.templateMgr.GetTemplateSize(ctx, templateRef)
-		localPath := h.resolveTemplatePath(ref, req.StorageBackend)
+		if err := verifyCachedTemplateIntegrity(storageBackend, templateRef, req.ExpectedSizeBytes, req.ChecksumSha256); err != nil {
+			h.server.logger.Error("cached template integrity verification failed",
+				"template_ref", templateRef,
+				"storage_backend", storageBackend,
+				"error", err)
+			return &nodeagentpb.EnsureTemplateCachedResponse{
+				Success:      false,
+				ErrorMessage: templateCacheIntegrityClientMessage(err),
+			}, nil
+		}
 		h.server.logger.Info("template already cached",
-			"template_id", req.TemplateId, "ref", ref, "local_path", localPath)
+			"template_id", req.TemplateId, "ref", ref, "local_path", templateRef)
 		return &nodeagentpb.EnsureTemplateCachedResponse{
 			Success:       true,
-			LocalPath:     localPath,
+			LocalPath:     templateRef,
 			AlreadyCached: true,
 			SizeBytes:     size,
 		}, nil
@@ -1100,9 +1157,13 @@ func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb
 
 	localPath, sizeBytes, dlErr := h.downloadAndImportTemplate(ctx, req, ref)
 	if dlErr != nil {
+		h.server.logger.Error("template download/import failed",
+			"template_ref", ref,
+			"storage_backend", storageBackend,
+			"error", dlErr)
 		return &nodeagentpb.EnsureTemplateCachedResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("downloading template: %v", dlErr),
+			ErrorMessage: templateCacheDownloadClientMessage(dlErr),
 		}, nil
 	}
 
@@ -1115,6 +1176,13 @@ func (h *grpcHandler) EnsureTemplateCached(ctx context.Context, req *nodeagentpb
 		AlreadyCached: false,
 		SizeBytes:     sizeBytes,
 	}, nil
+}
+
+func buildTemplateCacheRef(templateID, templateName string) string {
+	if templateID != "" {
+		return storage.SanitizeTemplateName(templateID)
+	}
+	return storage.SanitizeTemplateName(templateName)
 }
 
 // downloadAndImportTemplate downloads a template from source URL and imports it into the local backend.
@@ -1130,7 +1198,7 @@ func (h *grpcHandler) downloadAndImportTemplate(ctx context.Context, req *nodeag
 	if err := builder.DownloadFile(ctx, req.SourceUrl, tmpFile); err != nil {
 		return "", 0, fmt.Errorf("downloading template from %s: %w", req.SourceUrl, err)
 	}
-	if err := downloadutil.VerifyFileIntegrity(tmpFile, req.ExpectedSizeBytes, req.ChecksumSha256); err != nil {
+	if err := verifyTemplateIntegrity(tmpFile, req.ExpectedSizeBytes, req.ChecksumSha256); err != nil {
 		return "", 0, fmt.Errorf("verifying downloaded template: %w", err)
 	}
 
@@ -1143,25 +1211,13 @@ func (h *grpcHandler) downloadAndImportTemplate(ctx context.Context, req *nodeag
 	return localPath, sizeBytes, nil
 }
 
-// resolveTemplatePath returns the expected local path for a template reference.
-func (h *grpcHandler) resolveTemplatePath(ref, storageBackend string) string {
-	switch storageBackend {
-	case "qcow":
-		return filepath.Join("/var/lib/virtuestack/templates", ref+".qcow2")
-	case "lvm":
-		return "/dev/" + ref
-	default:
-		return ref
-	}
-}
-
 // mapError maps internal errors to safe gRPC status codes.
 // The original error is logged server-side and only a generic message is
 // returned to the caller to prevent leaking internal details such as file
 // paths or stack traces.
 func (h *grpcHandler) mapError(err error, operation string) error {
 	h.server.logger.Error("gRPC handler error", "operation", operation, "error", err)
-	return status.Errorf(codes.Internal, "%s failed", operation)
+	return grpcStatusForNodeError(operation, err)
 }
 
 // validatePath checks that path is non-empty and, after cleaning, is located

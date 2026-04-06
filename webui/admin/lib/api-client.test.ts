@@ -70,6 +70,17 @@ async function loadAdminAPIClientModule(): Promise<AdminAPIClientModule | null> 
   }
 }
 
+function assertCsrfBootstrapCall(
+  fetchCalls: Array<{ input: string; init?: RequestInit }>,
+  expectedPath: string,
+): void {
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.input, expectedPath);
+  assert.equal(fetchCalls[0]?.init?.method, "GET");
+  assert.equal(fetchCalls[0]?.init?.credentials, "include");
+  assert.ok(fetchCalls[0]?.init?.signal instanceof AbortSignal);
+}
+
 test("adminAuthApi exposes refresh for logout recovery", async () => {
   const apiClientModule = await loadAdminAPIClientModule();
   assert.ok(apiClientModule?.adminAuthApi, "adminAuthApi should exist");
@@ -258,15 +269,7 @@ test("adminAuthApi.login bootstraps CSRF before posting credentials", async () =
     };
 
     await assert.doesNotReject(apiClientModule.adminAuthApi.login(credentials));
-    assert.deepEqual(fetchCalls, [
-      {
-        input: "/api/v1/admin/auth/csrf",
-        init: {
-          method: "GET",
-          credentials: "include",
-        },
-      },
-    ]);
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/admin/auth/csrf");
     assert.equal(capturedEndpoint, "/admin/auth/login");
     assert.deepEqual(capturedBody, credentials);
   } finally {
@@ -279,6 +282,8 @@ test("admin billing and notification helpers accept already-unwrapped API payloa
   const apiClientModule = await loadAdminAPIClientModule();
   assert.ok(apiClientModule, "admin API client module should load");
 
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
   const originalGet = apiClientModule.apiClient.get;
   const originalPost = apiClientModule.apiClient.post;
 
@@ -326,6 +331,19 @@ test("admin billing and notification helpers accept already-unwrapped API payloa
     status: "succeeded",
   };
   const voidResult = { status: "void" };
+
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "" } as Document,
+  });
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input);
+    if (url === "/api/v1/admin/auth/csrf") {
+      globalThis.document.cookie = "csrf_token=admin-test-token";
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected fetch ${url} ${String(init?.method ?? "GET")}`);
+  };
 
   apiClientModule.apiClient.get = async (endpoint) => {
     switch (endpoint) {
@@ -388,6 +406,11 @@ test("admin billing and notification helpers accept already-unwrapped API payloa
       );
     });
   } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: originalDocument,
+    });
     apiClientModule.apiClient.get = originalGet;
     apiClientModule.apiClient.post = originalPost;
   }

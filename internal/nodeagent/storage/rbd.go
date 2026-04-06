@@ -7,30 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/ceph/go-ceph/rados"
 	"github.com/ceph/go-ceph/rbd"
 )
-
-const (
-	// gbToBytes is the number of bytes in one gigabyte.
-	gbToBytes = 1024 * 1024 * 1024
-	// VMDiskNameFmt is the format for VM disk image names.
-	VMDiskNameFmt = "vs-%s-disk0"
-)
-
-// SnapshotInfo holds metadata about a storage snapshot.
-type SnapshotInfo struct {
-	// Name is the snapshot name.
-	Name string
-	// Size is the snapshot size in bytes.
-	Size int64
-	// Protected indicates whether the snapshot is protected from deletion.
-	Protected bool
-	// CreatedAt is the time when the snapshot was created.
-	CreatedAt time.Time
-}
 
 // RBDManager handles Ceph RBD operations for VM disk management.
 type RBDManager struct {
@@ -469,16 +449,6 @@ func (m *RBDManager) FlattenImage(ctx context.Context, imageName string) error {
 	return nil
 }
 
-// PoolStats contains storage pool statistics.
-type PoolStats struct {
-	// Total is the total capacity of the pool in bytes.
-	Total int64
-	// Used is the used capacity of the pool in bytes.
-	Used int64
-	// Free is the available capacity of the pool in bytes.
-	Free int64
-}
-
 // GetPoolStats returns storage statistics for the configured pool.
 // It queries the Ceph cluster for pool usage information.
 func (m *RBDManager) GetPoolStats(ctx context.Context) (*PoolStats, error) {
@@ -607,7 +577,7 @@ func (m *RBDManager) GetImageInfo(ctx context.Context, imageName string) (*Image
 	}
 
 	return &ImageInfo{
-		Filename:          imageName,
+		Filename:         imageName,
 		Format:           "rbd",
 		VirtualSizeBytes: int64(virtualSize),
 		ActualSizeBytes:  0,

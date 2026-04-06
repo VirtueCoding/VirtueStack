@@ -28,8 +28,8 @@ on:
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:
-      browsers:
-        description: 'Browsers to test (comma-separated)'
+      project_group:
+        description: 'Browser family to run across admin, customer, and auth projects'
         required: false
         default: 'chromium'
         type: string
@@ -38,8 +38,9 @@ env:
   # Test secrets (NOT for production)
   POSTGRES_PASSWORD: virtuestack_test_password
   JWT_SECRET: test_jwt_secret_for_e2e_testing_minimum_32_chars
-  ENCRYPTION_KEY: test_encryption_key_32_bytes_test
+  ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   NATS_AUTH_TOKEN: virtuestack_nats_test_token
+  GUEST_OP_HMAC_SECRET: test_guest_op_hmac_secret_for_e2e_testing
 
 jobs:
   e2e-tests:
@@ -58,16 +59,6 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      nats:
-        image: nats:2.12-alpine
-        ports:
-          - 4222:4222
-        options: >-
-          --health-cmd "wget --spider -q http://localhost:8222/healthz"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -98,21 +89,37 @@ jobs:
       - name: Install Playwright browsers
         run: |
           cd tests/e2e
-          pnpm exec playwright install --with-deps ${{ inputs.browsers || 'chromium' }}
+          pnpm exec playwright install --with-deps ${{ inputs.project_group || 'chromium' }}
 
       - name: Generate test secrets
         run: |
-          # Create .env file for docker-compose
-          cat > .env << EOF
+          cat > .env.test << EOF
           POSTGRES_USER=virtuestack
-          POSTGRES_PASSWORD=virtuestack_test_password
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           POSTGRES_DB=virtuestack
-          NATS_AUTH_TOKEN=virtuestack_nats_test_token
-          JWT_SECRET=test_jwt_secret_for_e2e_testing_minimum_32_chars
-          ENCRYPTION_KEY=test_encryption_key_32_bytes_test
+          NATS_AUTH_TOKEN=${NATS_AUTH_TOKEN}
+          JWT_SECRET=${JWT_SECRET}
+          ENCRYPTION_KEY=${ENCRYPTION_KEY}
+          GUEST_OP_HMAC_SECRET=${GUEST_OP_HMAC_SECRET}
+          TEST_ADMIN_EMAIL=admin@test.virtuestack.local
+          TEST_ADMIN_2FA_EMAIL=2fa-admin@test.virtuestack.local
+          TEST_ADMIN_PASSWORD=AdminTest123!
+          TEST_ADMIN_TOTP_SECRET=JBSWY3DPEHPK3PXP
+          TEST_CUSTOMER_EMAIL=customer@test.virtuestack.local
+          TEST_CUSTOMER_2FA_EMAIL=2fa-customer@test.virtuestack.local
+          TEST_CUSTOMER_PASSWORD=CustomerTest123!
+          TEST_CUSTOMER_TOTP_SECRET=KRSXG5DSN5XW4ZLP
           LOG_LEVEL=debug
           NEXT_PUBLIC_API_URL=/api/v1
           EOF
+
+      - name: Start NATS
+        run: |
+          docker run -d --name virtuestack-e2e-nats \
+            -p 4222:4222 \
+            -p 8222:8222 \
+            nats:2.12-alpine \
+            nats-server -js -sd /data --auth "${NATS_AUTH_TOKEN}" -m 8222
 
       - name: Generate SSL certificates
         run: |
@@ -134,10 +141,7 @@ jobs:
 
       - name: Seed test data
         run: |
-          # Create and run seed data
-          ./scripts/setup-e2e.sh --seed-only || true
-          psql "postgresql://virtuestack:virtuestack_test_password@localhost:5432/virtuestack" < migrations/test_seed.sql || true
-        continue-on-error: true
+          ./scripts/setup-e2e.sh --seed-only
 
       - name: Build WebUIs
         run: |
@@ -146,10 +150,11 @@ jobs:
 
       - name: Start Controller
         run: |
-          DATABASE_URL="postgresql://virtuestack:virtuestack_test_password@localhost:5432/virtuestack?sslmode=disable" \
-          NATS_URL="nats://virtuestack_nats_test_token@localhost:4222" \
-          JWT_SECRET="test_jwt_secret_for_e2e_testing_minimum_32_chars" \
-          ENCRYPTION_KEY="test_encryption_key_32_bytes_test" \
+          DATABASE_URL="postgresql://virtuestack:${POSTGRES_PASSWORD}@localhost:5432/virtuestack?sslmode=disable" \
+          NATS_URL="nats://${NATS_AUTH_TOKEN}@localhost:4222" \
+          JWT_SECRET="${JWT_SECRET}" \
+          ENCRYPTION_KEY="${ENCRYPTION_KEY}" \
+          GUEST_OP_HMAC_SECRET="${GUEST_OP_HMAC_SECRET}" \
           LISTEN_ADDR=":8080" \
           LOG_LEVEL="debug" \
           ./bin/controller &
@@ -172,33 +177,31 @@ jobs:
 
       - name: Wait for services
         run: |
-          echo "Waiting for services to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
-              echo "Controller is healthy"
-              break
-            fi
-            sleep 1
-          done
-          for i in {1..30}; do
-            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
-              echo "Admin WebUI is healthy"
-              break
-            fi
-            sleep 1
-          done
-          for i in {1..30}; do
-            if curl -sf http://localhost:3001 > /dev/null 2>&1; then
-              echo "Customer WebUI is healthy"
-              break
-            fi
-            sleep 1
-          done
+          wait_for_url() {
+            local name="$1"
+            local url="$2"
+            local attempts="$3"
+
+            for _ in $(seq 1 "${attempts}"); do
+              if curl -sf "${url}" > /dev/null 2>&1; then
+                echo "${name} is healthy"
+                return 0
+              fi
+              sleep 1
+            done
+
+            echo "timed out waiting for ${name} at ${url}" >&2
+            return 1
+          }
+
+          wait_for_url "controller" "http://localhost:8080/health" 30
+          wait_for_url "admin webui" "http://localhost:3000" 30
+          wait_for_url "customer webui" "http://localhost:3001" 30
 
       - name: Run E2E tests
         run: |
           cd tests/e2e
-          pnpm exec playwright test --project=${{ inputs.browsers || 'chromium' }}
+          pnpm exec playwright test --project=admin-${{ inputs.project_group || 'chromium' }} --project=customer-${{ inputs.project_group || 'chromium' }} --project=auth-${{ inputs.project_group || 'chromium' }}
         env:
           ADMIN_URL: http://localhost:3000
           CUSTOMER_URL: http://localhost:3001
@@ -206,8 +209,12 @@ jobs:
           # Test credentials
           TEST_ADMIN_EMAIL: admin@test.virtuestack.local
           TEST_ADMIN_PASSWORD: AdminTest123!
+          TEST_ADMIN_2FA_EMAIL: 2fa-admin@test.virtuestack.local
+          TEST_ADMIN_TOTP_SECRET: JBSWY3DPEHPK3PXP
           TEST_CUSTOMER_EMAIL: customer@test.virtuestack.local
           TEST_CUSTOMER_PASSWORD: CustomerTest123!
+          TEST_CUSTOMER_2FA_EMAIL: 2fa-customer@test.virtuestack.local
+          TEST_CUSTOMER_TOTP_SECRET: KRSXG5DSN5XW4ZLP
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
@@ -232,3 +239,4 @@ jobs:
         run: |
           pkill -f "bin/controller" || true
           pkill -f "next start" || true
+          docker rm -f virtuestack-e2e-nats || true

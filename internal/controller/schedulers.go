@@ -246,15 +246,44 @@ func (s *Server) startMonthlyInvoiceScheduler(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
-			prev := time.Now().UTC().AddDate(0, -1, 0)
-			count, err := s.invoiceService.GenerateAllMonthlyInvoices(
-				ctx, prev.Year(), prev.Month())
-			if err != nil {
-				s.logger.Error("monthly invoice generation failed", "error", err)
-			} else {
-				s.logger.Info("monthly invoice generation complete",
-					"invoices_generated", count)
-			}
+			s.runMonthlyInvoiceSchedulerCycle(ctx, time.Now().UTC())
 		}
 	}
+}
+
+func (s *Server) runMonthlyInvoiceSchedulerCycle(ctx context.Context, now time.Time) {
+	if s.invoiceSchedulerLock != nil {
+		acquired, err := s.invoiceSchedulerLock.TryAdvisoryLock(ctx, monthlyInvoiceSchedulerLockID)
+		if err != nil {
+			s.logger.Error("failed to acquire monthly invoice lock", "error", err)
+			return
+		}
+		if !acquired {
+			s.logger.Debug("monthly invoice lock held by another instance, skipping")
+			return
+		}
+		defer func() {
+			if releaseErr := s.invoiceSchedulerLock.ReleaseAdvisoryLock(ctx, monthlyInvoiceSchedulerLockID); releaseErr != nil {
+				s.logger.Warn("failed to release monthly invoice lock", "error", releaseErr)
+			}
+		}()
+	}
+
+	generator := s.generateMonthlyInvoices
+	if generator == nil && s.invoiceService != nil {
+		generator = s.invoiceService.GenerateAllMonthlyInvoices
+	}
+	if generator == nil {
+		return
+	}
+
+	prev := now.AddDate(0, -1, 0)
+	count, err := generator(ctx, prev.Year(), prev.Month())
+	if err != nil {
+		s.logger.Error("monthly invoice generation failed", "error", err)
+		return
+	}
+
+	s.logger.Info("monthly invoice generation complete",
+		"invoices_generated", count)
 }

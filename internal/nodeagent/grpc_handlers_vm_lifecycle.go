@@ -46,6 +46,7 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 	}
 
 	var diskPath string
+	var cleanupStorage storageCleanupFunc
 	switch storageBackend {
 	case vm.StorageBackendQcow:
 		templatePath := req.GetTemplateFilePath()
@@ -87,6 +88,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			return nil, status.Errorf(codes.Internal, "cloning QCOW template: %v", err)
 		}
 		diskPath = newDiskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned QCOW template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
 
 	case vm.StorageBackendCeph:
@@ -107,6 +111,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			diskName,
 		); err != nil {
 			return nil, status.Errorf(codes.Internal, "cloning RBD template: %v", err)
+		}
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskName)
 		}
 		logger.Info("cloned RBD template for reinstall", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
 
@@ -143,6 +150,9 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			return nil, status.Errorf(codes.Internal, "cloning LVM template: %v", err)
 		}
 		diskPath = newDiskPath
+		cleanupStorage = func(ctx context.Context, _ string) error {
+			return h.server.storageBackend.Delete(ctx, diskPath)
+		}
 		logger.Info("cloned LVM template for reinstall", "template", templatePath, "disk_path", diskPath, "size_gb", diskSizeGB)
 
 	default:
@@ -177,7 +187,14 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		},
 		func() error {
 			return reinstallutil.IgnoreDeleteNotFound(
-				h.server.vmManager.DeleteVM(ctx, req.GetVmId()),
+				deleteVMWithAbusePreventionCleanup(
+					ctx,
+					req.GetVmId(),
+					logger,
+					h.server.getVMTapInterface,
+					h.server.abusePreventionMgr,
+					h.server.vmManager.DeleteVM,
+				),
 				func(deleteErr error) bool {
 					return sharederrors.Is(deleteErr, sharederrors.ErrNotFound)
 				},
@@ -202,9 +219,30 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		IPv6Address:    req.GetIpv6Address(),
 	}
 
-	result, err := h.server.vmManager.CreateVM(ctx, cfg)
-	if err != nil {
+	var result *vm.CreateResult
+	if err := createVMWithRollbackCleanup(ctx, func(ctx context.Context) error {
+		var createErr error
+		result, createErr = h.server.vmManager.CreateVM(ctx, cfg)
+		return createErr
+	}, func(ctx context.Context) error {
+		if cleanupStorage == nil {
+			return nil
+		}
+		return cleanupStorage(ctx, req.GetVmId())
+	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "recreating VM: %v", err)
+	}
+
+	if err := ensureAbusePreventionAfterCreate(
+		ctx,
+		req.GetVmId(),
+		logger,
+		h.server.getVMTapInterface,
+		h.server.abusePreventionMgr,
+		h.server.vmManager.DeleteVM,
+		cleanupStorage,
+	); err != nil {
+		return nil, h.mapError(err, "applying abuse prevention")
 	}
 
 	// Set root password via guest agent if available

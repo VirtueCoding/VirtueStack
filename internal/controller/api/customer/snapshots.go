@@ -153,8 +153,16 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		return
 	}
 
+	planLimit := defaultSnapshotLimit
+	if h.planRepo != nil {
+		plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
+		if planErr == nil && plan.SnapshotLimit > 0 {
+			planLimit = plan.SnapshotLimit
+		}
+	}
+
 	// Create snapshot asynchronously - quota is enforced atomically in the service layer
-	snapshot, taskID, err := h.backupService.CreateSnapshotAsync(c.Request.Context(), vm.ID, req.Name, customerID)
+	snapshot, taskID, err := h.backupService.CreateSnapshotAsyncWithLimit(c.Request.Context(), vm.ID, req.Name, customerID, planLimit)
 	if err != nil {
 		h.logFailedAudit(c, "snapshot.create", "vm", req.VMID, map[string]any{
 			"name": req.Name,
@@ -162,12 +170,6 @@ func (h *CustomerHandler) CreateSnapshot(c *gin.Context) {
 		// F-106: Use errors.Is/As against the sentinel error type instead of
 		// strings.Contains(err.Error(), ...) to avoid fragile string matching.
 		if errors.Is(err, services.ErrSnapshotQuotaExceeded) {
-			// Get plan limit for a clearer error message.
-			planLimit := defaultSnapshotLimit
-			plan, planErr := h.planRepo.GetByID(c.Request.Context(), vm.PlanID)
-			if planErr == nil && plan.SnapshotLimit > 0 {
-				planLimit = plan.SnapshotLimit
-			}
 			middleware.RespondWithError(c, http.StatusConflict, "SNAPSHOT_QUOTA_EXCEEDED",
 				fmt.Sprintf("Snapshot limit reached for this VM (%d max). Delete existing snapshots first.", planLimit))
 			return
@@ -241,9 +243,19 @@ func (h *CustomerHandler) DeleteSnapshot(c *gin.Context) {
 		return
 	}
 
-	// Verify snapshot belongs to a VM owned by the customer
-	if !h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID) {
-		middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+	// Verify snapshot belongs to a VM owned by the customer.
+	if verifyErr := h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID); verifyErr != nil {
+		if sharederrors.Is(verifyErr, sharederrors.ErrForbidden) || sharederrors.Is(verifyErr, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+			return
+		}
+		h.logger.Error("failed to verify snapshot ownership",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID,
+			"customer_id", customerID,
+			"error", verifyErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_DELETE_FAILED", "Internal server error")
 		return
 	}
 
@@ -321,9 +333,19 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 		return
 	}
 
-	// Verify snapshot belongs to a VM owned by the customer
-	if !h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID) {
-		middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+	// Verify snapshot belongs to a VM owned by the customer.
+	if verifyErr := h.verifySnapshotOwnership(c.Request.Context(), snapshot.VMID, customerID); verifyErr != nil {
+		if sharederrors.Is(verifyErr, sharederrors.ErrForbidden) || sharederrors.Is(verifyErr, sharederrors.ErrNotFound) {
+			middleware.RespondWithError(c, http.StatusNotFound, "SNAPSHOT_NOT_FOUND", "Snapshot not found")
+			return
+		}
+		h.logger.Error("failed to verify snapshot ownership",
+			"snapshot_id", snapshotID,
+			"vm_id", snapshot.VMID,
+			"customer_id", customerID,
+			"error", verifyErr,
+			"correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "SNAPSHOT_RESTORE_FAILED", "Internal server error")
 		return
 	}
 
@@ -365,6 +387,6 @@ func (h *CustomerHandler) RestoreSnapshot(c *gin.Context) {
 
 // verifySnapshotOwnership verifies that a VM belongs to the customer.
 // This is an alias for verifyVMOwnership for semantic clarity in snapshot contexts.
-func (h *CustomerHandler) verifySnapshotOwnership(ctx context.Context, vmID, customerID string) bool {
+func (h *CustomerHandler) verifySnapshotOwnership(ctx context.Context, vmID, customerID string) error {
 	return h.verifyVMOwnership(ctx, vmID, customerID)
 }

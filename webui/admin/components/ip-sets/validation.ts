@@ -10,8 +10,34 @@ const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){
 
 const isValidIPv4Octet = (ip: string): boolean => {
   const parts = ip.split(".").map(Number);
-  return parts.every((part) => part >= 0 && part <= 255);
+  return parts.length === 4 && parts.every((part) => part >= 0 && part <= 255);
 };
+
+const isValidIPv4Address = (ip: string): boolean => ipv4Regex.test(ip) && isValidIPv4Octet(ip);
+
+const isValidIPv4Cidr = (value: string): boolean => {
+  if (!ipv4CidrRegex.test(value)) {
+    return false;
+  }
+
+  const [ip, prefix] = value.split("/");
+  const prefixNum = parseInt(prefix, 10);
+  return prefixNum >= 1 && prefixNum <= 32 && isValidIPv4Address(ip);
+};
+
+export const extractValidImportAddresses = (lines: readonly string[]): string[] => lines.flatMap((line) => {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.toLowerCase().startsWith("ip") || trimmed.startsWith("#")) {
+    return [];
+  }
+
+  const address = trimmed.split(",")[0].trim();
+  if (isValidIPv4Address(address) || isValidIPv4Cidr(address) || ipv6Regex.test(address) || ipv6CidrRegex.test(address)) {
+    return [address];
+  }
+
+  return [];
+});
 
 export const createIPSetSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -33,7 +59,7 @@ export const createIPSetSchema = z.object({
     } else {
       const [ip, prefix] = data.network.split("/");
       const prefixNum = parseInt(prefix, 10);
-      if (prefixNum < 1 || prefixNum > 32 || !isValidIPv4Octet(ip)) {
+      if (prefixNum < 1 || prefixNum > 32 || !isValidIPv4Address(ip)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Invalid IPv4 CIDR format (e.g., 10.0.0.0/24)",
@@ -42,7 +68,7 @@ export const createIPSetSchema = z.object({
       }
     }
     // Validate gateway for IPv4
-    if (!ipv4Regex.test(data.gateway) || !isValidIPv4Octet(data.gateway)) {
+    if (!isValidIPv4Address(data.gateway)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Invalid IPv4 address",
@@ -91,7 +117,7 @@ export const editIPSetSchema = z.object({
   // Only validate gateway if provided
   if (data.gateway && data.gateway.length > 0) {
     // Try IPv4 first
-    const isIPv4 = ipv4Regex.test(data.gateway) && isValidIPv4Octet(data.gateway);
+    const isIPv4 = isValidIPv4Address(data.gateway);
     // Then try IPv6 using the RFC-compliant regex (covers ::, ::1, and all compressed forms)
     const isIPv6 = ipv6Regex.test(data.gateway);
 

@@ -106,10 +106,6 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	}
 
 	actorID := middleware.GetUserID(c)
-	h.logAuditEvent(c, "admin.list", "admin", "", map[string]any{
-		"actor_id": actorID,
-	}, true)
-
 	admins, _, _, err := h.adminRepo.List(c.Request.Context(), repository.AdminListFilter{
 		PaginationParams: pagination,
 	})
@@ -120,6 +116,10 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		middleware.RespondWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list admins")
 		return
 	}
+
+	h.logAuditEvent(c, "admin.list", "admin", "", map[string]any{
+		"actor_id": actorID,
+	}, true)
 
 	c.JSON(http.StatusOK, models.Response{Data: admins})
 }

@@ -35,16 +35,12 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
 interface VNCConsoleProps {
   className?: string
-  wsUrl?: string
-  vmId?: string
-  token?: string
+  vmId: string
 }
 
 export function VNCConsole({
   className,
-  wsUrl,
   vmId,
-  token,
 }: VNCConsoleProps) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected")
   const [isFullScreen, setIsFullScreen] = useState(false)
@@ -59,16 +55,11 @@ export function VNCConsole({
 
   // Build WebSocket URL
   const getWsUrl = useCallback(() => {
-    if (wsUrl) return wsUrl
-    if (vmId && token) {
-      // Always use wss:// in production. ws:// only allowed in dev.
-      const wsProtocol = process.env.NEXT_PUBLIC_ALLOW_WS === 'true' ?
-        (window.location.protocol === 'https:' ? 'wss:' : 'ws:') :
-        'wss:';
-      return `${wsProtocol}//${window.location.host}/api/v1/customer/ws/vnc/${vmId}?token=${token}`
-    }
-    return null
-  }, [wsUrl, vmId, token])
+    const wsProtocol = process.env.NEXT_PUBLIC_ALLOW_WS === 'true'
+      ? (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
+      : 'wss:'
+    return `${wsProtocol}//${window.location.host}/api/v1/customer/ws/vnc/${vmId}`
+  }, [vmId])
 
   // Connect to VNC
   const connect = useCallback(async () => {

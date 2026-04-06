@@ -11,7 +11,7 @@
 #   - Exposes all service ports for direct testing
 #   - Uses test-friendly credentials
 #   - Includes health checks for all services
-#   - Mounts test seed data
+#   - Seeds test data after migrations
 # =============================================================================
 
 services:
@@ -28,7 +28,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d/migrations:ro
-      - ./migrations/test_seed.sql:/docker-entrypoint-initdb.d/99_test_seed.sql:ro
 
   # ===========================================================================
   # NATS - Exposed for direct test access

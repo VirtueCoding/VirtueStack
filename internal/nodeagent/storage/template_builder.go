@@ -20,6 +20,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage/downloadutil"
 	sharedconfig "github.com/AbuGosok/VirtueStack/internal/shared/config"
 	sharedcrypto "github.com/AbuGosok/VirtueStack/internal/shared/crypto"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 )
 
 // templateBuildTimeout is the maximum time for the entire ISO build process.
@@ -72,6 +73,10 @@ type BuildResult struct {
 //
 // If cfg.ISOURL is set (instead of cfg.ISOPath), the ISO is downloaded first.
 func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildResult, error) {
+	if err := ValidateBuildISOSource(cfg); err != nil {
+		return nil, err
+	}
+
 	// If a URL is provided, download the ISO first.
 	if cfg.ISOURL != "" {
 		downloadedPath, cleanup, err := b.downloadISO(ctx, cfg.ISOURL)
@@ -173,6 +178,17 @@ func (b *TemplateBuilder) Build(ctx context.Context, cfg BuildConfig) (*BuildRes
 		DiskPath:  diskPath,
 		SizeBytes: virtSize,
 	}, nil
+}
+
+// ValidateBuildISOSource enforces the proto contract requiring exactly one ISO source.
+func ValidateBuildISOSource(cfg BuildConfig) error {
+	hasPath := cfg.ISOPath != ""
+	hasURL := cfg.ISOURL != ""
+	if hasPath == hasURL {
+		return sharederrors.NewValidationError("iso_source", "exactly one of iso_path or iso_url must be set")
+	}
+
+	return nil
 }
 
 // Cleanup removes the build directory and temporary files.
@@ -432,6 +448,10 @@ func (b *TemplateBuilder) downloadHTTPClient() *http.Client {
 	return downloadutil.NewHTTPClient(ssrfSafeDialContext(), maxRedirects)
 }
 
+func (b *TemplateBuilder) templateDownloadHTTPClient() *http.Client {
+	return downloadutil.NewHTTPClient(nil, maxRedirects)
+}
+
 // maxTemplateDownloadSize is the maximum size for a template file download (20 GB).
 const maxTemplateDownloadSize int64 = 20 * 1024 * 1024 * 1024
 
@@ -440,7 +460,8 @@ const templateDownloadTimeout = 30 * time.Minute
 
 // DownloadFile downloads a file from a URL to a local destination path.
 // Used for template distribution — downloads template images from the controller.
-// Applies SSRF protection, size limits, and redirect limits.
+// Internal controller URLs are allowed here, unlike ISO downloads, so this path
+// keeps the stricter URL validation but does not reuse the ISO SSRF dialer.
 func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath string) error {
 	if err := validateDownloadURL(sourceURL); err != nil {
 		return err
@@ -449,7 +470,7 @@ func (b *TemplateBuilder) DownloadFile(ctx context.Context, sourceURL, destPath 
 	dlCtx, cancel := context.WithTimeout(ctx, templateDownloadTimeout)
 	defer cancel()
 
-	client := downloadutil.NewHTTPClient(ssrfSafeDialContext(), maxRedirects)
+	client := b.templateDownloadHTTPClient()
 
 	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, sourceURL, nil)
 	if err != nil {

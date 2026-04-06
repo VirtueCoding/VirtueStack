@@ -10,6 +10,8 @@ import (
 
 	controllermetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // Constants for backup operations.
@@ -32,13 +34,13 @@ type BackupConfig struct {
 // BackupHandlerContext holds common context for backup handler functions.
 // It groups related parameters to comply with QG-01 (max 4 parameters).
 type BackupHandlerContext struct {
-	Task            *models.Task
-	VM              *models.VM
-	NodeID          string
-	Payload         BackupCreatePayload
+	Task             *models.Task
+	VM               *models.VM
+	NodeID           string
+	Payload          BackupCreatePayload
 	FreezeSuccessful bool
-	FrozenCount     int
-	Logger          *slog.Logger
+	FrozenCount      int
+	Logger           *slog.Logger
 }
 
 // completeBackupTask marks a backup task as 100% complete, persists the result JSON,
@@ -250,6 +252,7 @@ func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 	}
 
 	backup := &models.Backup{
+		Method:         models.BackupMethodFull,
 		VMID:           payload.VMID,
 		Source:         payload.Source,
 		StorageBackend: storageBackendQCOW,
@@ -257,6 +260,9 @@ func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 		SnapshotName:   &snapshotName,
 		SizeBytes:      &sizeBytes,
 		Status:         models.BackupStatusCompleted,
+	}
+	if payload.BackupName != "" {
+		backup.Name = util.StringPtr(payload.BackupName)
 	}
 
 	if payload.AdminScheduleID != "" {
@@ -293,122 +299,10 @@ func handleQCOWBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *B
 }
 
 func handleCephBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *BackupHandlerContext) error {
-	task := backupCtx.Task
-	nodeID := backupCtx.NodeID
-	payload := backupCtx.Payload
-	freezeSuccessful := backupCtx.FreezeSuccessful
-	frozenCount := backupCtx.FrozenCount
-	logger := backupCtx.Logger
-
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Creating disk snapshot..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	snapshotName := fmt.Sprintf("backup-%s-%d", payload.VMID, time.Now().Unix())
-
-	snapshotResp, err := deps.NodeClient.CreateSnapshot(ctx, nodeID, payload.VMID, snapshotName)
-	if err != nil {
-		logger.Error("failed to create snapshot", "error", err)
-		return fmt.Errorf("creating snapshot for VM %s: %w", payload.VMID, err)
-	}
-
-	logger.Info("RBD snapshot created successfully",
-		"snapshot_name", snapshotResp.RBDSnapshotName,
-		"size_bytes", snapshotResp.SizeBytes)
-
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 40, "Protecting snapshot..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	if err := deps.NodeClient.ProtectSnapshot(ctx, nodeID, payload.VMID, snapshotResp.RBDSnapshotName); err != nil {
-		logger.Error("failed to protect snapshot", "error", err)
-		return fmt.Errorf("protecting snapshot for VM %s: %w", payload.VMID, err)
-	}
-
-	logger.Info("snapshot protected successfully", "snapshot_name", snapshotResp.RBDSnapshotName)
-
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Cloning to backup storage..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	backupImageName := fmt.Sprintf("vs-%s-%d-backup", payload.VMID, time.Now().Unix())
-
-	clonedImageName, err := deps.NodeClient.CloneSnapshot(ctx, nodeID, payload.VMID, snapshotResp.RBDSnapshotName, BackupPoolName)
-	if err != nil {
-		logger.Error("failed to clone snapshot to backup pool", "error", err)
-		if unprotectErr := deps.NodeClient.UnprotectSnapshot(ctx, nodeID, payload.VMID, snapshotResp.RBDSnapshotName); unprotectErr != nil {
-			logger.Warn("failed to unprotect snapshot during cleanup", "error", unprotectErr)
-		}
-		return fmt.Errorf("cloning snapshot to backup pool for VM %s: %w", payload.VMID, err)
-	}
-
-	if clonedImageName != "" {
-		backupImageName = clonedImageName
-	}
-
-	logger.Info("snapshot cloned to backup pool successfully",
-		"backup_image", backupImageName,
-		"backup_pool", BackupPoolName)
-
-	// Register a cleanup defer for the cloned RBD image so that if the DB insert
-	// fails the orphaned image is removed. dbInsertSucceeded is flipped to true
-	// immediately after a successful CreateBackup call.
-	dbInsertSucceeded := false
-	defer func() {
-		if !dbInsertSucceeded {
-			if removeErr := deps.NodeClient.DeleteDisk(context.WithoutCancel(ctx), nodeID, backupImageName); removeErr != nil {
-				logger.Error("failed to cleanup orphaned RBD clone after DB insert failure",
-					"backup_image", backupImageName,
-					"error", removeErr)
-			}
-		}
-	}()
-
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 70, "Creating backup record..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	backupConsistency := "crash-consistent"
-	if freezeSuccessful {
-		backupConsistency = "application-consistent"
-	}
-
-	storagePath := fmt.Sprintf("%s/%s", BackupPoolName, backupImageName)
-	backup := &models.Backup{
-		VMID:           payload.VMID,
-		Source:         payload.Source,
-		StorageBackend: storageBackendCeph,
-		RBDSnapshot:    &snapshotResp.RBDSnapshotName,
-		StoragePath:    &storagePath,
-		Status:         models.BackupStatusCompleted,
-	}
-
-	if payload.AdminScheduleID != "" {
-		backup.AdminScheduleID = &payload.AdminScheduleID
-	}
-
-	expiresAt := time.Now().AddDate(0, 0, DefaultBackupExpirationDays)
-	backup.ExpiresAt = &expiresAt
-
-	if err := deps.BackupRepo.CreateBackup(ctx, backup); err != nil {
-		logger.Error("failed to create backup record", "error", err)
-		return fmt.Errorf("creating backup record: %w", err)
-	}
-	dbInsertSucceeded = true
-
-	result := BackupCreateResult{
-		BackupID:          backup.ID,
-		VMID:              payload.VMID,
-		SnapshotName:      snapshotResp.RBDSnapshotName,
-		StoragePath:       storagePath,
-		SizeBytes:         snapshotResp.SizeBytes,
-		Consistency:       backupConsistency,
-		FrozenFilesystems: frozenCount,
-		StorageBackend:    storageBackendCeph,
-	}
-	completeBackupTask(ctx, task, deps, backup, result, logger)
-
-	return nil
+	return fmt.Errorf(
+		"ceph full backups are not supported until clone transport is implemented: %w",
+		sharederrors.ErrNotSupported,
+	)
 }
 
 // handleLVMBackupCreate handles LVM backup creation with thin snapshot support.
@@ -471,6 +365,7 @@ func handleLVMBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *Ba
 	}
 
 	backup := &models.Backup{
+		Method:         models.BackupMethodFull,
 		VMID:           payload.VMID,
 		Source:         payload.Source,
 		StorageBackend: storageBackendLVM,
@@ -478,6 +373,9 @@ func handleLVMBackupCreate(ctx context.Context, deps *HandlerDeps, backupCtx *Ba
 		SnapshotName:   &snapshotName,
 		SizeBytes:      &sizeBytes,
 		Status:         models.BackupStatusCompleted,
+	}
+	if payload.BackupName != "" {
+		backup.Name = util.StringPtr(payload.BackupName)
 	}
 
 	if payload.AdminScheduleID != "" {

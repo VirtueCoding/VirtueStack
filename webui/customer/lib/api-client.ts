@@ -75,6 +75,7 @@ export const customerAuthApi = {
   },
 
   async verify2FA(request: Verify2FARequest): Promise<CustomerAuthSessionResponse> {
+    await fetchCsrfToken();
     return apiClient.post<CustomerAuthSessionResponse>("/customer/auth/verify-2fa", request);
   },
 
@@ -96,10 +97,12 @@ export const customerAuthApi = {
   },
 
   async forgotPassword(email: string): Promise<{ message: string }> {
+    await fetchCsrfToken();
     return apiClient.post<{ message: string }>("/customer/auth/forgot-password", { email });
   },
 
   async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    await fetchCsrfToken();
     return apiClient.post<{ message: string }>("/customer/auth/reset-password", {
       token,
       new_password: newPassword,
@@ -152,12 +155,6 @@ export interface VM {
   max_iso_size_bytes?: number;
 }
 
-export interface ConsoleTokenResponse {
-  token: string;
-  url: string;
-  expires_at: string;
-}
-
 export interface VMOperationResponse {
   message: string;
 }
@@ -173,14 +170,6 @@ export interface CursorPaginatedResponse<T> {
 }
 
 export const vmApi = {
-  async getConsoleToken(vmId: string): Promise<ConsoleTokenResponse> {
-    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/console-token`, {});
-  },
-
-  async getSerialToken(vmId: string): Promise<ConsoleTokenResponse> {
-    return apiClient.post<ConsoleTokenResponse>(`/customer/vms/${vmId}/serial-token`, {});
-  },
-
   async startVM(vmId: string): Promise<VMOperationResponse> {
     return apiClient.post<VMOperationResponse>(`/customer/vms/${vmId}/start`, {});
   },

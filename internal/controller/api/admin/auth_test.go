@@ -9,12 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
 	"github.com/AbuGosok/VirtueStack/internal/controller/services"
+	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -31,6 +34,31 @@ type logoutAdminRepoStub struct {
 func (s *logoutAdminRepoStub) DeleteSession(_ context.Context, id string) error {
 	s.deleteSessionIDs = append(s.deleteSessionIDs, id)
 	return s.deleteSessionErr
+}
+
+type refreshAdminRepoStub struct {
+	repository.CustomerRepo
+	sessionByRefreshToken *models.Session
+	createdSession        *models.Session
+	deleteSessionIDs      []string
+}
+
+func (s *refreshAdminRepoStub) GetSessionByRefreshToken(_ context.Context, refreshTokenHash string) (*models.Session, error) {
+	if s.sessionByRefreshToken == nil || s.sessionByRefreshToken.RefreshTokenHash != refreshTokenHash {
+		return nil, errors.New("unexpected refresh token hash")
+	}
+	return s.sessionByRefreshToken, nil
+}
+
+func (s *refreshAdminRepoStub) CreateSession(_ context.Context, session *models.Session) error {
+	sessionCopy := *session
+	s.createdSession = &sessionCopy
+	return nil
+}
+
+func (s *refreshAdminRepoStub) DeleteSession(_ context.Context, id string) error {
+	s.deleteSessionIDs = append(s.deleteSessionIDs, id)
+	return nil
 }
 
 type adminAuditCaptureDB struct {
@@ -70,6 +98,15 @@ func testAdminLogger() *slog.Logger {
 func setupAdminTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	return gin.New()
+}
+
+func findResponseCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }
 
 // TestLogin_InvalidRequestBody tests that invalid JSON returns 400.
@@ -302,6 +339,81 @@ func TestRefreshToken_MissingToken(t *testing.T) {
 	errorObj, ok := resp["error"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "VALIDATION_ERROR", errorObj["code"])
+}
+
+func TestRefreshToken_AdminIncludesSessionMetadata(t *testing.T) {
+	router := setupAdminTestRouter()
+	logger := testAdminLogger()
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret-key-that-is-32-bytes-long!!",
+		Issuer:    "virtuestack",
+	}
+
+	const adminID = "admin-123"
+	refreshToken, err := middleware.GenerateRefreshToken()
+	require.NoError(t, err)
+
+	repo := &refreshAdminRepoStub{
+		sessionByRefreshToken: &models.Session{
+			ID:               "old-session-id",
+			UserID:           adminID,
+			UserType:         "admin",
+			RefreshTokenHash: crypto.HashSHA256(refreshToken),
+			ExpiresAt:        time.Now().Add(time.Hour),
+		},
+	}
+	adminDB := &fakeDB{
+		queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+			if strings.Contains(sql, "FROM admins WHERE id = $1") {
+				return &fakeRow{values: adminRow(adminID, "admin@example.com", "admin")}
+			}
+			return &fakeRow{scanErr: pgx.ErrNoRows}
+		},
+	}
+	authService := services.NewAuthService(
+		repo,
+		repository.NewAdminRepository(adminDB),
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	handler := &AdminHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+	router.POST("/refresh", handler.RefreshToken)
+
+	req := httptest.NewRequest(http.MethodPost, "/refresh", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  middleware.RefreshTokenCookieName,
+		Value: refreshToken,
+	})
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Data struct {
+			TokenType           string `json:"token_type"`
+			ExpiresIn           int    `json:"expires_in"`
+			SessionID           string `json:"session_id"`
+			SessionCleanupToken string `json:"session_cleanup_token"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	require.NotNil(t, repo.createdSession)
+	assert.Equal(t, "Bearer", resp.Data.TokenType)
+	assert.NotZero(t, resp.Data.ExpiresIn)
+	assert.Equal(t, repo.createdSession.ID, resp.Data.SessionID)
+	assert.NotEmpty(t, resp.Data.SessionCleanupToken)
 }
 
 // TestMe_Unauthorized tests /me endpoint without authentication.
@@ -640,6 +752,58 @@ func TestAdminLogout_RejectsMalformedJSON(t *testing.T) {
 	assert.Equal(t, "INVALID_REQUEST_BODY", errorObj["code"])
 }
 
+func TestAdminLogout_CleanupTokenWithoutCurrentSessionClearsCookies(t *testing.T) {
+	router := setupAdminTestRouter()
+	logger := testAdminLogger()
+	authConfig := middleware.AuthConfig{JWTSecret: "test-secret", Issuer: "virtuestack"}
+	repo := &logoutAdminRepoStub{}
+	authService := services.NewAuthService(
+		repo,
+		nil,
+		nil,
+		authConfig.JWTSecret,
+		authConfig.Issuer,
+		"",
+		logger,
+	)
+
+	cleanupToken, err := middleware.GenerateSessionCleanupToken(
+		authConfig,
+		"admin-123",
+		"admin",
+		"admin",
+		"session-123",
+	)
+	require.NoError(t, err)
+
+	handler := &AdminHandler{
+		authService: authService,
+		authConfig:  authConfig,
+		logger:      logger,
+	}
+	router.POST("/logout", handler.Logout)
+
+	body, err := json.Marshal(LogoutRequest{SessionCleanupToken: cleanupToken})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []string{"session-123"}, repo.deleteSessionIDs)
+
+	accessCookie := findResponseCookie(w.Result().Cookies(), middleware.AccessTokenCookieName)
+	require.NotNil(t, accessCookie)
+	assert.Equal(t, -1, accessCookie.MaxAge)
+
+	refreshCookie := findResponseCookie(w.Result().Cookies(), middleware.RefreshTokenCookieName)
+	require.NotNil(t, refreshCookie)
+	assert.Equal(t, -1, refreshCookie.MaxAge)
+}
+
 func TestAdminLogout_LogsFailedSessionAuditEventWhenInvalidationFails(t *testing.T) {
 	logger := testAdminLogger()
 	authConfig := middleware.AuthConfig{JWTSecret: "test-secret", Issuer: "virtuestack"}
@@ -835,11 +999,11 @@ func TestShouldClearLogoutCookies(t *testing.T) {
 			want:                false,
 		},
 		{
-			name:                "cleanup token without current session preserves cookies",
+			name:                "cleanup token without current session clears cookies",
 			sessionCleanupToken: "cleanup-token",
 			targetSessionID:     "stale-session",
 			currentSessionID:    "",
-			want:                false,
+			want:                true,
 		},
 	}
 

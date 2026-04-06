@@ -54,12 +54,12 @@ const customerAPIKeySelectCols = `
 func (r *CustomerAPIKeyRepository) Create(ctx context.Context, key *models.CustomerAPIKey) error {
 	const q = `
 		INSERT INTO customer_api_keys (
-			id, customer_id, name, key_hash, allowed_ips, vm_ids, permissions
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			id, customer_id, name, key_hash, allowed_ips, vm_ids, permissions, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING ` + customerAPIKeySelectCols
 
 	row := r.db.QueryRow(ctx, q,
-		key.ID, key.CustomerID, key.Name, key.KeyHash, key.AllowedIPs, key.VMIDs, key.Permissions,
+		key.ID, key.CustomerID, key.Name, key.KeyHash, key.AllowedIPs, key.VMIDs, key.Permissions, key.ExpiresAt,
 	)
 
 	created, err := scanCustomerAPIKey(row)

@@ -106,7 +106,7 @@ func RegisterAdminRoutes(router *gin.RouterGroup, handler *AdminHandler, inAppNo
 		auth.GET("/csrf", middleware.CSRF(middleware.DefaultCSRFConfig()), handler.CSRF)
 		auth.POST("/login", middleware.LoginRateLimit(), handler.Login)
 		auth.POST("/verify-2fa", middleware.LoginRateLimit(), handler.Verify2FA)
-		auth.POST("/refresh", middleware.LoginRateLimit(), handler.RefreshToken)
+		auth.POST("/refresh", middleware.RefreshRateLimit(), handler.RefreshToken)
 	}
 
 	registerAdminLogoutRoutes(admin, handler)

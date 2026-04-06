@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/tabs";
 import { Archive, Camera, Loader2, Trash2, RefreshCcw, Download, CheckCircle2, XCircle, Clock } from "lucide-react";
 import type { Backup } from "@/lib/api-client";
+import { completeDialogAction } from "@/lib/dialog-action";
 import { getStatusLabel, formatBytes } from "@/lib/vm-utils";
 
 function getBackupStatusBadgeVariant(
@@ -93,23 +94,35 @@ export function VMBackupsTab({
 
   const handleCreate = async () => {
     if (!backupName.trim()) return;
-    await onCreateBackup(backupName.trim());
-    setShowCreateDialog(false);
-    setBackupName("");
+    await completeDialogAction(
+      () => onCreateBackup(backupName.trim()),
+      () => {
+        setShowCreateDialog(false);
+        setBackupName("");
+      },
+    );
   };
 
   const handleDelete = async () => {
     if (!selectedBackup) return;
-    await onDeleteBackup(selectedBackup.id);
-    setShowDeleteDialog(false);
-    setSelectedBackup(null);
+    await completeDialogAction(
+      () => onDeleteBackup(selectedBackup.id),
+      () => {
+        setShowDeleteDialog(false);
+        setSelectedBackup(null);
+      },
+    );
   };
 
   const handleRestore = async () => {
     if (!selectedBackup) return;
-    await onRestoreBackup(selectedBackup.id);
-    setShowRestoreDialog(false);
-    setSelectedBackup(null);
+    await completeDialogAction(
+      () => onRestoreBackup(selectedBackup.id),
+      () => {
+        setShowRestoreDialog(false);
+        setSelectedBackup(null);
+      },
+    );
   };
 
   const filteredBackups = methodFilter === "all"

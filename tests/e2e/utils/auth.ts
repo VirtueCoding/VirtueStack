@@ -60,22 +60,22 @@ export function generateTOTP(secret: string, period = 30, digits = 6): string {
  */
 export const CREDENTIALS = {
   admin: {
-    email: 'admin@virtuestack.local',
+    email: process.env.TEST_ADMIN_EMAIL || 'admin@test.virtuestack.local',
     password: 'AdminTest123!',
     totpSecret: process.env.TEST_ADMIN_TOTP_SECRET || 'JBSWY3DPEHPK3PXP',
   },
   adminWith2FA: {
-    email: '2fa-admin@virtuestack.local',
+    email: process.env.TEST_ADMIN_2FA_EMAIL || '2fa-admin@test.virtuestack.local',
     password: 'AdminTest123!',
     totpSecret: process.env.TEST_ADMIN_TOTP_SECRET || 'JBSWY3DPEHPK3PXP',
   },
   customer: {
-    email: 'customer@virtuestack.local',
+    email: process.env.TEST_CUSTOMER_EMAIL || 'customer@test.virtuestack.local',
     password: 'CustomerTest123!',
     totpSecret: null,
   },
   customerWith2FA: {
-    email: '2fa-customer@virtuestack.local',
+    email: process.env.TEST_CUSTOMER_2FA_EMAIL || '2fa-customer@test.virtuestack.local',
     password: 'CustomerTest123!',
     totpSecret: process.env.TEST_CUSTOMER_TOTP_SECRET || 'KRSXG5DSN5XW4ZLP',
   },

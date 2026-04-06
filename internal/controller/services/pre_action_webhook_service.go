@@ -15,6 +15,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	"github.com/AbuGosok/VirtueStack/internal/shared/crypto"
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 )
 
 // PreActionWebhookService evaluates pre-action webhooks before protected operations.
@@ -80,6 +81,15 @@ func (s *PreActionWebhookService) CheckPreAction(ctx context.Context, event stri
 }
 
 func (s *PreActionWebhookService) callWebhook(ctx context.Context, wh *models.PreActionWebhook, payload *PreActionPayload) error {
+	if err := util.ValidateHTTPSURL(wh.URL); err != nil {
+		s.logger.Warn("pre-action webhook has insecure URL",
+			"webhook_id", wh.ID, "webhook_name", wh.Name, "error", err, "fail_open", wh.FailOpen)
+		if wh.FailOpen {
+			return nil
+		}
+		return fmt.Errorf("insecure pre-action webhook URL for %q: %w", wh.Name, sharederrors.ErrForbidden)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.logger.Error("failed to marshal pre-action payload", "webhook_id", wh.ID, "error", err)

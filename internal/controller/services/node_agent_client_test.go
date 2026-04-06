@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -494,7 +495,7 @@ func TestNodeAgentGRPCClient_GuestFilesystemOpsRequireGuestOpSecret(t *testing.T
 	assert.Contains(t, err.Error(), "guest operation HMAC secret is required")
 }
 
-func TestNodeAgentGRPCClient_MigrateVMAlwaysUsesLiveFlag(t *testing.T) {
+func TestNodeAgentGRPCClient_MigrateVMHonorsRequestedLiveFlag(t *testing.T) {
 	t.Parallel()
 
 	const sourceNodeID = "source-node"
@@ -520,34 +521,67 @@ func TestNodeAgentGRPCClient_MigrateVMAlwaysUsesLiveFlag(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		opts *tasks.MigrateVMOptions
+		name         string
+		opts         *tasks.MigrateVMOptions
+		configureOpt func(t *testing.T, opts *tasks.MigrateVMOptions)
+		wantLive     bool
 	}{
 		{
-			name: "nil options still uses live migration",
-			opts: nil,
+			name:     "nil options default to live migration",
+			opts:     nil,
+			wantLive: true,
 		},
 		{
-			name: "target address option does not affect live flag",
+			name: "explicit false disables live migration",
 			opts: &tasks.MigrateVMOptions{
 				TargetNodeAddress: "10.0.0.2:8443",
 			},
+			configureOpt: func(t *testing.T, opts *tasks.MigrateVMOptions) {
+				t.Helper()
+				liveField := reflect.ValueOf(opts).Elem().FieldByName("Live")
+				require.True(t, liveField.IsValid(), "MigrateVMOptions should expose a Live flag")
+				if liveField.Kind() == reflect.Bool {
+					liveField.SetBool(false)
+					return
+				}
+				require.Equal(t, reflect.Ptr, liveField.Kind())
+				live := false
+				liveField.Set(reflect.ValueOf(&live))
+			},
+			wantLive: false,
 		},
 		{
-			name: "empty target address does not force cold request",
+			name: "explicit true keeps live migration",
 			opts: &tasks.MigrateVMOptions{
 				TargetNodeAddress: "",
 			},
+			configureOpt: func(t *testing.T, opts *tasks.MigrateVMOptions) {
+				t.Helper()
+				liveField := reflect.ValueOf(opts).Elem().FieldByName("Live")
+				require.True(t, liveField.IsValid(), "MigrateVMOptions should expose a Live flag")
+				if liveField.Kind() == reflect.Bool {
+					liveField.SetBool(true)
+					return
+				}
+				require.Equal(t, reflect.Ptr, liveField.Kind())
+				live := true
+				liveField.Set(reflect.ValueOf(&live))
+			},
+			wantLive: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.opts != nil && tt.configureOpt != nil {
+				tt.configureOpt(t, tt.opts)
+			}
+
 			server := &testNodeAgentServer{
 				migrateVMFunc: func(ctx context.Context, req *nodeagentpb.MigrateVMRequest) (*nodeagentpb.MigrateVMResponse, error) {
 					assert.Equal(t, vmID, req.GetVmId())
 					assert.Equal(t, "target-node:8443", req.GetDestinationNodeAddress())
-					assert.True(t, req.GetLive())
+					assert.Equal(t, tt.wantLive, req.GetLive())
 					return &nodeagentpb.MigrateVMResponse{
 						VmId:    req.GetVmId(),
 						Success: true,

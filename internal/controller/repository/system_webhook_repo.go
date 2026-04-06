@@ -16,6 +16,18 @@ type SystemWebhookRepository struct {
 	encryptionKey string
 }
 
+// WithEncryptionKey returns a repository bound to the same database handle but
+// using the provided encryption key for secret decode/encode operations.
+func (r *SystemWebhookRepository) WithEncryptionKey(encryptionKey string) *SystemWebhookRepository {
+	if r == nil {
+		return nil
+	}
+	return &SystemWebhookRepository{
+		db:            r.db,
+		encryptionKey: encryptionKey,
+	}
+}
+
 // NewSystemWebhookRepository creates a repository without secret encryption support.
 func NewSystemWebhookRepository(db DB) *SystemWebhookRepository {
 	return &SystemWebhookRepository{db: db}

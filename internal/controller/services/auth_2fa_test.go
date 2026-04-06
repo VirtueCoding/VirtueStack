@@ -122,6 +122,10 @@ func (m *mock2FACustomerRepo) GetPasswordResetByTokenHash(ctx context.Context, t
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *mock2FACustomerRepo) ResetPasswordWithToken(ctx context.Context, tokenHash, passwordHash string) (*models.PasswordReset, error) {
+	return nil, repository.ErrNoRowsAffected
+}
+
 func (m *mock2FACustomerRepo) MarkPasswordResetUsed(ctx context.Context, id string) error {
 	return nil
 }

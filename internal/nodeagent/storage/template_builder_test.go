@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -105,4 +106,39 @@ func TestTemplateBuilderBuild_CleansTempDirOnInstallConfigError(t *testing.T) {
 	entries, err := os.ReadDir(tmpRoot)
 	require.NoError(t, err)
 	assert.Empty(t, entries)
+}
+
+func TestTemplateBuilderBuild_RejectsAmbiguousISOSource(t *testing.T) {
+	testDir := templateBuilderTestDir(t)
+	isoPath := filepath.Join(testDir, "source.iso")
+	require.NoError(t, os.WriteFile(isoPath, []byte("iso"), 0o600))
+
+	builder := &TemplateBuilder{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	_, err := builder.Build(context.Background(), BuildConfig{
+		TemplateName: "Ambiguous ISO Source",
+		ISOPath:      isoPath,
+		ISOURL:       "http://127.0.0.1/source.iso",
+		OSFamily:     "debian",
+		OSVersion:    "12",
+		DiskSizeGB:   10,
+		MemoryMB:     1024,
+		VCPUs:        1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of iso_path or iso_url must be set")
+}
+
+func templateBuilderTestDir(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp(".", "template-builder-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(dir))
+	})
+
+	return dir
 }

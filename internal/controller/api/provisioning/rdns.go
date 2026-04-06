@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/common"
 	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
@@ -105,8 +106,12 @@ func (h *ProvisioningHandler) SetVMRDNS(c *gin.Context) {
 		return
 	}
 
-	if err := h.ipRepo.SetRDNS(c.Request.Context(), ipID, req.Hostname); err != nil {
-		h.logger.Error("failed to set rDNS", "ip_id", ipID, "vm_id", vmID, "hostname", req.Hostname, "error", err, "correlation_id", correlationID)
+	if err := common.UpdateRDNSRecord(c.Request.Context(), h.ipRepo, h.rdnsService, *ip, req.Hostname); err != nil {
+		h.logger.Error("failed to set rDNS", "ip_id", ipID, "vm_id", vmID, "ip_address", ip.Address, "hostname", req.Hostname, "error", err, "correlation_id", correlationID)
+		if sharederrors.Is(err, sharederrors.ErrServiceDown) {
+			middleware.RespondWithError(c, http.StatusBadGateway, "RDNS_UPDATE_FAILED", "Failed to update authoritative rDNS")
+			return
+		}
 		middleware.RespondWithError(c, http.StatusInternalServerError, "RDNS_UPDATE_FAILED", "Failed to update rDNS")
 		return
 	}

@@ -3,8 +3,17 @@
   "pages404": true,
   "appType": "app",
   "caseSensitive": false,
-  "basePath": "",
+  "basePath": "/admin",
   "redirects": [
+    {
+      "source": "/admin/",
+      "destination": "/admin",
+      "basePath": false,
+      "internal": true,
+      "priority": true,
+      "statusCode": 308,
+      "regex": "^/admin/$"
+    },
     {
       "source": "/:path+/",
       "destination": "/:path+",

@@ -20,30 +20,27 @@ declare(strict_types=1);
 $whmcsPath = dirname(__FILE__, 4);
 require_once $whmcsPath . '/init.php';
 require_once __DIR__ . '/lib/shared_functions.php';
+require_once __DIR__ . '/lib/webhook_request.php';
 
 use WHMCS\Database\Capsule;
 
 // Constants
 const WEBHOOK_SECRET_SETTING = 'VirtueStackWebhookSecret';
-const SIGNATURE_HEADER = 'HTTP_X_VIRTUESTACK_SIGNATURE';
+const PRIMARY_SIGNATURE_HEADER = 'HTTP_X_WEBHOOK_SIGNATURE';
+const LEGACY_SIGNATURE_HEADER = 'HTTP_X_VIRTUESTACK_SIGNATURE';
 const MAX_REQUEST_SIZE = 65536; // 64KB
 
 // Allowed webhook event types — reject anything not in this list.
 const ALLOWED_EVENTS = [
     'vm.created',
-    'vm.creation_failed',
     'vm.deleted',
-    'vm.suspended',
-    'vm.unsuspended',
-    'vm.resized',
     'vm.started',
     'vm.stopped',
     'vm.reinstalled',
     'vm.migrated',
     'backup.completed',
     'backup.failed',
-    'task.completed',
-    'task.failed',
+    'webhook.test',
 ];
 
 /**
@@ -64,18 +61,12 @@ function handleWebhook(): void
         return;
     }
 
-    // Read request body
-    $body = file_get_contents('php://input');
-    
-    if (empty($body)) {
-        sendResponse(400, ['error' => 'Empty request body']);
+    $requestBody = virtuestack_readWebhookBody(MAX_REQUEST_SIZE, virtuestack_getDeclaredContentLength());
+    if ($requestBody['error'] !== null) {
+        sendResponse($requestBody['status'], ['error' => $requestBody['error']]);
         return;
     }
-
-    if (strlen($body) > MAX_REQUEST_SIZE) {
-        sendResponse(413, ['error' => 'Request body too large']);
-        return;
-    }
+    $body = $requestBody['body'];
 
     // Parse JSON
     $data = json_decode($body, true);
@@ -85,77 +76,44 @@ function handleWebhook(): void
     }
 
     // Verify signature
-    $signature = $_SERVER[SIGNATURE_HEADER] ?? '';
+    $signature = getWebhookSignatureHeader();
     if (!verifyWebhookSignature($body, $signature)) {
         logWebhook('error', 'Invalid webhook signature');
         sendResponse(401, ['error' => 'Invalid signature']);
         return;
     }
 
-    // Process the event with input validation
-    $eventType = isset($data['event']) && is_string($data['event']) ? trim($data['event']) : '';
-    $taskId = isset($data['task_id']) && is_string($data['task_id']) ? trim($data['task_id']) : '';
-    $vmId = isset($data['vm_id']) && is_string($data['vm_id']) ? trim($data['vm_id']) : '';
-    $externalServiceId = isset($data['external_service_id']) && is_int($data['external_service_id']) ? $data['external_service_id'] : 0;
-    $result = isset($data['result']) && is_array($data['result']) ? $data['result'] : [];
-    $timestamp = isset($data['timestamp']) && is_string($data['timestamp']) ? trim($data['timestamp']) : date('c');
-
-    // Validate required fields
-    if (empty($eventType) || empty($taskId)) {
-        logWebhook('error', 'Missing required fields in webhook payload');
-        sendResponse(400, ['error' => 'Missing required fields: event, task_id']);
+    // Process the event with input validation.
+    $context = virtuestack_extractWebhookContext($data);
+    $validationError = virtuestack_validateWebhookContext($context, ALLOWED_EVENTS);
+    if ($validationError !== null) {
+        logWebhook('error', $validationError . ' in webhook payload');
+        sendResponse(400, ['error' => $validationError]);
         return;
     }
 
-    // Whitelist event types to reject unknown/injected values
-    if (!in_array($eventType, ALLOWED_EVENTS, true)) {
-        logWebhook('warning', 'Rejected unknown webhook event type: ' . substr($eventType, 0, 100));
-        sendResponse(400, ['error' => 'Unknown event type']);
-        return;
-    }
-
-    // Validate UUID format for task_id and vm_id when present
-    if (!preg_match(UUID_PATTERN, $taskId)) {
-        logWebhook('error', 'Invalid task_id format in webhook payload');
-        sendResponse(400, ['error' => 'Invalid task_id format']);
-        return;
-    }
-    if (!empty($vmId) && !preg_match(UUID_PATTERN, $vmId)) {
-        logWebhook('error', 'Invalid vm_id format in webhook payload');
-        sendResponse(400, ['error' => 'Invalid vm_id format']);
-        return;
-    }
+    $eventType = $context['event'];
+    $taskId = $context['task_id'];
+    $vmId = $context['vm_id'];
+    $externalServiceId = $context['external_service_id'];
+    $eventData = $context['event_data'];
+    $timestamp = $context['timestamp'] !== '' ? $context['timestamp'] : date('c');
 
     logWebhook('info', "Received webhook: {$eventType}", [
         'task_id' => $taskId,
         'vm_id' => $vmId,
         'service_id' => $externalServiceId,
+        'idempotency_key' => $context['idempotency_key'],
     ]);
 
     try {
         switch ($eventType) {
             case 'vm.created':
-                handleVMCreated($taskId, $vmId, $externalServiceId, $result);
-                break;
-
-            case 'vm.creation_failed':
-                handleVMCreationFailed($taskId, $externalServiceId, $data);
+                handleVMCreated($taskId, $vmId, $externalServiceId, $eventData);
                 break;
 
             case 'vm.deleted':
                 handleVMDeleted($vmId, $externalServiceId);
-                break;
-
-            case 'vm.suspended':
-                handleVMSuspended($vmId, $externalServiceId);
-                break;
-
-            case 'vm.unsuspended':
-                handleVMUnsuspended($vmId, $externalServiceId);
-                break;
-
-            case 'vm.resized':
-                handleVMResized($vmId, $externalServiceId, $result);
                 break;
 
             case 'vm.started':
@@ -190,7 +148,7 @@ function handleWebhook(): void
 
             case 'vm.migrated':
                 if ($externalServiceId > 0) {
-                    $newNodeId = $data['node_id'] ?? '';
+                    $newNodeId = $eventData['node_id'] ?? '';
                     // SECURITY: Validate node_id is a valid UUID before storing
                     if (!empty($newNodeId) && !VirtueStackHelper::isValidUuid($newNodeId)) {
                         logWebhook('warning', "Invalid node_id received in vm.migrated webhook", [
@@ -212,7 +170,7 @@ function handleWebhook(): void
 
             case 'backup.failed':
                 if ($externalServiceId > 0) {
-                    $errorMsg = $data['message'] ?? $data['error'] ?? 'Unknown error';
+                    $errorMsg = $eventData['message'] ?? $eventData['error'] ?? 'Unknown error';
                     logActivity("VirtueStack: Backup FAILED for service {$externalServiceId}: {$errorMsg}");
                     notifyAdmin(
                         'VirtueStack Backup Failure',
@@ -221,12 +179,8 @@ function handleWebhook(): void
                 }
                 break;
 
-            case 'task.completed':
-                handleTaskCompleted($taskId, $result);
-                break;
-
-            case 'task.failed':
-                handleTaskFailed($taskId, $data);
+            case 'webhook.test':
+                logWebhook('info', 'Received webhook test event');
                 break;
 
             default:
@@ -241,6 +195,22 @@ function handleWebhook(): void
         ]);
         sendResponse(500, ['error' => 'Processing error']);
     }
+}
+
+/**
+ * Read the webhook signature header while supporting the controller's current
+ * X-Webhook-Signature header and the legacy X-VirtueStack-Signature variant.
+ *
+ * @return string
+ */
+function getWebhookSignatureHeader(): string
+{
+    $signature = $_SERVER[PRIMARY_SIGNATURE_HEADER] ?? '';
+    if ($signature !== '') {
+        return $signature;
+    }
+
+    return $_SERVER[LEGACY_SIGNATURE_HEADER] ?? '';
 }
 
 /**

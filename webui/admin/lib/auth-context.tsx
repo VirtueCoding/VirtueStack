@@ -26,8 +26,13 @@ import {
 import {
   advanceAuthVersion,
   applyAuthenticatedUserIfCurrent,
+  applyRevalidationResultIfCurrent,
   canApplyBootstrapResult,
+  getAuthSyncAction,
   getCancelled2FAState,
+  getProfileBootstrapErrorState,
+  shouldPublishSessionInvalidated,
+  shouldRevalidateSession,
 } from "./auth-bootstrap";
 
 interface AuthState {
@@ -35,6 +40,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   requires2FA: boolean;
+  hasBootstrapError: boolean;
 }
 
 interface AuthContextType extends AuthState {
@@ -48,8 +54,7 @@ interface AuthContextType extends AuthState {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const AUTH_STATE_KEY = "admin_auth_state";
+const AUTH_SYNC_KEY = "virtuestack_admin_auth_sync";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -58,55 +63,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: false,
     isLoading: true,
     requires2FA: false,
+    hasBootstrapError: false,
   });
   const [tempToken, setTempToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const authVersionRef = useRef(0);
-
-  const persistState = useCallback(
-    (user: AdminUser | null, isAuthenticated: boolean) => {
-      if (typeof window === "undefined") return;
-      if (user && isAuthenticated) {
-        sessionStorage.setItem(
-          AUTH_STATE_KEY,
-          JSON.stringify({ user, isAuthenticated })
-        );
-      } else {
-        sessionStorage.removeItem(AUTH_STATE_KEY);
-      }
-    },
-    []
-  );
+  const lastRevalidatedAtRef = useRef(0);
+  const revalidationRequestIdRef = useRef(0);
+  const revalidationInFlightRef = useRef(false);
 
   const clearError = useCallback(() => setError(null), []);
+
+  const applyVerifiedSession = useCallback((user: AdminUser | null) => {
+    setState({
+      user,
+      isAuthenticated: user !== null,
+      isLoading: false,
+      requires2FA: false,
+      hasBootstrapError: false,
+    });
+    setTempToken(null);
+    setError(null);
+  }, []);
+
+  const publishAuthSyncEvent = useCallback(
+    (type: "logout" | "session-invalidated") => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      try {
+        window.localStorage.setItem(
+          AUTH_SYNC_KEY,
+          JSON.stringify({ type, at: Date.now() }),
+        );
+      } catch {
+        // Cross-tab sync is best-effort; the current tab state is already updated.
+      }
+    },
+    [],
+  );
 
   const setAuthenticatedUser = useCallback(
     (user: AdminUser) => {
       authVersionRef.current = advanceAuthVersion(authVersionRef.current);
-      setState({
-        user,
-        isAuthenticated: true,
-        isLoading: false,
-        requires2FA: false,
-      });
-      setTempToken(null);
-      setError(null);
-      persistState(user, true);
+      lastRevalidatedAtRef.current = Date.now();
+      applyVerifiedSession(user);
     },
-    [persistState]
+    [applyVerifiedSession]
   );
 
   const clearAuthenticatedState = useCallback(() => {
     authVersionRef.current = advanceAuthVersion(authVersionRef.current);
+    lastRevalidatedAtRef.current = Date.now();
     setState({
       user: null,
       isAuthenticated: false,
       isLoading: false,
       requires2FA: false,
+      hasBootstrapError: false,
     });
     setTempToken(null);
-    persistState(null, false);
-  }, [persistState]);
+    setError(null);
+  }, []);
 
   const reset2FA = useCallback(() => {
     authVersionRef.current = advanceAuthVersion(authVersionRef.current);
@@ -137,22 +156,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        lastRevalidatedAtRef.current = Date.now();
         if (!serverUser) {
-          sessionStorage.removeItem(AUTH_STATE_KEY);
-          setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
+          applyVerifiedSession(null);
           return;
         }
 
-        setState({
-          user: serverUser,
-          isAuthenticated: true,
-          isLoading: false,
-          requires2FA: false,
-        });
-        sessionStorage.setItem(
-          AUTH_STATE_KEY,
-          JSON.stringify({ user: serverUser, isAuthenticated: true }),
-        );
+        applyVerifiedSession(serverUser);
       } catch {
         if (
           !isActive ||
@@ -161,10 +171,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        lastRevalidatedAtRef.current = Date.now();
         // Network error or unexpected failure — clear stored state so we don't
         // grant access based on unvalidated cached data.
-        sessionStorage.removeItem(AUTH_STATE_KEY);
-        setState({ user: null, isAuthenticated: false, isLoading: false, requires2FA: false });
+        setError("Unable to verify your session right now. Please try again.");
+        setState(getProfileBootstrapErrorState());
       }
     };
 
@@ -173,7 +184,132 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [applyVerifiedSession]);
+
+  const revalidateSession = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nowMs = Date.now();
+    if (revalidationInFlightRef.current) {
+      return;
+    }
+    if (
+      !shouldRevalidateSession({
+        isAuthenticated: state.isAuthenticated,
+        isLoading: state.isLoading,
+        requires2FA: state.requires2FA,
+        hasBootstrapError: state.hasBootstrapError,
+        lastRevalidatedAtMs: lastRevalidatedAtRef.current,
+        nowMs,
+        force,
+      })
+    ) {
+      return;
+    }
+
+    lastRevalidatedAtRef.current = nowMs;
+    revalidationInFlightRef.current = true;
+    const revalidationVersion = authVersionRef.current;
+    const revalidationRequestId = revalidationRequestIdRef.current + 1;
+    revalidationRequestIdRef.current = revalidationRequestId;
+    const wasAuthenticated = state.isAuthenticated;
+
+    try {
+      const serverUser = await adminAuthApi.me();
+      if (!canApplyBootstrapResult(revalidationVersion, authVersionRef.current)) {
+        return;
+      }
+
+      applyRevalidationResultIfCurrent(
+        serverUser,
+        revalidationRequestId,
+        revalidationRequestIdRef.current,
+        (verifiedUser) => {
+          lastRevalidatedAtRef.current = Date.now();
+          if (!verifiedUser) {
+            clearAuthenticatedState();
+            if (shouldPublishSessionInvalidated({ isAuthenticated: wasAuthenticated })) {
+              publishAuthSyncEvent("session-invalidated");
+            }
+            router.replace("/login");
+            return;
+          }
+
+          applyVerifiedSession(verifiedUser);
+        },
+      );
+    } catch {
+      if (!canApplyBootstrapResult(revalidationVersion, authVersionRef.current)) {
+        return;
+      }
+
+      applyRevalidationResultIfCurrent(
+        true,
+        revalidationRequestId,
+        revalidationRequestIdRef.current,
+        () => {
+          lastRevalidatedAtRef.current = Date.now();
+          setError("Unable to verify your session right now. Please try again.");
+          setState(getProfileBootstrapErrorState());
+        },
+      );
+    } finally {
+      if (revalidationRequestIdRef.current === revalidationRequestId) {
+        revalidationInFlightRef.current = false;
+      }
+    }
+  }, [
+    applyVerifiedSession,
+    clearAuthenticatedState,
+    publishAuthSyncEvent,
+    router,
+    state.hasBootstrapError,
+    state.isAuthenticated,
+    state.isLoading,
+    state.requires2FA,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_SYNC_KEY) {
+        return;
+      }
+
+      if (getAuthSyncAction(event.newValue) !== "clear-auth") {
+        return;
+      }
+
+      clearAuthenticatedState();
+      router.replace("/login");
+    };
+
+    const handleWindowFocus = () => {
+      void revalidateSession({ force: true });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void revalidateSession({ force: true });
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [clearAuthenticatedState, revalidateSession, router]);
 
   const login = useCallback(
     async (credentials: LoginRequest) => {
@@ -294,6 +430,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await adminAuthApi.logout();
       clearAuthenticatedState();
+      publishAuthSyncEvent("logout");
       router.push("/login");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to log out. Please try again.";
@@ -305,7 +442,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         variant: "destructive",
       });
     }
-  }, [clearAuthenticatedState, router]);
+  }, [clearAuthenticatedState, publishAuthSyncEvent, router]);
 
   const value: AuthContextType = {
     ...state,

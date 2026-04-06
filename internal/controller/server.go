@@ -39,6 +39,13 @@ import (
 
 type fallbackTemplateStorage struct{}
 
+const monthlyInvoiceSchedulerLockID int64 = 0x5649525455455349
+
+type schedulerLock interface {
+	TryAdvisoryLock(ctx context.Context, lockID int64) (bool, error)
+	ReleaseAdvisoryLock(ctx context.Context, lockID int64) error
+}
+
 func (fallbackTemplateStorage) ImportTemplate(ctx context.Context, name, sourcePath string) (string, string, error) {
 	return "", "", fmt.Errorf("template storage backend is not configured")
 }
@@ -97,6 +104,8 @@ type Server struct {
 	adminBackupScheduleService *services.AdminBackupScheduleService
 	billingScheduler           *services.BillingScheduler
 	invoiceService             *services.BillingInvoiceService
+	invoiceSchedulerLock       schedulerLock
+	generateMonthlyInvoices    func(ctx context.Context, year int, month time.Month) (int, error)
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers

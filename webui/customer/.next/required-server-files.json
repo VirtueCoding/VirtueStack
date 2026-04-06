@@ -105,7 +105,7 @@
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit",
+    "outputFileTracingRoot": "/home/hiron",
     "cacheComponents": false,
     "cacheLife": {
       "default": {
@@ -305,12 +305,12 @@
     "bundlePagesRouterDependencies": false,
     "configFileName": "next.config.js",
     "turbopack": {
-      "root": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit"
+      "root": "/home/hiron"
     },
     "distDirRoot": ".next"
   },
   "appDir": "/home/hiron/.config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/customer",
-  "relativeAppDir": "webui/customer",
+  "relativeAppDir": ".config/superpowers/worktrees/VirtueStack/repo-wide-audit/webui/customer",
   "files": [
     ".next/routes-manifest.json",
     ".next/server/pages-manifest.json",

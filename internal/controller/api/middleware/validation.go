@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/AbuGosok/VirtueStack/internal/shared/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	googleuuid "github.com/google/uuid"
@@ -54,6 +55,13 @@ func registerCustomValidations(v *validator.Validate) {
 		return slugRegex.MatchString(fl.Field().String())
 	}); err != nil {
 		panic(fmt.Sprintf("register slug validation: %v", err))
+	}
+
+	// "https_url" validates URLs that must use HTTPS and include a host.
+	if err := v.RegisterValidation("https_url", func(fl validator.FieldLevel) bool {
+		return util.ValidateHTTPSURL(fl.Field().String()) == nil
+	}); err != nil {
+		panic(fmt.Sprintf("register https_url validation: %v", err))
 	}
 }
 
@@ -242,6 +250,8 @@ func fieldIssue(fe validator.FieldError) string {
 		return fmt.Sprintf("must be less than or equal to %s", fe.Param())
 	case "url":
 		return "must be a valid URL"
+	case "https_url":
+		return "must be a valid HTTPS URL"
 	default:
 		return fmt.Sprintf("failed validation rule %q", fe.Tag())
 	}

@@ -12,7 +12,7 @@ This guide explains how to run and maintain E2E tests for VirtueStack.
 ./scripts/setup-e2e.sh --start
 
 # 3. Run the tests
-cd tests/e2e && npm test
+cd tests/e2e && pnpm test
 
 # 4. Cleanup when done
 ./scripts/setup-e2e.sh --clean
@@ -81,24 +81,24 @@ The seed data creates these test users:
 
 ```bash
 # Run only admin tests
-npm run test:admin
+pnpm run test:admin
 
 # Run only customer tests
-npm run test:customer
+pnpm run test:customer
 
 # Run only auth tests
-npm run test:auth
+pnpm run test:auth
 
 # Run in headed mode (see browser)
-npm run test:headed
+pnpm run test:headed
 
 # Debug tests
-npm run test:debug
+pnpm run test:debug
 
 # Run on specific browser
-npm run test:chromium
-npm run test:firefox
-npm run test:webkit
+pnpm run test:chromium
+pnpm run test:firefox
+pnpm run test:webkit
 ```
 
 ## Test Data IDs
@@ -149,8 +149,8 @@ The GitHub Actions workflow `.github/workflows/e2e.yml` runs E2E tests on:
 # All tests on push to main
 git push origin main
 
-# Manual trigger with specific browsers
-gh workflow run e2e.yml -f browsers="chromium,firefox"
+# Manual trigger for one browser family across all UI/auth projects
+gh workflow run e2e.yml -f project_group="chromium"
 ```
 
 ## Mock Node Agent
@@ -333,18 +333,18 @@ await page.waitForResponse(resp =>
 ```bash
 # Regenerate auth state files
 cd tests/e2e
-npx playwright test --project=setup
+pnpm exec playwright test --project=setup-admin --project=setup-customer
 ```
 
 ## Debugging
 
 ```bash
 # Debug mode with Playwright Inspector
-npm run test:debug
+pnpm run test:debug
 
 # Generate test code by recording actions
-npm run codegen http://localhost:3000
+pnpm run codegen -- http://localhost:3000
 
 # View trace after failure
-npx playwright show-trace test-results/trace.zip
+pnpm exec playwright show-trace test-results/trace.zip
 ```

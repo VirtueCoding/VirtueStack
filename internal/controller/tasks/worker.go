@@ -15,20 +15,22 @@ import (
 	taskmetrics "github.com/AbuGosok/VirtueStack/internal/controller/metrics"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
 // JetStream constants.
 const (
-	StreamName         = "TASKS"
-	StreamSubject      = "tasks.>"
-	EventStreamName    = "EVENTS"
-	EventStreamSubject = "virtuestack.events.>"
-	ConsumerName       = "task-worker"
-	AckWait            = 5 * time.Minute
-	MaxDeliver         = 3
-	maxTaskRetries     = 3
+	StreamName          = "TASKS"
+	StreamSubject       = "tasks.>"
+	EventStreamName     = "EVENTS"
+	EventStreamSubject  = "virtuestack.events.>"
+	ConsumerName        = "task-worker"
+	AckWait             = 5 * time.Minute
+	AckProgressInterval = time.Minute
+	MaxDeliver          = 3
+	maxTaskRetries      = 3
 )
 
 const stuckTaskRecoveredMessage = "stuck task recovered after timeout"
@@ -58,6 +60,50 @@ func nakDelay(numDelivered uint64) time.Duration {
 // TaskHandler processes a task of a specific type.
 type TaskHandler func(ctx context.Context, task *models.Task) error
 
+type taskMessage interface {
+	payload() []byte
+	subjectName() string
+	ack() error
+	nakWithDelay(delay time.Duration) error
+	inProgress() error
+	metadata() (*nats.MsgMetadata, error)
+}
+
+type taskQueue interface {
+	AddStream(cfg *nats.StreamConfig, opts ...nats.JSOpt) (*nats.StreamInfo, error)
+	AddConsumer(stream string, cfg *nats.ConsumerConfig, opts ...nats.JSOpt) (*nats.ConsumerInfo, error)
+	QueueSubscribe(subj, queue string, cb nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error)
+	Publish(subj string, data []byte, opts ...nats.PubOpt) (*nats.PubAck, error)
+}
+
+type natsTaskMessage struct {
+	msg *nats.Msg
+}
+
+func (m natsTaskMessage) payload() []byte {
+	return m.msg.Data
+}
+
+func (m natsTaskMessage) subjectName() string {
+	return m.msg.Subject
+}
+
+func (m natsTaskMessage) ack() error {
+	return m.msg.Ack()
+}
+
+func (m natsTaskMessage) nakWithDelay(delay time.Duration) error {
+	return m.msg.NakWithDelay(delay)
+}
+
+func (m natsTaskMessage) inProgress() error {
+	return m.msg.InProgress()
+}
+
+func (m natsTaskMessage) metadata() (*nats.MsgMetadata, error) {
+	return m.msg.Metadata()
+}
+
 type workerTaskRepository interface {
 	FindStuckTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error)
 	RetryTask(ctx context.Context, taskID string) error
@@ -66,15 +112,17 @@ type workerTaskRepository interface {
 
 // Worker processes tasks from NATS JetStream.
 type Worker struct {
-	js       nats.JetStreamContext
-	dbPool   *pgxpool.Pool
-	taskRepo workerTaskRepository
-	handlers map[string]TaskHandler
-	logger   *slog.Logger
-	mu       sync.RWMutex
-	cancel   context.CancelFunc
-	eg       *errgroup.Group
-	egCtx    context.Context
+	js                  taskQueue
+	db                  repository.DB
+	taskRepo            workerTaskRepository
+	handlers            map[string]TaskHandler
+	logger              *slog.Logger
+	ackProgressInterval time.Duration
+	handlerTimeout      time.Duration
+	mu                  sync.RWMutex
+	cancel              context.CancelFunc
+	eg                  *errgroup.Group
+	egCtx               context.Context
 }
 
 // NewWorker creates a new task worker.
@@ -112,11 +160,13 @@ func NewWorker(js nats.JetStreamContext, dbPool *pgxpool.Pool, logger *slog.Logg
 	}
 
 	return &Worker{
-		js:       js,
-		dbPool:   dbPool,
-		taskRepo: repository.NewTaskRepository(dbPool),
-		handlers: make(map[string]TaskHandler),
-		logger:   logger.With("component", "task-worker"),
+		js:                  js,
+		db:                  dbPool,
+		taskRepo:            repository.NewTaskRepository(dbPool),
+		handlers:            make(map[string]TaskHandler),
+		logger:              logger.With("component", "task-worker"),
+		ackProgressInterval: AckProgressInterval,
+		handlerTimeout:      AckWait,
 	}, nil
 }
 
@@ -130,7 +180,7 @@ func (w *Worker) RegisterHandler(taskType string, handler TaskHandler) {
 
 // Start begins consuming tasks from the NATS JetStream stream.
 func (w *Worker) Start(ctx context.Context, numWorkers int) error {
-	ctx, cancel := context.WithCancel(ctx)
+	workerCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 
 	consumerConfig := &nats.ConsumerConfig{
@@ -161,7 +211,7 @@ func (w *Worker) Start(ctx context.Context, numWorkers int) error {
 		return fmt.Errorf("subscribing to tasks: %w", err)
 	}
 
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := errgroup.WithContext(workerCtx)
 	eg.SetLimit(numWorkers)
 	w.eg = eg
 	w.egCtx = egCtx
@@ -215,20 +265,43 @@ func (w *Worker) Stop() {
 // handleMessage returns a message handler for NATS messages.
 func (w *Worker) handleMessage() func(msg *nats.Msg) {
 	return func(msg *nats.Msg) {
-		w.eg.Go(func() error {
-			return w.processMessage(w.egCtx, msg)
-		})
+		processCtx := w.egCtx
+		if processCtx == nil {
+			processCtx = context.Background()
+		}
+
+		run := func() error {
+			if err := w.processMessage(processCtx, natsTaskMessage{msg: msg}); err != nil {
+				w.logger.Warn("task processing returned error",
+					"subject", msg.Subject,
+					"error", err,
+				)
+			}
+			return nil
+		}
+
+		if w.eg != nil {
+			w.eg.Go(run)
+			return
+		}
+
+		if err := run(); err != nil {
+			w.logger.Warn("task processing returned error outside worker group",
+				"subject", msg.Subject,
+				"error", err,
+			)
+		}
 	}
 }
 
-func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
+func (w *Worker) processMessage(ctx context.Context, msg taskMessage) error {
 	var task models.Task
-	if err := json.Unmarshal(msg.Data, &task); err != nil {
+	if err := json.Unmarshal(msg.payload(), &task); err != nil {
 		w.logger.Error("failed to unmarshal task",
 			"error", err,
-			"subject", msg.Subject,
+			"subject", msg.subjectName(),
 		)
-		if err := msg.Ack(); err != nil {
+		if err := msg.ack(); err != nil {
 			w.logger.Warn("failed to ack malformed task message", "error", err)
 		}
 		return nil
@@ -243,20 +316,35 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 
 	taskStart := time.Now()
 
-	handlerCtx, handlerCancel := context.WithTimeout(ctx, 5*time.Minute)
+	handlerTimeout := w.handlerTimeout
+	if handlerTimeout <= 0 {
+		handlerTimeout = AckWait
+	}
+
+	handlerCtx, handlerCancel := context.WithTimeout(ctx, handlerTimeout)
 	defer handlerCancel()
 
-	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusRunning, nil, nil); err != nil {
+	runningStatusCtx, runningStatusCancel := context.WithTimeout(ctx, handlerTimeout)
+	defer runningStatusCancel()
+
+	if err := w.updateTaskStatus(runningStatusCtx, &task, models.TaskStatusRunning, nil, nil); err != nil {
+		if errors.Is(err, sharederrors.ErrNoRowsAffected) {
+			logger.Warn("dropping orphaned task message with no backing task row")
+			if ackErr := msg.ack(); ackErr != nil {
+				logger.Warn("failed to ack orphaned task message", "error", ackErr)
+			}
+			return nil
+		}
 		logger.Error("failed to update task status to running", "error", err)
 		// Determine backoff delay from delivery count.
-		var nakDelay_ time.Duration
-		if meta, metaErr := msg.Metadata(); metaErr == nil {
-			nakDelay_ = nakDelay(meta.NumDelivered)
+		var backoffDelay time.Duration
+		if meta, metaErr := msg.metadata(); metaErr == nil {
+			backoffDelay = nakDelay(meta.NumDelivered)
 		} else {
-			nakDelay_ = nakDelays[0]
+			backoffDelay = nakDelays[0]
 		}
-		if err := msg.NakWithDelay(nakDelay_); err != nil {
-			logger.Warn("failed to nak task message", "error", err)
+		if nakErr := msg.nakWithDelay(backoffDelay); nakErr != nil {
+			logger.Warn("failed to nak task message", "error", nakErr)
 		}
 		return err
 	}
@@ -268,53 +356,162 @@ func (w *Worker) processMessage(ctx context.Context, msg *nats.Msg) error {
 	if !ok {
 		errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
 		logger.Error(errMsg)
-		// Error is intentionally discarded: the task is already being failed and the
-		// handler context may be near expiry; the outer Ack() below ensures the message
-		// is removed from the queue regardless of this status-update outcome.
-		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &errMsg); updateErr != nil {
+		if updateErr := w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, &errMsg); updateErr != nil {
 			logger.Warn("failed to persist missing-handler task status", "error", updateErr)
+			return updateErr
 		}
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-		if err := msg.Ack(); err != nil {
+		if err := msg.ack(); err != nil {
 			logger.Warn("failed to ack task message for missing handler", "error", err)
 		}
 		return nil
 	}
 
+	stopAckProgress := w.startAckProgress(handlerCtx, msg, task.ID, logger)
+	defer stopAckProgress()
+
 	err := handler(handlerCtx, &task)
 	if err != nil {
 		logger.Error("task handler failed", "error", err)
-		handlerErrMsg := err.Error()
-		if updateErr := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusFailed, nil, &handlerErrMsg); updateErr != nil {
-			logger.Error("failed to update task status to failed", "error", updateErr)
-		}
 		taskmetrics.TasksTotal.WithLabelValues(task.Type, "failed").Inc()
 		taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
-		// Use exponential backoff when NAK-ing failed tasks.
-		var nakDelay_ time.Duration
-		if meta, metaErr := msg.Metadata(); metaErr == nil {
-			nakDelay_ = nakDelay(meta.NumDelivered)
-		} else {
-			nakDelay_ = nakDelays[0]
+
+		retryable, retryDelay, retryDecisionErr := taskRetryDecision(msg)
+		if retryDecisionErr != nil {
+			logger.Warn("failed to read task delivery metadata; failing closed", "error", retryDecisionErr)
 		}
-		if err := msg.NakWithDelay(nakDelay_); err != nil {
-			logger.Warn("failed to nak task message after handler failure", "error", err)
+		if retryable {
+			if updateErr := w.resetTaskForRetry(ctx, &task); updateErr != nil {
+				logger.Error("failed to reset task state for retry", "error", updateErr)
+				return err
+			}
+			if nakErr := msg.nakWithDelay(retryDelay); nakErr != nil {
+				logger.Warn("failed to nak task message after handler failure", "error", nakErr)
+			}
+			return err
+		}
+
+		handlerErrMsg := err.Error()
+		if updateErr := w.updateTaskStatus(ctx, &task, models.TaskStatusFailed, nil, &handlerErrMsg); updateErr != nil {
+			logger.Error("failed to update task status to failed", "error", updateErr)
+			return err
+		}
+		if ackErr := msg.ack(); ackErr != nil {
+			logger.Warn("failed to ack task message after terminal handler failure", "error", ackErr)
 		}
 		return err
 	}
 
-	if err := w.updateTaskStatus(handlerCtx, &task, models.TaskStatusCompleted, task.Result, nil); err != nil {
+	if err := w.updateTaskStatus(ctx, &task, models.TaskStatusCompleted, task.Result, nil); err != nil {
 		logger.Error("failed to update task status to completed", "error", err)
+		return err
 	}
 
 	taskmetrics.TasksTotal.WithLabelValues(task.Type, "completed").Inc()
 	taskmetrics.TaskDuration.WithLabelValues(task.Type).Observe(time.Since(taskStart).Seconds())
 
 	logger.Info("task completed successfully")
-	if err := msg.Ack(); err != nil {
+	if err := msg.ack(); err != nil {
 		logger.Warn("failed to ack task message after completion", "error", err)
 	}
+	return nil
+}
+
+func taskRetryDecision(msg taskMessage) (bool, time.Duration, error) {
+	meta, err := msg.metadata()
+	if err != nil {
+		return false, 0, fmt.Errorf("reading task delivery metadata: %w", err)
+	}
+	if meta.NumDelivered >= MaxDeliver {
+		return false, 0, nil
+	}
+	return true, nakDelay(meta.NumDelivered), nil
+}
+
+func (w *Worker) startAckProgress(ctx context.Context, msg taskMessage, taskID string, logger *slog.Logger) func() {
+	interval := w.ackProgressInterval
+	if interval <= 0 {
+		interval = AckProgressInterval
+	}
+
+	progressCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-progressCtx.Done():
+				return
+			case <-ticker.C:
+				if err := msg.inProgress(); err != nil {
+					logger.Warn("failed to extend task ack deadline", "error", err)
+				}
+				if err := w.touchRunningTask(progressCtx, taskID); err != nil {
+					logger.Warn("failed to touch running task heartbeat", "error", err)
+				}
+			}
+		}
+	}()
+
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func (w *Worker) touchRunningTask(ctx context.Context, taskID string) error {
+	const query = `UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'running'`
+	tag, err := w.db.Exec(ctx, query, taskID)
+	if err != nil {
+		return fmt.Errorf("touching running task heartbeat: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return sharederrors.ErrNoRowsAffected
+	}
+	return nil
+}
+
+func (w *Worker) resetTaskForRetry(ctx context.Context, task *models.Task) error {
+	now := time.Now().UTC()
+
+	const query = `
+		UPDATE tasks
+		SET status = $1,
+		    result = NULL,
+		    error_message = NULL,
+		    progress = 0,
+		    progress_message = NULL,
+		    started_at = NULL,
+		    completed_at = NULL,
+		    updated_at = $2,
+		    retry_count = retry_count + 1
+		WHERE id = $3
+	`
+
+	tag, err := w.db.Exec(ctx, query, models.TaskStatusPending, now, task.ID)
+	if err != nil {
+		return fmt.Errorf("resetting task for retry: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return sharederrors.ErrNoRowsAffected
+	}
+
+	task.Status = models.TaskStatusPending
+	task.Result = nil
+	task.ErrorMessage = ""
+	task.Progress = 0
+	task.ProgressMessage = ""
+	task.StartedAt = nil
+	task.CompletedAt = nil
+	task.UpdatedAt = now
+	task.RetryCount++
+
 	return nil
 }
 
@@ -338,10 +535,6 @@ func (w *Worker) PublishTask(ctx context.Context, task *models.Task) error {
 	return nil
 }
 
-// updateTaskStatus updates the task status in the database.
-// errMsg must be nil when there is no error message so that COALESCE($3, error_message)
-// correctly preserves the existing column value instead of overwriting it with an
-// empty string. Pass a non-nil pointer only when there is an actual error to record.
 func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status models.TaskStatus, result json.RawMessage, errMsg *string) error {
 	now := time.Now().UTC()
 
@@ -349,24 +542,42 @@ func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status
 		UPDATE tasks
 		SET status = $1,
 		    result = COALESCE($2, result),
-		    error_message = COALESCE($3, error_message),
+		    error_message = $3,
 		    started_at = COALESCE($4, started_at),
 		    completed_at = COALESCE($5, completed_at),
 		    updated_at = $6
 		WHERE id = $7
 	`
-
-	var startedAt, completedAt *time.Time
-	if status == models.TaskStatusRunning {
-		startedAt = &now
-	} else if status == models.TaskStatusCompleted || status == models.TaskStatusFailed {
-		completedAt = &now
+	if status == models.TaskStatusFailed {
+		query = `
+		UPDATE tasks
+		SET status = $1,
+		    result = COALESCE($2, result),
+		    error_message = $3,
+		    started_at = COALESCE($4, started_at),
+		    completed_at = COALESCE($5, completed_at),
+		    updated_at = $6,
+		    retry_count = retry_count + 1
+		WHERE id = $7
+	`
 	}
 
-	_, err := w.dbPool.Exec(ctx, query,
+	var startedAt, completedAt *time.Time
+	var errorMessage any = errMsg
+	if status == models.TaskStatusRunning {
+		startedAt = &now
+		errorMessage = nil
+	} else if status == models.TaskStatusCompleted || status == models.TaskStatusFailed {
+		completedAt = &now
+		if status == models.TaskStatusCompleted {
+			errorMessage = nil
+		}
+	}
+
+	tag, err := w.db.Exec(ctx, query,
 		status,
 		result,
-		errMsg,
+		errorMessage,
 		startedAt,
 		completedAt,
 		now,
@@ -375,8 +586,14 @@ func (w *Worker) updateTaskStatus(ctx context.Context, task *models.Task, status
 	if err != nil {
 		return fmt.Errorf("updating task status: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return sharederrors.ErrNoRowsAffected
+	}
 
 	task.Status = status
+	if status == models.TaskStatusFailed {
+		task.RetryCount++
+	}
 	return nil
 }
 
@@ -404,6 +621,14 @@ func (w *Worker) recoverStuckTasks(ctx context.Context, stuckThreshold time.Dura
 			logger.Error("failed to retry stuck task", "error", retryErr)
 			continue
 		}
+		task.Status = models.TaskStatusPending
+		if publishErr := w.PublishTask(ctx, task); publishErr != nil {
+			logger.Error("failed to republish recovered stuck task", "error", publishErr)
+			if setFailedErr := w.taskRepo.SetFailed(ctx, task.ID, publishErr.Error()); setFailedErr != nil {
+				logger.Error("failed to mark recovered task failed after republish error", "error", setFailedErr)
+			}
+			continue
+		}
 		logger.Warn("stuck task reset to pending and retry_count incremented")
 	}
 }
@@ -415,7 +640,7 @@ func (w *Worker) CreateTaskRecord(ctx context.Context, task *models.Task) error 
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 
-	_, err := w.dbPool.Exec(ctx, query,
+	_, err := w.db.Exec(ctx, query,
 		task.ID,
 		task.Type,
 		task.Status,
@@ -435,14 +660,15 @@ func (w *Worker) CreateTaskRecord(ctx context.Context, task *models.Task) error 
 // GetTask retrieves a task by ID from the database.
 func (w *Worker) GetTask(ctx context.Context, taskID string) (*models.Task, error) {
 	query := `
-		SELECT id, type, status, payload, result, error_message, progress, 
-		       idempotency_key, created_by, created_at, started_at, completed_at
+		SELECT id, type, status, payload, result, error_message, progress,
+		       progress_message, idempotency_key, created_by, created_at, started_at, completed_at, updated_at
 		FROM tasks
 		WHERE id = $1
 	`
 
 	var task models.Task
-	err := w.dbPool.QueryRow(ctx, query, taskID).Scan(
+	var progressMessage *string
+	err := w.db.QueryRow(ctx, query, taskID).Scan(
 		&task.ID,
 		&task.Type,
 		&task.Status,
@@ -450,14 +676,19 @@ func (w *Worker) GetTask(ctx context.Context, taskID string) (*models.Task, erro
 		&task.Result,
 		&task.ErrorMessage,
 		&task.Progress,
+		&progressMessage,
 		&task.IdempotencyKey,
 		&task.CreatedBy,
 		&task.CreatedAt,
 		&task.StartedAt,
 		&task.CompletedAt,
+		&task.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("getting task: %w", err)
+	}
+	if progressMessage != nil {
+		task.ProgressMessage = *progressMessage
 	}
 
 	return &task, nil
@@ -472,7 +703,7 @@ func (w *Worker) UpdateTaskProgress(ctx context.Context, taskID string, progress
 	}
 
 	query := `UPDATE tasks SET progress = $1, updated_at = $2 WHERE id = $3`
-	_, err := w.dbPool.Exec(ctx, query, progress, time.Now().UTC(), taskID)
+	_, err := w.db.Exec(ctx, query, progress, time.Now().UTC(), taskID)
 	if err != nil {
 		return fmt.Errorf("updating task progress: %w", err)
 	}

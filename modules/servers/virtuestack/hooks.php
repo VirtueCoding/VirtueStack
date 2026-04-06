@@ -413,6 +413,7 @@ add_hook('IntelligentSearchUpdate', 1, function (array $vars) {
 function getPendingProvisioningServices(): array
 {
     $services = [];
+    $pendingStatuses = virtuestack_getAsyncPollableProvisioningStatuses();
     
     try {
         $rows = Capsule::table('tblhosting')
@@ -436,15 +437,16 @@ function getPendingProvisioningServices(): array
             ->where('tblproducts.servertype', 'virtuestack')
             ->where('tblservers.disabled', 0)
             ->where('tblhosting.domainstatus', 'Active')
-            ->where(function ($query) {
-                $query->where('cfv_status.value', 'pending')
+            ->where(function ($query) use ($pendingStatuses) {
+                $query->whereIn('cfv_status.value', $pendingStatuses)
                       ->orWhereNull('cfv_status.value');
             })
             ->select(
                 'tblhosting.id AS service_id',
                 'tblhosting.userid AS client_id',
                 'cfv_task.value AS task_id',
-                'cfv_vm.value AS vm_id'
+                'cfv_vm.value AS vm_id',
+                'cfv_status.value AS provisioning_status'
             )
             ->get();
 
@@ -454,6 +456,7 @@ function getPendingProvisioningServices(): array
                 'client_id' => (int) $row->client_id,
                 'task_id' => $row->task_id,
                 'vm_id' => $row->vm_id,
+                'provisioning_status' => is_string($row->provisioning_status ?? null) ? $row->provisioning_status : '',
             ];
         }
     } catch (\Exception $e) {
@@ -504,6 +507,8 @@ function handleProvisioningComplete(int $serviceId, array $task, ApiClient $clie
 {
     $result = $task['result'] ?? [];
     $vmId = $result['vm_id'] ?? getServiceField($serviceId, 'vm_id');
+    $statusUpdates = virtuestack_getAsyncTaskCompletionUpdates(getServiceField($serviceId, 'provisioning_status'));
+    $taskType = isset($task['type']) && is_string($task['type']) ? $task['type'] : '';
     
     // Update VM ID if provided
     if (!empty($vmId)) {
@@ -530,17 +535,17 @@ function handleProvisioningComplete(int $serviceId, array $task, ApiClient $clie
             updateServiceField($serviceId, 'vm_password', $encryptedPassword);
         }
 
-        // Update status
-        updateServiceField($serviceId, 'provisioning_status', 'active');
-        updateServiceField($serviceId, 'task_id', '');
+        // Update async task state after refreshable VM details have been stored.
+        virtuestack_applyServiceFieldUpdates($serviceId, $statusUpdates);
 
         logActivity("VirtueStack: VM provisioning completed for service {$serviceId}, VM {$vmId}");
-        
-        // Send welcome email with VM details
-        sendProvisioningEmail($serviceId, [
-            'vm_id' => $vmId,
-            'ip_address' => $primaryIp ?? '',
-        ]);
+
+        if (virtuestack_shouldSendProvisioningWelcomeEmail($taskType)) {
+            sendProvisioningEmail($serviceId, [
+                'vm_id' => $vmId,
+                'ip_address' => $primaryIp ?? '',
+            ]);
+        }
     } catch (\Exception $e) {
         logActivity("VirtueStack: Error fetching VM info for service {$serviceId}: " . $e->getMessage());
     }
@@ -555,9 +560,12 @@ function handleProvisioningComplete(int $serviceId, array $task, ApiClient $clie
 function handleProvisioningFailed(int $serviceId, array $task): void
 {
     $errorMessage = $task['message'] ?? 'Unknown error';
-    
-    updateServiceField($serviceId, 'provisioning_status', 'error');
-    updateServiceField($serviceId, 'provisioning_error', $errorMessage);
+    $currentStatus = getServiceField($serviceId, 'provisioning_status');
+
+    virtuestack_applyServiceFieldUpdates(
+        $serviceId,
+        virtuestack_getAsyncTaskFailureUpdates($currentStatus, $errorMessage)
+    );
 
     logActivity("VirtueStack: VM provisioning FAILED for service {$serviceId}: {$errorMessage}");
     

@@ -4,6 +4,7 @@ import { Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { isAdminNavItemActive } from "@/lib/pathname";
 import { cn } from "@/lib/utils";
 import { Button } from "@virtuestack/ui";
 import {
@@ -41,7 +42,7 @@ export function MobileNav() {
               </p>
               {group.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href;
+                const isActive = isAdminNavItemActive(pathname, item.href);
                 return (
                   <SheetClose asChild key={item.href}>
                     <Link

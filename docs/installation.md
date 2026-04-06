@@ -122,11 +122,16 @@ Create `.env` file (use strong secrets in production):
 ```bash
 # Generate strong secrets
 JWT_SECRET=$(openssl rand -base64 48)
-ENCRYPTION_KEY=$(openssl rand -base64 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
+GUEST_OP_HMAC_SECRET=$(openssl rand -base64 48)
 NATS_AUTH_TOKEN=$(openssl rand -base64 32)
 POSTGRES_PASSWORD=$(openssl rand -base64 24)
 
 cat > .env << EOF
+# Controller runtime URLs (used by validation and non-Docker controller runs)
+DATABASE_URL=postgresql://virtuestack:${POSTGRES_PASSWORD}@postgres:5432/virtuestack?sslmode=disable
+NATS_URL=nats://${NATS_AUTH_TOKEN}@nats:4222
+
 # PostgreSQL
 POSTGRES_USER=virtuestack
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -140,6 +145,9 @@ JWT_SECRET=${JWT_SECRET}
 
 # Encryption Key (32 bytes for AES-256-GCM)
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+# Shared HMAC secret for guest-agent operations (must match every node agent)
+GUEST_OP_HMAC_SECRET=${GUEST_OP_HMAC_SECRET}
 
 # Logging
 LOG_LEVEL=info
@@ -163,11 +171,15 @@ chmod 600 .env
 Before starting services, validate required configuration:
 
 ```bash
+set -a
+. .env
+set +a
 ./scripts/validate-env.sh
 ```
 
 This checks required variables and validates critical formats such as:
 - `ENCRYPTION_KEY` must be a 64-character hex string
+- `GUEST_OP_HMAC_SECRET` must be set and shared with every node agent
 - optional `REDIS_URL` must start with `redis://` when set
 - optional `SMTP_PORT` must be a positive integer when set
 
@@ -204,7 +216,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 ```bash
 make docker-build
 # Or manually:
-docker compose build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 ```
 
 #### Step 5: Start Services
@@ -212,7 +224,7 @@ docker compose build
 ```bash
 make docker-up
 # Or:
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 #### Step 6: Run Database Migrations
@@ -642,12 +654,15 @@ make deps
 
 # Create development .env
 cat > .env << EOF
+DATABASE_URL=postgresql://virtuestack:virtuestack_dev@localhost:5432/virtuestack?sslmode=disable
+NATS_URL=nats://dev_token@localhost:4222
 POSTGRES_USER=virtuestack
 POSTGRES_PASSWORD=virtuestack_dev
 POSTGRES_DB=virtuestack
 NATS_AUTH_TOKEN=dev_token
 JWT_SECRET=development_jwt_secret_minimum_32_chars
-ENCRYPTION_KEY=development_encryption_key_32b
+ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+GUEST_OP_HMAC_SECRET=development_guest_op_secret_minimum_32_chars
 LOG_LEVEL=debug
 NEXT_PUBLIC_API_URL=/api/v1
 SSL_CERT_PATH=./ssl/cert.pem
@@ -663,8 +678,8 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 # Build and start
-make docker-build
-make docker-up
+make docker-dev-build
+make docker-dev-up
 
 # Run migrations
 make migrate-up
@@ -674,7 +689,8 @@ make build-controller
 DATABASE_URL="postgresql://virtuestack:virtuestack_dev@localhost:5432/virtuestack?sslmode=disable" \
 NATS_URL="nats://dev_token@localhost:4222" \
 JWT_SECRET="development_jwt_secret_minimum_32_chars" \
-ENCRYPTION_KEY="development_encryption_key_32b" \
+ENCRYPTION_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" \
+GUEST_OP_HMAC_SECRET="development_guest_op_secret_minimum_32_chars" \
 ./bin/controller
 ```
 
@@ -700,8 +716,9 @@ The E2E test infrastructure provides a complete test environment with mock servi
 ```bash
 # 1. Install dependencies
 cd tests/e2e
-npm ci
-npx playwright install --with-deps chromium
+corepack enable
+pnpm install --frozen-lockfile
+pnpm exec playwright install --with-deps chromium
 
 # 2. Generate test environment
 ./scripts/setup-e2e.sh
@@ -716,7 +733,7 @@ make migrate-up
 psql postgresql://virtuestack:virtuestack_test_password@localhost:5432/virtuestack < migrations/test_seed.sql
 
 # 6. Run tests
-npm test
+pnpm test
 ```
 
 #### Test Architecture
@@ -909,7 +926,7 @@ make test-native
 
 # E2E tests
 cd tests/e2e
-npm test
+pnpm test
 ```
 
 ---
@@ -997,7 +1014,7 @@ sudo apt install -y libvirt0 librbd1 librados2
 docker compose logs -f
 
 # Restart a specific service
-docker compose restart controller
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart controller
 
 # Access database
 docker exec -it virtuestack-postgres psql -U virtuestack -d virtuestack
@@ -1006,12 +1023,12 @@ docker exec -it virtuestack-postgres psql -U virtuestack -d virtuestack
 docker exec virtuestack-nats nats stream info TASKS
 
 # Rebuild a specific image
-docker compose build --no-cache controller
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache controller
 
 # Full cleanup and rebuild
-docker compose down -v
-docker compose build --no-cache
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ---

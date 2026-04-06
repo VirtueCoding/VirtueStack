@@ -39,6 +39,8 @@ function base64URLEncode(buffer: Uint8Array): string {
 }
 
 const OAUTH_STORAGE_KEY = "oauth_pkce_state";
+const OAUTH_STORAGE_KEY_PREFIX = `${OAUTH_STORAGE_KEY}:`;
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 export type OAuthFlowMode = "login" | "link";
 
@@ -54,8 +56,9 @@ export interface OAuthStoredState {
 
 /** Persist PKCE state before redirecting to the OAuth provider. */
 export function storeOAuthState(params: Omit<OAuthStoredState, "timestamp">): void {
+  cleanupExpiredOAuthStates();
   const data: OAuthStoredState = { ...params, timestamp: Date.now() };
-  sessionStorage.setItem(OAUTH_STORAGE_KEY, JSON.stringify(data));
+  sessionStorage.setItem(getOAuthStorageKey(params.state), JSON.stringify(data));
 }
 
 /**
@@ -66,9 +69,13 @@ export function storeOAuthState(params: Omit<OAuthStoredState, "timestamp">): vo
 export function retrieveOAuthState(
   expectedState: string
 ): OAuthStoredState | null {
-  const raw = sessionStorage.getItem(OAUTH_STORAGE_KEY);
+  cleanupExpiredOAuthStates();
+
+  const storageKey = getOAuthStorageKey(expectedState);
+  const raw = sessionStorage.getItem(storageKey) ?? sessionStorage.getItem(OAUTH_STORAGE_KEY);
   if (!raw) return null;
 
+  sessionStorage.removeItem(storageKey);
   sessionStorage.removeItem(OAUTH_STORAGE_KEY);
 
   try {
@@ -76,8 +83,48 @@ export function retrieveOAuthState(
     // Validate state matches (CSRF protection)
     if (stored.state !== expectedState) return null;
     // Expire after 10 minutes
-    if (Date.now() - stored.timestamp > 10 * 60 * 1000) return null;
+    if (Date.now() - stored.timestamp > OAUTH_STATE_MAX_AGE_MS) return null;
     return stored;
+  } catch {
+    return null;
+  }
+}
+
+function getOAuthStorageKey(state: string): string {
+  return `${OAUTH_STORAGE_KEY_PREFIX}${state}`;
+}
+
+function cleanupExpiredOAuthStates(): void {
+  const now = Date.now();
+
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index);
+    if (!key || !key.startsWith(OAUTH_STORAGE_KEY_PREFIX)) continue;
+
+    const raw = sessionStorage.getItem(key);
+    if (!raw) {
+      sessionStorage.removeItem(key);
+      continue;
+    }
+
+    const stored = parseStoredState(raw);
+    if (!stored || now - stored.timestamp > OAUTH_STATE_MAX_AGE_MS) {
+      sessionStorage.removeItem(key);
+    }
+  }
+
+  const legacyRaw = sessionStorage.getItem(OAUTH_STORAGE_KEY);
+  if (!legacyRaw) return;
+
+  const legacyStored = parseStoredState(legacyRaw);
+  if (!legacyStored || now - legacyStored.timestamp > OAUTH_STATE_MAX_AGE_MS) {
+    sessionStorage.removeItem(OAUTH_STORAGE_KEY);
+  }
+}
+
+function parseStoredState(raw: string): OAuthStoredState | null {
+  try {
+    return JSON.parse(raw) as OAuthStoredState;
   } catch {
     return null;
   }

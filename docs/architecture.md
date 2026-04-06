@@ -621,12 +621,12 @@ All three APIs share the same Go binary but are separated by route prefix and mi
 /api/v1/provisioning/*   → API Key auth → Provisioning handlers
 /api/v1/customer/*       → JWT auth → Customer handlers (tenant-isolated)
 /api/v1/admin/*          → JWT + 2FA auth → Admin handlers (full access)
-/ws/vnc/{vm_id}          → JWT → WebSocket VNC proxy
-/ws/serial/{vm_id}       → JWT → WebSocket serial proxy
+/ws/vnc/{vm_id}          → Customer auth + vm:power scope → WebSocket VNC proxy
+/ws/serial/{vm_id}       → Customer auth + vm:power scope → WebSocket serial proxy
 /ws/status               → JWT → Real-time VM status stream
 /health                  → No auth → Liveness check
 /ready                   → No auth → Readiness check
-/metrics                 → Internal → Prometheus metrics
+/metrics (dedicated metrics listener, default 127.0.0.1:9091) → Internal → Prometheus metrics
 ```
 
 ### Authentication Model
@@ -766,15 +766,17 @@ Both Admin and Customer WebUIs are Next.js 16 applications served as Docker cont
 
 ```
 1. Customer clicks "Console" in WebUI
-2. WebUI requests one-time console token: POST /api/v1/customer/vms/{id}/console-token
-3. Controller validates ownership, generates short-lived token (60s expiry, single-use)
-4. Controller returns: { token: "abc123", type: "vnc"|"serial" }
-5. WebUI connects: wss://controller/ws/vnc/{vm_id}?token=abc123
-6. Controller validates token, looks up VM's Node Agent
+2. WebUI requests console access details when needed: POST /api/v1/customer/vms/{id}/console-token
+3. Controller validates ownership and returns the direct authenticated WebSocket URL
+4. First-party WebUI connects: wss://controller/api/v1/customer/ws/vnc/{vm_id}
+5. Controller authenticates the request with the existing customer session / API key scope
+6. Controller looks up the VM's Node Agent
 7. Controller opens gRPC bidirectional stream to Node Agent: StreamVNCConsole
 8. Node Agent connects to libvirt VNC on localhost:{port}
 9. Controller bridges WebSocket ←→ gRPC stream (binary frames)
 10. On disconnect: cleanup gRPC stream, log session duration/bytes
+
+Legacy note: the token endpoints still return a short-lived token for backward compatibility, and websocket handlers accept a query token if present, but first-party flows no longer embed console secrets in URLs.
 ```
 
 **WebSocket Security (per MASTER_CODING_STANDARD Section 17):**
@@ -1718,7 +1720,7 @@ CREATE TABLE sessions (
 | POST | `/api/v1/customer/vms/{id}/force-stop` | Force power off |
 | POST | `/api/v1/customer/vms/{id}/restart` | Restart VM |
 | POST | `/api/v1/customer/vms/{id}/reinstall` | Reinstall from template |
-| POST | `/api/v1/customer/vms/{id}/console-token` | Get one-time console token |
+| POST | `/api/v1/customer/vms/{id}/console-token` | Get VNC console access details |
 | GET | `/api/v1/customer/vms/{id}/metrics` | Get resource metrics |
 | GET | `/api/v1/customer/vms/{id}/bandwidth` | Get bandwidth usage |
 | PUT | `/api/v1/customer/vms/{id}/boot-order` | Change boot order |
@@ -2136,7 +2138,7 @@ For IPv6 /64 blocks, create a wildcard PTR or individual entries:
 |----------|---------|----------|
 | `GET /health` | Liveness | `{ "status": "ok" }` |
 | `GET /ready` | Readiness (DB + NATS + at least 1 node) | `{ "status": "ready", "db": true, "nats": true, "nodes": 3 }` |
-| `GET /metrics` | Prometheus scrape | Standard Prometheus metrics |
+| `GET /metrics` on the dedicated metrics listener | Prometheus scrape | Standard Prometheus metrics (default `127.0.0.1:9091`; bundled Docker compose sets `:9091`) |
 
 ### Prometheus Metrics (Controller)
 
@@ -2155,7 +2157,7 @@ For IPv6 /64 blocks, create a wildcard PTR or individual entries:
 
 ### Node Agent Metrics (Prometheus Exporter)
 
-Each Node Agent exposes `:9100/metrics` (node_exporter) plus custom VM metrics:
+Each Node Agent exposes `/metrics` on its metrics listener (default `127.0.0.1:9091`; set `metrics_addr` to `0.0.0.0:9091` when Prometheus scrapes over the network) plus custom VM metrics:
 
 | Metric | Type | Labels |
 |--------|------|--------|

@@ -238,7 +238,7 @@ function virtuestack_CreateAccount(array $params): string
                 ]));
                 // Update custom fields with existing VM info
                 virtuestack_updateServiceField($serviceId, 'vm_id', $existingVM['id']);
-                virtuestack_updateServiceField($serviceId, 'provisioning_status', 'completed');
+                virtuestack_updateServiceField($serviceId, 'provisioning_status', 'active');
                 return 'success';
             }
         } catch (\Exception $e) {
@@ -570,14 +570,16 @@ function virtuestack_ClientArea(array $params): array
         $vmId = virtuestack_getServiceField($serviceId, 'vm_id');
         $vmIp = virtuestack_getServiceField($serviceId, 'vm_ip');
         $provisioningStatus = virtuestack_getServiceField($serviceId, 'provisioning_status');
+        $vmStatus = virtuestack_getServiceField($serviceId, 'vm_status');
 
-        // Check if VM is still being provisioned
-        if ($provisioningStatus === 'pending') {
+        // Check if VM is still in an async provisioning flow.
+        if (in_array($provisioningStatus, virtuestack_getAsyncPollableProvisioningStatuses(), true)) {
             $taskId = virtuestack_getServiceField($serviceId, 'task_id');
+            $statusLabel = $provisioningStatus === 'resizing' ? 'resizing' : 'provisioning';
             return [
                 'templatefile' => 'templates/overview.tpl',
                 'vars' => [
-                    'status'          => 'provisioning',
+                    'status'          => $statusLabel,
                     'task_id'         => $taskId,
                     'service_id'      => $serviceId,
                     'provisioningUrl' => virtuestack_getProvisioningStatusUrl($taskId),
@@ -607,7 +609,7 @@ function virtuestack_ClientArea(array $params): array
         return [
             'templatefile' => 'templates/overview.tpl',
             'vars' => [
-                'status'      => $provisioningStatus ?? 'active',
+                'status'      => $vmStatus !== '' ? $vmStatus : ($provisioningStatus ?: 'active'),
                 'vm_id'       => $vmId,
                 'vm_ip'       => $vmIp,
                 'iframe_url'  => $iframeUrl,
@@ -781,8 +783,16 @@ function virtuestack_syncStatus(array $params): string
         }
 
         $status = $client->getVMStatus($vmId);
-        
-        virtuestack_updateServiceField($serviceId, 'provisioning_status', $status['status'] ?? 'unknown');
+
+        if (!empty($status['status'])) {
+            virtuestack_updateServiceField($serviceId, 'vm_status', (string) $status['status']);
+        }
+
+        virtuestack_updateServiceField(
+            $serviceId,
+            'provisioning_status',
+            virtuestack_mapVMStatusToProvisioningStatus((string) ($status['status'] ?? ''))
+        );
 
         return 'success';
     } catch (\Exception $e) {
@@ -918,24 +928,7 @@ function virtuestack_getServiceField(int $serviceId, string $fieldName): string
  */
 function virtuestack_updateServiceField(int $serviceId, string $fieldName, string $value): void
 {
-    if (!function_exists('update_query')) {
-        return;
-    }
-
-    $fieldId = virtuestack_getCustomFieldId($fieldName);
-    
-    if (empty($fieldId)) {
-        // Try to create the field
-        $fieldId = virtuestack_createCustomField($fieldName);
-    }
-
-    if (!empty($fieldId)) {
-        update_query(
-            'tblcustomfieldsvalues',
-            ['value' => $value],
-            ['relid' => $serviceId, 'fieldid' => $fieldId]
-        );
-    }
+    updateServiceField($serviceId, $fieldName, $value);
 }
 
 /**
@@ -1185,7 +1178,12 @@ function virtuestack_syncServiceState(ApiClient $client, int $serviceId): array
 
     virtuestack_updateServiceField($serviceId, 'vm_id', (string) $vm['id']);
     if (!empty($vm['status'])) {
-        virtuestack_updateServiceField($serviceId, 'provisioning_status', (string) $vm['status']);
+        virtuestack_updateServiceField($serviceId, 'vm_status', (string) $vm['status']);
+        virtuestack_updateServiceField(
+            $serviceId,
+            'provisioning_status',
+            virtuestack_mapVMStatusToProvisioningStatus((string) $vm['status'])
+        );
     }
 
     if (!empty($vm['ip_addresses']) && is_array($vm['ip_addresses'])) {

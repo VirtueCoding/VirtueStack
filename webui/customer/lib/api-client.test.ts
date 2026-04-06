@@ -34,6 +34,12 @@ interface CustomerAPIClientModule {
     logout: () => Promise<void>;
     invalidateSession: (sessionCleanupToken?: string) => Promise<void>;
     refresh: () => Promise<unknown>;
+    verify2FA: (request: {
+      temp_token: string;
+      totp_code: string;
+    }) => Promise<unknown>;
+    forgotPassword: (email: string) => Promise<unknown>;
+    resetPassword: (token: string, newPassword: string) => Promise<unknown>;
   };
   oauthApi: {
     link: (
@@ -101,6 +107,17 @@ async function loadCustomerAPIClientModule(): Promise<CustomerAPIClientModule | 
   } catch {
     return null;
   }
+}
+
+function assertCsrfBootstrapCall(
+  fetchCalls: Array<{ input: string; init?: RequestInit }>,
+  expectedPath: string,
+): void {
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.input, expectedPath);
+  assert.equal(fetchCalls[0]?.init?.method, "GET");
+  assert.equal(fetchCalls[0]?.init?.credentials, "include");
+  assert.ok(fetchCalls[0]?.init?.signal instanceof AbortSignal);
 }
 
 test("customerAuthApi exposes refresh for logout recovery", async () => {
@@ -293,17 +310,123 @@ test("oauthApi.link bootstraps CSRF before posting the link callback", async () 
     };
 
     await assert.doesNotReject(apiClientModule.oauthApi.link("google", request));
-    assert.deepEqual(fetchCalls, [
-      {
-        input: "/api/v1/customer/auth/csrf",
-        init: {
-          method: "GET",
-          credentials: "include",
-        },
-      },
-    ]);
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/customer/auth/csrf");
     assert.equal(capturedEndpoint, "/customer/account/oauth/google/link");
     assert.deepEqual(capturedBody, request);
+  } finally {
+    globalThis.fetch = originalFetch;
+    apiClientModule.apiClient.post = originalPost;
+  }
+});
+
+test("customerAuthApi.verify2FA bootstraps CSRF before posting the verification request", async () => {
+  const apiClientModule = await loadCustomerAPIClientModule();
+  assert.ok(apiClientModule?.customerAuthApi, "customerAuthApi should exist");
+
+  const originalFetch = globalThis.fetch;
+  const originalPost = apiClientModule.apiClient.post;
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  let capturedEndpoint: string | undefined;
+  let capturedBody: unknown;
+
+  globalThis.fetch = async (input, init) => {
+    fetchCalls.push({
+      input: typeof input === "string" ? input : String(input),
+      init,
+    });
+    return new Response(null, { status: 204 });
+  };
+  apiClientModule.apiClient.post = async (endpoint, body) => {
+    capturedEndpoint = endpoint;
+    capturedBody = body;
+    return {
+      token_type: "Bearer",
+      expires_in: 900,
+      session_id: "customer-session-2fa",
+    };
+  };
+
+  try {
+    const request = {
+      temp_token: "temp-token-123",
+      totp_code: "123456",
+    };
+
+    await assert.doesNotReject(apiClientModule.customerAuthApi.verify2FA(request));
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/customer/auth/csrf");
+    assert.equal(capturedEndpoint, "/customer/auth/verify-2fa");
+    assert.deepEqual(capturedBody, request);
+  } finally {
+    globalThis.fetch = originalFetch;
+    apiClientModule.apiClient.post = originalPost;
+  }
+});
+
+test("customerAuthApi.forgotPassword bootstraps CSRF before posting the reset request", async () => {
+  const apiClientModule = await loadCustomerAPIClientModule();
+  assert.ok(apiClientModule?.customerAuthApi, "customerAuthApi should exist");
+
+  const originalFetch = globalThis.fetch;
+  const originalPost = apiClientModule.apiClient.post;
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  let capturedEndpoint: string | undefined;
+  let capturedBody: unknown;
+
+  globalThis.fetch = async (input, init) => {
+    fetchCalls.push({
+      input: typeof input === "string" ? input : String(input),
+      init,
+    });
+    return new Response(null, { status: 204 });
+  };
+  apiClientModule.apiClient.post = async (endpoint, body) => {
+    capturedEndpoint = endpoint;
+    capturedBody = body;
+    return { message: "sent" };
+  };
+
+  try {
+    await assert.doesNotReject(apiClientModule.customerAuthApi.forgotPassword("user@example.com"));
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/customer/auth/csrf");
+    assert.equal(capturedEndpoint, "/customer/auth/forgot-password");
+    assert.deepEqual(capturedBody, { email: "user@example.com" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    apiClientModule.apiClient.post = originalPost;
+  }
+});
+
+test("customerAuthApi.resetPassword bootstraps CSRF before posting the new password", async () => {
+  const apiClientModule = await loadCustomerAPIClientModule();
+  assert.ok(apiClientModule?.customerAuthApi, "customerAuthApi should exist");
+
+  const originalFetch = globalThis.fetch;
+  const originalPost = apiClientModule.apiClient.post;
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  let capturedEndpoint: string | undefined;
+  let capturedBody: unknown;
+
+  globalThis.fetch = async (input, init) => {
+    fetchCalls.push({
+      input: typeof input === "string" ? input : String(input),
+      init,
+    });
+    return new Response(null, { status: 204 });
+  };
+  apiClientModule.apiClient.post = async (endpoint, body) => {
+    capturedEndpoint = endpoint;
+    capturedBody = body;
+    return { message: "reset" };
+  };
+
+  try {
+    await assert.doesNotReject(apiClientModule.customerAuthApi.resetPassword("reset-token", "new-password-123"));
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/customer/auth/csrf");
+    assert.equal(capturedEndpoint, "/customer/auth/reset-password");
+    assert.deepEqual(capturedBody, {
+      token: "reset-token",
+      new_password: "new-password-123",
+    });
   } finally {
     globalThis.fetch = originalFetch;
     apiClientModule.apiClient.post = originalPost;
@@ -380,15 +503,7 @@ test("isoApi.uploadISO bootstraps CSRF before starting the upload request", asyn
       new File([new Uint8Array([1, 2, 3])], "installer.iso", { type: "application/octet-stream" }),
     );
 
-    assert.deepEqual(fetchCalls, [
-      {
-        input: "/api/v1/customer/auth/csrf",
-        init: {
-          method: "GET",
-          credentials: "include",
-        },
-      },
-    ]);
+    assertCsrfBootstrapCall(fetchCalls, "/api/v1/customer/auth/csrf");
     assert.deepEqual(result, {
       id: "iso-1",
       file_name: "installer.iso",
@@ -467,6 +582,8 @@ test("customer billing, notification, and invoice helpers accept already-unwrapp
   const apiClientModule = await loadCustomerAPIClientModule();
   assert.ok(apiClientModule, "customer API client module should load");
 
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
   const originalGet = apiClientModule.apiClient.get;
   const originalPost = apiClientModule.apiClient.post;
 
@@ -504,6 +621,19 @@ test("customer billing, notification, and invoice helpers accept already-unwrapp
     has_pdf: true,
     created_at: "2026-02-01T00:00:00Z",
     updated_at: "2026-02-01T00:00:00Z",
+  };
+
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "" } as Document,
+  });
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input);
+    if (url === "/api/v1/customer/auth/csrf") {
+      globalThis.document.cookie = "csrf_token=customer-test-token";
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected fetch ${url} ${String(init?.method ?? "GET")}`);
   };
 
   apiClientModule.apiClient.get = async (endpoint) => {
@@ -561,6 +691,11 @@ test("customer billing, notification, and invoice helpers accept already-unwrapp
       );
     });
   } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: originalDocument,
+    });
     apiClientModule.apiClient.get = originalGet;
     apiClientModule.apiClient.post = originalPost;
   }

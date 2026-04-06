@@ -583,6 +583,101 @@ func newNotificationRouteTestRouter(t *testing.T) (*gin.Engine, string) {
 	return router, rawAPIKey
 }
 
+func newConsoleRouteTestRouter(t *testing.T, permissions []string) (*gin.Engine, string) {
+	t.Helper()
+
+	const (
+		rawAPIKey     = "vs_test_console_key"
+		encryptionKey = "test-encryption-key"
+	)
+
+	now := time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC)
+	expectedHash := sharedcrypto.GenerateHMACSignature(encryptionKey, []byte(rawAPIKey))
+	authConfig := middleware.AuthConfig{
+		JWTSecret: "test-secret",
+		Issuer:    "virtuestack",
+	}
+	logger := testAuthHandlerLogger()
+	nodeID := "550e8400-e29b-41d4-a716-446655440001"
+
+	db := &customerNotificationRouteTestDB{
+		queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
+			switch {
+			case strings.Contains(sql, "FROM customer_api_keys WHERE key_hash = $1 AND revoked_at IS NULL"):
+				if len(args) != 1 || args[0] != expectedHash {
+					return customerNotificationRouteTestRow{err: pgx.ErrNoRows}
+				}
+				return customerNotificationRouteTestRow{values: []any{
+					"key-1",
+					"customer-1",
+					"console-test-key",
+					expectedHash,
+					[]string{},
+					[]string{"550e8400-e29b-41d4-a716-446655440000"},
+					permissions,
+					nil,
+					now,
+					nil,
+					nil,
+				}}
+			default:
+				return customerNotificationRouteTestRow{err: pgx.ErrNoRows}
+			}
+		},
+	}
+
+	apiKeyRepo := repository.NewCustomerAPIKeyRepository(db)
+	handler := &CustomerHandler{
+		authConfig:    authConfig,
+		encryptionKey: encryptionKey,
+		vmService: newWebSocketVMService(t, models.VM{
+			ID:                 "550e8400-e29b-41d4-a716-446655440000",
+			CustomerID:         "customer-1",
+			NodeID:             &nodeID,
+			PlanID:             "550e8400-e29b-41d4-a716-446655440002",
+			Hostname:           "vm-test",
+			Status:             models.VMStatusRunning,
+			VCPU:               2,
+			MemoryMB:           2048,
+			DiskGB:             40,
+			PortSpeedMbps:      1000,
+			BandwidthLimitGB:   1000,
+			BandwidthUsedBytes: 0,
+			BandwidthResetAt:   now,
+			MACAddress:         "52:54:00:12:34:56",
+			StorageBackend:     "qcow",
+			Timestamps: models.Timestamps{
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		}),
+		nodeRepo: newWebSocketNodeRepo(t, models.Node{
+			ID:                nodeID,
+			Hostname:          "node-1",
+			GRPCAddress:       "127.0.0.1:50051",
+			ManagementIP:      "192.0.2.10",
+			Status:            models.NodeStatusOnline,
+			TotalVCPU:         16,
+			TotalMemoryMB:     32768,
+			AllocatedVCPU:     4,
+			AllocatedMemoryMB: 8192,
+			StorageBackend:    "qcow",
+			StoragePath:       "/var/lib/libvirt/images",
+			CreatedAt:         now,
+		}),
+		nodeAgent:  &websocketTestNodeAgent{err: errors.New("node offline")},
+		tokenStore: newConsoleTokenStore(),
+		logger:     logger,
+	}
+	t.Cleanup(handler.tokenStore.Stop)
+
+	router := gin.New()
+	api := router.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, apiKeyRepo, false, BillingRoutesConfig{})
+
+	return router, rawAPIKey
+}
+
 // TestJWTHasFullPermissions verifies that JWT-authenticated requests
 // bypass permission checks (full access).
 func TestJWTHasFullPermissions(t *testing.T) {
@@ -605,6 +700,47 @@ func TestJWTHasFullPermissions(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code, "JWT auth should have full permissions")
+}
+
+func TestConsoleWebSocketRoutes_RequireVMPowerForAPIKeys(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		permissions []string
+		wantStatus  int
+	}{
+		{
+			name:        "vnc websocket rejects read-only api key",
+			path:        "/api/v1/customer/ws/vnc/550e8400-e29b-41d4-a716-446655440000",
+			permissions: []string{PermissionVMRead},
+			wantStatus:  http.StatusForbidden,
+		},
+		{
+			name:        "serial websocket rejects read-only api key",
+			path:        "/api/v1/customer/ws/serial/550e8400-e29b-41d4-a716-446655440000",
+			permissions: []string{PermissionVMRead},
+			wantStatus:  http.StatusForbidden,
+		},
+		{
+			name:        "vnc websocket allows vm power api key past permission gate",
+			path:        "/api/v1/customer/ws/vnc/550e8400-e29b-41d4-a716-446655440000",
+			permissions: []string{PermissionVMRead, PermissionVMPower},
+			wantStatus:  http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, rawAPIKey := newConsoleRouteTestRouter(t, tt.permissions)
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			req.Header.Set("X-API-Key", rawAPIKey)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
 }
 
 // TestAllPermissionsNeeded tests that all 7 permission types work correctly.

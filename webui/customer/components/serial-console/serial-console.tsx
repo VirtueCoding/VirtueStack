@@ -23,7 +23,6 @@ import "@xterm/xterm/css/xterm.css";
 interface SerialConsoleProps {
   vmId: string;
   vmName: string;
-  token?: string;
 }
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -31,7 +30,6 @@ type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 export function SerialConsole({
   vmId,
   vmName,
-  token,
 }: SerialConsoleProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -53,9 +51,8 @@ export function SerialConsole({
       ? 'ws:'
       : 'wss:';
     const host = window.location.host;
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}${tokenParam}`;
-  }, [vmId, token]);
+    return `${protocol}//${host}/api/v1/customer/ws/serial/${vmId}`;
+  }, [vmId]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -172,7 +169,7 @@ export function SerialConsole({
       }
       term.dispose();
     };
-  }, [vmId, vmName, token, getWsUrl, reconnectKey, isConnected]);
+  }, [vmId, vmName, getWsUrl, reconnectKey, isConnected]);
 
   const handleConnect = () => {
     setIsConnected(true);

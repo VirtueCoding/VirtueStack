@@ -196,14 +196,14 @@ func (r *StorageBackendRepository) Delete(ctx context.Context, id string) error 
 }
 
 // AssignToNodes assigns a storage backend to multiple nodes.
-// This creates records in the node_storage_backends junction table.
+// This creates records in the node_storage junction table.
 func (r *StorageBackendRepository) AssignToNodes(ctx context.Context, storageBackendID string, nodeIDs []string) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
 
 	// Build batch insert
-	const insertPrefix = `INSERT INTO node_storage_backends (node_id, storage_backend_id, enabled) VALUES `
+	const insertPrefix = `INSERT INTO node_storage (node_id, storage_backend_id, enabled) VALUES `
 	placeholders := make([]string, len(nodeIDs))
 	args := make([]any, 0, len(nodeIDs)*3)
 
@@ -225,7 +225,7 @@ func (r *StorageBackendRepository) AssignToNodes(ctx context.Context, storageBac
 
 // RemoveFromNode removes a storage backend assignment from a specific node.
 func (r *StorageBackendRepository) RemoveFromNode(ctx context.Context, storageBackendID, nodeID string) error {
-	const q = `DELETE FROM node_storage_backends WHERE node_id = $1 AND storage_backend_id = $2`
+	const q = `DELETE FROM node_storage WHERE node_id = $1 AND storage_backend_id = $2`
 	_, err := r.db.Exec(ctx, q, nodeID, storageBackendID)
 	if err != nil {
 		return fmt.Errorf("removing storage backend %s from node %s: %w", storageBackendID, nodeID, err)
@@ -237,7 +237,7 @@ func (r *StorageBackendRepository) RemoveFromNode(ctx context.Context, storageBa
 func (r *StorageBackendRepository) GetNodesForBackend(ctx context.Context, storageBackendID string) ([]models.StorageBackendNode, error) {
 	const q = `
 		SELECT nsb.node_id, n.hostname, nsb.enabled
-		FROM node_storage_backends nsb
+		FROM node_storage nsb
 		JOIN nodes n ON n.id = nsb.node_id
 		WHERE nsb.storage_backend_id = $1
 		ORDER BY n.hostname`
@@ -258,7 +258,7 @@ func (r *StorageBackendRepository) GetBackendsForNode(ctx context.Context, nodeI
 	const q = `
 		SELECT ` + storageBackendSelectCols + `
 		FROM storage_backends sb
-		JOIN node_storage_backends nsb ON nsb.storage_backend_id = sb.id
+		JOIN node_storage nsb ON nsb.storage_backend_id = sb.id
 		WHERE nsb.node_id = $1 AND nsb.enabled = true
 		ORDER BY sb.name`
 
