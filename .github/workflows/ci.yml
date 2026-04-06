@@ -33,6 +33,15 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Reject generated and local artifacts
+        run: |
+          forbidden='^(\.local/|\.tools/|webui/admin/\.next/|webui/customer/\.next/|\.env\.test$)'
+          if git ls-files | grep -E "${forbidden}" >/dev/null; then
+            echo "Forbidden tracked artifacts detected:"
+            git ls-files | grep -E "${forbidden}"
+            exit 1
+          fi
+
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod

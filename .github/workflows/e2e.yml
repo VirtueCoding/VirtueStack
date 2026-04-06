@@ -158,6 +158,7 @@ jobs:
           LISTEN_ADDR=":8080" \
           LOG_LEVEL="debug" \
           ./bin/controller &
+          echo $! > /tmp/controller.pid
           echo "Controller started"
           sleep 5
 
@@ -165,6 +166,7 @@ jobs:
         run: |
           cd webui/admin
           PORT=3000 npm run start &
+          echo $! > /tmp/admin-webui.pid
           echo "Admin WebUI started"
           sleep 5
 
@@ -172,6 +174,7 @@ jobs:
         run: |
           cd webui/customer
           PORT=3001 npm run start &
+          echo $! > /tmp/customer-webui.pid
           echo "Customer WebUI started"
           sleep 5
 
@@ -237,6 +240,13 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          pkill -f "bin/controller" || true
-          pkill -f "next start" || true
+          for pid_file in /tmp/controller.pid /tmp/admin-webui.pid /tmp/customer-webui.pid; do
+            if [ -f "${pid_file}" ]; then
+              pid="$(cat "${pid_file}")"
+              if [ -n "${pid}" ] && kill -0 "${pid}" > /dev/null 2>&1; then
+                kill "${pid}" || true
+                wait "${pid}" 2>/dev/null || true
+              fi
+            fi
+          done
           docker rm -f virtuestack-e2e-nats || true

@@ -18,6 +18,7 @@ vendor/
 .env
 .env.local
 .env.*.local
+.env.test
 
 # IDE
 .idea/
@@ -74,3 +75,5 @@ iso-storage/
 
 # Go tools cache
 /tmp/
+.local/
+.tools/
