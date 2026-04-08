@@ -47,7 +47,9 @@ run_controller_env_passthrough_test() {
 }
 
 run_admin_seed_schema_test() {
-  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO admins (id, email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)"
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO admins ("
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "id, email, password_hash, name,"
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "totp_secret_encrypted, totp_enabled"
   assert_file_not_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO admins (id, email, password_hash, role, status"
 }
 
@@ -66,7 +68,9 @@ run_installer_split_docs_test() {
 
 run_e2e_seed_quality_test() {
   assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO customers (id, email, password_hash, name, status, created_at, updated_at)"
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO customers ("
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "id, email, password_hash, name, external_client_id, billing_provider, auth_provider,"
+  assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "status, created_at, updated_at"
   assert_file_not_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "INSERT INTO customers (id, email, password_hash, status, created_at, updated_at)"
   assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "pnpm install --frozen-lockfile --ignore-scripts"
   assert_file_contains "${REPO_ROOT}/scripts/setup-e2e.sh" "pnpm exec playwright install --with-deps"
