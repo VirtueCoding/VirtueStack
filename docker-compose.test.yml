@@ -11,7 +11,7 @@
 #   - Exposes all service ports for direct testing
 #   - Uses test-friendly credentials
 #   - Includes health checks for all services
-#   - Seeds test data after migrations
+#   - Mounts test seed data
 # =============================================================================
 
 services:
@@ -19,15 +19,21 @@ services:
   # PostgreSQL - Exposed for direct test access
   # ===========================================================================
   postgres:
+    user: "0:0"
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-virtuestack}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.test}
-      POSTGRES_DB: ${POSTGRES_DB:-virtuestack}
+      POSTGRES_USER: virtuestack
+      POSTGRES_PASSWORD: virtuestack_test_password
+      POSTGRES_DB: virtuestack
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d/migrations:ro
 
   # ===========================================================================
   # NATS - Exposed for direct test access
@@ -36,7 +42,7 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    command: ["nats-server", "-js", "-sd", "/data", "--auth", "${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env.test}", "-m", "8222"]
+    command: ["nats-server", "-js", "-sd", "/data", "--auth", "virtuestack_nats_test_token", "-m", "8222"]
 
   # ===========================================================================
   # Controller - Exposed for API testing
@@ -44,16 +50,21 @@ services:
   controller:
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "node-agent:host-gateway"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-virtuestack}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.test}@postgres:5432/${POSTGRES_DB:-virtuestack}?sslmode=disable
-      NATS_URL: nats://${NATS_AUTH_TOKEN:?NATS_AUTH_TOKEN must be set in .env.test}@nats:4222
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env.test}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env.test}
-      GUEST_OP_HMAC_SECRET: ${GUEST_OP_HMAC_SECRET:?GUEST_OP_HMAC_SECRET must be set in .env.test}
+      DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@postgres:5432/virtuestack?sslmode=disable
+      NATS_URL: nats://virtuestack_nats_test_token@nats:4222
+      JWT_SECRET: test_jwt_secret_for_e2e_testing_minimum_32_chars
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      GUEST_OP_HMAC_SECRET: test_guest_op_hmac_secret_for_e2e_testing
       LISTEN_ADDR: :8080
       LOG_LEVEL: debug
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001
       # Disable auth rate limiting for tests
       AUTH_RATE_LIMIT_ENABLED: "false"
+      BILLING_WHMCS_ENABLED: "true"
+      BILLING_WHMCS_PRIMARY: "true"
     volumes:
       - ./certs:/etc/virtuestack/certs:ro
 
@@ -61,6 +72,9 @@ services:
   # Admin WebUI - Exposed for Playwright testing
   # ===========================================================================
   admin-webui:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
     ports:
       - "3000:3000"
     environment:
@@ -71,6 +85,9 @@ services:
   # Customer WebUI - Exposed for Playwright testing
   # ===========================================================================
   customer-webui:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
     ports:
       - "3001:3001"
     environment:
@@ -121,3 +138,7 @@ networks:
   virtuestack-internal:
     driver: bridge
     name: virtuestack-test-network
+    ipam:
+      driver: default
+      config:
+        - subnet: ${DOCKER_TEST_NETWORK_SUBNET:-172.31.0.0/24}
