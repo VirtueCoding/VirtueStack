@@ -26,14 +26,20 @@ WORKDIR /app
 # Enable corepack for yarn/pnpm support
 RUN corepack enable
 
-# Copy package files first for caching
-COPY webui/customer/package.json webui/customer/package-lock.json* ./
+# Copy workspace manifests first for caching
+COPY webui/package.json webui/package-lock.json ./
+COPY webui/admin/package.json ./admin/package.json
+COPY webui/customer/package.json ./customer/package.json
+COPY webui/packages/api-client/package.json ./packages/api-client/package.json
+COPY webui/packages/ui/package.json ./packages/ui/package.json
 
 # Install dependencies
 RUN npm ci --legacy-peer-deps
 
 # Copy source code
-COPY webui/customer/ .
+COPY webui/ ./
+
+WORKDIR /app/customer
 
 # Build arguments for environment variables
 ARG NEXT_PUBLIC_API_URL=/api/v1
@@ -46,10 +52,10 @@ ENV NODE_ENV=production \
 # Build the application
 RUN npm run build
 
-# Export static files (if using static-export)
-# For Next.js standalone output:
-RUN cp -r public ./.next/standalone/ && \
-    cp -r .next/static ./.next/standalone/.next/
+# Export standalone runtime assets alongside customer/server.js.
+RUN mkdir -p ./.next/standalone/customer/.next && \
+    if [ -d public ]; then cp -r public ./.next/standalone/customer/public; fi && \
+    cp -r .next/static ./.next/standalone/customer/.next/
 
 # -----------------------------------------------------------------------------
 # Development Stage
@@ -68,14 +74,20 @@ RUN corepack enable
 
 WORKDIR /app
 
-# Copy package files
-COPY webui/customer/package.json webui/customer/package-lock.json* ./
+# Copy workspace manifests
+COPY webui/package.json webui/package-lock.json ./
+COPY webui/admin/package.json ./admin/package.json
+COPY webui/customer/package.json ./customer/package.json
+COPY webui/packages/api-client/package.json ./packages/api-client/package.json
+COPY webui/packages/ui/package.json ./packages/ui/package.json
 
 # Install all dependencies (including devDependencies)
 RUN npm ci --legacy-peer-deps
 
 # Copy source code
-COPY webui/customer/ .
+COPY webui/ ./
+
+WORKDIR /app/customer
 
 # Expose development port
 EXPOSE 3001
@@ -111,7 +123,7 @@ RUN mkdir -p /var/cache/nginx /var/log/nginx /usr/share/nginx/html \
     && chown -R 1000:1000 /var/cache/nginx /var/log/nginx /usr/share/nginx/html
 
 # Copy built application from builder
-COPY --from=builder --chown=1000:1000 /app/.next/standalone /usr/share/nginx/html
+COPY --from=builder --chown=1000:1000 /app/customer/.next/standalone /usr/share/nginx/html
 
 # Copy custom nginx configuration for SPA
 COPY webui/customer/nginx-app.conf /etc/nginx/conf.d/app.conf
@@ -146,16 +158,13 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# Create non-root user
-RUN adduser -D -u 1000 -g 1000 -h /app -s /bin/sh nodeuser
+# Reuse the non-root user provided by the Node base image.
 
 # Copy built application
-COPY --from=builder --chown=1000:1000 /app/.next/standalone ./
-COPY --from=builder --chown=1000:1000 /app/.next/static ./.next/static
-COPY --from=builder --chown=1000:1000 /app/public ./public
+COPY --from=builder --chown=1000:1000 /app/customer/.next/standalone ./
 
 # Switch to non-root user
-USER 1000:1000
+USER node
 
 # Expose port
 EXPOSE 3001
@@ -163,11 +172,12 @@ EXPOSE 3001
 # Set environment
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3001
+    PORT=3001 \
+    HOSTNAME=0.0.0.0
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost:3001/api/health || exit 1
+    CMD curl -f http://127.0.0.1:3001/login || exit 1
 
 # Start the application
-CMD ["node", "server.js"]
+CMD ["node", "customer/server.js"]

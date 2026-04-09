@@ -183,6 +183,26 @@ VirtueStack is a cloud-native VM management platform for VPS hosting providers:
 - Docker Compose 2.20+
 - Make
 
+### One-Line Install
+
+On a fresh Ubuntu 24.04 or Debian 13 server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --controller
+```
+
+For a node agent hypervisor host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --node
+```
+
+The controller stack (`controller`, `nats`, `postgres`, `admin-webui`, `customer-webui`, and `nginx`) stays in Docker.
+
+The node installer writes `/etc/virtuestack/node-agent.env` and installs the `virtuestack-node-agent` systemd service.
+
+`--controller` writes the deployment `.env`, asks whether to request Let's Encrypt when a real domain is provided, and brings up the production Docker Compose stack. `--node` prefers a matching GitHub release binary when one exists for the host architecture, falls back to compiling on the node when no compatible artifact is published, prompts for the controller gRPC address and storage backend, copies existing node mTLS files into `/etc/virtuestack/certs/`, and starts the native service. If you already cloned the repository, you can also run `sudo ./install.sh --controller` or `sudo ./install.sh --node`.
+
 ### Using Docker Compose
 
 ```bash

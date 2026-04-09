@@ -84,7 +84,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd tests/e2e
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Playwright browsers
         run: |

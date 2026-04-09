@@ -85,6 +85,35 @@ sudo apt install -y libvirt0 librbd1 librados2
 
 ## 2. Production Deployment
 
+### 2.0 One-Line Installer
+
+For fresh Ubuntu 24.04 or Debian 13 servers, the fastest path is the bundled installer.
+
+Controller host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --controller
+```
+
+Node Agent host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --node
+```
+
+`--node` prefers a matching GitHub release binary for the host architecture when one is published. If no compatible artifact exists, it falls back to installing build dependencies and compiling on the node host.
+
+The controller stack (`controller`, `nats`, `postgres`, `admin-webui`, `customer-webui`, and `nginx`) remains Docker-based.
+
+The node installer copies your existing mTLS certificate, key, and CA files into `/etc/virtuestack/certs/`, writes `/etc/virtuestack/node-agent.env`, installs `/etc/systemd/system/virtuestack-node-agent.service`, and starts `virtuestack-node-agent`.
+
+The controller installer can ask for:
+- your public domain or IP
+- whether to issue Let's Encrypt certificates when a domain is provided
+- the first admin email, display name, and password
+
+If you already cloned the repository, run `sudo ./install.sh --controller` or `sudo ./install.sh --node`.
+
 ### Architecture Overview
 
 ```
@@ -224,7 +253,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 ```bash
 make docker-up
 # Or:
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 #### Step 6: Run Database Migrations
@@ -246,15 +275,17 @@ migrate -path migrations -database "postgresql://virtuestack:${POSTGRES_PASSWORD
 docker exec -it virtuestack-postgres psql -U virtuestack -d virtuestack
 
 # Insert admin user (password: change this in production!)
-INSERT INTO admins (id, email, password_hash, role, status, created_at, updated_at)
-VALUES (
-    gen_random_uuid(),
+INSERT INTO admins (email, password_hash, name, role, totp_enabled, totp_secret_encrypted, created_at)
+SELECT
     'admin@yourdomain.com',
     '$argon2id$v=19$m=65536,t=3,p=4$your-salt-here$your-hash-here',
+    'VirtueStack Administrator',
     'super_admin',
-    'active',
-    NOW(),
+    FALSE,
+    '',
     NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM admins WHERE email = 'admin@yourdomain.com'
 );
 ```
 
@@ -437,72 +468,46 @@ make build-node-agent
 # The binary is at: bin/node-agent
 ```
 
-#### Step 5: Install Node Agent
+#### Step 5: Run the Node Installer
+
+On each hypervisor host, run the native installer:
 
 ```bash
-# Copy binary to KVM host
-scp bin/node-agent user@kvm-host:/usr/local/bin/virtuestack-node-agent
-
-# Create configuration directory
-sudo mkdir -p /etc/virtuestack
-sudo mkdir -p /var/lib/virtuestack/{vms,templates,cloud-init,iso}
-
-# Create systemd service
-sudo cat > /etc/systemd/system/virtuestack-node-agent.service << 'EOF'
-[Unit]
-Description=VirtueStack Node Agent
-After=network.target libvirtd.service
-Wants=libvirtd.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/virtuestack-node-agent
-Restart=always
-RestartSec=5
-
-# Environment variables
-EnvironmentFile=/etc/virtuestack/node-agent.env
-
-[Install]
-WantedBy=multi-user.target
-EOF
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --node
 ```
 
-#### Step 6: Configure Node Agent
-
-Create `/etc/virtuestack/node-agent.env`:
+If you already cloned the repository on the node host, run:
 
 ```bash
-# Controller gRPC address
-CONTROLLER_GRPC_ADDR=controller.yourdomain.com:50051
-
-# Node identifier (unique per node)
-NODE_ID=your-node-uuid-here
-
-# Storage backend: "ceph" or "qcow"
-STORAGE_BACKEND=ceph
-
-# Ceph configuration (if using Ceph)
-CEPH_POOL=vs-vms
-CEPH_USER=virtuestack
-CEPH_CONF=/etc/ceph/ceph.conf
-CEPH_KEYRING=/etc/ceph/ceph.client.virtuestack.keyring
-
-# QCOW2 paths (if using QCOW2)
-STORAGE_PATH=/var/lib/virtuestack/vms
-TEMPLATE_PATH=/var/lib/virtuestack/templates
-
-# mTLS certificates
-TLS_CERT_FILE=/etc/virtuestack/certs/node-agent.crt
-TLS_KEY_FILE=/etc/virtuestack/certs/node-agent.key
-TLS_CA_FILE=/etc/virtuestack/certs/ca.crt
-
-# Logging
-LOG_LEVEL=info
+sudo ./install.sh --node
 ```
 
-#### Step 7: Register Node in Database
+The node installer prompts for:
+
+- controller gRPC address (`host:port`)
+- node UUID (auto-generated if you accept the default)
+- storage backend (`qcow`, `ceph`, or `lvm`)
+- backend-specific storage settings when required
+- source paths to an existing node certificate, private key, and CA certificate
+
+After the installer completes, the node host contains:
+
+- `/usr/local/bin/virtuestack-node-agent`
+- `/etc/virtuestack/node-agent.env`
+- `/etc/virtuestack/certs/node-agent.crt`
+- `/etc/virtuestack/certs/node-agent.key`
+- `/etc/virtuestack/certs/ca.crt`
+- `/etc/systemd/system/virtuestack-node-agent.service`
+
+For QCOW-based hosts, the installer defaults to:
+
+```bash
+STORAGE_PATH=/var/lib/virtuestack
+CLOUDINIT_PATH=/var/lib/virtuestack/cloud-init
+ISO_STORAGE_PATH=/var/lib/virtuestack/iso
+```
+
+#### Step 6: Register Node in Database
 
 ```bash
 # On the controller, register the node
@@ -522,12 +527,10 @@ VALUES (
 EOF
 ```
 
-#### Step 8: Start Node Agent
+#### Step 7: Inspect Node Agent
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable virtuestack-node-agent
-sudo systemctl start virtuestack-node-agent
+sudo systemctl status virtuestack-node-agent --no-pager
 
 # Check logs
 sudo journalctl -u virtuestack-node-agent -f
