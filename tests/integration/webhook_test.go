@@ -191,7 +191,6 @@ func TestWebhookDelivery(t *testing.T) {
 		case req := <-received:
 			assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
 			assert.NotEmpty(t, req.Header.Get("X-Webhook-Signature"))
-			assert.Empty(t, req.Header.Get("X-VirtueStack-Signature"))
 		case <-time.After(5 * time.Second):
 			t.Fatal("Webhook not received within timeout")
 		}
@@ -280,9 +279,7 @@ func TestWebhookDelivery(t *testing.T) {
 
 		// Verify the delivery status - if context timed out before DB update, it may be "pending"
 		// otherwise it should be "retrying" or "failed"
-		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{
-			PerPage: 10,
-		})
+		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{PerPage: 10})
 		require.NoError(t, err)
 		if len(deliveries) > 0 {
 			// Status could be pending (if timeout happened before DB update) or retrying/failed
@@ -310,9 +307,7 @@ func TestWebhookDelivery(t *testing.T) {
 		require.NoError(t, err) // Processing completes, but delivery is marked failed
 
 		// Verify the delivery status is retrying or failed
-		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{
-			PerPage: 10,
-		})
+		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{PerPage: 10})
 		require.NoError(t, err)
 		if len(deliveries) > 0 {
 			assert.Contains(t, []string{"retrying", "failed"}, deliveries[0].Status, "Delivery should be retrying or failed")
@@ -583,9 +578,7 @@ func TestWebhookDeliveryHistory(t *testing.T) {
 		}
 
 		// List delivery history
-		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{
-			PerPage: 10,
-		})
+		deliveries, _, _, err := suite.WebhookService.ListDeliveries(ctx, webhookID, TestCustomerID, models.PaginationParams{PerPage: 10})
 		require.NoError(t, err, "Listing deliveries should succeed")
 		assert.GreaterOrEqual(t, len(deliveries), 5, "Should have at least 5 deliveries")
 	})

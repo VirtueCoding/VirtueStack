@@ -4,7 +4,7 @@
  * Uses the Page Object Model pattern for better maintainability.
  */
 
-import { adminTest as test, expect } from './fixtures/index';
+import { adminTest as test, expect } from './fixtures';
 import { TEST_IDS } from './utils/api';
 
 // ============================================

@@ -520,17 +520,6 @@ export interface WebhookDelivery {
   created_at: string;
 }
 
-export interface Template {
-  id: string;
-  name: string;
-  os_family: string;
-  os_version?: string;
-  min_disk_gb: number;
-  supports_cloudinit: boolean;
-  description?: string;
-  storage_backend: string;
-}
-
 export const settingsApi = {
   async getProfile(): Promise<CustomerProfile> {
     return apiClient.get<CustomerProfile>("/customer/profile");
@@ -745,10 +734,6 @@ export interface RDNSResponse {
   rdns_hostname?: string;
 }
 
-export interface UpdateRDNSRequest {
-  hostname: string;
-}
-
 export const rdnsApi = {
   async listIPs(vmId: string): Promise<IPAddressRecord[]> {
     return apiClient.get<IPAddressRecord[]>(`/customer/vms/${vmId}/ips`);
@@ -808,13 +793,6 @@ export const notificationApi = {
 
   async listEvents(): Promise<NotificationEvent[]> {
     return apiClient.get<NotificationEvent[]>("/customer/notifications/events");
-  },
-};
-
-export const templateApi = {
-  async listTemplates(osFamily?: string): Promise<Template[]> {
-    const params = osFamily ? `?os_family=${encodeURIComponent(osFamily)}` : "";
-    return apiClient.get<Template[]>(`/customer/templates${params}`);
   },
 };
 

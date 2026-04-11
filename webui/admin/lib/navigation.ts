@@ -70,7 +70,3 @@ export const adminNavGroups: NavGroup[] = [
     ],
   },
 ];
-
-export const adminNavItems: NavItem[] = adminNavGroups.flatMap(
-  (group) => group.items
-);

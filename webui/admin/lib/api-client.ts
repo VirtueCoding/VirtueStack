@@ -723,32 +723,6 @@ export const adminTemplatesApi = {
 // Admin Backup API
 // ============================================================================
 
-export interface AdminBackup {
-  id: string;
-  vm_id: string;
-  vm_hostname?: string;
-  customer_id?: string;
-  customer_email?: string;
-  source: "manual" | "customer_schedule" | "admin_schedule";
-  admin_schedule_id?: string;
-  admin_schedule_name?: string;
-  storage_backend: string;
-  status: "creating" | "completed" | "failed" | "restoring";
-  size_bytes?: number;
-  created_at: string;
-  expires_at?: string;
-}
-
-export interface AdminBackupListParams {
-  per_page?: number;
-  cursor?: string;
-  customer_id?: string;
-  vm_id?: string;
-  status?: string;
-  source?: string;
-  admin_schedule_id?: string;
-}
-
 export interface PaginatedResponse<T> {
   data: T[];
   meta: {
@@ -758,25 +732,6 @@ export interface PaginatedResponse<T> {
     prev_cursor?: string;
   };
 }
-
-export const adminBackupsApi = {
-  async getBackups(params: AdminBackupListParams = {}): Promise<PaginatedResponse<AdminBackup>> {
-    const searchParams = new URLSearchParams();
-    if (params.cursor) searchParams.set("cursor", params.cursor);
-    if (params.per_page !== undefined) searchParams.set("per_page", String(params.per_page));
-    if (params.customer_id) searchParams.set("customer_id", params.customer_id);
-    if (params.vm_id) searchParams.set("vm_id", params.vm_id);
-    if (params.status) searchParams.set("status", params.status);
-    if (params.source) searchParams.set("source", params.source);
-    if (params.admin_schedule_id) searchParams.set("admin_schedule_id", params.admin_schedule_id);
-
-    return apiClient.get<PaginatedResponse<AdminBackup>>(`/admin/backups?${searchParams.toString()}`);
-  },
-
-  async restoreBackup(id: string): Promise<{ backup_id: string; status: string }> {
-    return apiClient.post<{ backup_id: string; status: string }>(`/admin/backups/${id}/restore`, {});
-  },
-};
 
 // ============================================================================
 // Admin Backup Schedule API
@@ -1065,50 +1020,6 @@ export const adminProvisioningKeysApi = {
 // ============================================================================
 // Per-VM Backup Schedule API
 // ============================================================================
-
-export interface VMBackupSchedule {
-  id: string;
-  vm_id: string;
-  frequency: "daily" | "weekly" | "monthly";
-  retention_count: number;
-  active: boolean;
-  next_run_at?: string;
-  last_run_at?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateVMBackupScheduleRequest {
-  frequency: "daily" | "weekly" | "monthly";
-  retention_count: number;
-  active?: boolean;
-}
-
-export interface UpdateVMBackupScheduleRequest {
-  frequency?: "daily" | "weekly" | "monthly";
-  retention_count?: number;
-  active?: boolean;
-}
-
-export const adminVMBackupSchedulesApi = {
-  async getVMBackupSchedules(vmId: string): Promise<VMBackupSchedule[]> {
-    return apiClient.get<VMBackupSchedule[]>(`/admin/backup-schedules?vm_id=${vmId}`);
-  },
-
-  async createVMBackupSchedule(vmId: string, data: CreateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
-    return apiClient.post<VMBackupSchedule>(`/admin/backup-schedules`, { ...data, vm_id: vmId });
-  },
-
-  /** vmId is retained for call-site compatibility; the backend identifies the schedule by scheduleId. */
-  async updateVMBackupSchedule(_vmId: string, scheduleId: string, data: UpdateVMBackupScheduleRequest): Promise<VMBackupSchedule> {
-    return apiClient.put<VMBackupSchedule>(`/admin/backup-schedules/${scheduleId}`, data);
-  },
-
-  /** vmId is retained for call-site compatibility; the backend identifies the schedule by scheduleId. */
-  async deleteVMBackupSchedule(_vmId: string, scheduleId: string): Promise<void> {
-    return apiClient.deleteVoid(`/admin/backup-schedules/${scheduleId}`);
-  },
-};
 
 // ============================================================================
 // Storage Backend API

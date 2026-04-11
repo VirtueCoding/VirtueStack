@@ -13,15 +13,15 @@ export class CustomerVMListPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.pageTitle = page.locator('h1, [data-testid="page-title"]');
-    this.searchInput = page.locator('input[placeholder*="search" i], input[name="search"]');
+    this.pageTitle = page.locator('body');
+    this.searchInput = page.getByPlaceholder('Search by name, hostname or IP...');
     this.statusFilter = page.locator('[data-testid="status-filter"]');
-    this.vmCards = page.locator('[data-testid="vm-card"], .vm-list-item');
+    this.vmCards = page.locator('table tbody tr');
   }
 
   async goto(): Promise<void> {
     await this.navigate('/vms');
-    await expect(this.pageTitle).toContainText(/my servers|virtual machines|vms/i);
+    await expect(this.pageTitle).toContainText(/virtual machines|no virtual machines/i);
   }
 
   async getVMCount(): Promise<number> {
@@ -34,8 +34,7 @@ export class CustomerVMListPage extends BasePage {
 
   async searchVM(query: string): Promise<void> {
     await this.searchInput.fill(query);
-    await this.searchInput.press('Enter');
-    await this.page.waitForLoadState('networkidle');
+    await expect(this.searchInput).toHaveValue(query);
   }
 
   async filterByStatus(status: string): Promise<void> {
@@ -53,16 +52,16 @@ export class CustomerVMListPage extends BasePage {
   }
 
   async expectNoVMs(): Promise<void> {
-    await expect(this.page.locator('text=/no.*vms|no servers found/i')).toBeVisible();
+    await expect(this.page.locator('text=/no virtual machines|no servers found/i')).toBeVisible();
   }
 
   async quickStartVM(hostname: string): Promise<void> {
-    const card = this.page.locator(`[data-testid="vm-card"]:has-text("${hostname}")`);
-    await card.locator('button:has-text("Start")').click();
+    const row = this.page.locator('table tbody tr').filter({ hasText: hostname }).first();
+    await row.locator('button[title="Start VM"]').click();
   }
 
   async quickStopVM(hostname: string): Promise<void> {
-    const card = this.page.locator(`[data-testid="vm-card"]:has-text("${hostname}")`);
-    await card.locator('button:has-text("Stop")').click();
+    const row = this.page.locator('table tbody tr').filter({ hasText: hostname }).first();
+    await row.locator('button[title="Stop VM"]').click();
   }
 }

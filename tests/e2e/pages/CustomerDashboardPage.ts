@@ -10,18 +10,22 @@ export class CustomerDashboardPage extends BasePage {
   readonly totalVMsStat: Locator;
   readonly runningVMsStat: Locator;
   readonly bandwidthUsedStat: Locator;
+  readonly vmRows: Locator;
+  readonly statusBadges: Locator;
 
   constructor(page: Page) {
     super(page);
-    this.pageTitle = page.locator('h1, [data-testid="dashboard-title"]');
+    this.pageTitle = page.locator('body');
     this.totalVMsStat = page.locator('[data-testid="total-vms"]');
     this.runningVMsStat = page.locator('[data-testid="running-vms"]');
     this.bandwidthUsedStat = page.locator('[data-testid="bandwidth-used"]');
+    this.vmRows = page.locator('table tbody tr');
+    this.statusBadges = page.locator('table tbody tr td:nth-child(2)');
   }
 
   async goto(): Promise<void> {
-    await this.navigate('/dashboard');
-    await expect(this.pageTitle).toContainText(/dashboard|overview/i);
+    await this.navigate('/vms');
+    await expect(this.pageTitle).toContainText(/virtual machines|no virtual machines/i);
   }
 
   async getQuickStats(): Promise<{
@@ -29,16 +33,18 @@ export class CustomerDashboardPage extends BasePage {
     runningVMs: string | null;
     bandwidthUsed: string | null;
   }> {
+    const statuses = await this.statusBadges.allInnerTexts();
+
     return {
-      totalVMs: await this.totalVMsStat.textContent(),
-      runningVMs: await this.runningVMsStat.textContent(),
-      bandwidthUsed: await this.bandwidthUsedStat.textContent(),
+      totalVMs: String(await this.vmRows.count()),
+      runningVMs: String(statuses.filter((status) => /running/i.test(status)).length),
+      bandwidthUsed: 'N/A',
     };
   }
 
   async navigateToVMs(): Promise<void> {
-    await this.page.click('a:has-text("My Servers"), a[href*="/vms"], nav a:has-text("Servers")');
-    await expect(this.page).toHaveURL(/\/vms|\/servers/);
+    await this.navigate('/vms');
+    await expect(this.page).toHaveURL(/\/vms/);
   }
 
   async navigateToBackups(): Promise<void> {

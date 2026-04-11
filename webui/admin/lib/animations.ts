@@ -5,21 +5,6 @@ export const fadeUp: Variants = {
   visible: { opacity: 1, y: 0 },
 };
 
-export const fadeIn: Variants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
-};
-
-export const scaleIn: Variants = {
-  hidden: { opacity: 0, scale: 0.95 },
-  visible: { opacity: 1, scale: 1 },
-};
-
-export const slideInLeft: Variants = {
-  hidden: { opacity: 0, x: -16 },
-  visible: { opacity: 1, x: 0 },
-};
-
 export const staggerContainer: Variants = {
   hidden: { opacity: 0 },
   visible: {
@@ -29,17 +14,6 @@ export const staggerContainer: Variants = {
       delayChildren: 0.1,
     },
   },
-};
-
-export const tableRow: Variants = {
-  hidden: { opacity: 0, x: -4 },
-  visible: { opacity: 1, x: 0 },
-};
-
-export const springTransition = {
-  type: "spring" as const,
-  stiffness: 350,
-  damping: 30,
 };
 
 export const easeTransition = {

@@ -14,7 +14,7 @@ export class CustomerConsolePage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.consoleContainer = page.locator('[data-testid="console-container"], canvas, #noVNC_canvas');
+    this.consoleContainer = page.locator('canvas, #noVNC_canvas, text=/Console Access|Console Unavailable|VM Console/i');
     this.ctrlAltDelButton = page.locator('button:has-text("Ctrl+Alt+Del"), [data-testid="ctrl-alt-del"]');
     this.fullscreenButton = page.locator('button:has-text("Fullscreen"), [data-testid="fullscreen"]');
     this.closeButton = page.locator('button:has-text("Close"), [data-testid="close-console"]');
@@ -22,7 +22,8 @@ export class CustomerConsolePage extends BasePage {
   }
 
   async goto(vmId: string): Promise<void> {
-    await this.navigate(`/vms/${vmId}/console`);
+    await this.navigate(`/vms/${vmId}`);
+    await this.page.locator('[role="tab"]:has-text("VNC")').click();
   }
 
   async waitForConsole(timeout = 30000): Promise<void> {

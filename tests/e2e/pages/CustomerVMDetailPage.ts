@@ -23,20 +23,20 @@ export class CustomerVMDetailPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.hostname = page.locator('[data-testid="vm-hostname"]');
-    this.status = page.locator('[data-testid="vm-status"]');
-    this.ipAddresses = page.locator('[data-testid="ip-address"]');
-    this.cpuUsage = page.locator('[data-testid="cpu-usage"]');
-    this.memoryUsage = page.locator('[data-testid="memory-usage"]');
-    this.diskUsage = page.locator('[data-testid="disk-usage"]');
-    this.bandwidthUsed = page.locator('[data-testid="bandwidth-used"]');
-    this.bandwidthLimit = page.locator('[data-testid="bandwidth-limit"]');
-    this.startButton = page.locator('button:has-text("Start"), [data-testid="start-btn"]');
-    this.stopButton = page.locator('button:has-text("Stop"), [data-testid="stop-btn"]');
-    this.rebootButton = page.locator('button:has-text("Reboot"), [data-testid="reboot-btn"]');
-    this.consoleButton = page.locator('button:has-text("Console"), a:has-text("Open Console")');
-    this.backupsTab = page.locator('a:has-text("Backups"), [data-testid="backups-tab"]');
-    this.settingsTab = page.locator('a:has-text("Settings"), [data-testid="settings-tab"]');
+    this.hostname = page.locator('h1');
+    this.status = page.locator('h1').locator('xpath=following-sibling::*[1]');
+    this.ipAddresses = page.locator('p.font-mono.text-lg');
+    this.cpuUsage = page.locator('text=/Virtual CPUs/i');
+    this.memoryUsage = page.locator('text=/RAM allocated/i');
+    this.diskUsage = page.locator('text=/Storage/i');
+    this.bandwidthUsed = page.locator('text=/Network/i');
+    this.bandwidthLimit = page.locator('text=/Metrics/i');
+    this.startButton = page.locator('button:has-text("Start")');
+    this.stopButton = page.locator('button:has-text("Stop")');
+    this.rebootButton = page.locator('button:has-text("Restart")');
+    this.consoleButton = page.locator('[role="tab"]:has-text("VNC"), button:has-text("Connect to Console")');
+    this.backupsTab = page.locator('[role="tab"]:has-text("Backups & Snapshots")');
+    this.settingsTab = page.locator('[role="tab"]:has-text("Settings")');
   }
 
   async goto(vmId: string): Promise<void> {
@@ -90,7 +90,11 @@ export class CustomerVMDetailPage extends BasePage {
   }
 
   async openConsole(): Promise<void> {
-    await this.consoleButton.click();
+    await this.page.locator('[role="tab"]:has-text("VNC")').click();
+    const connectButton = this.page.locator('button:has-text("Connect to Console")');
+    if (await connectButton.isVisible().catch(() => false)) {
+      await connectButton.click();
+    }
   }
 
   async navigateToBackups(): Promise<void> {

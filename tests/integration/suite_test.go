@@ -128,6 +128,21 @@ func mustGenerateRandomHex(hexChars int) string {
 
 var suite *TestSuite
 
+func dockerProviderError(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("docker provider panic: %v", r)
+		}
+	}()
+
+	provider, err := testcontainers.ProviderDocker.GetProvider()
+	if err != nil {
+		return err
+	}
+
+	return provider.Health(ctx)
+}
+
 // TestMain sets up the test suite and runs all tests.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -136,6 +151,11 @@ func TestMain(m *testing.M) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
+
+	if err := dockerProviderError(ctx); err != nil {
+		logger.Warn("skipping integration tests because docker is unavailable", "error", err)
+		os.Exit(0)
+	}
 
 	// Start PostgreSQL container
 	pgContainer, err := postgres.Run(ctx, "postgres:18-alpine",

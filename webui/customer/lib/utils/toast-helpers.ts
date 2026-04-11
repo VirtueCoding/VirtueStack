@@ -2,11 +2,6 @@ import { useCallback } from "react";
 import { useToast } from "@virtuestack/ui";
 import { ApiClientError } from "@/lib/api-client";
 
-export interface ToastOptions {
-  title?: string;
-  description: string;
-}
-
 /**
  * Hook providing standardized toast notification helpers.
  * Reduces repetitive toast patterns across mutation callbacks.
@@ -108,4 +103,3 @@ export function useMutationToast() {
     createMutationOnSuccess,
   };
 }
-
