@@ -648,3 +648,23 @@ func TestCustomerShouldClearLogoutCookies(t *testing.T) {
 }
 
 var _ = sharederrors.ErrUnauthorized
+
+func TestRegisterCustomerRoutes_LogoutRequiresAuthentication(t *testing.T) {
+	router := setupTestRouter()
+	logger := testAuthHandlerLogger()
+
+	handler := &CustomerHandler{
+		authConfig: middleware.AuthConfig{JWTSecret: "test-secret", Issuer: "virtuestack"},
+		logger:     logger,
+	}
+
+	api := router.Group("/api/v1")
+	RegisterCustomerRoutes(api, handler, nil, nil, nil, false, BillingRoutesConfig{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer/auth/logout", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}

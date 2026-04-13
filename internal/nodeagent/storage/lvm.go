@@ -5,6 +5,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -538,12 +539,20 @@ func (m *LVMManager) ImageExists(ctx context.Context, imageName string) (bool, e
 	// lvs /dev/{vg}/{imageName} - exit code 0 = exists, non-zero = does not exist
 	_, err = m.runLVMCommand(ctx, "lvs", lvPath)
 	if err != nil {
-		if strings.Contains(err.Error(), "Failed to find logical volume") {
+		if strings.Contains(err.Error(), "Failed to find logical volume") || isLVMNotFoundExit(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("checking if LV %s exists: %w", lvName, err)
 	}
 	return true, nil
+}
+
+func isLVMNotFoundExit(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return exitErr.ExitCode() == 5
 }
 
 // FlattenImage severs a snapshot's CoW relationship with its origin,

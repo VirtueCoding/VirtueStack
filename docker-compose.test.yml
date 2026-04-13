@@ -56,7 +56,7 @@ services:
       DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@postgres:5432/virtuestack?sslmode=disable
       NATS_URL: nats://virtuestack_nats_test_token@nats:4222
       JWT_SECRET: test_jwt_secret_for_e2e_testing_minimum_32_chars
-      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env.test}
       GUEST_OP_HMAC_SECRET: test_guest_op_hmac_secret_for_e2e_testing
       LISTEN_ADDR: :8080
       LOG_LEVEL: debug

@@ -65,8 +65,6 @@ func TestEnsureAbusePreventionAfterCreateDeletesVMWhenRuleInstallFails(t *testin
 }
 
 func TestEnsureAbusePreventionAfterCreateRetriesTapLookupBeforeFailing(t *testing.T) {
-	t.Parallel()
-
 	manager := &abuseLifecycleTestManager{}
 	lookupCalls := 0
 

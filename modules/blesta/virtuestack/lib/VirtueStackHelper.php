@@ -16,7 +16,7 @@ class VirtueStackHelper
      * Verify a webhook HMAC-SHA256 signature using timing-safe comparison.
      *
      * @param string $body Raw request body
-     * @param string $signature Signature from X-VirtueStack-Signature header
+     * @param string $signature Signature from X-Webhook-Signature header
      * @param string $secret Webhook shared secret
      * @return bool True if signature is valid
      */
@@ -25,9 +25,31 @@ class VirtueStackHelper
         string $signature,
         string $secret
     ): bool {
-        $computed = 'sha256=' . hash_hmac('sha256', $body, $secret);
+        $normalizedSignature = self::normalizeWebhookSignature($signature);
+        $computed = hash_hmac('sha256', $body, $secret);
 
-        return hash_equals($computed, $signature);
+        if ($secret === '' || $normalizedSignature === '') {
+            return false;
+        }
+
+        return hash_equals($computed, $normalizedSignature);
+    }
+
+    /**
+     * Normalize a webhook signature by stripping the optional sha256= prefix.
+     *
+     * @param string $signature Header value from the controller webhook request
+     * @return string Normalized raw hex digest
+     */
+    public static function normalizeWebhookSignature(string $signature): string
+    {
+        $normalized = trim($signature);
+
+        if (stripos($normalized, 'sha256=') === 0) {
+            return substr($normalized, 7);
+        }
+
+        return $normalized;
     }
 
     /**

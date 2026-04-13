@@ -103,6 +103,7 @@ services:
       TLS_CERT_FILE: /etc/virtuestack/certs/controller.crt
       TLS_KEY_FILE: /etc/virtuestack/certs/controller.key
       LISTEN_ADDR: :8080
+      METRICS_ADDR: ${CONTROLLER_METRICS_ADDR:-:9091}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:

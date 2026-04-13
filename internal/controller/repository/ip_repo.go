@@ -373,6 +373,19 @@ func (r *IPRepository) SetRDNS(ctx context.Context, ipID, hostname string) error
 	return nil
 }
 
+// ClearRDNS removes the reverse DNS hostname for an IP address.
+func (r *IPRepository) ClearRDNS(ctx context.Context, ipID string) error {
+	const q = `UPDATE ip_addresses SET rdns_hostname = NULL WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, ipID)
+	if err != nil {
+		return fmt.Errorf("clearing RDNS for IP %s: %w", ipID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("clearing RDNS for IP %s: %w", ipID, ErrNoRowsAffected)
+	}
+	return nil
+}
+
 // GetRDNS returns the reverse DNS hostname for an IP address.
 func (r *IPRepository) GetRDNS(ctx context.Context, ipID string) (string, error) {
 	const q = `SELECT rdns_hostname FROM ip_addresses WHERE id = $1`

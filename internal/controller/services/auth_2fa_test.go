@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -206,7 +207,7 @@ type atomicRefreshSessionRepo struct {
 		currentRefreshTokenHash string,
 		newSession *models.Session,
 	) (*models.Session, error)
-	calls int
+	calls atomic.Int32
 }
 
 func (m *mockRefreshSessionRepo) GetSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*models.Session, error) {
@@ -229,7 +230,7 @@ func (m *atomicRefreshSessionRepo) RotateSession(
 	currentRefreshTokenHash string,
 	newSession *models.Session,
 ) (*models.Session, error) {
-	m.calls++
+	m.calls.Add(1)
 	if m.rotateFunc != nil {
 		return m.rotateFunc(ctx, currentRefreshTokenHash, newSession)
 	}
@@ -372,7 +373,7 @@ func TestRefreshToken_AtomicRotationRejectsConcurrentReuse(t *testing.T) {
 	tokens, _, err := authService.RefreshToken(ctx, refreshToken, "127.0.0.1", "unit-test")
 	require.NoError(t, err)
 	require.NotNil(t, repo.createdSession)
-	assert.Equal(t, 1, repo.calls)
+	assert.Equal(t, int32(1), repo.calls.Load())
 
 	claims, err := middleware.ValidateJWT(authService.authConfig, tokens.AccessToken)
 	require.NoError(t, err)

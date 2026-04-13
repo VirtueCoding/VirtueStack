@@ -446,6 +446,9 @@ func resolveCustomerLogoutSession(c *gin.Context, authConfig middleware.AuthConf
 		if cleanupErr != nil {
 			return "", currentSessionID, cleanupErr
 		}
+		if claims.UserType != "customer" {
+			return "", currentSessionID, errors.New("invalid cleanup token user type")
+		}
 		return claims.SessionID, currentSessionID, nil
 	}
 

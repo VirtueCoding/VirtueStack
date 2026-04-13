@@ -91,6 +91,7 @@ services:
     command: >
       --jetstream
       --store_dir /data
+      --auth ${NATS_AUTH_TOKEN}
       --http_port 8222
       --cluster_name virtuestack
       --max_memory_store 1GB

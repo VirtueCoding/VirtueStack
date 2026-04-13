@@ -156,7 +156,7 @@ NATS_AUTH_TOKEN=$(generate_random_hex 24)
 JWT_SECRET=$(generate_random_string 64)
 
 # Encryption Key (32 bytes, 64 hex characters)
-ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+ENCRYPTION_KEY=$(generate_random_hex 32)
 
 # Guest operation HMAC secret (shared across controller and node agent)
 GUEST_OP_HMAC_SECRET=$(generate_random_string 48)

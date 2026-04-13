@@ -63,7 +63,7 @@ export default defineConfig({
     ...(hasSeededAdminCredentials
       ? [{
           name: 'setup-admin',
-          testMatch: /admin\.auth\.setup\.ts/,
+          testMatch: /auth\.setup\.ts/,
           use: {
             ...devices['Desktop Chrome'],
             baseURL: process.env.ADMIN_URL || 'http://localhost:3000',
@@ -72,7 +72,7 @@ export default defineConfig({
       : []),
     {
       name: 'setup-customer',
-      testMatch: /customer\.auth\.setup\.ts/,
+      testMatch: /auth\.setup\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
@@ -181,6 +181,7 @@ export default defineConfig({
       use: {
         ...devices['Pixel 5'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
+        storageState: '.auth/customer-storage.json',
       },
     },
     {
@@ -190,6 +191,7 @@ export default defineConfig({
       use: {
         ...devices['iPhone 12'],
         baseURL: process.env.CUSTOMER_URL || 'http://localhost:3001',
+        storageState: '.auth/customer-storage.json',
       },
     },
   ],
@@ -199,13 +201,13 @@ export default defineConfig({
     {
       command: 'npm run dev --prefix ../../webui/admin',
       url: 'http://localhost:3000',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: !!process.env.CI,
       timeout: 120000,
     },
     {
       command: 'npm run dev --prefix ../../webui/customer',
       url: 'http://localhost:3001',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: !!process.env.CI,
       timeout: 120000,
     },
   ],

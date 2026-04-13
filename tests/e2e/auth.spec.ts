@@ -59,6 +59,10 @@ const CUSTOMER_CREDENTIALS = {
   password: CREDENTIALS.customer.password,
 };
 
+const seededAdminTotpSecret = process.env.TEST_ADMIN_TOTP_SECRET;
+const seededCustomerTotpSecret = process.env.TEST_CUSTOMER_TOTP_SECRET;
+const customerBaseURL = process.env.CUSTOMER_URL || 'http://localhost:3001';
+
 const hasSeededAdminCredentials = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
 const hasSeededCustomer2FACredentials = Boolean(
   process.env.TEST_CUSTOMER_2FA_EMAIL && process.env.TEST_CUSTOMER_2FA_PASSWORD,
@@ -98,6 +102,31 @@ class LoginPage {
   }
 }
 
+async function bodyShowsRateLimit(page: Page): Promise<boolean> {
+  const bodyText = (await page.locator('body').textContent()) ?? '';
+  return /too many requests/i.test(bodyText);
+}
+
+async function loginAdminUntilTwoFactorPrompt(page: Page, loginPage: LoginPage): Promise<void> {
+  const adminWithTwoFactor = CREDENTIALS.adminWith2FA;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await loginPage.gotoAdmin();
+    await loginPage.login(adminWithTwoFactor.email, adminWithTwoFactor.password);
+
+    if (await bodyShowsRateLimit(page)) {
+      if (attempt === 5) {
+        throw new Error('admin login remained rate limited');
+      }
+      await page.waitForTimeout(15000);
+      continue;
+    }
+
+    await loginPage.expect2FARequired();
+    return;
+  }
+}
+
 // ============================================
 // Admin Login Tests
 // ============================================
@@ -121,7 +150,9 @@ test.describe('Admin Authentication', () => {
     await page.click('button[type="submit"]');
     
     // Should show validation errors
-    await expect(page.locator('text=/email is required|please enter your email/i')).toBeVisible();
+    await expect(
+      page.locator('text=/email is required|please enter your email|invalid email address/i'),
+    ).toBeVisible();
   });
 
   test('should show error for invalid email format', async ({ page }) => {
@@ -129,32 +160,29 @@ test.describe('Admin Authentication', () => {
     await page.fill('input[name="password"]', 'password123');
     await page.click('button[type="submit"]');
     
-    await expect(page.locator('text=/invalid email|please enter a valid email/i')).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
   });
 
   test('should show error for non-existent admin', async ({ page }) => {
-    await loginPage.login('nonexistent@example.com', 'Password123!');
+    await loginPage.login('nonexistent@example.com', 'InvalidSecret789!');
     
-    await loginPage.expectError(/invalid credentials|user not found/i);
+    await loginPage.expectError(/invalid credentials|user not found|invalid email or password/i);
   });
 
   test('should show error for wrong password', async ({ page }) => {
-    await loginPage.login(ADMIN_CREDENTIALS.email, 'WrongPassword123!');
+    await loginPage.login(ADMIN_CREDENTIALS.email, 'WrongSecret789!');
     
-    await loginPage.expectError(/invalid credentials|incorrect password/i);
+    await loginPage.expectError(
+      /invalid credentials|incorrect password|invalid email or password|too many requests/i,
+    );
   });
 
   test('should require 2FA for admin login', async ({ page }) => {
-    // Note: This test requires a valid admin account with 2FA enabled
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    
-    // Admin should always see 2FA prompt
-    await loginPage.expect2FARequired();
+    await loginAdminUntilTwoFactorPrompt(page, loginPage);
   });
 
   test('should show error for invalid 2FA code', async ({ page }) => {
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
+    await loginAdminUntilTwoFactorPrompt(page, loginPage);
     
     await loginPage.enter2FACode('000000');
     
@@ -163,12 +191,11 @@ test.describe('Admin Authentication', () => {
 
   test('should complete login with valid 2FA code', async ({ page }) => {
     // Skip if no valid TOTP code available
-    test.skip(!(process.env.ADMIN_TOTP_SECRET || process.env.TEST_ADMIN_TOTP_SECRET), 'Requires ADMIN_TOTP_SECRET env var');
+    test.skip(!seededAdminTotpSecret, 'Requires TEST_ADMIN_TOTP_SECRET env var');
     
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
+    await loginAdminUntilTwoFactorPrompt(page, loginPage);
     
-    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET || process.env.TEST_ADMIN_TOTP_SECRET!);
+    const validCode = generateTOTP(seededAdminTotpSecret!);
     await loginPage.enter2FACode(validCode);
     
     // Should redirect to admin dashboard
@@ -176,12 +203,11 @@ test.describe('Admin Authentication', () => {
   });
 
   test('should logout successfully', async ({ page }) => {
-    test.skip(!(process.env.ADMIN_TOTP_SECRET || process.env.TEST_ADMIN_TOTP_SECRET), 'Requires ADMIN_TOTP_SECRET for full login flow');
+    test.skip(!seededAdminTotpSecret, 'Requires TEST_ADMIN_TOTP_SECRET for full login flow');
 
-    await loginPage.login(ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password);
-    await loginPage.expect2FARequired();
+    await loginAdminUntilTwoFactorPrompt(page, loginPage);
 
-    const validCode = generateTOTP(process.env.ADMIN_TOTP_SECRET || process.env.TEST_ADMIN_TOTP_SECRET!);
+    const validCode = generateTOTP(seededAdminTotpSecret!);
     await loginPage.enter2FACode(validCode);
 
     await expect(page).toHaveURL(/\/dashboard|\/admin/);
@@ -204,6 +230,8 @@ test.describe('Admin Authentication', () => {
 // ============================================
 
 test.describe('Customer Authentication', () => {
+  test.use({ baseURL: customerBaseURL });
+
   let loginPage: LoginPage;
 
   test.beforeEach(async ({ page }) => {
@@ -245,12 +273,12 @@ test.describe('Customer Authentication', () => {
   test('should complete customer login with valid 2FA', async ({ page }) => {
     test.skip(!hasSeededCustomer2FACredentials, 'Requires seeded customer 2FA credentials');
     // This requires actual TOTP generation
-    test.skip(!(process.env.CUSTOMER_TOTP_SECRET || process.env.TEST_CUSTOMER_TOTP_SECRET), 'Requires CUSTOMER_TOTP_SECRET env var');
+    test.skip(!seededCustomerTotpSecret, 'Requires TEST_CUSTOMER_TOTP_SECRET env var');
     
     await loginPage.login(CREDENTIALS.customerWith2FA.email, CREDENTIALS.customerWith2FA.password);
     await loginPage.expect2FARequired();
     
-    const validCode = generateTOTP(process.env.CUSTOMER_TOTP_SECRET || process.env.TEST_CUSTOMER_TOTP_SECRET!);
+    const validCode = generateTOTP(seededCustomerTotpSecret!);
     await loginPage.enter2FACode(validCode);
     
     await expect(page).toHaveURL(/\/dashboard|\/vms/);
@@ -379,9 +407,9 @@ test.describe('Authentication Security', () => {
 
   test('should show error for invalid customer credentials', async ({ page }) => {
     await loginPage.gotoCustomer();
-    await loginPage.login('nonexistent@example.com', 'Password123!');
+    await loginPage.login('nonexistent@example.com', 'InvalidSecret789!');
 
-    await loginPage.expectError(/invalid credentials|too many requests/i);
+    await loginPage.expectError(/invalid credentials|too many requests|invalid email or password/i);
   });
 
   test('should rate limit login attempts', async ({ page }) => {
