@@ -1,0 +1,112 @@
+<?php
+$statusColors = [
+    'running' => '#22c55e',
+    'stopped' => '#ef4444',
+    'suspended' => '#f59e0b',
+    'provisioning' => '#3b82f6',
+    'migrating' => '#8b5cf6',
+    'reinstalling' => '#6366f1',
+    'error' => '#dc2626',
+    'deleted' => '#6b7280',
+];
+$statusColor = $statusColors[$vm_status ?? ''] ?? '#6b7280';
+$statusLabel = $this->_('Virtuestack.status.' . ($vm_status ?? 'unknown'), true) ?? ($vm_status ?? 'Unknown');
+?>
+
+<div class="title_row">
+    <h3><?php echo $this->_('Virtuestack.tab_admin_service', true);?></h3>
+</div>
+
+<?php if (!empty($error)) : ?>
+<div class="alert alert-danger" style="padding:10px;margin:10px 0;background:#fee2e2;border:1px solid #fecaca;border-radius:4px;color:#991b1b;">
+    <?php echo $this->Html->safe($error);?>
+</div>
+<?php endif; ?>
+
+<div class="pad">
+    <?php if (empty($vm_id)) : ?>
+        <p><?php echo $this->_('Virtuestack.admin.no_vm', true);?></p>
+    <?php else : ?>
+        <table class="table">
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.vm_id', true);?></strong></td>
+                <td><code><?php echo $this->Html->safe($vm_id);?></code></td>
+            </tr>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.vm_ip', true);?></strong></td>
+                <td><?php echo $this->Html->safe($vm_ip ?? '—');?></td>
+            </tr>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.vm_status', true);?></strong></td>
+                <td>
+                    <span style="display:inline-block;padding:2px 10px;border-radius:12px;background:<?php echo $statusColor;?>;color:#fff;font-size:12px;">
+                        <?php echo $this->Html->safe($statusLabel);?>
+                    </span>
+                </td>
+            </tr>
+            <?php if (!empty($provisioning_status)) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.provisioning_status', true);?></strong></td>
+                <td><?php echo $this->Html->safe($provisioning_status);?></td>
+            </tr>
+            <?php endif; ?>
+            <?php if (!empty($task_id)) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.task_id', true);?></strong></td>
+                <td><code><?php echo $this->Html->safe($task_id);?></code></td>
+            </tr>
+            <?php endif; ?>
+        </table>
+
+        <?php if (!empty($vm_info)) : ?>
+        <h4><?php echo $this->_('Virtuestack.admin.resources', true);?></h4>
+        <table class="table">
+            <?php if (isset($vm_info['vcpu'])) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.vcpu', true);?></strong></td>
+                <td><?php echo (int) $vm_info['vcpu'];?> Cores</td>
+            </tr>
+            <?php endif; ?>
+            <?php if (isset($vm_info['memory_mb'])) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.memory', true);?></strong></td>
+                <td><?php echo (int) $vm_info['memory_mb'];?> MB</td>
+            </tr>
+            <?php endif; ?>
+            <?php if (isset($vm_info['disk_gb'])) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.disk', true);?></strong></td>
+                <td><?php echo (int) $vm_info['disk_gb'];?> GB</td>
+            </tr>
+            <?php endif; ?>
+            <?php if (isset($vm_info['node_id'])) : ?>
+            <tr>
+                <td><strong><?php echo $this->_('Virtuestack.admin.node', true);?></strong></td>
+                <td><code><?php echo $this->Html->safe($vm_info['node_id']);?></code></td>
+            </tr>
+            <?php endif; ?>
+        </table>
+        <?php endif; ?>
+
+        <h4><?php echo $this->_('Virtuestack.admin.power_actions', true);?></h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <?php
+            $actions = [
+                'start' => $this->_('Virtuestack.action.start', true),
+                'stop' => $this->_('Virtuestack.action.stop', true),
+                'restart' => $this->_('Virtuestack.action.restart', true),
+                'force_stop' => $this->_('Virtuestack.action.force_stop', true),
+                'sync_status' => $this->_('Virtuestack.action.sync_status', true),
+            ];
+            foreach ($actions as $action => $label) :
+            ?>
+            <form method="post" style="display:inline;">
+                <input type="hidden" name="action" value="<?php echo $this->Html->safe($action);?>" />
+                <button type="submit" class="btn btn-sm btn-default">
+                    <?php echo $this->Html->safe($label);?>
+                </button>
+            </form>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+</div>

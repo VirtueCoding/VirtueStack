@@ -1,0 +1,7 @@
+BEGIN;
+
+SET lock_timeout = '5s';
+
+ALTER TABLE vms ADD COLUMN IF NOT EXISTS attached_iso VARCHAR(255) DEFAULT NULL;
+
+COMMIT;

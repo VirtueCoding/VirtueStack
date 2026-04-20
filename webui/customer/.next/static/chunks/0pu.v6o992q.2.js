@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,40813,i=>{"use strict";var t=i.i(72901);i.i(4853),i.s(["vmApi",()=>t.vmApi])}]);

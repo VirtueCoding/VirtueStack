@@ -1,0 +1,136 @@
+# =============================================================================
+# VirtueStack Controller - Multi-stage Dockerfile
+# =============================================================================
+# Build stage: Compiles the Go application
+# Runtime stage: Minimal Alpine image with the binary
+#
+# QG-15/QG-19 Production Recommendations:
+# - Pin base images to SHA digest for reproducible builds
+# - Consider gcr.io/distroless/static-debian12 for runtime stage to reduce
+#   attack surface (no shell, no package manager). Note: health checks require
+#   a minimal health check binary or external monitoring.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Build Stage
+# -----------------------------------------------------------------------------
+ARG GO_VERSION=1.26
+# Production: Pin to digest, e.g., FROM golang:1.26-alpine@sha256:...
+FROM golang:${GO_VERSION}-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    build-base \
+    git \
+    ca-certificates \
+    tzdata
+
+# Set working directory
+WORKDIR /build
+
+# Enable Go modules and configure build
+# CGO_ENABLED=0 is correct: Controller does not import go-ceph or libvirt-go directly.
+# Only the Node Agent uses CGO-dependent libraries.
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64 \
+    GOPROXY=https://proxy.golang.org,direct \
+    GOSUMDB=sum.golang.org \
+    GOTOOLCHAIN=local
+
+# Copy go.mod and go.sum first for caching
+COPY go.mod go.sum ./
+
+# Download dependencies (go.mod and go.sum are pre-validated)
+RUN GOFLAGS=-mod=mod go mod download && go mod verify
+
+# Copy source code
+COPY . .
+
+# Build the binary with optimizations
+RUN GOFLAGS=-mod=mod go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o /build/controller \
+    ./cmd/controller
+
+# Verify binary
+RUN chmod +x /build/controller && \
+    ls -la /build/controller
+
+# -----------------------------------------------------------------------------
+# Development Stage (for hot reload with air/delve)
+# -----------------------------------------------------------------------------
+# Production: Pin to digest
+FROM golang:${GO_VERSION}-alpine AS development
+
+# Install development tools
+RUN apk add --no-cache \
+    build-base \
+    git \
+    ca-certificates \
+    tzdata \
+    curl \
+    bash
+
+# Install Air for hot reload and Delve for debugging
+# Updated for Go 1.26 compatibility
+RUN go install github.com/air-verse/air@v1.61.7 && \
+    go install github.com/go-delve/delve/cmd/dlv@v1.23.1
+
+WORKDIR /app
+
+# Copy go.mod and go.sum first
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Expose debug port
+EXPOSE 40000
+
+# Default command (can be overridden)
+CMD ["air", "-c", ".air.toml"]
+
+# -----------------------------------------------------------------------------
+# Runtime Stage
+# -----------------------------------------------------------------------------
+# Production: Pin to digest, e.g., FROM alpine:3.22.3@sha256:...
+# Alternative: gcr.io/distroless/static-debian12:latest for zero attack surface
+# (requires external health monitoring since no shell/curl available)
+FROM alpine:3.22.3 AS runtime
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN adduser -D -u 1000 -g 1000 -h /app -s /bin/sh virtuestack
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder --chown=1000:1000 /build/controller /app/controller
+
+# Copy migrations directory (for database migrations)
+COPY --chown=1000:1000 --from=builder /build/migrations /app/migrations
+
+# Switch to non-root user
+USER 1000:1000
+
+# Expose application port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD wget -q -T 5 -O /dev/null http://localhost:8080/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/app/controller"]
+
+# Default arguments (can be overridden)
+CMD []

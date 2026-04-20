@@ -1,0 +1,143 @@
+# =============================================================================
+# VirtueStack E2E Test Docker Compose
+# =============================================================================
+# This configuration is for CI/CD E2E testing.
+# It includes mock services and test-friendly configurations.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+#
+# Features:
+#   - Exposes all service ports for direct testing
+#   - Uses test-friendly credentials
+#   - Includes health checks for all services
+#   - Mounts test seed data
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # PostgreSQL - Exposed for direct test access
+  # ===========================================================================
+  postgres:
+    user: "0:0"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: virtuestack
+      POSTGRES_PASSWORD: virtuestack_test_password
+      POSTGRES_DB: virtuestack
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # ===========================================================================
+  # NATS - Exposed for direct test access
+  # ===========================================================================
+  nats:
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["nats-server", "-js", "-sd", "/data", "--auth", "virtuestack_nats_test_token", "-m", "8222"]
+
+  # ===========================================================================
+  # Controller - Exposed for API testing
+  # ===========================================================================
+  controller:
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "node-agent:host-gateway"
+    environment:
+      DATABASE_URL: postgresql://virtuestack:virtuestack_test_password@postgres:5432/virtuestack?sslmode=disable
+      NATS_URL: nats://virtuestack_nats_test_token@nats:4222
+      JWT_SECRET: test_jwt_secret_for_e2e_testing_minimum_32_chars
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      LISTEN_ADDR: :8080
+      LOG_LEVEL: debug
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001
+      # Disable auth rate limiting for tests
+      AUTH_RATE_LIMIT_ENABLED: "false"
+      BILLING_WHMCS_ENABLED: "true"
+      BILLING_WHMCS_PRIMARY: "true"
+    volumes:
+      - ./certs:/etc/virtuestack/certs:ro
+
+  # ===========================================================================
+  # Admin WebUI - Exposed for Playwright testing
+  # ===========================================================================
+  admin-webui:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+      NODE_ENV: test
+
+  # ===========================================================================
+  # Customer WebUI - Exposed for Playwright testing
+  # ===========================================================================
+  customer-webui:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+    ports:
+      - "3001:3001"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+      NODE_ENV: test
+
+  # ===========================================================================
+  # Mock Node Agent (for testing without real KVM)
+  # ===========================================================================
+  mock-node-agent:
+    image: wiremock/wiremock:3
+    container_name: virtuestack-mock-node-agent
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./tests/e2e/mocks:/home/wiremock
+    command: ["--port", "50051", "--verbose"]
+    networks:
+      - virtuestack-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:50051/__admin/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Test Database Admin (optional, for debugging)
+  # ===========================================================================
+  # Uncomment to enable pgAdmin for debugging
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: virtuestack-pgadmin
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@test.local
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #     PGADMIN_CONFIG_SERVER_MODE: "False"
+  #   ports:
+  #     - "5050:80"
+  #   networks:
+  #     - virtuestack-internal
+  #   depends_on:
+  #     - postgres
+
+# =============================================================================
+# Override networks for test access
+# =============================================================================
+networks:
+  virtuestack-internal:
+    driver: bridge
+    name: virtuestack-test-network
+    ipam:
+      driver: default
+      config:
+        - subnet: ${DOCKER_TEST_NETWORK_SUBNET:-172.31.0.0/24}

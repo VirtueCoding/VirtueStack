@@ -1,0 +1,72 @@
+<?php
+$status = $provisioning_status ?? 'pending';
+?>
+
+<?php if (!empty($error)) : ?>
+<div style="padding:12px;margin:12px 0;background:#fee2e2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;">
+    <?php echo $this->Html->safe($error);?>
+</div>
+<?php endif; ?>
+
+<?php if ($status === 'pending') : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">⏳</div>
+        <h3><?php echo $this->_('Virtuestack.provisioning.pending', true);?></h3>
+        <?php if (!empty($task_id)) : ?>
+        <p style="color:#6b7280;margin-top:8px;">
+            Task: <code><?php echo $this->Html->safe($task_id);?></code>
+        </p>
+        <?php endif; ?>
+        <?php if (isset($task_status)) : ?>
+        <p style="color:#6b7280;">
+            Status: <?php echo $this->Html->safe($task_status);?>
+            <?php if (isset($task_progress) && $task_progress > 0) : ?>
+                (<?php echo (int) $task_progress;?>%)
+            <?php endif; ?>
+        </p>
+        <?php endif; ?>
+        <p style="color:#9ca3af;font-size:14px;margin-top:16px;">
+            This page will update automatically when provisioning completes.
+        </p>
+        <meta http-equiv="refresh" content="15">
+    </div>
+
+<?php elseif ($status === 'active' && !empty($iframe_url)) : ?>
+    <div style="margin-bottom:12px;text-align:right;">
+        <a href="<?php echo $this->Html->safe($iframe_url);?>" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-default">
+            <?php echo $this->_('Virtuestack.action.open_new_tab', true);?> ↗
+        </a>
+    </div>
+    <iframe src="<?php echo $this->Html->safe($iframe_url);?>"
+            style="width:100%;min-height:700px;border:none;"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            allow="clipboard-read; clipboard-write"></iframe>
+
+<?php elseif ($status === 'error') : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">❌</div>
+        <h3><?php echo $this->_('Virtuestack.provisioning.error', true);?></h3>
+        <?php if (!empty($provisioning_error)) : ?>
+        <p style="color:#991b1b;margin-top:8px;">
+            <?php echo $this->Html->safe($provisioning_error);?>
+        </p>
+        <?php endif; ?>
+    </div>
+
+<?php elseif ($status === 'suspended') : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
+        <h3><?php echo $this->_('Virtuestack.provisioning.suspended', true);?></h3>
+    </div>
+
+<?php elseif ($status === 'terminated') : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">🚫</div>
+        <h3><?php echo $this->_('Virtuestack.provisioning.terminated', true);?></h3>
+    </div>
+
+<?php else : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <p><?php echo $this->_('Virtuestack.status.unknown', true);?></p>
+    </div>
+<?php endif; ?>

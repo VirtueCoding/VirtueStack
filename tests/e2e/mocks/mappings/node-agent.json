@@ -1,0 +1,246 @@
+{
+  "mappings": [
+    {
+      "name": "ping",
+      "request": {
+        "method": "POST",
+        "url": "/ping"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "message": "pong",
+          "timestamp": "{{now timezone='UTC'}}"
+        }
+      }
+    },
+    {
+      "name": "get-node-health",
+      "request": {
+        "method": "POST",
+        "url": "/GetNodeHealth"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "healthy": true,
+          "cpu_percent": 45.5,
+          "memory_percent": 62.3,
+          "disk_percent": 35.2,
+          "uptime_seconds": 864000
+        }
+      }
+    },
+    {
+      "name": "get-node-resources",
+      "request": {
+        "method": "POST",
+        "url": "/GetNodeResources"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "total_cpu": 32,
+          "used_cpu": 12,
+          "total_memory_mb": 65536,
+          "used_memory_mb": 24576,
+          "total_disk_gb": 1000,
+          "used_disk_gb": 350,
+          "running_vms": 5,
+          "total_vms": 8
+        }
+      }
+    },
+    {
+      "name": "create-vm",
+      "request": {
+        "method": "POST",
+        "url": "/CreateVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "vm_id": "{{request.json.vm_uuid}}",
+          "message": "VM created successfully"
+        }
+      }
+    },
+    {
+      "name": "start-vm",
+      "request": {
+        "method": "POST",
+        "url": "/StartVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "VM started"
+        }
+      }
+    },
+    {
+      "name": "stop-vm",
+      "request": {
+        "method": "POST",
+        "url": "/StopVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "VM stopped"
+        }
+      }
+    },
+    {
+      "name": "restart-vm",
+      "request": {
+        "method": "POST",
+        "url": "/RestartVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "VM restarted"
+        }
+      }
+    },
+    {
+      "name": "delete-vm",
+      "request": {
+        "method": "POST",
+        "url": "/DeleteVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "VM deleted"
+        }
+      }
+    },
+    {
+      "name": "get-vm-status",
+      "request": {
+        "method": "POST",
+        "url": "/GetVMStatus"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "vm_uuid": "{{request.json.vm_uuid}}",
+          "status": "running",
+          "cpu_usage": 25.5,
+          "memory_usage_mb": 1024,
+          "disk_usage_gb": 10,
+          "uptime_seconds": 3600
+        }
+      }
+    },
+    {
+      "name": "get-vm-metrics",
+      "request": {
+        "method": "POST",
+        "url": "/GetVMMetrics"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "vm_uuid": "{{request.json.vm_uuid}}",
+          "cpu_percent": 35.2,
+          "memory_mb": 2048,
+          "disk_read_bytes": 1073741824,
+          "disk_write_bytes": 536870912,
+          "network_rx_bytes": 10485760,
+          "network_tx_bytes": 5242880
+        }
+      }
+    },
+    {
+      "name": "create-snapshot",
+      "request": {
+        "method": "POST",
+        "url": "/CreateSnapshot"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "snapshot_name": "{{request.json.snapshot_name}}",
+          "message": "Snapshot created"
+        }
+      }
+    },
+    {
+      "name": "delete-snapshot",
+      "request": {
+        "method": "POST",
+        "url": "/DeleteSnapshot"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "Snapshot deleted"
+        }
+      }
+    },
+    {
+      "name": "revert-snapshot",
+      "request": {
+        "method": "POST",
+        "url": "/RevertSnapshot"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "message": "Snapshot reverted"
+        }
+      }
+    },
+    {
+      "name": "list-snapshots",
+      "request": {
+        "method": "POST",
+        "url": "/ListSnapshots"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "vm_uuid": "{{request.json.vm_uuid}}",
+          "snapshots": [
+            {
+              "name": "daily-backup",
+              "created_at": "{{now offset='-1d' timezone='UTC'}}",
+              "size_bytes": 1073741824
+            },
+            {
+              "name": "before-update",
+              "created_at": "{{now offset='-2d' timezone='UTC'}}",
+              "size_bytes": 2147483648
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "migrate-vm",
+      "request": {
+        "method": "POST",
+        "url": "/MigrateVM"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "migration_id": "{{randomValue length=36 type='UUID'}}",
+          "message": "Migration started"
+        }
+      }
+    }
+  ]
+}

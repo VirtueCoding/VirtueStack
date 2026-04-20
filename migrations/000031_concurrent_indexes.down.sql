@@ -1,0 +1,3 @@
+-- No-op: the .up migration is intentionally a compatibility placeholder.
+-- The canonical indexes were already created in migrations 000003-000007, so there
+-- is nothing additional to roll back here.

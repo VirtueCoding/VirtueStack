@@ -1,0 +1,8 @@
+BEGIN;
+
+DROP TABLE IF EXISTS audit_logs_2028_03;
+DROP TABLE IF EXISTS audit_logs_2028_02;
+DROP TABLE IF EXISTS audit_logs_2028_01;
+DROP TABLE IF EXISTS audit_logs_default;
+
+COMMIT;

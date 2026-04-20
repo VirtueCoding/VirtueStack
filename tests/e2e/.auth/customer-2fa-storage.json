@@ -1,0 +1,35 @@
+{
+  "cookies": [
+    {
+      "name": "vs_refresh_token",
+      "value": "1ba222d14be5eb41acb6972e3657ead45c095e35de7cee3b702c97646943f4bb",
+      "domain": "localhost",
+      "path": "/api/v1/customer/auth/refresh",
+      "expires": 1776207769.082118,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "vs_access_token",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4ODg4ODg4OC04ODg4LTg4ODgtODg4OC04ODg4ODg4ODgwMDIiLCJ1c2VyX3R5cGUiOiJjdXN0b21lciIsImlzcyI6InZpcnR1ZXN0YWNrIiwiZXhwIjoxNzc1NjAzODY4LCJuYmYiOjE3NzU2MDI5NjgsImlhdCI6MTc3NTYwMjk2OCwianRpIjoiYjdkMzA4NTktMTg5MC00YmNjLTg5MzctODJmOTYyMGFhZjk4In0.oseLSQJnVCsm-VSE5QvCOHG4TlCeOTdn8kHw1uxW9rU",
+      "domain": "localhost",
+      "path": "/api/v1/",
+      "expires": 1775603869.080762,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "csrf_token",
+      "value": "o6_BMu0oNeuOVDbalkMWknMW531DcGgYIQcDpRyrA7k=",
+      "domain": "localhost",
+      "path": "/",
+      "expires": 1775689366.322038,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    }
+  ],
+  "origins": []
+}
