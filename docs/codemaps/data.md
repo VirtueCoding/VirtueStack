@@ -1,0 +1,216 @@
+<!-- Generated: 2026-04-26 | Files scanned: 80 migrations | Token estimate: ~1500 -->
+
+# Data Architecture
+
+## Core Tables (40+ tables)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              ENTITY RELATIONSHIPS                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+locations ──┬── nodes ────────┬── ipv6_prefixes ── vm_ipv6_subnets
+            │                 │
+            │                 ├── node_heartbeats
+            │                 │
+            │                 └── vms ──────┬── snapshots
+            │                               ├── backups
+            │                               ├── ip_addresses
+            │                               └── iso_uploads
+            │
+            └── ip_sets ──────── ip_addresses
+
+customers ──┬── vms
+            ├── sessions
+            ├── customer_api_keys
+            ├── webhooks ── webhook_deliveries   # Customer webhooks (renamed in 000010)
+            ├── notification_preferences
+            ├── failed_login_attempts
+            ├── sso_tokens          # Billing SSO bootstrap
+            ├── billing_transactions
+            ├── billing_payments
+            ├── billing_invoices ── billing_invoice_line_items
+            ├── notifications       # In-app notifications
+            └── customer_oauth_links
+
+admins ───┬── sessions
+          ├── console_tokens     # Time-limited console access
+          └── admin_permissions  # RBAC permissions
+
+plans ─── vms
+
+templates ──┬── vms
+            └── template_node_cache  # QCOW/LVM node template caching
+
+storage_backends ── node_storage (junction) ── nodes
+
+provisioning_keys (billing API keys — neutral, supports WHMCS/Blesta/any)
+
+tasks (async job queue)
+
+audit_logs (partitioned by timestamp)
+
+system_settings (key-value)
+
+failover_requests (HA tracking)
+
+admin_backup_schedules (mass backup campaigns)
+
+system_webhooks (system-level webhook configs)
+
+email_verification_tokens (customer email verification)
+
+pre_action_webhooks (pre-action approval webhooks)
+
+billing_vm_checkpoints (hourly VM usage billing dedup)
+
+billing_invoice_counters (per-year invoice number sequence)
+
+bandwidth_usage / bandwidth_throttle / bandwidth_snapshots (per-VM bandwidth accounting)
+
+ip_set_nodes (junction: ip_sets ↔ nodes for shared pools)
+
+exchange_rates (currency conversion rates)
+
+vms ── billing_vm_checkpoints  # Hourly billing dedup per VM
+```
+
+## Table Schemas
+
+### Identity & Auth
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `customers` | id, email, password_hash, totp_*, status, billing_provider | Customer accounts |
+| `admins` | id, email, password_hash, totp_*, role | Admin users |
+| `sessions` | id, user_id, user_type, refresh_token_hash, expires_at | JWT refresh |
+| `customer_api_keys` | id, customer_id, key_hash, vm_ids, permissions, allowed_ips, expires_at | API auth |
+| `provisioning_keys` | id, key_hash, allowed_ips, expires_at | WHMCS auth |
+| `console_tokens` | id, token_hash, user_id, user_type, vm_id, console_type, expires_at | Console access |
+| `admin_permissions` | id, admin_id, permissions (jsonb) | RBAC |
+| `sso_tokens` | id, token_hash, customer_id, vm_id, redirect_path, expires_at | SSO bootstrap |
+| `password_resets` | id, user_id, token_hash, expires_at | Password reset flow |
+| `failed_login_attempts` | id, email, ip_address, user_type, attempted_at | Brute-force tracking |
+
+### Infrastructure
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `locations` | id, name, region, country | Data centers |
+| `nodes` | id, hostname, grpc_address, status, storage_backend | Hypervisors |
+| `node_heartbeats` | id, node_id, timestamp, cpu_percent, memory_percent | Health metrics |
+| `ip_sets` | id, location_id, network, gateway | IP pools |
+| `ip_set_nodes` | ip_set_id, node_id | Junction: IP set ↔ node membership |
+| `ip_addresses` | id, ip_set_id, address, vm_id, rdns_hostname | IP allocations |
+| `ipv6_prefixes` | id, node_id, prefix | /48 allocations |
+| `vm_ipv6_subnets` | id, vm_id, ipv6_prefix_id, subnet | /64 subnets |
+| `storage_backends` | id, name, type, ceph_*, storage_path, lvm_*, health_* | Storage backend registry |
+| `node_storage` | node_id, storage_backend_id, enabled | Node-to-backend junction |
+
+### VM Resources
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `plans` | id, name, slug, vcpu, memory_mb, disk_gb, snapshot_limit, backup_limit, iso_upload_limit | VPS tiers |
+| `templates` | id, name, os_family, rbd_image, storage_backend, file_path | OS images |
+| `template_node_cache` | template_id, node_id, status, local_path, size_bytes | Template distribution cache |
+| `vms` | id, customer_id, node_id, plan_id, hostname, status, storage_backend, disk_path, storage_backend_id, attached_iso | Virtual machines |
+| `snapshots` | id, vm_id, name, rbd_snapshot | Point-in-time |
+| `backups` | id, vm_id, source, status, storage_path, size_bytes | Backups |
+| `backup_schedules` | id, vm_id, interval, retention | Scheduled backups |
+| `admin_backup_schedules` | id, name, frequency, target_*, retention_count | Mass backup campaigns |
+| `iso_uploads` | id, vm_id, filename, size_bytes, storage_path | Uploaded ISOs |
+
+### Async, Audit & Bandwidth
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `tasks` | id, type, status, payload, result, progress, progress_message, retry_count | Job queue |
+| `audit_logs` | id, timestamp, actor_id, action, resource_type, changes | Immutable trail (partitioned by month, `audit_logs_YYYY_MM` + `audit_logs_default`) |
+| `failover_requests` | id, source_node_id, target_node_id, status | HA tracking |
+| `bandwidth_usage` | id, vm_id, period_start, ingress_bytes, egress_bytes | Per-VM bandwidth meter |
+| `bandwidth_throttle` | id, vm_id, rate_limit_bps, applied_at | Active rate-limit state |
+| `bandwidth_snapshots` | id, vm_id, snapshot_at, ingress_bytes, egress_bytes | Periodic counter snapshots |
+
+### Integrations
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `webhooks` | id, customer_id, url, secret_hash, events[], active, fail_count | Customer webhook endpoints (renamed from `customer_webhooks` in 000010) |
+| `webhook_deliveries` | id, webhook_id, event, idempotency_key, status, attempt_count | Delivery log (recreated in 000010 with new schema) |
+| `notification_preferences` | id, customer_id, channels | Notification settings |
+| `notification_events` | id, customer_id, event_type, payload, created_at | Per-customer event log (drives email/Telegram fanout) |
+| `system_settings` | key, value (jsonb) | Config |
+| `system_webhooks` | id, name, url, secret, events[], is_active | System-level webhooks |
+| `email_verification_tokens` | id, customer_id, token_hash, expires_at | Email verification |
+| `pre_action_webhooks` | id, name, url, secret, events[], timeout_ms, fail_open, is_active | Pre-action approval webhooks |
+
+### Billing & Payments
+
+| Table | Key Columns | Purpose |
+|-------|-------------|---------|
+| `billing_transactions` | id, customer_id, type (credit/debit/refund), amount, currency, description, balance_after, reference_type, reference_id | Immutable credit ledger |
+| `billing_payments` | id, customer_id, provider, external_id, amount, currency, status, metadata | Payment gateway records |
+| `billing_invoices` | id, customer_id, invoice_number, status, total, currency, due_date | Invoice headers |
+| `billing_invoice_line_items` | id, invoice_id, description, quantity, unit_price, total | Invoice line items |
+| `billing_invoice_counters` | year, last_number | Per-year monotonic invoice number sequence |
+| `billing_vm_checkpoints` | id, vm_id, billed_at, amount | Hourly billing dedup |
+| `exchange_rates` | currency (PK), rate_to_usd, updated_at | Currency conversion |
+| `notifications` | id, customer_id, title, message, is_read, created_at | In-app notifications |
+| `customer_oauth_links` | id, customer_id, provider, provider_user_id, email | OAuth provider links |
+
+Note: `customers` table now includes `billing_provider` column (values: `whmcs`, `blesta`, `native`). The `vms` table references are via neutral `external_service_id` and `external_client_id` columns.
+
+## Row Level Security
+
+```sql
+-- Customer isolation enforced at DB level
+ALTER TABLE vms ENABLE ROW LEVEL SECURITY;
+CREATE POLICY customer_vms ON vms FOR ALL TO app_customer
+    USING (customer_id = current_setting('app.current_customer_id')::UUID);
+
+-- Also protected: customer_api_keys, ip_addresses, backups, snapshots,
+-- backup_schedules, sessions, notification_preferences, notification_events,
+-- console_tokens, customers, password_resets, email_verification_tokens,
+-- system_webhooks, pre_action_webhooks, billing_transactions, billing_payments,
+-- billing_invoices, billing_invoice_line_items, notifications, customer_oauth_links,
+-- webhooks, webhook_deliveries
+```
+
+## Index Strategy
+
+| Table | Index | Purpose |
+|-------|-------|---------|
+| vms | idx_vms_customer_id, idx_vms_node_id, idx_vms_status | Lookups |
+| ip_addresses | idx_ip_addresses_vm_id, idx_ip_addresses_status | Allocation |
+| tasks | idx_tasks_status, idx_tasks_status_created | Queue queries |
+| audit_logs | idx_audit_logs_actor_id, idx_audit_logs_timestamp | Search |
+| backups | idx_backups_vm_id, idx_backups_status_created | List/restore |
+| console_tokens | idx_console_tokens_expires_at | Token lookup |
+| vm_ipv6_subnets | unique(vm_id, subnet) | Subnet uniqueness |
+
+## Migration History
+
+| Range | Purpose |
+|-------|---------|
+| 000001 | Initial schema |
+| 000002-000008 | Indexes, bandwidth, notifications, webhooks |
+| 000009-000018 | Features (API keys, password reset, failed logins) |
+| 000019-000021 | Storage backends, failover, ISO |
+| 000022-000028 | RLS policies, constraints |
+| 000029-000034 | Performance indexes, plan limits |
+| 000035-000038 | Ceph config, admin backup schedules, API key IP whitelist |
+| 000039-000044 | Console tokens, RLS policies, plan cleanup, admin permissions |
+| 000045-000053 | Schema indexes, RLS fixes, FK constraints, audit log partitions |
+| 000054-000057 | Rename ceph to storage stats, storage backend registry, LVM thresholds |
+| 000058-000060 | IPv6 subnet uniqueness, bandwidth snapshots, task progress messages |
+| 000061-000065 | ISO uploads, SSO tokens, provisioning key expiry, template cache, unify backup/snapshot |
+| 000066-000071 | VM state machine constraint, task retry count, system webhooks, email verification, pre-action webhooks, review fixes (RLS + GIN indexes) |
+| 000072-000080 | Billing system: billing_provider column, notifications, billing_transactions, billing_payments, billing_vm_checkpoints, exchange_rates, billing_invoices + line_items + counters, customer_oauth_links, neutral external_client_id + external_service_id |
+
+## Database Roles
+
+```sql
+app_user      -- Controller connection (read/write)
+app_customer  -- RLS isolation (SET ROLE for customer context)
+```

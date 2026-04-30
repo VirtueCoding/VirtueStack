@@ -1,0 +1,398 @@
+# VirtueStack
+
+**A modern, scalable Virtual Machine management platform built for VPS hosting providers.**
+
+[![Go Version](https://img.shields.io/badge/Go-1.26-blue)](https://golang.org/)
+[![React](https://img.shields.io/badge/React-19-blue)](https://reactjs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-blue)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+VirtueStack provides a complete infrastructure-as-a-service platform for managing virtual machines across distributed compute nodes.
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Development](#development)
+- [Production Deployment](#production-deployment)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Overview
+
+VirtueStack is a cloud-native VM management platform for VPS hosting providers:
+
+- **Multi-tenant** - Separate admin and customer portals with RBAC
+- **Distributed** - Scale across multiple hypervisor nodes
+- **Flexible Storage** - Ceph RBD, QCOW2, or LVM thin-provisioned backends
+- **Live Migration** - Zero-downtime VM movement
+- **API Integration** - Neutral Provisioning REST API for WHMCS, Blesta, or custom billing
+- **Built-in Billing** - Native credit-based billing with Stripe, PayPal, and crypto payments
+- **High Availability** - Automatic node failover with IPMI fencing
+- **Monitoring** - Prometheus metrics with Grafana dashboards
+
+---
+
+## Features
+
+### Core Platform
+
+| Feature | Status |
+|---------|--------|
+| VM Lifecycle Management | ✅ Create, start, stop, restart, reinstall VMs |
+| Live Migration | ✅ Zero-downtime migration between nodes |
+| Storage Backends | ✅ Ceph RBD, QCOW2, and LVM thin-provisioned with admin management UI |
+| Storage Backend Management | ✅ Full CRUD, node assignment, health monitoring with configurable thresholds |
+| Bandwidth Monitoring | ✅ Real-time tracking with limits and overage throttling |
+| Backup & Snapshots | ✅ Unified backup model (full + snapshot methods) with plan-based limits |
+| Admin Backup Schedules | ✅ Mass backup campaigns targeting VMs by plan/node/customer |
+| Console Access | ✅ Web-based VNC (noVNC) and Serial (xterm.js) consoles |
+| HA Node Failover | ✅ IPMI fencing, STONITH, Ceph blocklist, VM redistribution |
+| Template Build from ISO | ✅ Build OS templates from ISO with unattended install (preseed/kickstart/autoinstall) |
+| Template Distribution | ✅ Distribute templates to QCOW/LVM nodes with cache tracking |
+| PowerDNS rDNS | ✅ Reverse DNS with MySQL direct access, IPv4+IPv6 PTR |
+| IPv6 Support | ✅ /48 prefix allocation, /64 per-VM subnets |
+| WHMCS Integration | ✅ Full provisioning, suspend, resize, terminate module with SSO token exchange |
+| Blesta Integration | ✅ Server module with provisioning, suspend, unsuspend, terminate, SSO |
+| ISO Management | ✅ Upload, attach, detach ISOs with plan-based limits and SHA256 validation |
+| Webhooks | ✅ Customer webhook delivery with retry and logging |
+| System Webhooks | ✅ Admin-managed webhooks for system events (node/failover/storage) |
+| Pre-Action Webhooks | ✅ Synchronous approval webhooks before VM operations (fail-open/fail-closed) |
+| Notification Preferences | ✅ Email and Telegram notifications per event type |
+
+### Security & Authentication
+
+| Feature | Status |
+|---------|--------|
+| Multi-factor Authentication | ✅ TOTP/2FA with backup codes |
+| JWT Authentication | ✅ Secure token-based sessions with refresh tokens |
+| RBAC | ✅ Role-based permissions (customer and admin) |
+| Fine-grained Admin Permissions | ✅ 27 granular permissions with super_admin management |
+| API Keys | ✅ Secure API access with expiration, IP whitelist, and VM scoping |
+| API Key IP Whitelist | ✅ IPv4, IPv6, CIDR support for customer and provisioning keys |
+| VM-Scoped API Keys | ✅ Restrict customer API keys to specific VMs |
+| SSO Token Exchange | ✅ One-time opaque tokens for WHMCS → customer portal seamless login |
+| Audit Logging | ✅ Immutable operation logs with partitioning |
+| Anti-Spoofing | ✅ nwfilter MAC, IP, ARP, DHCP, RA spoofing prevention |
+| Abuse Prevention | ✅ nftables rules (SMTP block, metadata endpoint block) |
+| Row Level Security | ✅ PostgreSQL RLS for customer data isolation |
+| OAuth Login | ✅ Google and GitHub OAuth with PKCE for customer registration/login |
+| Email Verification | ✅ Token-based email verification for customer registration |
+| Circuit Breaker | ✅ Resilience pattern preventing cascading failures to node agents |
+
+### Monitoring & Observability
+
+| Feature | Status |
+|---------|--------|
+| Prometheus Metrics | ✅ Controller (10) and Node Agent (20) metric endpoints |
+| Grafana Dashboards | ✅ Pre-built dashboard templates |
+| Alerting Rules | ✅ Prometheus alerting configuration |
+| Background Collector | ✅ Periodic resource and health data collection |
+
+### Billing & Payments
+
+| Feature | Status |
+|---------|--------|
+| Multi-Provider Billing | ✅ WHMCS (external), Blesta (external), Native (built-in credit-based) |
+| Credit Ledger | ✅ Immutable transaction log with SELECT FOR UPDATE consistency |
+| Payment Gateways | ✅ Stripe Checkout, PayPal Orders API, BTCPay Server, NOWPayments |
+| Hourly VM Billing | ✅ Automatic usage-based charging with advisory locks for HA |
+| Invoice Generation | ✅ Invoice creation with PDF export (go-pdf/fpdf) |
+| Exchange Rates | ✅ Multi-currency support with admin-managed rates |
+| In-App Notifications | ✅ Notification center with Server-Sent Events (SSE) real-time delivery |
+| OAuth Registration | ✅ Google and GitHub OAuth with PKCE for customer login/registration |
+| Neutral Provisioning API | ✅ Billing-system-agnostic API with external_service_id/external_client_id |
+
+### Web Interfaces
+
+| Portal | Technology | Pages |
+|--------|------------|-------|
+| Admin Portal | Next.js 16 + React 19 + shadcn/ui | Dashboard, VMs, Nodes, Customers, Plans, Templates, IP Sets, Backups, Backup Schedules, Storage Backends, Provisioning Keys, Failover Requests, Audit Logs, Settings (incl. Permissions), Billing (transactions + payments), Invoices, Exchange Rates |
+| Customer Portal | Next.js 16 + React 19 + shadcn/ui | VM List, VM Detail (console, metrics, backups, snapshots, ISO, rDNS), Settings (profile, 2FA, API keys, webhooks, notifications), Billing (balance, top-up, transactions, payments), Invoices, Notification Bell + SSE, OAuth Login, Forgot/Reset Password |
+
+### API System
+
+| Tier | Base Path | Auth | Rate Limit |
+|------|-----------|------|------------|
+| Admin | `/api/v1/admin/*` | JWT + 2FA | 500/min |
+| Customer | `/api/v1/customer/*` | JWT + Refresh | 100 read / 30 write per min |
+| Provisioning | `/api/v1/provisioning/*` | API Key | 1000/min |
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Load Balancer                        │
+│                         (Nginx)                             │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+   ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
+   │  Admin  │  │Customer │  │   API   │
+   │  WebUI  │  │ WebUI   │  │         │
+   │(Next.js)│  │(Next.js)│  │ (Go)    │
+   └────┬────┘  └────┬────┘  └────┬────┘
+        │            │            │
+        └────────────┼────────────┘
+                     │
+            ┌────────▼────────┐
+            │   Controller    │
+            │   (Go/Gin)      │
+            └────────┬────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+   ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
+   │PostgreSQL│  │  NATS   │  │ Node    │
+   │   16    │  │ JetStream│  │ Agents  │
+   └─────────┘  └─────────┘  └────┬────┘
+                                  │
+                         ┌────────▼────────┐
+                         │  Hypervisor     │
+                         │   Nodes         │
+                         │ (KVM/libvirt)   │
+                         └─────────────────┘
+```
+
+### Technology Stack
+
+| Layer | Technologies |
+|-------|-------------|
+| **Backend** | Go 1.26, Gin, gRPC, NATS JetStream, PostgreSQL |
+| **Billing** | Stripe, PayPal, BTCPay Server, NOWPayments, go-pdf/fpdf |
+| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui |
+| **Infrastructure** | KVM/QEMU, Ceph RBD/QCOW2/LVM, Docker, Nginx |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Docker 26.0+
+- Docker Compose 2.20+
+- Make
+
+### One-Line Install
+
+On a fresh Ubuntu 24.04 or Debian 13 server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --controller
+```
+
+For a node agent hypervisor host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AbuGosok/VirtueStack/main/install.sh | sudo bash -s -- --node
+```
+
+The controller stack (`controller`, `nats`, `postgres`, `admin-webui`, `customer-webui`, and `nginx`) stays in Docker.
+
+The node installer writes `/etc/virtuestack/node-agent.env` and installs the `virtuestack-node-agent` systemd service.
+
+`--controller` writes the deployment `.env`, asks whether to request Let's Encrypt when a real domain is provided, and brings up the production Docker Compose stack. `--node` prefers a matching GitHub release binary when one exists for the host architecture, falls back to compiling on the node when no compatible artifact is published, prompts for the controller gRPC address and storage backend, copies existing node mTLS files into `/etc/virtuestack/certs/`, and starts the native service. If you already cloned the repository, you can also run `sudo ./install.sh --controller` or `sudo ./install.sh --node`.
+
+### Using Docker Compose
+
+```bash
+# Clone the repository
+git clone https://github.com/AbuGosok/VirtueStack.git
+cd VirtueStack
+
+# Copy and edit environment file
+cp .env.example .env
+
+# Start all services
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Access Points
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Admin Portal | https://localhost/admin | admin@virtuestack.local / admin123 |
+| Customer Portal | https://localhost | customer@virtuestack.local / customer123 |
+| API | https://localhost/api/v1 | JWT or API key |
+
+---
+
+## Development
+
+### Testing Methodology
+
+VirtueStack uses a hybrid testing approach:
+
+- **Docker stack** (Controller, NATS, PostgreSQL, Admin UI, Customer UI, Nginx) — run via `docker compose up -d`. This replicates the production runtime environment.
+- **Node Agent** — build and run directly on the host via `make build-node-agent`. The Node Agent requires direct access to the host's KVM/libvirt daemon and is not containerized during testing.
+
+For integration testing, start the Docker stack for the Controller side and run the Node Agent binary separately on a real KVM node.
+
+### Backend
+
+```bash
+# Install dependencies
+make deps
+
+# Run database migrations
+make migrate-up
+
+# Run controller/shared unit tests that do not require native libvirt/Ceph headers
+make test
+
+# Run Docker/Testcontainers-backed integration tests
+make test-integration
+
+# Build Node Agent (runs directly on host, not in Docker)
+make build-node-agent
+
+# Run native node-agent tests on a hypervisor/build host with libvirt/Ceph headers installed
+make test-native
+```
+
+### Docker Stack
+
+```bash
+# Build and start Controller, PostgreSQL, NATS, UIs, Nginx
+make docker-build && make docker-up
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Frontend
+
+```bash
+# Admin Portal
+cd webui/admin && npm ci && npm run dev
+
+# Customer Portal
+cd webui/customer && npm ci && npm run dev
+```
+
+---
+
+## Production Deployment
+
+### Prerequisites
+
+Before deploying to production:
+- Replace default passwords in docker-compose.yml
+- Configure IP allowlisting for provisioning API
+- Use CA-signed TLS certificates
+- Review firewall rules
+
+### Deployment
+
+```bash
+# Production deployment
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+See [docs/installation.md](docs/installation.md) for detailed setup instructions.
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/installation.md](docs/installation.md) | Installation guide |
+| [docs/api-reference.md](docs/api-reference.md) | API reference |
+| [docs/architecture.md](docs/architecture.md) | Detailed architecture specification |
+| [docs/coding-standard.md](docs/coding-standard.md) | Quality gates and coding rules |
+
+---
+
+## Contributing
+
+We welcome contributions!
+
+### Development Workflow
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Code Standards
+
+- Go: Follow [Effective Go](https://golang.org/doc/effective_go.html)
+- TypeScript: Use ESLint configuration in the repo
+- Tests: Maintain >80% coverage
+
+See [docs/coding-standard.md](docs/coding-standard.md) for complete quality gates.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Support
+
+- 📧 Email: support@virtuestack.com
+- 🐛 Issues: [GitHub Issues](https://github.com/AbuGosok/VirtueStack/issues)
+
+---
+
+## Project Status
+
+**Overall: 100% Complete**
+
+| Component | Status |
+|-----------|--------|
+| Controller APIs | 100% |
+| Node Agent | 100% |
+| Database Schema (80 migrations) | 100% |
+| Authentication (JWT, 2FA, API Keys, SSO) | 100% |
+| VM Lifecycle | 100% |
+| Storage (Ceph RBD + QCOW + LVM) | 100% |
+| Storage Backend Management | 100% |
+| Live Migration | 100% |
+| Backup & Snapshots (unified) | 100% |
+| Admin Backup Schedules | 100% |
+| Template Build from ISO | 100% |
+| Template Distribution & Caching | 100% |
+| WebSocket Console | 100% |
+| Web UIs | 100% |
+| WHMCS Module | 100% |
+| Blesta Module | 100% |
+| Billing System (Native + WHMCS + Blesta) | 100% |
+| Payment Gateways (Stripe, PayPal, Crypto) | 100% |
+| Invoicing & PDF Export | 100% |
+| In-App Notifications + SSE | 100% |
+| OAuth (Google, GitHub) | 100% |
+| Networking | 100% |
+| HA Failover | 100% |
+| PowerDNS rDNS | 100% |
+| Admin Permissions | 100% |
+| Monitoring | 100% |
+| E2E Tests | 100% |
+| System Webhooks | 100% |
+| Pre-Action Webhooks | 100% |
+| Email Verification | 100% |
+| VM State Machine | 100% |
+| Circuit Breaker | 100% |

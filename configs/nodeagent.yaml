@@ -1,0 +1,38 @@
+# VirtueStack Node Agent Configuration
+# Copy this file to /etc/virtuestack/nodeagent.yaml or set VS_CONFIG_FILE
+
+# Node identification
+node_id: "node-001"
+controller_grpc_addr: "controller:50051"
+
+# Storage backend configuration
+# Options: "ceph" (Ceph RBD) or "qcow" (file-based QCOW2)
+storage_backend: "qcow"
+storage_path: "/var/lib/virtuestack"
+
+# Ceph configuration (used when storage_backend is "ceph")
+# ceph_conf: "/etc/ceph/ceph.conf"
+# ceph_user: "admin"
+# ceph_pool: "vs-vms"
+
+# Libvirt connection
+libvirt_uri: "qemu:///system"
+
+# VNC configuration
+vnc_host: "0.0.0.0"
+
+# TLS certificates for gRPC communication with controller
+tls_cert_file: "/etc/virtuestack/certs/node-agent.crt"
+tls_key_file: "/etc/virtuestack/certs/node-agent.key"
+tls_ca_file: "/etc/virtuestack/certs/ca.crt"
+
+# Required for sensitive guest operations such as password resets.
+guest_op_hmac_secret: "replace-with-32-plus-byte-random-secret"
+
+# Paths
+data_dir: "/var/lib/virtuestack"
+cloudinit_path: "/var/lib/virtuestack/cloud-init"
+iso_storage_path: "/var/lib/virtuestack/iso"
+
+# Logging
+log_level: "info"

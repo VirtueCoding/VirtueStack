@@ -1,0 +1,10 @@
+{
+  "name": "@virtuestack/webui-workspace",
+  "private": true,
+  "packageManager": "npm@10.9.7",
+  "workspaces": [
+    "admin",
+    "customer",
+    "packages/*"
+  ]
+}

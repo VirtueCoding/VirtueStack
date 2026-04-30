@@ -1,0 +1,16 @@
+-- Migration 000031 was originally introduced to rebuild indexes from migrations
+-- 000003-000007 with CREATE/DROP INDEX CONCURRENTLY so upgrades on large, already
+-- populated tables would not block writes.
+--
+-- golang-migrate executes SQL migrations in a way that makes CONCURRENTLY-based
+-- index rebuilds incompatible with the normal migration chain, causing automated
+-- setups to fail with "cannot run inside a transaction block".
+--
+-- The schema-level indexes already exist because migrations 000003-000007 created
+-- them under the canonical names used throughout the application. To keep the
+-- migration history compatible with golang-migrate while preserving schema
+-- correctness for fresh installs and CI databases, this migration is now a no-op.
+--
+-- Operators that want to rebuild these legacy indexes concurrently on an existing
+-- production dataset must do so as an explicit operational step outside the
+-- golang-migrate transaction-managed migration chain.

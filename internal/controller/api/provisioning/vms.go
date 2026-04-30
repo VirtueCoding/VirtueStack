@@ -1,0 +1,183 @@
+package provisioning
+
+import (
+	cryptorand "crypto/rand"
+	"errors"
+	"fmt"
+	"math/big"
+	"net/http"
+	"slices"
+
+	"github.com/AbuGosok/VirtueStack/internal/controller/api/middleware"
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"github.com/gin-gonic/gin"
+)
+
+// CreateVM handles POST /vms - creates a new VM asynchronously.
+// This endpoint is called by the billing module when a new service is provisioned.
+// @Tags Provisioning
+// @Summary Create VM
+// @Description Creates a VM for a provisioning request and returns async task details.
+// @Accept json
+// @Produce json
+// @Security APIKeyAuth
+// @Param request body object true "Provisioning VM create request"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 409 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms [post]
+func (h *ProvisioningHandler) CreateVM(c *gin.Context) {
+	var req ProvisioningCreateVMRequest
+	if err := middleware.BindAndValidate(c, &req); err != nil {
+		var apiErr *sharederrors.APIError
+		if errors.As(err, &apiErr) {
+			middleware.RespondWithError(c, apiErr.HTTPStatus, apiErr.Code, apiErr.Message)
+			return
+		}
+		middleware.RespondWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request")
+		return
+	}
+
+	idempotencyKey := c.GetHeader("Idempotency-Key")
+	password, err := generateRandomPassword()
+	if err != nil {
+		h.logger.Error("failed to generate random password for provisioning request", "customer_id", req.CustomerID, "hostname", req.Hostname, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "PASSWORD_GENERATION_FAILED", "Internal server error")
+		return
+	}
+	vmReq := buildVMCreateRequest(&req, password, idempotencyKey)
+
+	vm, taskID, err := h.vmService.CreateVM(c.Request.Context(), vmReq, req.CustomerID)
+	if err != nil {
+		if errors.Is(err, sharederrors.ErrConflict) {
+			middleware.RespondWithError(c, http.StatusConflict, "EXTERNAL_SERVICE_CONFLICT", "External service is already assigned")
+			return
+		}
+		h.logger.Error("failed to create VM", "customer_id", req.CustomerID, "hostname", req.Hostname, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		return
+	}
+	if taskID == "" {
+		h.logger.Error("VM create returned without durable task", "customer_id", req.CustomerID, "hostname", req.Hostname, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_CREATE_FAILED", "Internal server error")
+		return
+	}
+
+	h.logger.Info("VM creation initiated via provisioning API", "vm_id", vm.ID, "task_id", taskID, "customer_id", req.CustomerID, "external_service_id", req.ExternalServiceID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusAccepted, models.Response{Data: CreateVMResponse{TaskID: taskID, VMID: vm.ID}})
+}
+
+// DeleteVM handles DELETE /vms/:id - terminates a VM asynchronously.
+// This endpoint is called by the billing module when a service is cancelled/terminated.
+// @Tags Provisioning
+// @Summary Delete VM
+// @Description Deletes a VM through provisioning workflow and returns async task details.
+// @Produce json
+// @Security APIKeyAuth
+// @Param id path string true "VM ID"
+// @Success 202 {object} models.Response
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/v1/provisioning/vms/{id} [delete]
+func (h *ProvisioningHandler) DeleteVM(c *gin.Context) {
+	vmID := c.Param("id")
+
+	vm, err := h.getOwnedVMIncludingDeleted(c, vmID)
+	if err != nil {
+		respondWithValidationError(c, err)
+		return
+	}
+
+	taskID, err := h.vmService.DeleteVM(c.Request.Context(), vmID, vm.CustomerID, true)
+	if err != nil {
+		if sharederrors.Is(err, sharederrors.ErrConflict) {
+			middleware.RespondWithError(c, http.StatusConflict, "VM_DELETE_CONFLICT", "VM delete task state is unknown; retry later")
+			return
+		}
+		h.logger.Error("failed to delete VM", "vm_id", vmID, "error", err, "correlation_id", middleware.GetCorrelationID(c))
+		middleware.RespondWithError(c, http.StatusInternalServerError, "VM_DELETE_FAILED", "Internal server error")
+		return
+	}
+
+	h.logger.Info("VM termination initiated via provisioning API", "vm_id", vmID, "task_id", taskID, "customer_id", vm.CustomerID, "correlation_id", middleware.GetCorrelationID(c))
+	c.JSON(http.StatusAccepted, models.Response{Data: TaskResponse{TaskID: taskID}})
+}
+
+// buildVMCreateRequest builds a VMCreateRequest from a ProvisioningCreateVMRequest.
+func buildVMCreateRequest(req *ProvisioningCreateVMRequest, password, idempotencyKey string) *models.VMCreateRequest {
+	vmReq := &models.VMCreateRequest{
+		CustomerID:        req.CustomerID,
+		PlanID:            req.PlanID,
+		TemplateID:        req.TemplateID,
+		Hostname:          req.Hostname,
+		Password:          password,
+		SSHKeys:           req.SSHKeys,
+		ExternalServiceID: &req.ExternalServiceID,
+		IdempotencyKey:    idempotencyKey,
+	}
+	if req.LocationID != "" {
+		vmReq.LocationID = &req.LocationID
+	}
+	return vmReq
+}
+
+// generateRandomPassword creates a cryptographically secure random password
+// that always satisfies strength requirements: at least 1 uppercase letter,
+// 1 lowercase letter, 1 digit, 1 special character, and 12+ characters total.
+func generateRandomPassword() (string, error) {
+	const (
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		digitChars   = "0123456789"
+		specialChars = "!@#$%^&*"
+		allChars     = upperChars + lowerChars + digitChars + specialChars
+		totalLen     = 16
+	)
+
+	randChar := func(charset string) (byte, error) {
+		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return 0, fmt.Errorf("generate random password character: %w", err)
+		}
+		return charset[n.Int64()], nil
+	}
+
+	requiredCharsets := []string{upperChars, lowerChars, digitChars, specialChars}
+	required := make([]byte, 0, len(requiredCharsets))
+	for _, charset := range requiredCharsets {
+		char, err := randChar(charset)
+		if err != nil {
+			return "", err
+		}
+		required = append(required, char)
+	}
+
+	// Fill remaining characters from the full set
+	rest := make([]byte, totalLen-len(required))
+	for i := range rest {
+		char, err := randChar(allChars)
+		if err != nil {
+			return "", err
+		}
+		rest[i] = char
+	}
+
+	combined := slices.Concat(required, rest)
+
+	// Shuffle using crypto/rand to avoid predictable placement of required chars
+	for i := len(combined) - 1; i > 0; i-- {
+		jBig, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return "", fmt.Errorf("shuffle random password: %w", err)
+		}
+		j := int(jBig.Int64())
+		combined[i], combined[j] = combined[j], combined[i]
+	}
+
+	return string(combined), nil
+}

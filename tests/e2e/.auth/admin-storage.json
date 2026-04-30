@@ -1,0 +1,25 @@
+{
+  "cookies": [
+    {
+      "name": "vs_refresh_token",
+      "value": "28f42aad8c111d7a417c103f337c20e0cb4c05f702fb00724c552394a573315d",
+      "domain": "localhost",
+      "path": "/api/v1/admin/auth/refresh",
+      "expires": 1775617374.268613,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "vs_access_token",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3Nzc3Nzc3Ny03Nzc3LTc3NzctNzc3Ny03Nzc3Nzc3NzcwMDIiLCJ1c2VyX3R5cGUiOiJhZG1pbiIsInJvbGUiOiJzdXBlcl9hZG1pbiIsImlzcyI6InZpcnR1ZXN0YWNrIiwiZXhwIjoxNzc1NjAzODc0LCJuYmYiOjE3NzU2MDI5NzQsImlhdCI6MTc3NTYwMjk3NCwianRpIjoiNDgwYzQwOTQtMWE0YS00NmJhLWI1OWUtZDQ3MDFlOTAxYzgzIn0.wxLcxS2bK1AMTKUiPl4aBH3fKcMlvQrkpSKRNvMTz9c",
+      "domain": "localhost",
+      "path": "/api/v1/",
+      "expires": 1775603874.268383,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Strict"
+    }
+  ],
+  "origins": []
+}

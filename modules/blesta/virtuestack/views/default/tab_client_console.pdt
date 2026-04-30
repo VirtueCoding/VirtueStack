@@ -1,0 +1,11 @@
+<?php if (!empty($console_url)) : ?>
+    <iframe src="<?php echo $this->Html->safe($console_url);?>"
+            style="width:100%;height:calc(100vh - 100px);border:none;"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            allow="clipboard-read; clipboard-write"></iframe>
+<?php else : ?>
+    <div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">🖥️</div>
+        <p>Console is not available at this time.</p>
+    </div>
+<?php endif; ?>

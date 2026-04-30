@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+bin/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Docs
+docs/*
+!docs/docs.go
+LICENSE
+
+# Temp
+tmp/
+temp/
+*.log
+
+# Test coverage
+coverage/
+.coverage
+
+# WebUI generated artifacts (rebuilt in Docker)
+webui/admin/node_modules
+webui/admin/.next
+webui/admin/tsconfig.tsbuildinfo
+webui/customer/node_modules
+webui/customer/.next
+webui/customer/tsconfig.tsbuildinfo
+
+# SSL certificates (recreated)
+ssl/

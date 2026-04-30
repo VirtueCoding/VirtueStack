@@ -1,0 +1,11 @@
+{
+    "name": "Virtuestack",
+    "version": "1.0.0",
+    "authors": [
+        {
+            "name": "VirtueStack",
+            "url": "https://github.com/AbuGosok/VirtueStack"
+        }
+    ],
+    "description": "VirtueStack KVM/QEMU VPS provisioning module for Blesta. Creates, manages, suspends, and terminates virtual machines via the VirtueStack Provisioning API."
+}

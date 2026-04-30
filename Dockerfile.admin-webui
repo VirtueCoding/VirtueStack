@@ -1,0 +1,182 @@
+# =============================================================================
+# VirtueStack Admin WebUI - Multi-stage Dockerfile
+# =============================================================================
+# Build stage: Compiles the Next.js application
+# Runtime stage: Nginx for static file serving
+#
+# QG-15 Production Recommendation:
+# - Pin base images to SHA digest for reproducible builds
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Build Stage
+# -----------------------------------------------------------------------------
+ARG NODE_VERSION=24
+# Production: Pin to digest, e.g., FROM node:24-alpine3.22@sha256:...
+FROM node:${NODE_VERSION}-alpine3.22 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    libc6-compat \
+    openssl
+
+# Set working directory
+WORKDIR /app
+
+# Enable corepack for yarn/pnpm support
+RUN corepack enable
+
+# Copy workspace manifests first for caching
+COPY webui/package.json webui/package-lock.json ./
+COPY webui/admin/package.json ./admin/package.json
+COPY webui/customer/package.json ./customer/package.json
+COPY webui/packages/api-client/package.json ./packages/api-client/package.json
+COPY webui/packages/ui/package.json ./packages/ui/package.json
+
+# Install dependencies
+RUN npm ci --legacy-peer-deps
+
+# Copy source code
+COPY webui/ ./
+
+WORKDIR /app/admin
+
+# Build arguments for environment variables
+ARG NEXT_PUBLIC_API_URL=/api/v1
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+# Set node environment
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+
+# Build the application
+RUN npm run build
+
+# Export standalone runtime assets alongside admin/server.js.
+RUN mkdir -p ./.next/standalone/admin/.next && \
+    if [ -d public ]; then cp -r public ./.next/standalone/admin/public; fi && \
+    cp -r .next/static ./.next/standalone/admin/.next/
+
+# -----------------------------------------------------------------------------
+# Development Stage
+# -----------------------------------------------------------------------------
+# Production: Pin to digest
+FROM node:${NODE_VERSION}-alpine3.22 AS development
+
+# Install development dependencies
+RUN apk add --no-cache \
+    libc6-compat \
+    openssl \
+    curl \
+    bash
+
+RUN corepack enable
+
+WORKDIR /app
+
+# Copy workspace manifests
+COPY webui/package.json webui/package-lock.json ./
+COPY webui/admin/package.json ./admin/package.json
+COPY webui/customer/package.json ./customer/package.json
+COPY webui/packages/api-client/package.json ./packages/api-client/package.json
+COPY webui/packages/ui/package.json ./packages/ui/package.json
+
+# Install all dependencies (including devDependencies)
+RUN npm ci --legacy-peer-deps
+
+# Copy source code
+COPY webui/ ./
+
+WORKDIR /app/admin
+
+# Expose development port
+EXPOSE 3000
+
+# Set environment
+ENV NODE_ENV=development \
+    NEXT_TELEMETRY_DISABLED=1
+
+# Default command
+CMD ["npm", "run", "dev"]
+
+# -----------------------------------------------------------------------------
+# Runtime Stage (Nginx for static serving)
+# -----------------------------------------------------------------------------
+# Production: Pin to digest
+FROM nginx:1.28-alpine AS runtime
+
+# Install additional tools
+RUN apk add --no-cache \
+    curl \
+    tzdata \
+    && rm -rf /var/cache/apk/*
+
+# Remove default nginx config
+RUN rm -rf /etc/nginx/conf.d/default.conf
+
+# Create non-root user for nginx
+RUN adduser -D -u 1000 -g 1000 -h /var/cache/nginx -s /sbin/nologin nginx-user
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /var/cache/nginx /var/log/nginx /usr/share/nginx/html \
+    && chown -R 1000:1000 /var/cache/nginx /var/log/nginx /usr/share/nginx/html
+
+# Copy built application from builder
+COPY --from=builder --chown=1000:1000 /app/admin/.next/standalone /usr/share/nginx/html
+
+# Copy custom nginx configuration for SPA
+COPY webui/admin/nginx-app.conf /etc/nginx/conf.d/app.conf
+
+# Create nginx pid directory
+RUN mkdir -p /var/run/nginx && chown -R 1000:1000 /var/run/nginx
+
+# Switch to non-root user
+USER 1000:1000
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:3000/ || exit 1
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
+
+# -----------------------------------------------------------------------------
+# Alternative Runtime Stage (Next.js Standalone)
+# -----------------------------------------------------------------------------
+# Production: Pin to digest
+FROM node:${NODE_VERSION}-alpine3.22 AS standalone
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    libc6-compat \
+    openssl \
+    curl
+
+WORKDIR /app
+
+# Reuse the non-root user provided by the Node base image.
+
+# Copy built application
+COPY --from=builder --chown=1000:1000 /app/admin/.next/standalone ./
+
+# Switch to non-root user
+USER node
+
+# Expose port
+EXPOSE 3000
+
+# Set environment
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://127.0.0.1:3000/login || exit 1
+
+# Start the application
+CMD ["node", "admin/server.js"]
