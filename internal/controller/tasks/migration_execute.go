@@ -75,12 +75,14 @@ func prepareMigrationContext(ctx context.Context, task *models.Task, deps *Handl
 		return nil, nil
 	}
 
-	fromStatus := payload.PreMigrationState
-	if fromStatus == "" {
-		fromStatus = vm.Status
-	}
-	if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, fromStatus, models.VMStatusMigrating); err != nil {
-		return nil, fmt.Errorf("updating VM %s status to migrating: %w", payload.VMID, err)
+	if vm.Status != models.VMStatusMigrating {
+		fromStatus := payload.PreMigrationState
+		if fromStatus == "" {
+			fromStatus = vm.Status
+		}
+		if err := deps.VMRepo.TransitionStatus(ctx, payload.VMID, fromStatus, models.VMStatusMigrating); err != nil {
+			return nil, fmt.Errorf("updating VM %s status to migrating: %w", payload.VMID, err)
+		}
 	}
 
 	return &MigrationContext{
@@ -180,13 +182,16 @@ func finalizeMigration(mc *MigrationContext) error {
 		return fmt.Errorf("updating VM %s node assignment: %w", mc.Payload.VMID, err)
 	}
 
-	if err := mc.Deps.VMRepo.TransitionStatus(mc.Ctx, mc.Payload.VMID, models.VMStatusMigrating, models.VMStatusRunning); err != nil {
+	finalStatus := migrationFinalStatus(mc.Payload.PreMigrationState)
+	if err := mc.Deps.VMRepo.TransitionStatus(mc.Ctx, mc.Payload.VMID, models.VMStatusMigrating, finalStatus); err != nil {
 		if errors.Is(err, sharederrors.ErrConflict) {
-			mc.Logger.Error("failed VM transition from migrating to running after migration completion", "error", err)
-			return fmt.Errorf("transitioning VM %s to running after migration: %w", mc.Payload.VMID, err)
+			mc.Logger.Error("failed VM transition after migration completion", "to_status", finalStatus, "error", err)
+			return fmt.Errorf("transitioning VM %s to %s after migration: %w", mc.Payload.VMID, finalStatus, err)
 		}
 		mc.Logger.Warn("failed to transition VM status after migration", "error", err)
 	}
+
+	cleanupSourceDiskAfterCommit(mc.Ctx, mc.Deps.NodeClient, mc.Payload, mc.Logger)
 
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 100, "Migration completed successfully"); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
@@ -206,6 +211,28 @@ func finalizeMigration(mc *MigrationContext) error {
 	mc.Logger.Info("vm.migrate task completed successfully", "vm_id", mc.Payload.VMID,
 		"source_node", mc.Payload.SourceNodeID, "target_node", mc.Payload.TargetNodeID)
 	return nil
+}
+
+func migrationFinalStatus(preMigrationState string) string {
+	switch preMigrationState {
+	case models.VMStatusStopped, models.VMStatusSuspended:
+		return preMigrationState
+	default:
+		return models.VMStatusRunning
+	}
+}
+
+type migrationDiskCleaner interface {
+	DeleteDisk(ctx context.Context, nodeID, vmID string) error
+}
+
+func cleanupSourceDiskAfterCommit(ctx context.Context, cleaner migrationDiskCleaner, payload VMMigratePayload, logger *slog.Logger) {
+	if payload.MigrationStrategy == MigrationStrategyLiveSharedStorage {
+		return
+	}
+	if err := cleaner.DeleteDisk(ctx, payload.SourceNodeID, payload.VMID); err != nil {
+		logger.Warn("failed to delete source disk after migration commit", "error", err)
+	}
 }
 
 // executeLiveSharedStorageMigration performs live migration with shared Ceph storage.
@@ -334,8 +361,8 @@ func executeLiveDiskCopyMigration(mc *MigrationContext) error {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
-	// Step 5: Delete VM definition on source (but keep disk for now)
-	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
+	// Step 5: Undefine VM on source while preserving disk until commit
+	if err := mc.Deps.NodeClient.UndefineVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
 		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
 	}
 
@@ -398,12 +425,12 @@ func executeColdDiskCopyMigration(mc *MigrationContext) error {
 		return fmt.Errorf("disk transfer failed: %w", err)
 	}
 
-	// Delete VM definition on source
+	// Undefine VM on source while preserving disk until commit
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 80, "Cleaning up source node..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
-	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
+	if err := mc.Deps.NodeClient.UndefineVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
 		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
 	}
 
@@ -468,12 +495,12 @@ func executeColdMigration(mc *MigrationContext) error {
 		return fmt.Errorf("disk transfer with conversion failed: %w", err)
 	}
 
-	// Delete VM definition on source
+	// Undefine VM on source while preserving disk until commit
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 80, "Cleaning up source node..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
-	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
+	if err := mc.Deps.NodeClient.UndefineVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
 		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
 	}
 
@@ -550,8 +577,8 @@ func executeLiveLVMMigration(mc *MigrationContext) error {
 		return fmt.Errorf("stopping VM: %w", err)
 	}
 
-	// Step 4: Delete VM on source
-	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, vmID); err != nil {
+	// Step 4: Undefine VM on source while preserving disk until commit
+	if err := mc.Deps.NodeClient.UndefineVM(mc.Ctx, mc.Payload.SourceNodeID, vmID); err != nil {
 		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
 	}
 
@@ -616,12 +643,12 @@ func executeColdLVMMigration(mc *MigrationContext) error {
 		return fmt.Errorf("LVM disk transfer failed: %w", err)
 	}
 
-	// Delete VM on source
+	// Undefine VM on source while preserving disk until commit
 	if err := mc.Deps.TaskRepo.UpdateProgress(mc.Ctx, mc.Task.ID, 80, "Cleaning up source..."); err != nil {
 		mc.Logger.Warn("failed to update task progress", "error", err)
 	}
 
-	if err := mc.Deps.NodeClient.DeleteVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
+	if err := mc.Deps.NodeClient.UndefineVM(mc.Ctx, mc.Payload.SourceNodeID, mc.Payload.VMID); err != nil {
 		mc.Logger.Warn("failed to delete VM definition on source", "error", err)
 	}
 

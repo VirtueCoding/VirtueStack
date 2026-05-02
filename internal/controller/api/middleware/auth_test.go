@@ -1,3 +1,4 @@
+//nolint:revive // Table-driven test fixtures keep uniform callback signatures.
 package middleware
 
 import (
@@ -125,7 +126,7 @@ func TestJWTAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := setupRouter(JWTAuth(config))
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 			tt.setupRequest(t, req)
 			w := httptest.NewRecorder()
 
@@ -215,7 +216,7 @@ func TestAPIKeyAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := setupRouter(APIKeyAuth(tt.validator))
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 			tt.setupRequest(req)
 			w := httptest.NewRecorder()
 
@@ -281,7 +282,7 @@ func TestRequireRole(t *testing.T) {
 				c.Status(http.StatusOK)
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 
@@ -337,7 +338,7 @@ func TestRequireUserType(t *testing.T) {
 				c.Status(http.StatusOK)
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 
@@ -357,7 +358,7 @@ func TestOptionalJWTAuth(t *testing.T) {
 
 	t.Run("no token proceeds anonymously", func(t *testing.T) {
 		r := setupRouter(OptionalJWTAuth(config))
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 		w := httptest.NewRecorder()
 
 		r.ServeHTTP(w, req)
@@ -372,7 +373,7 @@ func TestOptionalJWTAuth(t *testing.T) {
 	t.Run("valid token sets context", func(t *testing.T) {
 		r := setupRouter(OptionalJWTAuth(config))
 		token := testAccessToken(t, config, "user-opt", "admin", "admin", 15*time.Minute)
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 
@@ -387,7 +388,7 @@ func TestOptionalJWTAuth(t *testing.T) {
 
 	t.Run("invalid token proceeds anonymously", func(t *testing.T) {
 		r := setupRouter(OptionalJWTAuth(config))
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 		req.Header.Set("Authorization", "Bearer invalid.token.here")
 		w := httptest.NewRecorder()
 
@@ -525,7 +526,7 @@ func TestCustomerAPIKeyAuth(t *testing.T) {
 				})
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 			tt.setupRequest(req)
 			w := httptest.NewRecorder()
 
@@ -677,7 +678,7 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 				})
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 			tt.setupRequest(t, req)
 			w := httptest.NewRecorder()
 
@@ -701,6 +702,78 @@ func TestJWTOrCustomerAPIKeyAuth(t *testing.T) {
 	}
 }
 
+func TestPrincipalContext(t *testing.T) {
+	config := testAuthConfig()
+	tests := []struct {
+		name          string
+		middleware    gin.HandlerFunc
+		setupRequest  func(t *testing.T, req *http.Request)
+		wantPrincipal Principal
+	}{
+		{
+			name:       "JWT auth sets normalized principal",
+			middleware: JWTAuth(config),
+			setupRequest: func(t *testing.T, req *http.Request) {
+				token := testAccessToken(t, config, "admin-1", "admin", "super_admin", 15*time.Minute)
+				req.Header.Set("Authorization", "Bearer "+token)
+			},
+			wantPrincipal: Principal{
+				UserID:    "admin-1",
+				UserType:  "admin",
+				Role:      "super_admin",
+				ActorType: "admin",
+			},
+		},
+		{
+			name: "customer API key auth sets normalized principal",
+			middleware: CustomerAPIKeyAuth(func(context.Context, string) (CustomerAPIKeyInfo, error) {
+				return CustomerAPIKeyInfo{
+					KeyID:       "key-1",
+					CustomerID:  "customer-1",
+					Permissions: []string{"vm:read"},
+					VMIDs:       []string{"vm-1"},
+				}, nil
+			}),
+			setupRequest: func(t *testing.T, req *http.Request) {
+				req.Header.Set("X-API-Key", "customer-key")
+			},
+			wantPrincipal: Principal{
+				UserID:      "customer-1",
+				UserType:    "customer",
+				ActorType:   "customer_api_key",
+				APIKeyID:    "key-1",
+				Permissions: []string{"vm:read"},
+				VMIDs:       []string{"vm-1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(tt.middleware)
+			r.GET("/protected", func(c *gin.Context) {
+				principal, ok := GetPrincipal(c)
+				require.True(t, ok)
+				assert.Equal(t, tt.wantPrincipal, principal)
+				assert.Equal(t, tt.wantPrincipal.UserID, GetUserID(c))
+				assert.Equal(t, tt.wantPrincipal.UserType, GetUserType(c))
+				assert.Equal(t, tt.wantPrincipal.Role, GetRole(c))
+				assert.Equal(t, tt.wantPrincipal.Permissions, GetPermissions(c))
+				assert.Equal(t, tt.wantPrincipal.VMIDs, GetVMIDs(c))
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+			tt.setupRequest(t, req)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+	}
+}
+
 func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
 	t.Run("allows scoped vmId path parameter", func(t *testing.T) {
 		r := gin.New()
@@ -712,7 +785,7 @@ func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/ws/vm-1", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ws/vm-1", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -729,7 +802,7 @@ func TestRequireVMScopeSupportsVMIDParam(t *testing.T) {
 			c.Status(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/ws/vm-2", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ws/vm-2", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -750,7 +823,7 @@ func TestPermissions(t *testing.T) {
 			c.JSON(http.StatusOK, gin.H{"permissions": GetPermissions(c)})
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -771,7 +844,7 @@ func TestPermissions(t *testing.T) {
 			c.JSON(http.StatusOK, gin.H{"permissions": GetPermissions(c)})
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -834,7 +907,7 @@ func TestHasPermission(t *testing.T) {
 				c.JSON(http.StatusOK, gin.H{"has_permission": HasPermission(c, tt.permission)})
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 
@@ -910,7 +983,7 @@ func TestRequirePermission(t *testing.T) {
 				c.Status(http.StatusOK)
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 

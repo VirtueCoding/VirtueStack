@@ -259,32 +259,74 @@ func newTestPaymentService(
 	})
 }
 
-type mockBillingTxRepo struct{}
+func TestPaymentServiceSettlePayment(t *testing.T) {
+	payment := &models.BillingPayment{ID: "pay-1", CustomerID: "cust-1"}
+	tests := []struct {
+		name               string
+		settlement         paymentSettlement
+		wantGenericGateway string
+		wantPayPalOrderID  string
+	}{
+		{
+			name: "generic settlement credits by gateway payment id",
+			settlement: paymentSettlement{
+				Payment:          payment,
+				Gateway:          "stripe",
+				GatewayPaymentID: "pi_1",
+				CustomerID:       "cust-1",
+				AmountCents:      1500,
+				Description:      "Top-up via stripe",
+				IdempotencyKey:   "stripe:payment:pi_1",
+			},
+			wantGenericGateway: "stripe",
+		},
+		{
+			name: "paypal settlement claims order and capture ids",
+			settlement: paymentSettlement{
+				Payment:          payment,
+				Gateway:          models.PaymentGatewayPayPal,
+				GatewayPaymentID: "capture-1",
+				PayPalOrderID:    "order-1",
+				CustomerID:       "cust-1",
+				AmountCents:      2500,
+				Description:      "Top-up via paypal",
+				IdempotencyKey:   "paypal:capture-1",
+			},
+			wantPayPalOrderID: "order-1",
+		},
+	}
 
-func (m *mockBillingTxRepo) CreditAccount(
-	_ context.Context, _ string, amount int64, _ string, _ *string,
-) (*models.BillingTransaction, error) {
-	return &models.BillingTransaction{
-		ID: "tx_1", Amount: amount, BalanceAfter: amount,
-	}, nil
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var genericReq repository.PaymentCompletionCredit
+			var paypalReq repository.PayPalCaptureCredit
+			repo := &mockBillingPaymentRepo{
+				completeAndCreditFunc: func(_ context.Context, req repository.PaymentCompletionCredit) (bool, error) {
+					genericReq = req
+					return true, nil
+				},
+				completePayPalCreditFunc: func(_ context.Context, req repository.PayPalCaptureCredit) (bool, error) {
+					paypalReq = req
+					return true, nil
+				},
+			}
+			svc := newTestPaymentService(nil, repo)
 
-func (m *mockBillingTxRepo) DebitAccount(
-	_ context.Context, _ string, amount int64, _ string, _, _, _ *string,
-) (*models.BillingTransaction, error) {
-	return &models.BillingTransaction{
-		ID: "tx_2", Amount: amount,
-	}, nil
-}
+			claimed, err := svc.settlePayment(context.Background(), tt.settlement)
 
-func (m *mockBillingTxRepo) GetBalance(_ context.Context, _ string) (int64, error) {
-	return 1000, nil
-}
-
-func (m *mockBillingTxRepo) ListByCustomer(
-	_ context.Context, _ string, _ models.PaginationParams,
-) ([]models.BillingTransaction, bool, string, error) {
-	return nil, false, "", nil
+			require.NoError(t, err)
+			assert.True(t, claimed)
+			if tt.wantPayPalOrderID != "" {
+				assert.Equal(t, tt.wantPayPalOrderID, paypalReq.OrderID)
+				assert.Equal(t, tt.settlement.GatewayPaymentID, paypalReq.CaptureID)
+				assert.Empty(t, genericReq.PaymentID)
+				return
+			}
+			assert.Equal(t, tt.wantGenericGateway, genericReq.Gateway)
+			assert.Equal(t, tt.settlement.GatewayPaymentID, genericReq.GatewayPaymentID)
+			assert.Empty(t, paypalReq.PaymentID)
+		})
+	}
 }
 
 type trackingBillingTxRepo struct {
@@ -474,6 +516,7 @@ func TestPaymentService_HandleWebhook_PaymentCompleted(t *testing.T) {
 }
 
 func TestPaymentService_HandleWebhook_StripePaymentIntentSucceededCreditsLedger(t *testing.T) {
+	// #nosec G101 -- test webhook signing secret.
 	secret := "whsec_test_service_pi"
 	provider := stripeprovider.NewProvider(stripeprovider.ProviderConfig{
 		SecretKey:      "sk_test_fake",
@@ -521,7 +564,7 @@ func makeStripePaymentIntentPayload(t *testing.T, secret string) ([]byte, string
 			"amount_cents": "2500",
 		},
 	}
-	piBytes, err := json.Marshal(pi)
+	piBytes, err := json.Marshal(pi) // #nosec G117 -- Stripe test payload must contain client_secret-shaped SDK fields.
 	require.NoError(t, err)
 	event := gostripe.Event{
 		ID:   "evt_test_service_pi",

@@ -76,7 +76,7 @@ func run() int {
 	defer closeNATS(infra.nc, logger)
 
 	// Initialize server, services, task worker, and routes
-	srv, worker, err := initializeServer(ctx, cfg, infra, logger)
+	srv, worker, err := initializeServer(cfg, infra, logger)
 	if err != nil {
 		logger.Error("Failed to initialize server", "error", err)
 		return 1
@@ -129,7 +129,7 @@ func initializeInfrastructure(ctx context.Context, cfg *controller.Config, logge
 
 // initializeServer creates and wires up the HTTP server, node client, services,
 // task handlers, and API routes. It returns the server and task worker, ready to start.
-func initializeServer(ctx context.Context, cfg *controller.Config, infra *infrastructure, logger *slog.Logger) (*controller.Server, *tasks.Worker, error) {
+func initializeServer(cfg *controller.Config, infra *infrastructure, logger *slog.Logger) (*controller.Server, *tasks.Worker, error) {
 	worker, err := tasks.NewWorker(infra.js, infra.dbPool, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating task worker: %w", err)
@@ -154,6 +154,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 
 	handlerDeps := &tasks.HandlerDeps{
 		VMRepo:            repository.NewVMRepository(infra.dbPool),
+		CustomerRepo:      repository.NewCustomerRepository(infra.dbPool),
 		NodeRepo:          repository.NewNodeRepository(infra.dbPool),
 		IPRepo:            repository.NewIPRepository(infra.dbPool),
 		BackupRepo:        repository.NewBackupRepository(infra.dbPool),
@@ -161,6 +162,7 @@ func initializeServer(ctx context.Context, cfg *controller.Config, infra *infras
 		TemplateRepo:      repository.NewTemplateRepository(infra.dbPool),
 		TemplateCacheRepo: repository.NewTemplateCacheRepository(infra.dbPool),
 		IPAMService:       server.GetIPAMService(),
+		BillingHooks:      server.GetBillingHooks(),
 		NodeClient: services.NewNodeAgentGRPCClient(repository.NewNodeRepository(infra.dbPool), repository.NewVMRepository(infra.dbPool), nodeClient, &services.CephConfig{
 			Monitors:   cfg.CephMonitors,
 			User:       cfg.CephUser,
@@ -261,7 +263,7 @@ func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStrea
 		nats.Name("VirtueStack-Controller"),
 		nats.ReconnectWait(2*time.Second),
 		nats.MaxReconnects(-1),
-		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			if err != nil {
 				logger.Warn("NATS disconnected", "error", err)
 			}
@@ -269,7 +271,7 @@ func connectNATS(natsURL string, logger *slog.Logger) (*nats.Conn, nats.JetStrea
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			logger.Info("NATS reconnected", "url", nc.ConnectedUrl())
 		}),
-		nats.ClosedHandler(func(nc *nats.Conn) {
+		nats.ClosedHandler(func(_ *nats.Conn) {
 			logger.Warn("NATS connection closed")
 		}),
 	)

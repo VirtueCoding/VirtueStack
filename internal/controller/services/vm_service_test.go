@@ -493,7 +493,7 @@ func TestVMService_PowerAndDeleteConflictPaths(t *testing.T) {
 	}
 }
 
-func TestVMServiceDeleteVMSoftDeleteFailureDoesNotPublishTask(t *testing.T) {
+func TestVMServiceDeleteVMStatusTransitionFailureDoesNotPublishTask(t *testing.T) {
 	nodeID := "node-1"
 	publisher := &recordingTaskPublisher{}
 	db := &fakeDB{
@@ -504,7 +504,7 @@ func TestVMServiceDeleteVMSoftDeleteFailureDoesNotPublishTask(t *testing.T) {
 			return &fakeRow{scanErr: pgx.ErrNoRows}
 		},
 		execFunc: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
-			if strings.Contains(sql, "UPDATE vms SET deleted_at = $1") {
+			if strings.Contains(sql, "WHERE id = $2 AND status = $3 AND deleted_at IS NULL") {
 				return pgconn.NewCommandTag("UPDATE 0"), nil
 			}
 			return pgconn.NewCommandTag("UPDATE 1"), nil
@@ -519,13 +519,13 @@ func TestVMServiceDeleteVMSoftDeleteFailureDoesNotPublishTask(t *testing.T) {
 	taskID, err := svc.DeleteVM(context.Background(), "vm-1", "customer-1", false)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "delete task state unknown")
+	assert.Contains(t, err.Error(), "marking VM")
 	assert.ErrorIs(t, err, sharederrors.ErrConflict)
 	assert.Equal(t, "", taskID)
 	assert.Equal(t, 0, publisher.calls)
 }
 
-func TestVMServiceDeleteVMPublishFailureRestoresSoftDeletedVM(t *testing.T) {
+func TestVMServiceDeleteVMPublishFailureRestoresPreviousStatus(t *testing.T) {
 	nodeID := "node-1"
 	publisher := &failingTaskPublisher{}
 	restoreCalled := false
@@ -537,10 +537,8 @@ func TestVMServiceDeleteVMPublishFailureRestoresSoftDeletedVM(t *testing.T) {
 			return &fakeRow{scanErr: pgx.ErrNoRows}
 		},
 		execFunc: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
-			if strings.Contains(sql, "UPDATE vms SET deleted_at = $1") {
-				return pgconn.NewCommandTag("UPDATE 1"), nil
-			}
-			if strings.Contains(sql, "SET deleted_at = NULL") {
+			if strings.Contains(sql, "WHERE id = $2 AND deleted_at IS NULL") &&
+				!strings.Contains(sql, "status = $3") {
 				restoreCalled = true
 				return pgconn.NewCommandTag("UPDATE 1"), nil
 			}
@@ -701,9 +699,13 @@ func TestDefaultTaskPublisher_PublishTaskWithIdempotencyKeyPersistsKey(t *testin
 				queryRowFunc: func(_ context.Context, sql string, args ...any) pgx.Row {
 					require.Contains(t, sql, "INSERT INTO tasks")
 					require.Equal(t, tt.idempotencyKey, args[6])
+					taskID, ok := args[0].(string)
+					require.True(t, ok)
+					taskType, ok := args[1].(string)
+					require.True(t, ok)
 					payload, ok := args[3].(json.RawMessage)
 					require.True(t, ok)
-					return &fakeRow{values: taskRow(args[0].(string), args[1].(string), tt.idempotencyKey, payload)}
+					return &fakeRow{values: taskRow(taskID, taskType, tt.idempotencyKey, payload)}
 				},
 			}
 			publisher := NewDefaultTaskPublisher(repository.NewTaskRepository(db), testVMServiceLogger())

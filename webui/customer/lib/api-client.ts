@@ -1,11 +1,11 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 import {
   ApiClientError,
+  apiEnvelopeRequest,
   apiRequest as sharedAPIRequest,
-  buildHeaders,
+  createAuthSession,
   fetchCsrfToken as sharedFetchCsrfToken,
   getCsrfToken,
-  parseError,
 } from "@virtuestack/api-client";
 
 import type {
@@ -29,17 +29,7 @@ export async function apiRequest<T>(
 }
 
 async function apiPaginatedGet<T>(endpoint: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    method: "GET",
-    credentials: "include",
-    headers: buildHeaders(),
-  });
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  return (await response.json()) as T;
+  return apiEnvelopeRequest<T>(API_BASE_URL, endpoint, { method: "GET" });
 }
 
 export const apiClient = {
@@ -73,7 +63,13 @@ export const apiClient = {
   },
 };
 
-let tokenValidUntil = 0;
+function refreshCustomerAuthToken(): Promise<AuthTokens> {
+  return apiClient.post<AuthTokens>("/customer/auth/refresh", {});
+}
+
+const customerAuthSession = createAuthSession({
+  refreshToken: refreshCustomerAuthToken,
+});
 
 export const customerAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
@@ -86,7 +82,7 @@ export const customerAuthApi = {
   },
 
   async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/customer/auth/refresh", {});
+    return refreshCustomerAuthToken();
   },
 
   async logout(): Promise<void> {
@@ -97,23 +93,11 @@ export const customerAuthApi = {
       // Log for debugging but always clear local state regardless.
       console.warn('Logout request failed (session may already be invalid):', err);
     }
-    tokenValidUntil = 0;
+    customerAuthSession.reset();
   },
 
   async ensureValidToken(): Promise<boolean> {
-    if (Date.now() < tokenValidUntil) {
-      return true;
-    }
-
-    try {
-      const tokens = await customerAuthApi.refreshToken();
-      tokenValidUntil =
-        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
-      return true;
-    } catch {
-      tokenValidUntil = 0;
-      return false;
-    }
+    return customerAuthSession.ensureValidToken();
   },
 
   async forgotPassword(email: string): Promise<{ message: string }> {

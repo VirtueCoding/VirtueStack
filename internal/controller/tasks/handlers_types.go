@@ -5,10 +5,11 @@ package tasks
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/repository"
-	"log/slog"
 )
 
 // MACPrefix is the OUI prefix for VirtueStack VM MAC addresses.
@@ -17,20 +18,27 @@ const MACPrefix = "52:54:00"
 
 // HandlerDeps contains all dependencies required by task handlers.
 type HandlerDeps struct {
-	VMRepo             *repository.VMRepository
-	NodeRepo           *repository.NodeRepository
-	IPRepo             *repository.IPRepository
-	BackupRepo         *repository.BackupRepository
-	TaskRepo           *repository.TaskRepository
-	TemplateRepo       *repository.TemplateRepository
-	TemplateCacheRepo  *repository.TemplateCacheRepository
-	IPAMService        IPAMService
-	NodeClient         NodeAgentClient
-	DNSNameservers     []string
-	CephUser           string
-	CephSecretUUID     string
-	CephMonitors       []string
-	Logger             *slog.Logger
+	VMRepo            *repository.VMRepository
+	CustomerRepo      *repository.CustomerRepository
+	NodeRepo          *repository.NodeRepository
+	IPRepo            *repository.IPRepository
+	BackupRepo        *repository.BackupRepository
+	TaskRepo          *repository.TaskRepository
+	TemplateRepo      *repository.TemplateRepository
+	TemplateCacheRepo *repository.TemplateCacheRepository
+	IPAMService       IPAMService
+	BillingHooks      BillingHookResolver
+	NodeClient        NodeAgentClient
+	DNSNameservers    []string
+	CephUser          string
+	CephSecretUUID    string
+	CephMonitors      []string
+	Logger            *slog.Logger
+}
+
+// BillingHookResolver resolves the billing lifecycle hook for a customer's provider.
+type BillingHookResolver interface {
+	ForCustomer(providerName string) (billing.VMLifecycleHook, error)
 }
 
 // IPAMService defines the interface for IP address management operations.
@@ -46,14 +54,18 @@ type IPAMService interface {
 type NodeAgentClient interface {
 	// CreateVM provisions a new VM on the specified node.
 	CreateVM(ctx context.Context, nodeID string, req *CreateVMRequest) (*CreateVMResponse, error)
+	// ReinstallVM reimages an existing VM on the specified node.
+	ReinstallVM(ctx context.Context, nodeID string, req *ReinstallVMRequest) (*CreateVMResponse, error)
 	// StartVM starts a stopped VM on the specified node.
 	StartVM(ctx context.Context, nodeID, vmID string) error
 	// StopVM gracefully stops a running VM on the specified node.
 	StopVM(ctx context.Context, nodeID, vmID string, timeoutSec int) error
 	// ForceStopVM immediately terminates a VM on the specified node.
 	ForceStopVM(ctx context.Context, nodeID, vmID string) error
-	// DeleteVM removes a VM definition from the specified node.
+	// DeleteVM removes a VM definition and disk from the specified node.
 	DeleteVM(ctx context.Context, nodeID, vmID string) error
+	// UndefineVM removes a VM definition from the specified node while preserving disk.
+	UndefineVM(ctx context.Context, nodeID, vmID string) error
 	// CreateSnapshot creates a disk snapshot for a VM.
 	CreateSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) (*SnapshotResponse, error)
 	// DeleteSnapshot removes a disk snapshot for a VM.
@@ -62,7 +74,7 @@ type NodeAgentClient interface {
 	RestoreSnapshot(ctx context.Context, nodeID, vmID, snapshotName string) error
 	// CloneFromBackup clones a VM disk from a backup snapshot.
 	CloneFromBackup(ctx context.Context, nodeID, vmID, backupSnapshot string, diskGB int) error
-	// DeleteDisk removes the RBD disk for a VM.
+	// DeleteDisk removes the disk for a VM.
 	DeleteDisk(ctx context.Context, nodeID, vmID string) error
 	// CloneFromTemplate clones a disk from a template for a VM.
 	CloneFromTemplate(ctx context.Context, nodeID, vmID, templateImage, templateSnapshot string, diskGB int) error
@@ -152,8 +164,35 @@ type CreateVMRequest struct {
 
 // CreateVMResponse contains the result of a VM creation operation.
 type CreateVMResponse struct {
-	DomainName string
-	VNCPort    int32
+	DomainName    string
+	VNCPort       int32
+	CloudInitPath string
+}
+
+// ReinstallVMRequest contains parameters for VM reinstallation via node agent.
+type ReinstallVMRequest struct {
+	VMID                string
+	Hostname            string
+	VCPU                int
+	MemoryMB            int
+	DiskGB              int
+	StorageBackend      string
+	TemplateFilePath    string
+	TemplateRBDImage    string
+	TemplateRBDSnapshot string
+	RootPasswordHash    string
+	SSHPublicKeys       []string
+	IPv4Address         string
+	IPv4Gateway         string
+	IPv6Address         string
+	IPv6Gateway         string
+	MACAddress          string
+	PortSpeedMbps       int
+	CephMonitors        []string
+	CephUser            string
+	CephSecretUUID      string
+	CephPool            string
+	Nameservers         []string
 }
 
 // SnapshotResponse contains the result of a snapshot creation operation.
@@ -258,21 +297,21 @@ const (
 
 // VMMigratePayload represents the payload for vm.migrate tasks.
 type VMMigratePayload struct {
-	VMID                 string            `json:"vm_id"`
-	SourceNodeID         string            `json:"source_node_id"`
-	TargetNodeID         string            `json:"target_node_id"`
-	PreMigrationState    string            `json:"pre_migration_state,omitempty"`
-	SourceStorageBackend string            `json:"source_storage_backend,omitempty"`
-	TargetStorageBackend string            `json:"target_storage_backend,omitempty"`
-	SourceStoragePath    string            `json:"source_storage_path,omitempty"`
-	TargetStoragePath    string            `json:"target_storage_path,omitempty"`
-	SourceCephPool       string            `json:"source_ceph_pool,omitempty"`
-	TargetCephPool       string            `json:"target_ceph_pool,omitempty"`
+	VMID                 string `json:"vm_id"`
+	SourceNodeID         string `json:"source_node_id"`
+	TargetNodeID         string `json:"target_node_id"`
+	PreMigrationState    string `json:"pre_migration_state,omitempty"`
+	SourceStorageBackend string `json:"source_storage_backend,omitempty"`
+	TargetStorageBackend string `json:"target_storage_backend,omitempty"`
+	SourceStoragePath    string `json:"source_storage_path,omitempty"`
+	TargetStoragePath    string `json:"target_storage_path,omitempty"`
+	SourceCephPool       string `json:"source_ceph_pool,omitempty"`
+	TargetCephPool       string `json:"target_ceph_pool,omitempty"`
 	// LVM storage backend fields for migration
-	SourceLVMVolumeGroup string `json:"source_lvm_volume_group,omitempty"`
-	SourceLVMThinPool    string `json:"source_lvm_thin_pool,omitempty"`
-	TargetLVMVolumeGroup string `json:"target_lvm_volume_group,omitempty"`
-	TargetLVMThinPool    string `json:"target_lvm_thin_pool,omitempty"`
+	SourceLVMVolumeGroup string            `json:"source_lvm_volume_group,omitempty"`
+	SourceLVMThinPool    string            `json:"source_lvm_thin_pool,omitempty"`
+	TargetLVMVolumeGroup string            `json:"target_lvm_volume_group,omitempty"`
+	TargetLVMThinPool    string            `json:"target_lvm_thin_pool,omitempty"`
 	MigrationStrategy    MigrationStrategy `json:"migration_strategy"`
 	Live                 bool              `json:"live"`
 	SourceDiskPath       string            `json:"source_disk_path,omitempty"`

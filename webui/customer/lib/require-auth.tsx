@@ -1,30 +1,25 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { RequireAuthGate } from "@virtuestack/ui";
+
 import { useAuth } from "./auth-context";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const redirectToLogin = useCallback(() => {
+    router.push("/login");
+  }, [router]);
 
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push("/login");
-    }
-  }, [isLoading, isAuthenticated, router]);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground" />
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  return <>{children}</>;
+  return (
+    <RequireAuthGate
+      isAuthenticated={isAuthenticated}
+      isLoading={isLoading}
+      onUnauthenticated={redirectToLogin}
+    >
+      {children}
+    </RequireAuthGate>
+  );
 }

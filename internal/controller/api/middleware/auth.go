@@ -41,8 +41,8 @@ const (
 	// vmIDsContextKey is the gin context key for API key VM scope.
 	vmIDsContextKey = "vm_ids"
 
-	// tempTokenPurposeClaim is the custom claim key for temp token purpose.
-	tempTokenPurposeClaim = "purpose"
+	// principalContextKey is the gin context key for the authenticated principal.
+	principalContextKey = "principal"
 
 	// tempTokenPurposeValue is the expected value of the purpose claim on temp tokens.
 	tempTokenPurposeValue = "2fa"
@@ -95,6 +95,17 @@ type CustomerAPIKeyInfo struct {
 	Permissions []string
 	AllowedIPs  []string
 	VMIDs       []string // VMs this key is scoped to (empty = all VMs)
+}
+
+// Principal is the normalized authenticated actor for a request.
+type Principal struct {
+	UserID      string
+	UserType    string
+	Role        string
+	ActorType   string
+	APIKeyID    string
+	Permissions []string
+	VMIDs       []string
 }
 
 // CustomerAPIKeyValidator looks up a customer API key by its raw value.
@@ -288,14 +299,7 @@ func CustomerAPIKeyAuth(validator CustomerAPIKeyValidator) gin.HandlerFunc {
 			}
 		}
 
-		// Set the standard auth context keys for customer API key auth.
-		// This allows downstream handlers to use GetUserID() consistently.
-		c.Set(userIDContextKey, info.CustomerID)
-		c.Set(userTypeContextKey, "customer")
-		c.Set(apiKeyIDContextKey, info.KeyID)
-		c.Set(actorTypeContextKey, "customer_api_key")
-		c.Set(permissionsContextKey, info.Permissions)
-		c.Set(vmIDsContextKey, info.VMIDs)
+		setCustomerAPIKeyContext(c, info)
 		c.Next()
 	}
 }
@@ -361,13 +365,7 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 			}
 		}
 
-		// Set the standard auth context keys for customer API key auth.
-		c.Set(userIDContextKey, info.CustomerID)
-		c.Set(userTypeContextKey, "customer")
-		c.Set(apiKeyIDContextKey, info.KeyID)
-		c.Set(actorTypeContextKey, "customer_api_key")
-		c.Set(permissionsContextKey, info.Permissions)
-		c.Set(vmIDsContextKey, info.VMIDs)
+		setCustomerAPIKeyContext(c, info)
 		c.Next()
 	}
 }
@@ -375,6 +373,9 @@ func JWTOrCustomerAPIKeyAuth(jwtConfig AuthConfig, keyValidator CustomerAPIKeyVa
 // GetPermissions extracts the permissions set by CustomerAPIKeyAuth from gin.Context.
 // Returns nil if not present (i.e., JWT auth was used instead).
 func GetPermissions(c *gin.Context) []string {
+	if principal, ok := GetPrincipal(c); ok {
+		return principal.Permissions
+	}
 	v, _ := c.Get(permissionsContextKey)
 	perms, _ := v.([]string)
 	return perms
@@ -384,6 +385,9 @@ func GetPermissions(c *gin.Context) []string {
 // Returns nil if not present or empty (i.e., JWT auth or API key with no VM restriction).
 // An empty/nil return means all VMs are accessible.
 func GetVMIDs(c *gin.Context) []string {
+	if principal, ok := GetPrincipal(c); ok {
+		return principal.VMIDs
+	}
 	v, _ := c.Get(vmIDsContextKey)
 	vmIDs, _ := v.([]string)
 	return vmIDs
@@ -639,6 +643,9 @@ func ValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, error) {
 // GetUserID extracts the user_id set by JWTAuth from gin.Context.
 // Returns an empty string if not present.
 func GetUserID(c *gin.Context) string {
+	if principal, ok := GetPrincipal(c); ok {
+		return principal.UserID
+	}
 	v, _ := c.Get(userIDContextKey)
 	s, _ := v.(string)
 	return s
@@ -647,6 +654,9 @@ func GetUserID(c *gin.Context) string {
 // GetUserType extracts the user_type set by JWTAuth from gin.Context.
 // Returns an empty string if not present.
 func GetUserType(c *gin.Context) string {
+	if principal, ok := GetPrincipal(c); ok {
+		return principal.UserType
+	}
 	v, _ := c.Get(userTypeContextKey)
 	s, _ := v.(string)
 	return s
@@ -655,9 +665,22 @@ func GetUserType(c *gin.Context) string {
 // GetRole extracts the role set by JWTAuth from gin.Context.
 // Returns an empty string if not present (e.g., for customer users).
 func GetRole(c *gin.Context) string {
+	if principal, ok := GetPrincipal(c); ok {
+		return principal.Role
+	}
 	v, _ := c.Get(roleContextKey)
 	s, _ := v.(string)
 	return s
+}
+
+// GetPrincipal extracts the normalized authenticated actor from gin.Context.
+func GetPrincipal(c *gin.Context) (Principal, bool) {
+	v, ok := c.Get(principalContextKey)
+	if !ok {
+		return Principal{}, false
+	}
+	principal, ok := v.(Principal)
+	return principal, ok
 }
 
 // ─── internal helpers ────────────────────────────────────────────────────────
@@ -690,9 +713,42 @@ func parseAndValidateJWT(config AuthConfig, tokenString string) (*JWTClaims, err
 
 // setAuthContext populates the gin context with user info from JWT claims.
 func setAuthContext(c *gin.Context, claims *JWTClaims) {
-	c.Set(userIDContextKey, claims.UserID)
-	c.Set(userTypeContextKey, claims.UserType)
-	c.Set(roleContextKey, claims.Role)
+	setPrincipal(c, Principal{
+		UserID:    claims.UserID,
+		UserType:  claims.UserType,
+		Role:      claims.Role,
+		ActorType: claims.UserType,
+	})
+}
+
+func setCustomerAPIKeyContext(c *gin.Context, info CustomerAPIKeyInfo) {
+	setPrincipal(c, Principal{
+		UserID:      info.CustomerID,
+		UserType:    "customer",
+		ActorType:   "customer_api_key",
+		APIKeyID:    info.KeyID,
+		Permissions: append([]string(nil), info.Permissions...),
+		VMIDs:       append([]string(nil), info.VMIDs...),
+	})
+}
+
+func setPrincipal(c *gin.Context, principal Principal) {
+	c.Set(principalContextKey, principal)
+	c.Set(userIDContextKey, principal.UserID)
+	c.Set(userTypeContextKey, principal.UserType)
+	c.Set(roleContextKey, principal.Role)
+	if principal.APIKeyID != "" {
+		c.Set(apiKeyIDContextKey, principal.APIKeyID)
+	}
+	if principal.ActorType != "" {
+		c.Set(actorTypeContextKey, principal.ActorType)
+	}
+	if principal.Permissions != nil {
+		c.Set(permissionsContextKey, principal.Permissions)
+	}
+	if principal.VMIDs != nil {
+		c.Set(vmIDsContextKey, principal.VMIDs)
+	}
 }
 
 // hashAPIKey returns the hex-encoded SHA-256 hash of a raw API key.

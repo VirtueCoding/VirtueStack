@@ -1,3 +1,4 @@
+//nolint:revive,gosec // Node Agent Adapter methods mirror task Interfaces; numeric ranges are validated before requests are built.
 package services
 
 import (
@@ -5,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/models"
 	"github.com/AbuGosok/VirtueStack/internal/controller/tasks"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 )
@@ -113,23 +115,16 @@ func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID strin
 		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
 	}
 
-	vm, err := c.vmRepo.GetByID(ctx, vmID)
+	vm, err := c.vmRepo.GetByIDIncludingDeleted(ctx, vmID)
 	if err != nil {
 		return fmt.Errorf("getting VM %s: %w", vmID, err)
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	var diskPath string
-	if vm.DiskPath != nil {
-		diskPath = *vm.DiskPath
-	}
-	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{
-		VmId:           vmID,
-		StorageBackend: vm.StorageBackend,
-		DiskPath:       diskPath,
-	})
+	req := deleteVMRequestFromModel(vm)
+	resp, err := client.DeleteDisk(ctx, req)
 	if err != nil {
-		return fmt.Errorf("calling DeleteVM: %w", err)
+		return fmt.Errorf("calling DeleteDisk: %w", err)
 	}
 	if !resp.GetSuccess() {
 		return fmt.Errorf("failed to delete disk for VM %s: %s", vmID, resp.GetErrorMessage())
@@ -137,35 +132,27 @@ func (c *NodeAgentGRPCClient) DeleteDisk(ctx context.Context, nodeID, vmID strin
 	return nil
 }
 
-func (c *NodeAgentGRPCClient) CloneFromTemplate(ctx context.Context, nodeID, vmID, templateImage, templateSnapshot string, diskGB int) error {
-	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+func (c *NodeAgentGRPCClient) deleteVMRequest(ctx context.Context, vmID string) (*nodeagentpb.DeleteVMRequest, error) {
+	vm, err := c.vmRepo.GetByIDIncludingDeleted(ctx, vmID)
 	if err != nil {
-		return fmt.Errorf("getting node %s: %w", nodeID, err)
+		return nil, fmt.Errorf("getting VM %s: %w", vmID, err)
 	}
+	return deleteVMRequestFromModel(vm), nil
+}
 
-	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
-	if err != nil {
-		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+func deleteVMRequestFromModel(vm *models.VM) *nodeagentpb.DeleteVMRequest {
+	req := &nodeagentpb.DeleteVMRequest{
+		VmId:           vm.ID,
+		StorageBackend: vm.StorageBackend,
 	}
+	if vm.DiskPath != nil {
+		req.DiskPath = *vm.DiskPath
+	}
+	return req
+}
 
-	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	resp, err := client.CreateVM(ctx, &nodeagentpb.CreateVMRequest{
-		VmId:                vmID,
-		TemplateRbdImage:    templateImage,
-		TemplateRbdSnapshot: templateSnapshot,
-		DiskGb:              int32(diskGB),
-		CephMonitors:        c.cephMonitors(),
-		CephUser:            c.cephUser(),
-		CephSecretUuid:      c.cephSecretUUID(),
-		CephPool:            node.CephPool,
-	})
-	if err != nil {
-		return fmt.Errorf("calling CreateVM: %w", err)
-	}
-	if !resp.GetSuccess() {
-		return fmt.Errorf("failed to clone template for VM %s: %s", vmID, resp.GetErrorMessage())
-	}
-	return nil
+func (c *NodeAgentGRPCClient) CloneFromTemplate(_ context.Context, _, vmID, _, _ string, _ int) error {
+	return fmt.Errorf("cloning template for VM %s requires CreateVM or ReinstallVM materialization", vmID)
 }
 
 func (c *NodeAgentGRPCClient) GuestFreezeFilesystems(ctx context.Context, nodeID, vmID string) (int, error) {

@@ -1,139 +1,197 @@
 // Package tasks provides the VM deletion task handler.
-// This file contains the handleVMDelete function which handles the full
-// VM deletion flow including stopping the VM, deleting disk, releasing IPs,
-// and soft-deleting the VM record.
 package tasks
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 
+	"github.com/AbuGosok/VirtueStack/internal/controller/billing"
 	"github.com/AbuGosok/VirtueStack/internal/controller/models"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// handleVMDelete handles the VM deletion flow.
-// Steps:
-//  1. Parse payload
-//  2. Get VM record
-//  3. Stop VM (if running)
-//  4. Delete VM definition
-//  5. Delete RBD volume
-//  6. Release IP addresses
-//  7. Soft delete VM record
-func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
-	logger := taskLogger(deps.Logger, task)
+type vmDeletionVMRepo interface {
+	GetByIDIncludingDeleted(ctx context.Context, id string) (*models.VM, error)
+	SoftDelete(ctx context.Context, id string) error
+}
 
-	// Parse payload
+type vmDeletionTaskRepo interface {
+	UpdateProgress(ctx context.Context, id string, progress int, message string) error
+	SetCompleted(ctx context.Context, id string, result []byte) error
+}
+
+type vmDeletionCustomerRepo interface {
+	GetByID(ctx context.Context, id string) (*models.Customer, error)
+}
+
+type vmDeletionNodeClient interface {
+	StopVM(ctx context.Context, nodeID, vmID string, timeoutSec int) error
+	ForceStopVM(ctx context.Context, nodeID, vmID string) error
+	DeleteVM(ctx context.Context, nodeID, vmID string) error
+}
+
+type vmDeletionIPAM interface {
+	ReleaseIPsByVM(ctx context.Context, vmID string) error
+}
+
+type vmDeletion struct {
+	vmRepo       vmDeletionVMRepo
+	taskRepo     vmDeletionTaskRepo
+	customerRepo vmDeletionCustomerRepo
+	ipam         vmDeletionIPAM
+	nodeClient   vmDeletionNodeClient
+	billingHooks BillingHookResolver
+	logger       *slog.Logger
+}
+
+func handleVMDelete(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
 	var payload VMDeletePayload
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
-		logger.Error("failed to parse vm.delete payload", "error", err)
 		return fmt.Errorf("parsing vm.delete payload: %w", err)
 	}
-
-	logger.Info("vm.delete task started")
-
-	// Update task progress
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 5, "Starting VM deletion..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
+	deletion := vmDeletion{
+		vmRepo:       deps.VMRepo,
+		taskRepo:     deps.TaskRepo,
+		customerRepo: deps.CustomerRepo,
+		ipam:         deps.IPAMService,
+		nodeClient:   deps.NodeClient,
+		billingHooks: deps.BillingHooks,
+		logger:       taskLogger(deps.Logger, task),
 	}
+	return deletion.execute(ctx, task.ID, payload)
+}
 
-	// Get VM record
-	vm, err := deps.VMRepo.GetByID(ctx, payload.VMID)
+func (d vmDeletion) execute(ctx context.Context, taskID string, payload VMDeletePayload) error {
+	d.progress(ctx, taskID, 5, "Starting VM deletion...")
+	vm, err := d.vmRepo.GetByIDIncludingDeleted(ctx, payload.VMID)
 	if err != nil {
-		logger.Error("failed to get VM record", "error", err)
-		// If VM doesn't exist, consider deletion successful (idempotent).
-		// json.Marshal error is intentionally suppressed: the map contains only
-		// primitive types (string, int, bool) whose marshaling cannot fail.
-		idempotentResult, _ := json.Marshal(map[string]any{
-			"vm_id":  payload.VMID,
-			"status": "deleted",
-		})
-		if err := deps.TaskRepo.SetCompleted(ctx, task.ID, idempotentResult); err != nil {
-			logger.Warn("failed to set task completed", "error", err)
+		return d.completeIfRecordMissing(ctx, taskID, payload.VMID, err)
+	}
+	wasDeleted := vm.IsDeleted()
+	if err := d.cleanupNode(ctx, taskID, vm); err != nil {
+		return err
+	}
+	d.progress(ctx, taskID, 70, "Releasing IP addresses...")
+	if err := d.releaseIPs(ctx, vm.ID); err != nil {
+		return err
+	}
+	d.progress(ctx, taskID, 90, "Removing VM record...")
+	if !wasDeleted {
+		if err := d.vmRepo.SoftDelete(ctx, vm.ID); err != nil {
+			return fmt.Errorf("soft deleting VM %s: %w", vm.ID, err)
 		}
+		d.notifyBilling(ctx, vm)
+	}
+	d.progress(ctx, taskID, 100, "VM deleted successfully")
+	return d.complete(ctx, taskID, vm.ID)
+}
+
+func (d vmDeletion) cleanupNode(ctx context.Context, taskID string, vm *models.VM) error {
+	if vm.NodeID == nil {
 		return nil
 	}
-
-	// Update task progress: Stopping VM
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Stopping virtual machine..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	// Delete VM definition and disk if node is assigned
-	if vm.NodeID != nil {
-		nodeID := *vm.NodeID
-
-		// Stop VM if running
-		if vm.Status == models.VMStatusRunning {
-			if err := stopVMGracefully(ctx, deps.NodeClient, nodeID, payload.VMID, 60, logger); err != nil {
-				logger.Warn("failed to stop VM during deletion, continuing", "error", err)
-			}
-		}
-
-		// Update task progress: Deleting VM definition
-		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Deleting VM definition..."); err != nil {
-			logger.Warn("failed to update task progress", "error", err)
-		}
-
-		// Delete VM definition from libvirt
-		if err := deps.NodeClient.DeleteVM(ctx, nodeID, payload.VMID); err != nil {
-			logger.Warn("failed to delete VM definition", "error", err)
-			// Continue with disk deletion
-		}
-
-		// Update task progress: Deleting disk
-		if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Deleting disk image..."); err != nil {
-			logger.Warn("failed to update task progress", "error", err)
-		}
-
-		// Delete RBD disk
-		if err := deps.NodeClient.DeleteDisk(ctx, nodeID, payload.VMID); err != nil {
-			logger.Warn("failed to delete disk", "error", err)
-			// Continue with IP release
+	nodeID := *vm.NodeID
+	d.progress(ctx, taskID, 15, "Stopping virtual machine...")
+	if vm.Status == models.VMStatusRunning {
+		if err := d.stopVM(ctx, nodeID, vm.ID); err != nil {
+			d.logger.Warn("failed to stop VM before deletion, continuing", "error", err)
 		}
 	}
-
-	// Update task progress: Releasing IPs
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 70, "Releasing IP addresses..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
+	d.progress(ctx, taskID, 40, "Deleting virtual machine from node...")
+	if err := d.nodeClient.DeleteVM(ctx, nodeID, vm.ID); err != nil && !isAlreadyAbsent(err) {
+		return fmt.Errorf("deleting VM %s from node %s: %w", vm.ID, nodeID, err)
 	}
-
-	// Release IP addresses
-	if err := deps.IPAMService.ReleaseIPsByVM(ctx, payload.VMID); err != nil {
-		logger.Warn("failed to release IPs", "error", err)
-		// Continue with VM record deletion
-	}
-
-	// Update task progress: Soft deleting record
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 90, "Removing VM record..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	// Soft delete VM record
-	if err := deps.VMRepo.SoftDelete(ctx, payload.VMID); err != nil {
-		logger.Error("failed to soft delete VM record", "error", err)
-		return fmt.Errorf("soft deleting VM %s: %w", payload.VMID, err)
-	}
-
-	// Update task progress: Complete
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 100, "VM deleted successfully"); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	// Set task result
-	result := map[string]any{
-		"vm_id":  payload.VMID,
-		"status": "deleted",
-	}
-	// json.Marshal error is intentionally suppressed: the map contains only
-	// primitive types (string, int, bool) whose marshaling cannot fail.
-	resultJSON, _ := json.Marshal(result)
-	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
-		logger.Warn("failed to set task completed", "error", err)
-	}
-
-	logger.Info("vm.delete task completed successfully", "vm_id", payload.VMID)
-
 	return nil
+}
+
+func (d vmDeletion) stopVM(ctx context.Context, nodeID, vmID string) error {
+	if err := d.nodeClient.StopVM(ctx, nodeID, vmID, 60); err != nil {
+		d.logger.Warn("graceful stop failed, attempting force stop", "vm_id", vmID, "error", err)
+		if forceErr := d.nodeClient.ForceStopVM(ctx, nodeID, vmID); forceErr != nil {
+			return fmt.Errorf("force stopping VM %s: %w", vmID, forceErr)
+		}
+	}
+	return nil
+}
+
+func (d vmDeletion) releaseIPs(ctx context.Context, vmID string) error {
+	if d.ipam == nil {
+		return nil
+	}
+	if err := d.ipam.ReleaseIPsByVM(ctx, vmID); err != nil && !isAlreadyAbsent(err) {
+		return fmt.Errorf("releasing IPs for VM %s: %w", vmID, err)
+	}
+	return nil
+}
+
+func (d vmDeletion) completeIfRecordMissing(ctx context.Context, taskID, vmID string, err error) error {
+	if !isAlreadyAbsent(err) {
+		return fmt.Errorf("getting VM %s for deletion: %w", vmID, err)
+	}
+	d.logger.Info("VM already absent during deletion")
+	return d.complete(ctx, taskID, vmID)
+}
+
+func (d vmDeletion) complete(ctx context.Context, taskID, vmID string) error {
+	result, err := json.Marshal(map[string]any{"vm_id": vmID, "status": "deleted"})
+	if err != nil {
+		return fmt.Errorf("marshaling vm.delete result: %w", err)
+	}
+	if err := d.taskRepo.SetCompleted(ctx, taskID, result); err != nil {
+		return fmt.Errorf("completing vm.delete task: %w", err)
+	}
+	return nil
+}
+
+func (d vmDeletion) progress(ctx context.Context, taskID string, progress int, message string) {
+	if err := d.taskRepo.UpdateProgress(ctx, taskID, progress, message); err != nil {
+		d.logger.Warn("failed to update task progress", "error", err)
+	}
+}
+
+func (d vmDeletion) notifyBilling(ctx context.Context, vm *models.VM) {
+	if d.billingHooks == nil || d.customerRepo == nil {
+		return
+	}
+	hook, err := d.billingHook(ctx, vm.CustomerID)
+	if err != nil {
+		d.logger.Warn("billing hook: provider not found", "customer_id", vm.CustomerID, "error", err)
+		return
+	}
+	if err := hook.OnVMDeleted(ctx, billing.VMRef{
+		ID: vm.ID, CustomerID: vm.CustomerID, PlanID: vm.PlanID, Hostname: vm.Hostname,
+	}); err != nil {
+		d.logger.Warn("billing hook: callback failed", "customer_id", vm.CustomerID, "error", err)
+	}
+}
+
+func (d vmDeletion) billingHook(ctx context.Context, customerID string) (billing.VMLifecycleHook, error) {
+	customer, err := d.customerRepo.GetByID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("getting customer %s: %w", customerID, err)
+	}
+	provider := ""
+	if customer.BillingProvider != nil {
+		provider = *customer.BillingProvider
+	}
+	return d.billingHooks.ForCustomer(provider)
+}
+
+func isAlreadyAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
+	if sharederrors.Is(err, sharederrors.ErrNotFound) || errors.Is(err, sharederrors.ErrNotFound) {
+		return true
+	}
+	if status.Code(err) == codes.NotFound {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }

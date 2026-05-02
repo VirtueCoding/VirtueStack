@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/storage"
 	"github.com/AbuGosok/VirtueStack/internal/nodeagent/vm"
 	"github.com/AbuGosok/VirtueStack/internal/shared/config"
+	sharederrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/AbuGosok/VirtueStack/internal/shared/logging"
 	nodeagentpb "github.com/AbuGosok/VirtueStack/internal/shared/proto/virtuestack"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -417,7 +419,7 @@ func (s *Server) startHealthHTTPServer(ctx context.Context) {
 			s.logger,
 		)
 
-		if err := healthServer.Start(ctx); err != nil && err != context.Canceled {
+		if err := healthServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			s.logger.Error("health HTTP server error", "error", err)
 		}
 	})
@@ -476,8 +478,12 @@ func (s *Server) getDiskUsage() float64 {
 		s.logger.Warn("could not get disk usage", "error", err)
 		return 0
 	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	used := (stat.Blocks - stat.Bavail) * uint64(stat.Bsize)
+	if stat.Bsize <= 0 {
+		return 0
+	}
+	blockSize := uint64(stat.Bsize)
+	total := stat.Blocks * blockSize
+	used := (stat.Blocks - stat.Bavail) * blockSize
 	if total == 0 {
 		return 0
 	}
@@ -499,7 +505,7 @@ func (s *Server) getStoragePoolStats(ctx context.Context) (totalGB, usedGB int64
 }
 
 // isStorageConnected returns true if the storage backend connection is healthy.
-func (s *Server) isStorageConnected() bool {
+func (s *Server) isStorageConnected(ctx context.Context) bool {
 	if s.storageBackend == nil {
 		return false
 	}
@@ -510,11 +516,11 @@ func (s *Server) isStorageConnected() bool {
 		}
 	case storage.StorageTypeQCOW:
 		if qcowMgr, ok := s.storageBackend.(*storage.QCOWManager); ok {
-			return qcowMgr.HealthCheck(context.Background()) == nil
+			return qcowMgr.HealthCheck(ctx) == nil
 		}
 	case storage.StorageTypeLVM:
 		if lvmMgr, ok := s.storageBackend.(*storage.LVMManager); ok {
-			_, _, err := lvmMgr.ThinPoolStats(context.Background())
+			_, _, err := lvmMgr.ThinPoolStats(ctx)
 			return err == nil
 		}
 	}
@@ -610,7 +616,7 @@ func newGRPCHandler(server *Server) *grpcHandler {
 }
 
 // Ping verifies the node agent service is responsive.
-func (h *grpcHandler) Ping(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.PingResponse, error) {
+func (h *grpcHandler) Ping(_ context.Context, _ *nodeagentpb.Empty) (*nodeagentpb.PingResponse, error) {
 	return &nodeagentpb.PingResponse{
 		NodeId:    h.server.config.NodeID,
 		Timestamp: timestamppb.Now(),
@@ -618,7 +624,7 @@ func (h *grpcHandler) Ping(ctx context.Context, req *nodeagentpb.Empty) (*nodeag
 }
 
 // GetNodeHealth retrieves comprehensive health status of the node.
-func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.NodeHealthResponse, error) {
+func (h *grpcHandler) GetNodeHealth(ctx context.Context, _ *nodeagentpb.Empty) (*nodeagentpb.NodeHealthResponse, error) {
 	resources, err := h.server.vmManager.GetNodeResources(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
@@ -649,7 +655,7 @@ func (h *grpcHandler) GetNodeHealth(ctx context.Context, req *nodeagentpb.Empty)
 		LoadAverage:        resources.LoadAverage[:],
 		UptimeSeconds:      resources.UptimeSeconds,
 		LibvirtConnected:   h.server.libvirtConn != nil && h.server.isLibvirtAlive(),
-		CephConnected:      h.server.isStorageConnected(),
+		CephConnected:      h.server.isStorageConnected(ctx),
 		LvmDataPercent:     lvmDataPercent,
 		LvmMetadataPercent: lvmMetadataPercent,
 	}, nil
@@ -699,7 +705,7 @@ func (h *grpcHandler) GetVMMetrics(ctx context.Context, req *nodeagentpb.VMIdent
 }
 
 // GetNodeResources retrieves aggregate resource information for the node.
-func (h *grpcHandler) GetNodeResources(ctx context.Context, req *nodeagentpb.Empty) (*nodeagentpb.NodeResourcesResponse, error) {
+func (h *grpcHandler) GetNodeResources(ctx context.Context, _ *nodeagentpb.Empty) (*nodeagentpb.NodeResourcesResponse, error) {
 	resources, err := h.server.vmManager.GetNodeResources(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "getting node resources: %v", err)
@@ -764,6 +770,31 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		IPv6Address:    req.GetIpv6Address(),
 		PortSpeedKbps:  int(req.GetPortSpeedMbps()) * 1000,
 	}
+	cloudInitPath, err := h.server.generateCloudInitISO(ctx, storage.CloudInitConfig{
+		VMID:             req.GetVmId(),
+		Hostname:         req.GetHostname(),
+		RootPasswordHash: req.GetRootPasswordHash(),
+		SSHPublicKeys:    req.GetSshPublicKeys(),
+		IPv4Address:      req.GetIpv4Address(),
+		IPv4Gateway:      req.GetIpv4Gateway(),
+		IPv6Address:      req.GetIpv6Address(),
+		IPv6Gateway:      req.GetIpv6Gateway(),
+		Nameservers:      req.GetNameservers(),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "generating cloud-init: %v", err)
+	}
+	cfg.CloudInitISOPath = cloudInitPath
+	keepCloudInit := false
+	defer func() {
+		if keepCloudInit {
+			return
+		}
+		generator := storage.NewCloudInitGenerator(h.server.config.CloudInitPath, h.server.logger)
+		if err := generator.Delete(req.GetVmId()); err != nil {
+			logger.Warn("failed to clean up cloud-init after create failure", "error", err)
+		}
+	}()
 
 	switch storageBackend {
 	case vm.StorageBackendQcow:
@@ -802,7 +833,7 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 
 		if req.GetTemplateRbdImage() != "" && req.GetTemplateRbdSnapshot() != "" {
 			diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
-			if err := h.server.storageBackend.CloneFromTemplate(ctx, req.GetCephPool(), req.GetTemplateRbdImage(), req.GetTemplateRbdSnapshot(), diskName); err != nil {
+			if err := h.server.storageBackend.CloneFromTemplate(ctx, cfg.CephPool, req.GetTemplateRbdImage(), req.GetTemplateRbdSnapshot(), diskName); err != nil {
 				return nil, status.Errorf(codes.Internal, "cloning RBD template: %v", err)
 			}
 			logger.Info("cloned RBD template", "template", req.GetTemplateRbdImage(), "snapshot", req.GetTemplateRbdSnapshot())
@@ -841,6 +872,7 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 
 	result, err := h.server.vmManager.CreateVM(ctx, cfg)
 	if err != nil {
+		h.cleanupFailedCreate(ctx, req, storageBackend, cfg, logger)
 		return nil, h.mapError(err, "creating VM")
 	}
 
@@ -851,12 +883,44 @@ func (h *grpcHandler) CreateVM(ctx context.Context, req *nodeagentpb.CreateVMReq
 		logger.Warn("failed to apply abuse prevention rules", "error", tapErr, "tap", tapIface)
 	}
 
+	keepCloudInit = true
 	return &nodeagentpb.CreateVMResponse{
 		VmId:              req.GetVmId(),
 		Success:           true,
 		LibvirtDomainName: result.DomainName,
 		VncPort:           result.VNCPort,
+		CloudInitPath:     cloudInitPath,
 	}, nil
+}
+
+func (s *Server) generateCloudInitISO(ctx context.Context, cfg storage.CloudInitConfig) (string, error) {
+	outputPath := s.config.CloudInitPath
+	if outputPath == "" {
+		outputPath = "/var/lib/virtuestack/cloud-init"
+	}
+	generator := storage.NewCloudInitGenerator(outputPath, s.logger)
+	path, err := generator.Generate(ctx, &cfg)
+	if err != nil {
+		return "", fmt.Errorf("generating cloud-init ISO: %w", err)
+	}
+	return path, nil
+}
+
+func (h *grpcHandler) cleanupFailedCreate(
+	ctx context.Context,
+	req *nodeagentpb.CreateVMRequest,
+	storageBackend string,
+	cfg *vm.DomainConfig,
+	logger *slog.Logger,
+) {
+	deleteReq := &nodeagentpb.DeleteVMRequest{
+		VmId:           req.GetVmId(),
+		StorageBackend: storageBackend,
+		DiskPath:       cfg.DiskPath,
+	}
+	if err := h.deleteDisk(ctx, deleteReq, logger); err != nil {
+		logger.Warn("failed to clean up disk after create failure", "error", err)
+	}
 }
 
 // StartVM powers on a stopped virtual machine.
@@ -912,16 +976,15 @@ func (h *grpcHandler) ForceStopVM(ctx context.Context, req *nodeagentpb.VMIdenti
 	}, nil
 }
 
-// DeleteVM permanently removes a virtual machine and its disk image.
-func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMRequest) (*nodeagentpb.VMOperationResponse, error) {
+// UndefineVM removes a virtual machine domain while preserving its disk image.
+func (h *grpcHandler) UndefineVM(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
 
-	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete")
-	logger.Info("deleting VM")
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "undefine")
+	logger.Info("undefining VM")
 
-	// Remove abuse prevention nftables rules before deletion
 	if tapIface, tapErr := h.server.getVMTapInterface(ctx, req.GetVmId()); tapErr != nil {
 		logger.Warn("failed to get tap interface for abuse prevention cleanup", "error", tapErr)
 	} else if tapErr := h.server.abusePreventionMgr.RemoveVMRules(ctx, tapIface); tapErr != nil {
@@ -929,53 +992,109 @@ func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMReq
 	}
 
 	if err := h.server.vmManager.DeleteVM(ctx, req.GetVmId()); err != nil {
+		if errors.Is(err, sharederrors.ErrNotFound) {
+			logger.Info("VM domain already absent")
+			return vmOperationSuccess(req.GetVmId()), nil
+		}
 		return nil, h.mapError(err, "deleting VM domain")
 	}
 
-	storageBackend := req.GetStorageBackend()
-	if storageBackend == "" {
-		storageBackend = h.server.config.StorageBackend
-		if storageBackend == "" {
-			storageBackend = vm.StorageBackendCeph
-		}
-	}
+	return vmOperationSuccess(req.GetVmId()), nil
+}
 
-	switch storageBackend {
+// DeleteDisk removes a virtual machine disk image from storage.
+func (h *grpcHandler) DeleteDisk(ctx context.Context, req *nodeagentpb.DeleteVMRequest) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
+	}
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete-disk")
+	if err := h.deleteDisk(ctx, req, logger); err != nil {
+		return nil, err
+	}
+	return vmOperationSuccess(req.GetVmId()), nil
+}
+
+// DeleteVM permanently removes a virtual machine and its disk image.
+func (h *grpcHandler) DeleteVM(ctx context.Context, req *nodeagentpb.DeleteVMRequest) (*nodeagentpb.VMOperationResponse, error) {
+	if req.GetVmId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
+	}
+	if _, err := h.UndefineVM(ctx, &nodeagentpb.VMIdentifier{VmId: req.GetVmId()}); err != nil {
+		return nil, err
+	}
+	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "delete")
+	if err := h.deleteDisk(ctx, req, logger); err != nil {
+		return nil, err
+	}
+	return vmOperationSuccess(req.GetVmId()), nil
+}
+
+func (h *grpcHandler) deleteDisk(ctx context.Context, req *nodeagentpb.DeleteVMRequest, logger *slog.Logger) error {
+	switch h.deleteStorageBackend(req) {
 	case vm.StorageBackendQcow:
 		diskPath := req.GetDiskPath()
 		if diskPath == "" {
 			diskPath = fmt.Sprintf("%s/vms/%s-disk0.qcow2", h.server.config.StoragePath, req.GetVmId())
 		}
 		if err := validatePath(diskPath, h.server.config.StoragePath); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
+			return status.Errorf(codes.InvalidArgument, "invalid disk_path: %v", err)
 		}
 		if err := h.server.storageBackend.Delete(ctx, diskPath); err != nil {
-			logger.Warn("failed to delete QCOW disk", "error", err, "path", diskPath)
-		} else {
-			logger.Info("QCOW disk deleted", "path", diskPath)
+			if isDeleteAlreadyAbsentError(err) {
+				logger.Info("QCOW disk already absent", "path", diskPath)
+				return nil
+			}
+			return h.mapError(err, "deleting QCOW disk")
 		}
+		logger.Info("QCOW disk deleted", "path", diskPath)
 
 	case vm.StorageBackendCeph:
 		diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
 		if err := h.server.storageBackend.Delete(ctx, diskName); err != nil {
-			logger.Warn("failed to delete RBD disk", "error", err, "name", diskName)
-		} else {
-			logger.Info("RBD disk deleted", "name", diskName)
+			if isDeleteAlreadyAbsentError(err) {
+				logger.Info("RBD disk already absent", "name", diskName)
+				return nil
+			}
+			return h.mapError(err, "deleting RBD disk")
 		}
+		logger.Info("RBD disk deleted", "name", diskName)
 
 	case vm.StorageBackendLVM:
 		diskIdentifier := h.server.storageBackend.DiskIdentifier(req.GetVmId())
 		if err := h.server.storageBackend.Delete(ctx, diskIdentifier); err != nil {
-			logger.Warn("failed to delete LVM disk", "error", err, "path", diskIdentifier)
-		} else {
-			logger.Info("LVM disk deleted", "path", diskIdentifier)
+			if isDeleteAlreadyAbsentError(err) {
+				logger.Info("LVM disk already absent", "path", diskIdentifier)
+				return nil
+			}
+			return h.mapError(err, "deleting LVM disk")
 		}
+		logger.Info("LVM disk deleted", "path", diskIdentifier)
 	}
+	return nil
+}
 
-	return &nodeagentpb.VMOperationResponse{
-		VmId:    req.GetVmId(),
-		Success: true,
-	}, nil
+func (h *grpcHandler) deleteStorageBackend(req *nodeagentpb.DeleteVMRequest) string {
+	if req.GetStorageBackend() != "" {
+		return req.GetStorageBackend()
+	}
+	if h.server.config.StorageBackend != "" {
+		return h.server.config.StorageBackend
+	}
+	return vm.StorageBackendCeph
+}
+
+func vmOperationSuccess(vmID string) *nodeagentpb.VMOperationResponse {
+	return &nodeagentpb.VMOperationResponse{VmId: vmID, Success: true}
+}
+
+func isDeleteAlreadyAbsentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "no such file")
 }
 
 // BuildTemplateFromISO builds a VM template from an ISO using unattended installation.
@@ -1134,7 +1253,11 @@ func (h *grpcHandler) downloadAndImportTemplate(ctx context.Context, req *nodeag
 	if err != nil {
 		return "", 0, fmt.Errorf("creating temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			h.server.logger.Debug("failed to remove temporary template download directory", "path", tmpDir, "error", err)
+		}
+	}()
 
 	tmpFile := filepath.Join(tmpDir, ref+".qcow2")
 	builder := storage.NewTemplateBuilder(h.server.logger)

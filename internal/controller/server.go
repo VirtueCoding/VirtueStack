@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	apierrors "github.com/AbuGosok/VirtueStack/internal/shared/errors"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	// PowerDNS uses MySQL when PDNS_MYSQL_DSN is configured.
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -37,15 +39,15 @@ import (
 
 type fallbackTemplateStorage struct{}
 
-func (fallbackTemplateStorage) ImportTemplate(ctx context.Context, name, sourcePath string) (string, string, error) {
+func (fallbackTemplateStorage) ImportTemplate(_ context.Context, _, _ string) (string, string, error) {
 	return "", "", fmt.Errorf("template storage backend is not configured")
 }
 
-func (fallbackTemplateStorage) DeleteTemplate(ctx context.Context, templateRef, snapshotRef string) error {
+func (fallbackTemplateStorage) DeleteTemplate(_ context.Context, _, _ string) error {
 	return fmt.Errorf("template storage backend is not configured")
 }
 
-func (fallbackTemplateStorage) GetTemplateSize(ctx context.Context, templateRef, snapshotRef string) (int64, error) {
+func (fallbackTemplateStorage) GetTemplateSize(_ context.Context, _, _ string) (int64, error) {
 	return 0, fmt.Errorf("template storage backend is not configured")
 }
 
@@ -63,17 +65,18 @@ const (
 
 // Server represents the VirtueStack Controller HTTP server.
 type Server struct {
-	config     *config.ControllerConfig
-	router     *gin.Engine
-	httpServer *http.Server
-	dbPool     *pgxpool.Pool
-	powerDNSDB *sql.DB // MySQL connection to PowerDNS database
-	natsConn   *nats.Conn
-	jetstream  nats.JetStreamContext
-	taskWorker *tasks.Worker
-	logger     *slog.Logger
-	nodeClient *NodeClient
-	storage    services.TemplateStorage
+	config       *config.ControllerConfig
+	router       *gin.Engine
+	httpServer   *http.Server
+	dbPool       *pgxpool.Pool
+	powerDNSDB   *sql.DB // MySQL connection to PowerDNS database
+	natsConn     *nats.Conn
+	jetstream    nats.JetStreamContext
+	taskWorker   *tasks.Worker
+	logger       *slog.Logger
+	nodeClient   *NodeClient
+	storage      services.TemplateStorage
+	billingHooks tasks.BillingHookResolver
 	// Services
 	vmService                  *services.VMService
 	authService                *services.AuthService
@@ -94,20 +97,20 @@ type Server struct {
 	// Repositories needed for route registration
 	customerAPIKeyRepo *repository.CustomerAPIKeyRepository
 	// API Handlers
-	provisioningHandler        *provisioning.ProvisioningHandler
-	customerHandler            *customer.CustomerHandler
-	adminHandler               *admin.AdminHandler
-	notifyHandler              *customer.NotificationsHandler
-	customerInAppNotifHandler  *customer.InAppNotificationsHandler
-	adminInAppNotifHandler     *admin.AdminInAppNotificationsHandler
-	sseHub                     *services.SSEHub
-	inAppNotifService          *services.InAppNotificationService
-	stripeWebhookHandler       *webhooks.StripeWebhookHandler
-	paypalProvider             *paypalPayments.Provider
-	paypalWebhookHandler       *webhooks.PayPalWebhookHandler
-	cryptoWebhookHandler       *webhooks.CryptoWebhookHandler
-	readinessDBPing            func(context.Context) error
-	readinessNATSStatus        func() nats.Status
+	provisioningHandler       *provisioning.ProvisioningHandler
+	customerHandler           *customer.CustomerHandler
+	adminHandler              *admin.AdminHandler
+	notifyHandler             *customer.NotificationsHandler
+	customerInAppNotifHandler *customer.InAppNotificationsHandler
+	adminInAppNotifHandler    *admin.AdminInAppNotificationsHandler
+	sseHub                    *services.SSEHub
+	inAppNotifService         *services.InAppNotificationService
+	stripeWebhookHandler      *webhooks.StripeWebhookHandler
+	paypalProvider            *paypalPayments.Provider
+	paypalWebhookHandler      *webhooks.PayPalWebhookHandler
+	cryptoWebhookHandler      *webhooks.CryptoWebhookHandler
+	readinessDBPing           func(context.Context) error
+	readinessNATSStatus       func() nats.Status
 }
 
 // NewServer creates a new Controller server.
@@ -305,6 +308,9 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadTimeout:  ReadTimeout,
 		WriteTimeout: WriteTimeout,
 		IdleTimeout:  IdleTimeout,
+		BaseContext: func(net.Listener) context.Context {
+			return ctx
+		},
 	}
 
 	s.logger.Info("starting HTTP server", "address", s.config.ListenAddr)
@@ -349,14 +355,6 @@ func (s *Server) Stop(ctx context.Context) error {
 // respondJSON sends a JSON response with the standard format.
 func respondJSON(c *gin.Context, status int, data any) {
 	c.JSON(status, models.Response{Data: data})
-}
-
-// respondJSONWithMeta sends a JSON response with pagination metadata.
-func respondJSONWithMeta(c *gin.Context, status int, data any, meta models.PaginationMeta) {
-	c.JSON(status, models.ListResponse{
-		Data: data,
-		Meta: meta,
-	})
 }
 
 // respondError sends an error response in the standard format.

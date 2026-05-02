@@ -1,3 +1,4 @@
+//nolint:revive,gosec // Node Agent Adapter methods mirror task Interfaces; numeric ranges are validated before requests are built.
 package services
 
 import (
@@ -90,12 +91,36 @@ func (c *NodeAgentGRPCClient) DeleteVM(ctx context.Context, nodeID, vmID string)
 	}
 
 	client := nodeagentpb.NewNodeAgentServiceClient(conn)
-	resp, err := client.DeleteVM(ctx, &nodeagentpb.DeleteVMRequest{VmId: vmID})
+	req, err := c.deleteVMRequest(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	resp, err := client.DeleteVM(ctx, req)
 	if err != nil {
 		return fmt.Errorf("calling DeleteVM: %w", err)
 	}
 	if !resp.GetSuccess() {
 		return fmt.Errorf("failed to delete VM %s: %s", vmID, resp.GetErrorMessage())
+	}
+	return nil
+}
+
+func (c *NodeAgentGRPCClient) UndefineVM(ctx context.Context, nodeID, vmID string) error {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.UndefineVM(ctx, &nodeagentpb.VMIdentifier{VmId: vmID})
+	if err != nil {
+		return fmt.Errorf("calling UndefineVM: %w", err)
+	}
+	if !resp.GetSuccess() {
+		return fmt.Errorf("failed to undefine VM %s: %s", vmID, resp.GetErrorMessage())
 	}
 	return nil
 }
@@ -208,11 +233,59 @@ func (c *NodeAgentGRPCClient) CreateVM(ctx context.Context, nodeID string, req *
 	}
 
 	return &tasks.CreateVMResponse{
-		DomainName: resp.GetLibvirtDomainName(),
-		VNCPort:    resp.GetVncPort(),
+		DomainName:    resp.GetLibvirtDomainName(),
+		VNCPort:       resp.GetVncPort(),
+		CloudInitPath: resp.GetCloudInitPath(),
 	}, nil
 }
 
-func (c *NodeAgentGRPCClient) GenerateCloudInit(ctx context.Context, nodeID string, cfg *tasks.CloudInitConfig) (string, error) {
-	return fmt.Sprintf("/var/lib/virtuestack/cloud-init/%s.iso", cfg.VMID), nil
+func (c *NodeAgentGRPCClient) ReinstallVM(ctx context.Context, nodeID string, req *tasks.ReinstallVMRequest) (*tasks.CreateVMResponse, error) {
+	node, err := c.nodeRepo.GetByID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting node %s: %w", nodeID, err)
+	}
+
+	conn, err := c.connPool.GetConnection(ctx, nodeID, node.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to node %s: %w", nodeID, err)
+	}
+
+	client := nodeagentpb.NewNodeAgentServiceClient(conn)
+	resp, err := client.ReinstallVM(ctx, &nodeagentpb.ReinstallVMRequest{
+		VmId:                req.VMID,
+		TemplateRbdImage:    req.TemplateRBDImage,
+		TemplateRbdSnapshot: req.TemplateRBDSnapshot,
+		RootPasswordHash:    req.RootPasswordHash,
+		SshPublicKeys:       req.SSHPublicKeys,
+		Ipv4Address:         req.IPv4Address,
+		Ipv4Gateway:         req.IPv4Gateway,
+		Ipv6Address:         req.IPv6Address,
+		Ipv6Gateway:         req.IPv6Gateway,
+		Nameservers:         req.Nameservers,
+		Hostname:            req.Hostname,
+		StorageBackend:      req.StorageBackend,
+		TemplateFilePath:    req.TemplateFilePath,
+		DiskSizeGb:          int32(req.DiskGB),
+		Vcpu:                int32(req.VCPU),
+		MemoryMb:            int32(req.MemoryMB),
+		MacAddress:          req.MACAddress,
+		PortSpeedMbps:       int32(req.PortSpeedMbps),
+		CephMonitors:        req.CephMonitors,
+		CephUser:            req.CephUser,
+		CephSecretUuid:      req.CephSecretUUID,
+		CephPool:            req.CephPool,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("calling ReinstallVM: %w", err)
+	}
+
+	return &tasks.CreateVMResponse{
+		DomainName:    resp.GetLibvirtDomainName(),
+		VNCPort:       resp.GetVncPort(),
+		CloudInitPath: resp.GetCloudInitPath(),
+	}, nil
+}
+
+func (c *NodeAgentGRPCClient) GenerateCloudInit(_ context.Context, _ string, cfg *tasks.CloudInitConfig) (string, error) {
+	return "", fmt.Errorf("cloud-init for VM %s requires CreateVM or ReinstallVM materialization", cfg.VMID)
 }

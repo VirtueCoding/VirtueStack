@@ -1,5 +1,7 @@
 // Package nodeagent provides gRPC handlers for VM lifecycle operations.
 // This file contains handlers for VM reinstall, resize, and migration operations.
+//
+//nolint:gosec // gRPC numeric fields are validated for positive values before libvirt conversions.
 package nodeagent
 
 import (
@@ -26,12 +28,39 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 	logger := h.server.logger.With("vm_id", req.GetVmId(), "operation", "reinstall")
 	logger.Info("reinstalling VM")
 
+	vcpu := int(req.GetVcpu())
+	memoryMB := int(req.GetMemoryMb())
+	if vcpu <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "vcpu must be positive")
+	}
+	if memoryMB <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "memory_mb must be positive")
+	}
+	if req.GetMacAddress() == "" {
+		return nil, status.Error(codes.InvalidArgument, "mac_address is required")
+	}
+
 	storageBackend := req.GetStorageBackend()
 	if storageBackend == "" {
 		storageBackend = h.server.config.StorageBackend
 		if storageBackend == "" {
 			storageBackend = vm.StorageBackendCeph
 		}
+	}
+
+	cloudInitPath, err := h.server.generateCloudInitISO(ctx, storage.CloudInitConfig{
+		VMID:             req.GetVmId(),
+		Hostname:         req.GetHostname(),
+		RootPasswordHash: req.GetRootPasswordHash(),
+		SSHPublicKeys:    req.GetSshPublicKeys(),
+		IPv4Address:      req.GetIpv4Address(),
+		IPv4Gateway:      req.GetIpv4Gateway(),
+		IPv6Address:      req.GetIpv6Address(),
+		IPv6Gateway:      req.GetIpv6Gateway(),
+		Nameservers:      req.GetNameservers(),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "generating cloud-init: %v", err)
 	}
 
 	// Stop the VM if running
@@ -90,6 +119,10 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 			return nil, status.Error(codes.InvalidArgument, "template_rbd_image and template_rbd_snapshot are required for ceph storage backend")
 		}
 
+		cephPool := req.GetCephPool()
+		if cephPool == "" {
+			cephPool = h.server.config.CephPool
+		}
 		diskName := fmt.Sprintf(storage.VMDiskNameFmt, req.GetVmId())
 		if err := h.server.storageBackend.Delete(ctx, diskName); err != nil {
 			logger.Warn("failed to delete old RBD disk", "error", err)
@@ -97,7 +130,7 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 
 		if err := h.server.storageBackend.CloneFromTemplate(
 			ctx,
-			h.server.config.CephPool,
+			cephPool,
 			req.GetTemplateRbdImage(),
 			req.GetTemplateRbdSnapshot(),
 			diskName,
@@ -152,38 +185,33 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		}
 	}
 
-	// Fetch current VM domain to retrieve VCPU and MemoryMB before deleting it
-	existingDomain, lookupErr := h.server.libvirtConn.LookupDomainByName(vm.DomainNameFromID(req.GetVmId()))
-	var vcpu int
-	var memoryMB int
-	if lookupErr == nil {
-		if info, infoErr := existingDomain.GetInfo(); infoErr == nil {
-			vcpu = int(info.NrVirtCpu)
-			memoryMB = int(info.Memory / 1024) // Convert from KB to MB
-		}
-		if freeErr := existingDomain.Free(); freeErr != nil {
-			logger.Debug("failed to free domain after info fetch", "error", freeErr)
-		}
-	}
-	if vcpu <= 0 {
-		vcpu = 1
-	}
-	if memoryMB <= 0 {
-		memoryMB = 1024
-	}
-
 	// Re-create domain from existing config with new template
 	cfg := &vm.DomainConfig{
-		VMID:           req.GetVmId(),
-		Hostname:       req.GetHostname(),
-		VCPU:           vcpu,
-		MemoryMB:       memoryMB,
-		StorageBackend: storageBackend,
-		DiskPath:       diskPath,
-		CephPool:       h.server.config.CephPool,
-		CephUser:       h.server.config.CephUser,
-		IPv4Address:    req.GetIpv4Address(),
-		IPv6Address:    req.GetIpv6Address(),
+		VMID:             req.GetVmId(),
+		Hostname:         req.GetHostname(),
+		VCPU:             vcpu,
+		MemoryMB:         memoryMB,
+		StorageBackend:   storageBackend,
+		DiskPath:         diskPath,
+		CephPool:         req.GetCephPool(),
+		CephMonitors:     req.GetCephMonitors(),
+		CephUser:         req.GetCephUser(),
+		CephSecretUUID:   req.GetCephSecretUuid(),
+		MACAddress:       req.GetMacAddress(),
+		IPv4Address:      req.GetIpv4Address(),
+		IPv6Address:      req.GetIpv6Address(),
+		PortSpeedKbps:    int(req.GetPortSpeedMbps()) * 1000,
+		CloudInitISOPath: cloudInitPath,
+	}
+	if cfg.CephPool == "" {
+		cfg.CephPool = h.server.config.CephPool
+	}
+	if cfg.CephUser == "" {
+		cfg.CephUser = h.server.config.CephUser
+	}
+	if storageBackend == vm.StorageBackendLVM {
+		cfg.LVMDiskPath = diskPath
+		cfg.DiskPath = ""
 	}
 
 	result, err := h.server.vmManager.CreateVM(ctx, cfg)
@@ -219,6 +247,7 @@ func (h *grpcHandler) ReinstallVM(ctx context.Context, req *nodeagentpb.Reinstal
 		Success:           true,
 		LibvirtDomainName: result.DomainName,
 		VncPort:           result.VNCPort,
+		CloudInitPath:     cloudInitPath,
 	}, nil
 }
 
@@ -345,7 +374,7 @@ func (h *grpcHandler) ResizeVM(ctx context.Context, req *nodeagentpb.ResizeVMReq
 }
 
 // MigrateVM initiates a live migration to a target node.
-func (h *grpcHandler) MigrateVM(ctx context.Context, req *nodeagentpb.MigrateVMRequest) (*nodeagentpb.MigrateVMResponse, error) {
+func (h *grpcHandler) MigrateVM(_ context.Context, req *nodeagentpb.MigrateVMRequest) (*nodeagentpb.MigrateVMResponse, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}
@@ -403,7 +432,7 @@ func (h *grpcHandler) MigrateVM(ctx context.Context, req *nodeagentpb.MigrateVMR
 }
 
 // AbortMigration cancels an in-progress VM migration.
-func (h *grpcHandler) AbortMigration(ctx context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
+func (h *grpcHandler) AbortMigration(_ context.Context, req *nodeagentpb.VMIdentifier) (*nodeagentpb.VMOperationResponse, error) {
 	if req.GetVmId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "vm_id is required")
 	}

@@ -1,7 +1,7 @@
 // Package tasks provides the VM creation task handler.
 // This file contains the handleVMCreate function which handles the full
-// VM provisioning flow including template cloning, cloud-init generation,
-// IP allocation, and VM startup.
+// VM provisioning flow including template resolution, IP allocation, and Node
+// Agent materialization.
 package tasks
 
 import (
@@ -17,11 +17,9 @@ import (
 // handleVMCreate handles the full VM provisioning flow.
 // Steps:
 //  1. Parse payload
-//  2. Clone RBD from template
-//  3. Generate cloud-init ISO
-//  4. Define and start VM via gRPC
-//  5. Allocate IP addresses
-//  6. Update VM status
+//  2. Resolve template and network inputs
+//  3. Materialize VM through Node Agent
+//  4. Update VM status
 func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) error {
 	logger := taskLogger(deps.Logger, task)
 
@@ -84,24 +82,13 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		macAddress = generateMACAddress(payload.VMID)
 	}
 
-	// Update task progress: Preparing template disk
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Cloning disk image from template..."); err != nil {
+	// Update task progress: Preparing VM materialization inputs
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 15, "Preparing VM materialization inputs..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
 	var templateFilePath string
-
-	if template.StorageBackend == "" || template.StorageBackend == models.StorageBackendCeph {
-		err = deps.NodeClient.CloneFromTemplate(ctx, payload.NodeID, payload.VMID,
-			template.RBDImage, template.RBDSnapshot, payload.DiskGB)
-		if err != nil {
-			logger.Error("failed to clone template", "error", err)
-			return fmt.Errorf("cloning template for VM %s: %w", payload.VMID, err)
-		}
-		compensationStack.Push("delete-disk", func(cleanupCtx context.Context) error {
-			return deps.NodeClient.DeleteDisk(cleanupCtx, payload.NodeID, payload.VMID)
-		})
-	} else {
+	if template.StorageBackend != "" && template.StorageBackend != models.StorageBackendCeph {
 		templateFilePath, err = resolveTemplatePathForNode(ctx, deps, template, payload.NodeID)
 		if err != nil {
 			logger.Error("failed to resolve template path for node", "error", err)
@@ -109,8 +96,8 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		}
 	}
 
-	// Update task progress: Generating cloud-init
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Generating cloud-init configuration..."); err != nil {
+	// Update task progress: Allocating network resources
+	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 30, "Allocating network resources..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
 	}
 
@@ -142,30 +129,6 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		return deps.IPAMService.ReleaseIPsByVM(cleanupCtx, payload.VMID)
 	})
 
-	// Generate cloud-init ISO
-	cloudInitCfg := &CloudInitConfig{
-		VMID:             payload.VMID,
-		Hostname:         payload.Hostname,
-		RootPasswordHash: passwordHash,
-		SSHPublicKeys:    payload.SSHKeys,
-		IPv4Address:      ipv4Addr,
-		IPv4Gateway:      ipv4Gateway,
-		IPv6Address:      ipv6Addr,
-		IPv6Gateway:      ipv6Gateway,
-		Nameservers:      append([]string(nil), deps.DNSNameservers...),
-	}
-
-	cloudInitPath, err := deps.NodeClient.GenerateCloudInit(ctx, payload.NodeID, cloudInitCfg)
-	if err != nil {
-		logger.Error("failed to generate cloud-init", "error", err)
-		rollbackWithErrorStatus(err)
-		return fmt.Errorf("generating cloud-init for VM %s: %w", payload.VMID, err)
-	}
-	compensationStack.Push("delete-cloudinit", func(cleanupCtx context.Context) error {
-		logger.Warn("cloud-init cleanup is not supported by node client; skipping cleanup step")
-		return nil
-	})
-
 	// Update task progress: Creating VM
 	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 50, "Creating virtual machine..."); err != nil {
 		logger.Warn("failed to update task progress", "error", err)
@@ -173,26 +136,28 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 
 	// Create VM via node agent gRPC
 	createReq := &CreateVMRequest{
-		VMID:             payload.VMID,
-		Hostname:         payload.Hostname,
-		VCPU:             payload.VCPU,
-		MemoryMB:         payload.MemoryMB,
-		DiskGB:           payload.DiskGB,
-		StorageBackend:   template.StorageBackend,
-		TemplateFilePath: templateFilePath,
-		RootPasswordHash: passwordHash,
-		SSHPublicKeys:    payload.SSHKeys,
-		IPv4Address:      ipv4Addr,
-		IPv4Gateway:      ipv4Gateway,
-		IPv6Address:      ipv6Addr,
-		IPv6Gateway:      ipv6Gateway,
-		MACAddress:       macAddress,
-		PortSpeedMbps:    vm.PortSpeedMbps,
-		CephPool:         node.CephPool,
-		CephUser:         deps.CephUser,
-		CephSecretUUID:   deps.CephSecretUUID,
-		CephMonitors:     append([]string(nil), deps.CephMonitors...),
-		Nameservers:      cloudInitCfg.Nameservers,
+		VMID:                payload.VMID,
+		Hostname:            payload.Hostname,
+		VCPU:                payload.VCPU,
+		MemoryMB:            payload.MemoryMB,
+		DiskGB:              payload.DiskGB,
+		StorageBackend:      template.StorageBackend,
+		TemplateFilePath:    templateFilePath,
+		TemplateRBDImage:    template.RBDImage,
+		TemplateRBDSnapshot: template.RBDSnapshot,
+		RootPasswordHash:    passwordHash,
+		SSHPublicKeys:       payload.SSHKeys,
+		IPv4Address:         ipv4Addr,
+		IPv4Gateway:         ipv4Gateway,
+		IPv6Address:         ipv6Addr,
+		IPv6Gateway:         ipv6Gateway,
+		MACAddress:          macAddress,
+		PortSpeedMbps:       vm.PortSpeedMbps,
+		CephPool:            node.CephPool,
+		CephUser:            deps.CephUser,
+		CephSecretUUID:      deps.CephSecretUUID,
+		CephMonitors:        append([]string(nil), deps.CephMonitors...),
+		Nameservers:         append([]string(nil), deps.DNSNameservers...),
 	}
 	createResp, err := deps.NodeClient.CreateVM(ctx, payload.NodeID, createReq)
 	if err != nil {
@@ -202,24 +167,6 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 	}
 	compensationStack.Push("delete-vm", func(cleanupCtx context.Context) error {
 		return deps.NodeClient.DeleteVM(cleanupCtx, payload.NodeID, payload.VMID)
-	})
-
-	// Update task progress: Starting VM
-	if err := deps.TaskRepo.UpdateProgress(ctx, task.ID, 80, "Starting virtual machine..."); err != nil {
-		logger.Warn("failed to update task progress", "error", err)
-	}
-
-	// Start VM via node agent
-	if err := deps.NodeClient.StartVM(ctx, payload.NodeID, payload.VMID); err != nil {
-		logger.Error("failed to start VM", "error", err)
-		if forceErr := deps.NodeClient.ForceStopVM(ctx, payload.NodeID, payload.VMID); forceErr != nil {
-			logger.Warn("failed to force stop VM after start failure", "error", forceErr)
-		}
-		rollbackWithErrorStatus(err)
-		return fmt.Errorf("starting VM %s: %w", payload.VMID, err)
-	}
-	compensationStack.Push("stop-vm", func(cleanupCtx context.Context) error {
-		return deps.NodeClient.ForceStopVM(cleanupCtx, payload.NodeID, payload.VMID)
 	})
 
 	// Update VM status to running
@@ -260,7 +207,7 @@ func handleVMCreate(ctx context.Context, task *models.Task, deps *HandlerDeps) e
 		"vnc_port":        createResp.VNCPort,
 		"ipv4_address":    ipv4Addr,
 		"ipv6_subnet":     ipv6Addr,
-		"cloud_init_path": cloudInitPath,
+		"cloud_init_path": createResp.CloudInitPath,
 	}
 	// json.Marshal error is intentionally suppressed: the map contains only
 	// primitive types (string, int, bool) whose marshaling cannot fail.

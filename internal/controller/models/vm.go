@@ -15,6 +15,7 @@ const (
 	VMStatusRunning      = "running"
 	VMStatusStopped      = "stopped"
 	VMStatusSuspended    = "suspended"
+	VMStatusDeleting     = "deleting"
 	VMStatusMigrating    = "migrating"
 	VMStatusReinstalling = "reinstalling"
 	VMStatusError        = "error"
@@ -24,12 +25,13 @@ const (
 // ValidVMTransitions defines all allowed VM lifecycle state transitions.
 var ValidVMTransitions = map[string][]string{
 	VMStatusProvisioning: {VMStatusRunning, VMStatusError},
-	VMStatusRunning:      {VMStatusStopped, VMStatusSuspended, VMStatusMigrating, VMStatusReinstalling, VMStatusError},
-	VMStatusStopped:      {VMStatusRunning, VMStatusDeleted, VMStatusReinstalling, VMStatusMigrating, VMStatusError},
-	VMStatusSuspended:    {VMStatusRunning, VMStatusStopped, VMStatusDeleted},
-	VMStatusMigrating:    {VMStatusRunning, VMStatusError},
+	VMStatusRunning:      {VMStatusStopped, VMStatusSuspended, VMStatusDeleting, VMStatusMigrating, VMStatusReinstalling, VMStatusError},
+	VMStatusStopped:      {VMStatusRunning, VMStatusDeleting, VMStatusReinstalling, VMStatusMigrating, VMStatusError},
+	VMStatusSuspended:    {VMStatusRunning, VMStatusStopped, VMStatusDeleting, VMStatusMigrating},
+	VMStatusDeleting:     {VMStatusDeleted, VMStatusError},
+	VMStatusMigrating:    {VMStatusRunning, VMStatusStopped, VMStatusSuspended, VMStatusError},
 	VMStatusReinstalling: {VMStatusRunning, VMStatusError},
-	VMStatusError:        {VMStatusStopped, VMStatusDeleted},
+	VMStatusError:        {VMStatusStopped, VMStatusDeleting},
 }
 
 // ValidateVMTransition validates whether a VM status transition is allowed.

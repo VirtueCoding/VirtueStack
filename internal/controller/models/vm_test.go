@@ -19,6 +19,7 @@ func TestVMStatusConstants(t *testing.T) {
 		{"running", VMStatusRunning, "running"},
 		{"stopped", VMStatusStopped, "stopped"},
 		{"suspended", VMStatusSuspended, "suspended"},
+		{"deleting", VMStatusDeleting, "deleting"},
 		{"migrating", VMStatusMigrating, "migrating"},
 		{"reinstalling", VMStatusReinstalling, "reinstalling"},
 		{"error", VMStatusError, "error"},
@@ -38,6 +39,7 @@ func TestVMStatusConstants_Unique(t *testing.T) {
 		VMStatusRunning,
 		VMStatusStopped,
 		VMStatusSuspended,
+		VMStatusDeleting,
 		VMStatusMigrating,
 		VMStatusReinstalling,
 		VMStatusError,
@@ -49,7 +51,7 @@ func TestVMStatusConstants_Unique(t *testing.T) {
 		assert.False(t, seen[s], "VM status %q should be unique", s)
 		seen[s] = true
 	}
-	assert.Len(t, seen, 8, "should have exactly 8 VM statuses")
+	assert.Len(t, seen, 9, "should have exactly 9 VM statuses")
 }
 
 func TestVMCreateRequest_Fields(t *testing.T) {
@@ -146,20 +148,26 @@ func TestValidateVMTransition(t *testing.T) {
 		{"valid running to migrating", VMStatusRunning, VMStatusMigrating, false},
 		{"valid running to reinstalling", VMStatusRunning, VMStatusReinstalling, false},
 		{"valid running to error", VMStatusRunning, VMStatusError, false},
+		{"valid running to deleting", VMStatusRunning, VMStatusDeleting, false},
 		{"valid stopped to running", VMStatusStopped, VMStatusRunning, false},
-		{"valid stopped to deleted", VMStatusStopped, VMStatusDeleted, false},
+		{"valid stopped to deleting", VMStatusStopped, VMStatusDeleting, false},
 		{"valid stopped to reinstalling", VMStatusStopped, VMStatusReinstalling, false},
 		{"valid stopped to migrating", VMStatusStopped, VMStatusMigrating, false},
 		{"valid stopped to error", VMStatusStopped, VMStatusError, false},
 		{"valid suspended to running", VMStatusSuspended, VMStatusRunning, false},
 		{"valid suspended to stopped", VMStatusSuspended, VMStatusStopped, false},
-		{"valid suspended to deleted", VMStatusSuspended, VMStatusDeleted, false},
+		{"valid suspended to deleting", VMStatusSuspended, VMStatusDeleting, false},
+		{"valid suspended to migrating", VMStatusSuspended, VMStatusMigrating, false},
+		{"valid deleting to deleted", VMStatusDeleting, VMStatusDeleted, false},
+		{"valid deleting to error", VMStatusDeleting, VMStatusError, false},
 		{"valid migrating to running", VMStatusMigrating, VMStatusRunning, false},
+		{"valid migrating to stopped", VMStatusMigrating, VMStatusStopped, false},
+		{"valid migrating to suspended", VMStatusMigrating, VMStatusSuspended, false},
 		{"valid migrating to error", VMStatusMigrating, VMStatusError, false},
 		{"valid reinstalling to running", VMStatusReinstalling, VMStatusRunning, false},
 		{"valid reinstalling to error", VMStatusReinstalling, VMStatusError, false},
 		{"valid error to stopped", VMStatusError, VMStatusStopped, false},
-		{"valid error to deleted", VMStatusError, VMStatusDeleted, false},
+		{"valid error to deleting", VMStatusError, VMStatusDeleting, false},
 		{"invalid deleted to running", VMStatusDeleted, VMStatusRunning, true},
 		{"invalid error to running", VMStatusError, VMStatusRunning, true},
 		{"invalid provisioning to deleted", VMStatusProvisioning, VMStatusDeleted, true},

@@ -59,12 +59,12 @@ func checkReinstallIdempotency(
 	payload *VMReinstallPayload,
 	info *vmReinstallInfo,
 	logger *slog.Logger,
-) (bool, error) {
+) bool {
 	if info.vm.Status != models.VMStatusRunning {
-		return false, nil
+		return false
 	}
 	if info.vm.TemplateID == nil || *info.vm.TemplateID != payload.TemplateID {
-		return false, nil
+		return false
 	}
 
 	logger.Info("VM already running with correct template, reinstall complete (idempotent)")
@@ -76,103 +76,104 @@ func checkReinstallIdempotency(
 		"template_id": payload.TemplateID,
 		"status":      "already_reinstalled",
 	}
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		logger.Warn("failed to marshal idempotent reinstall result", "error", err)
+		return true
+	}
 	if err := deps.TaskRepo.SetCompleted(ctx, task.ID, resultJSON); err != nil {
 		logger.Warn("failed to set task completed", "error", err)
 	}
-	return true, nil
+	return true
 }
 
-// stopVMForReinstall stops the VM gracefully before reinstallation.
-// Returns an error only if the stop operation critically fails.
-func stopVMForReinstall(
-	ctx context.Context,
-	deps *HandlerDeps,
-	info *vmReinstallInfo,
-	logger *slog.Logger,
-) error {
-	if info.vm.Status != models.VMStatusRunning && info.vm.Status != models.VMStatusSuspended {
-		logger.Info("VM already stopped, skipping stop step (idempotent)")
-		return nil
-	}
-	logger.Info("stopping VM for reinstallation")
-	if err := stopVMGracefully(ctx, deps.NodeClient, info.nodeID, info.vm.ID, 30, logger); err != nil {
-		logger.Warn("stop attempt returned error, continuing with reinstallation", "error", err)
-	}
-	return nil
+type reinstallNetworkConfig struct {
+	ipv4Address string
+	ipv4Gateway string
+	ipv6Address string
+	ipv6Gateway string
 }
 
-// replaceVMDisk deletes the old disk and clones a fresh one from the template.
-func replaceVMDisk(
+func buildReinstallRequest(
 	ctx context.Context,
 	deps *HandlerDeps,
 	payload *VMReinstallPayload,
 	info *vmReinstallInfo,
+	passwordHash string,
 	logger *slog.Logger,
-) error {
-	logger.Info("deleting existing disk volume")
-	if err := deps.NodeClient.DeleteDisk(ctx, info.nodeID, payload.VMID); err != nil {
-		logger.Warn("delete disk returned error, continuing with clone", "error", err)
-	}
-
-	logger.Info("cloning fresh disk from template",
-		"rbd_image", info.template.RBDImage,
-		"rbd_snapshot", info.template.RBDSnapshot,
-		"disk_gb", info.vm.DiskGB)
-
-	if err := deps.NodeClient.CloneFromTemplate(ctx, info.nodeID, payload.VMID,
-		info.template.RBDImage, info.template.RBDSnapshot, info.vm.DiskGB); err != nil {
-		logger.Error("failed to clone template", "error", err)
-		return fmt.Errorf("cloning template %s for VM %s: %w", payload.TemplateID, payload.VMID, err)
-	}
-	return nil
-}
-
-// regenerateCloudInitForReinstall creates a new cloud-init ISO for the reinstalled VM.
-func regenerateCloudInitForReinstall(
-	ctx context.Context,
-	deps *HandlerDeps,
-	payload *VMReinstallPayload,
-	info *vmReinstallInfo,
-	logger *slog.Logger,
-) error {
-	// Get IP addresses for cloud-init
-	ipv4, _ := deps.IPAMService.GetPrimaryIPv4(ctx, payload.VMID)
-	ipv6Subnets, _ := deps.IPAMService.GetIPv6SubnetsByVM(ctx, payload.VMID)
-
-	var ipv4Addr, ipv4Gateway string
-	if ipv4 != nil {
-		ipv4Addr = ipv4.Address
-	}
-
-	var ipv6Addr, ipv6Gateway string
-	if len(ipv6Subnets) > 0 {
-		ipv6Addr = ipv6Subnets[0].Subnet
-		ipv6Gateway = ipv6Subnets[0].Gateway
-	}
-
-	passwordHash, err := hashPassword(payload.Password)
+) (*ReinstallVMRequest, error) {
+	templateFilePath, err := resolveReinstallTemplatePath(ctx, deps, payload, info)
 	if err != nil {
-		return fmt.Errorf("hashing password: %w", err)
+		return nil, err
 	}
+	network := loadReinstallNetworkConfig(ctx, deps, payload, logger)
+	cephPool := ""
+	if info.vm.CephPool != nil {
+		cephPool = *info.vm.CephPool
+	}
+	return &ReinstallVMRequest{
+		VMID:                payload.VMID,
+		Hostname:            info.vm.Hostname,
+		VCPU:                info.vm.VCPU,
+		MemoryMB:            info.vm.MemoryMB,
+		DiskGB:              info.vm.DiskGB,
+		StorageBackend:      info.template.StorageBackend,
+		TemplateFilePath:    templateFilePath,
+		TemplateRBDImage:    info.template.RBDImage,
+		TemplateRBDSnapshot: info.template.RBDSnapshot,
+		RootPasswordHash:    passwordHash,
+		SSHPublicKeys:       payload.SSHKeys,
+		IPv4Address:         network.ipv4Address,
+		IPv4Gateway:         network.ipv4Gateway,
+		IPv6Address:         network.ipv6Address,
+		IPv6Gateway:         network.ipv6Gateway,
+		MACAddress:          info.vm.MACAddress,
+		PortSpeedMbps:       info.vm.PortSpeedMbps,
+		CephMonitors:        append([]string(nil), deps.CephMonitors...),
+		CephUser:            deps.CephUser,
+		CephSecretUUID:      deps.CephSecretUUID,
+		CephPool:            cephPool,
+		Nameservers:         append([]string(nil), deps.DNSNameservers...),
+	}, nil
+}
 
-	cloudInitCfg := &CloudInitConfig{
-		VMID:             payload.VMID,
-		Hostname:         info.vm.Hostname,
-		RootPasswordHash: passwordHash,
-		SSHPublicKeys:    payload.SSHKeys,
-		IPv4Address:      ipv4Addr,
-		IPv4Gateway:      ipv4Gateway,
-		IPv6Address:      ipv6Addr,
-		IPv6Gateway:      ipv6Gateway,
-		Nameservers:      append([]string(nil), deps.DNSNameservers...),
+func resolveReinstallTemplatePath(
+	ctx context.Context,
+	deps *HandlerDeps,
+	payload *VMReinstallPayload,
+	info *vmReinstallInfo,
+) (string, error) {
+	if info.template.StorageBackend == "" || info.template.StorageBackend == models.StorageBackendCeph {
+		return "", nil
 	}
+	path, err := resolveTemplatePathForNode(ctx, deps, info.template, info.nodeID)
+	if err != nil {
+		return "", fmt.Errorf("resolving template for VM %s: %w", payload.VMID, err)
+	}
+	return path, nil
+}
 
-	if _, err := deps.NodeClient.GenerateCloudInit(ctx, info.nodeID, cloudInitCfg); err != nil {
-		logger.Error("failed to generate cloud-init", "error", err)
-		return fmt.Errorf("generating cloud-init for VM %s: %w", payload.VMID, err)
+func loadReinstallNetworkConfig(
+	ctx context.Context,
+	deps *HandlerDeps,
+	payload *VMReinstallPayload,
+	logger *slog.Logger,
+) reinstallNetworkConfig {
+	network := reinstallNetworkConfig{}
+	ipv4, err := deps.IPAMService.GetPrimaryIPv4(ctx, payload.VMID)
+	if err != nil {
+		logger.Warn("failed to get IPv4 for reinstall cloud-init", "error", err)
+	} else if ipv4 != nil {
+		network.ipv4Address = ipv4.Address
 	}
-	return nil
+	ipv6Subnets, err := deps.IPAMService.GetIPv6SubnetsByVM(ctx, payload.VMID)
+	if err != nil {
+		logger.Warn("failed to get IPv6 subnet for reinstall cloud-init", "error", err)
+	} else if len(ipv6Subnets) > 0 {
+		network.ipv6Address = ipv6Subnets[0].Subnet
+		network.ipv6Gateway = ipv6Subnets[0].Gateway
+	}
+	return network
 }
 
 // setReinstallResult updates the VM status and sets the task result.

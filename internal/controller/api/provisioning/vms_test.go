@@ -159,7 +159,7 @@ func TestCreateVMReturnsConflictForExternalServiceOwnedByAnotherCustomer(t *test
 			router.POST("/vms", handler.CreateVM)
 
 			body := `{"customer_id":"` + tt.requestCustomer + `","plan_id":"550e8400-e29b-41d4-a716-446655440001","template_id":"550e8400-e29b-41d4-a716-446655440002","hostname":"vm.example.test","external_service_id":123}`
-			req := httptest.NewRequest(http.MethodPost, "/vms", strings.NewReader(body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/vms", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -215,7 +215,7 @@ func TestCreateVMReturnsConflictForSameCustomerExternalServiceWithoutTask(t *tes
 			router.POST("/vms", handler.CreateVM)
 
 			body := `{"customer_id":"` + tt.customerID + `","plan_id":"550e8400-e29b-41d4-a716-446655440001","template_id":"550e8400-e29b-41d4-a716-446655440002","hostname":"vm.example.test","external_service_id":123}`
-			req := httptest.NewRequest(http.MethodPost, "/vms", strings.NewReader(body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/vms", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -253,7 +253,7 @@ func TestCreateVMRejectsNonPositiveExternalServiceID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"customer_id":"550e8400-e29b-41d4-a716-446655440000","plan_id":"550e8400-e29b-41d4-a716-446655440001","template_id":"550e8400-e29b-41d4-a716-446655440002","hostname":"vm.example.test","external_service_id":%d}`, tt.externalServiceID)
-			req := httptest.NewRequest(http.MethodPost, "/vms", strings.NewReader(body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/vms", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -310,7 +310,7 @@ func TestGetStatusRequiresMatchingProvisioningOwnership(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/vms/"+vmID+"/status"+tt.query, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/vms/"+vmID+"/status"+tt.query, nil)
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
@@ -357,7 +357,7 @@ func TestDeleteVMSoftDeletedWithoutTaskReturnsConflict(t *testing.T) {
 	router := gin.New()
 	router.DELETE("/vms/:id", handler.DeleteVM)
 
-	req := httptest.NewRequest(http.MethodDelete, "/vms/"+vmID+"?external_service_id=123&customer_id="+customerID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/vms/"+vmID+"?external_service_id=123&customer_id="+customerID, nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -371,7 +371,7 @@ func TestDeleteVMSoftDeletedWithoutTaskReturnsConflict(t *testing.T) {
 	assert.Equal(t, "VM_DELETE_CONFLICT", errObj["code"])
 }
 
-func TestDeleteVMSoftDeleteRaceReturnsConflict(t *testing.T) {
+func TestDeleteVMDeletingTransitionRaceReturnsConflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	vmID := "550e8400-e29b-41d4-a716-446655440010"
@@ -384,7 +384,7 @@ func TestDeleteVMSoftDeleteRaceReturnsConflict(t *testing.T) {
 			return &provisioningFakeRow{scanErr: pgx.ErrNoRows}
 		},
 		execFunc: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
-			if strings.Contains(sql, "UPDATE vms SET deleted_at = $1") {
+			if strings.Contains(sql, "WHERE id = $2 AND status = $3 AND deleted_at IS NULL") {
 				return pgconn.NewCommandTag("UPDATE 0"), nil
 			}
 			return pgconn.NewCommandTag("UPDATE 1"), nil
@@ -402,7 +402,7 @@ func TestDeleteVMSoftDeleteRaceReturnsConflict(t *testing.T) {
 	router := gin.New()
 	router.DELETE("/vms/:id", handler.DeleteVM)
 
-	req := httptest.NewRequest(http.MethodDelete, "/vms/"+vmID+"?external_service_id=123&customer_id="+customerID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/vms/"+vmID+"?external_service_id=123&customer_id="+customerID, nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)

@@ -1,10 +1,10 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 import {
   ApiClientError,
+  apiEnvelopeRequest,
   apiRequest as sharedAPIRequest,
-  buildHeaders,
+  createAuthSession,
   fetchCsrfToken as sharedFetchCsrfToken,
-  parseError,
 } from "@virtuestack/api-client";
 
 import type {
@@ -93,17 +93,7 @@ export async function apiRequest<T>(
 }
 
 async function apiPaginatedGet<T>(endpoint: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    method: "GET",
-    credentials: "include",
-    headers: buildHeaders(),
-  });
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  return (await response.json()) as T;
+  return apiEnvelopeRequest<T>(API_BASE_URL, endpoint, { method: "GET" });
 }
 
 export const apiClient = {
@@ -155,12 +145,18 @@ export const apiClient = {
   },
 };
 
-let tokenValidUntil = 0;
-
 export interface ReauthResponse {
   reauth_token: string;
   expires_in: number;
 }
+
+function refreshAdminAuthToken(): Promise<AuthTokens> {
+  return apiClient.post<AuthTokens>("/admin/auth/refresh", {});
+}
+
+const adminAuthSession = createAuthSession({
+  refreshToken: refreshAdminAuthToken,
+});
 
 export const adminAuthApi = {
   async login(credentials: LoginRequest): Promise<AuthTokens> {
@@ -173,7 +169,7 @@ export const adminAuthApi = {
   },
 
   async refreshToken(): Promise<AuthTokens> {
-    return apiClient.post<AuthTokens>("/admin/auth/refresh", {});
+    return refreshAdminAuthToken();
   },
 
   async logout(): Promise<void> {
@@ -184,7 +180,7 @@ export const adminAuthApi = {
       // Log for debugging but don't propagate to prevent UI from hanging.
       console.warn('Logout request failed (session may already be invalid):', err);
     }
-    tokenValidUntil = 0;
+    adminAuthSession.reset();
   },
 
   // me() fetches the current authenticated admin user's identity from the server.
@@ -215,19 +211,7 @@ export const adminAuthApi = {
   },
 
   async ensureValidToken(): Promise<boolean> {
-    if (Date.now() < tokenValidUntil) {
-      return true;
-    }
-
-    try {
-      const tokens = await adminAuthApi.refreshToken();
-      tokenValidUntil =
-        Date.now() + Math.max((tokens.expires_in || 900) - 60, 60) * 1000;
-      return true;
-    } catch {
-      tokenValidUntil = 0;
-      return false;
-    }
+    return adminAuthSession.ensureValidToken();
   },
 };
 

@@ -67,6 +67,17 @@ type PaymentService struct {
 	logger       *slog.Logger
 }
 
+type paymentSettlement struct {
+	Payment          *models.BillingPayment
+	Gateway          string
+	GatewayPaymentID string
+	PayPalOrderID    string
+	CustomerID       string
+	AmountCents      int64
+	Description      string
+	IdempotencyKey   string
+}
+
 // NewPaymentService creates a new PaymentService.
 func NewPaymentService(cfg PaymentServiceConfig) *PaymentService {
 	return &PaymentService{
@@ -186,7 +197,16 @@ func (s *PaymentService) handlePaymentCompleted(
 	}
 
 	idempotencyKey := paymentCreditIdempotencyKey(gateway, event)
-	claimed, err := s.claimCompletedPayment(ctx, gateway, payment, event, idempotencyKey)
+	claimed, err := s.settlePayment(ctx, paymentSettlement{
+		Payment:          payment,
+		Gateway:          gateway,
+		GatewayPaymentID: event.PaymentID,
+		PayPalOrderID:    event.Metadata["payment_id"],
+		CustomerID:       payment.CustomerID,
+		AmountCents:      event.AmountCents,
+		Description:      fmt.Sprintf("Top-up via %s", gateway),
+		IdempotencyKey:   idempotencyKey,
+	})
 	if err != nil {
 		return fmt.Errorf("complete payment: %w", err)
 	}
@@ -207,34 +227,26 @@ func (s *PaymentService) handlePaymentCompleted(
 	return nil
 }
 
-func (s *PaymentService) claimCompletedPayment(
-	ctx context.Context,
-	gateway string,
-	payment *models.BillingPayment,
-	event *payments.WebhookEvent,
-	idempotencyKey string,
-) (bool, error) {
-	description := fmt.Sprintf("Top-up via %s", gateway)
-	if gateway == models.PaymentGatewayPayPal {
-		orderID := event.Metadata["payment_id"]
+func (s *PaymentService) settlePayment(ctx context.Context, settlement paymentSettlement) (bool, error) {
+	if settlement.Gateway == models.PaymentGatewayPayPal && settlement.PayPalOrderID != "" {
 		return s.paymentRepo.CompletePayPalCaptureAndCredit(ctx, repository.PayPalCaptureCredit{
-			PaymentID:      payment.ID,
-			OrderID:        orderID,
-			CaptureID:      event.PaymentID,
-			CustomerID:     payment.CustomerID,
-			Amount:         event.AmountCents,
-			Description:    description,
-			IdempotencyKey: idempotencyKey,
+			PaymentID:      settlement.Payment.ID,
+			OrderID:        settlement.PayPalOrderID,
+			CaptureID:      settlement.GatewayPaymentID,
+			CustomerID:     settlement.CustomerID,
+			Amount:         settlement.AmountCents,
+			Description:    settlement.Description,
+			IdempotencyKey: settlement.IdempotencyKey,
 		})
 	}
 	return s.paymentRepo.CompleteWithGatewayPaymentIDAndCredit(ctx, repository.PaymentCompletionCredit{
-		PaymentID:        payment.ID,
-		Gateway:          gateway,
-		GatewayPaymentID: event.PaymentID,
-		CustomerID:       payment.CustomerID,
-		Amount:           event.AmountCents,
-		Description:      description,
-		IdempotencyKey:   idempotencyKey,
+		PaymentID:        settlement.Payment.ID,
+		Gateway:          settlement.Gateway,
+		GatewayPaymentID: settlement.GatewayPaymentID,
+		CustomerID:       settlement.CustomerID,
+		Amount:           settlement.AmountCents,
+		Description:      settlement.Description,
+		IdempotencyKey:   settlement.IdempotencyKey,
 	})
 }
 
@@ -372,16 +384,15 @@ func (s *PaymentService) CreditFromPayment(
 	if externalPaymentID == "" {
 		externalPaymentID = gatewayPaymentID
 	}
-	claimed, err := s.paymentRepo.CompleteWithGatewayPaymentIDAndCredit(
-		ctx, repository.PaymentCompletionCredit{
-			PaymentID:        existing.ID,
-			Gateway:          gateway,
-			GatewayPaymentID: externalPaymentID,
-			CustomerID:       accountID,
-			Amount:           amountCents,
-			Description:      fmt.Sprintf("Top-up via %s", gateway),
-			IdempotencyKey:   idempotencyKey,
-		})
+	claimed, err := s.settlePayment(ctx, paymentSettlement{
+		Payment:          existing,
+		Gateway:          gateway,
+		GatewayPaymentID: externalPaymentID,
+		CustomerID:       accountID,
+		AmountCents:      amountCents,
+		Description:      fmt.Sprintf("Top-up via %s", gateway),
+		IdempotencyKey:   idempotencyKey,
+	})
 	if err != nil {
 		return fmt.Errorf("complete crypto payment: %w", err)
 	}

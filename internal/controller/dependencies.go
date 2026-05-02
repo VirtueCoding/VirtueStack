@@ -151,7 +151,7 @@ func (s *Server) InitializeServices() error {
 	if s.config.Billing.Providers.Blesta.Enabled {
 		blestaAdapter := blesta.NewAdapter(blesta.BlestaConfig{
 			APIURL: s.config.Blesta.APIURL,
-			APIKey: string(s.config.Blesta.APIKey.Value()),
+			APIKey: s.config.Blesta.APIKey.Value(),
 			Logger: s.logger,
 		})
 		if err := billingRegistry.Register(blestaAdapter); err != nil {
@@ -159,6 +159,9 @@ func (s *Server) InitializeServices() error {
 		}
 		s.logger.Info("blesta billing provider registered")
 	}
+
+	billingHooks := billing.NewRegistryHookAdapter(billingRegistry)
+	s.billingHooks = billingHooks
 
 	// Payment gateway registry
 	paymentRegistry := payments.NewPaymentRegistry()
@@ -291,7 +294,7 @@ func (s *Server) InitializeServices() error {
 		IPAMService:         s.ipamService,
 		StorageBackendSvc:   storageBackendService,
 		PreActionWebhookSvc: preActionWebhookService,
-		BillingHooks:        billing.NewRegistryHookAdapter(billingRegistry),
+		BillingHooks:        billingHooks,
 		CustomerRepo:        customerRepo,
 		EncryptionKey:       s.config.EncryptionKey.Value(),
 		Logger:              s.logger,
@@ -313,7 +316,7 @@ func (s *Server) InitializeServices() error {
 		StorageBackends: map[string]services.TemplateStorage{
 			s.storage.GetStorageType(): s.storage,
 		},
-		DefaultBackend: string(s.storage.GetStorageType()),
+		DefaultBackend: s.storage.GetStorageType(),
 		NodeRepo:       nodeRepo,
 		TaskPublisher:  taskPublisher,
 		Logger:         s.logger,
@@ -565,4 +568,9 @@ func (s *Server) GetProvisioningKeyRepo() *repository.ProvisioningKeyRepository 
 // GetIPAMService returns the IPAM service for task handler dependencies.
 func (s *Server) GetIPAMService() tasks.IPAMService {
 	return s.ipamService
+}
+
+// GetBillingHooks returns billing lifecycle hooks for task handler dependencies.
+func (s *Server) GetBillingHooks() tasks.BillingHookResolver {
+	return s.billingHooks
 }

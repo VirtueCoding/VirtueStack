@@ -15,6 +15,18 @@ export interface Verify2FARequest {
   totp_code: string
 }
 
+export interface AuthSessionOptions {
+  refreshToken: () => Promise<Pick<AuthTokens, "expires_in">>
+  defaultExpiresInSeconds?: number
+  refreshLeewaySeconds?: number
+  minimumValiditySeconds?: number
+}
+
+export interface AuthSession {
+  ensureValidToken: () => Promise<boolean>
+  reset: () => void
+}
+
 export class ApiClientError extends Error {
   public readonly code: string
   public readonly status: number
@@ -26,6 +38,42 @@ export class ApiClientError extends Error {
     this.code = code
     this.status = status
     this.correlationId = correlationId
+  }
+}
+
+export function createAuthSession({
+  refreshToken,
+  defaultExpiresInSeconds = 900,
+  refreshLeewaySeconds = 60,
+  minimumValiditySeconds = 60,
+}: AuthSessionOptions): AuthSession {
+  let tokenValidUntil = 0
+
+  function updateValidity(expiresInSeconds?: number) {
+    const rawExpiresIn = expiresInSeconds || defaultExpiresInSeconds
+    const validForSeconds = Math.max(rawExpiresIn - refreshLeewaySeconds, minimumValiditySeconds)
+    tokenValidUntil = Date.now() + validForSeconds * 1000
+  }
+
+  return {
+    async ensureValidToken(): Promise<boolean> {
+      if (Date.now() < tokenValidUntil) {
+        return true
+      }
+
+      try {
+        const tokens = await refreshToken()
+        updateValidity(tokens.expires_in)
+        return true
+      } catch {
+        tokenValidUntil = 0
+        return false
+      }
+    },
+
+    reset() {
+      tokenValidUntil = 0
+    },
   }
 }
 
@@ -86,6 +134,18 @@ export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const data = await apiEnvelopeRequest<{ data: T }>(apiBaseURL, endpoint, options)
+  if (data === undefined) {
+    return undefined as unknown as T
+  }
+  return data.data
+}
+
+export async function apiEnvelopeRequest<T>(
+  apiBaseURL: string,
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
   const url = `${apiBaseURL}${endpoint}`
   const isStateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(
     (options.method || "GET").toUpperCase()
@@ -129,6 +189,5 @@ export async function apiRequest<T>(
     return undefined as unknown as T
   }
 
-  const data = await response.json()
-  return data.data as T
+  return (await response.json()) as T
 }

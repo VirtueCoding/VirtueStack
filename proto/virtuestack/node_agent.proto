@@ -84,8 +84,16 @@ service NodeAgentService {
   // Use with caution as this may cause data loss.
   rpc ForceStopVM(VMIdentifier) returns (VMOperationResponse);
 
+  // UndefineVM removes the libvirt domain definition but keeps its disk image.
+  // This is used by migration and repair flows that must preserve storage.
+  rpc UndefineVM(VMIdentifier) returns (VMOperationResponse);
+
+  // DeleteDisk removes a virtual machine disk image from the configured storage backend.
+  // Missing disk images are treated as already deleted.
+  rpc DeleteDisk(DeleteVMRequest) returns (VMOperationResponse);
+
   // DeleteVM permanently removes a virtual machine and its disk image.
-  // The VM must be stopped before deletion.
+  // This is full cleanup: domain definition, runtime networking rules, and disk image.
   rpc DeleteVM(DeleteVMRequest) returns (VMOperationResponse);
 
   // ReinstallVM reimages a virtual machine from a new template.
@@ -356,6 +364,8 @@ message CreateVMResponse {
   int32 vnc_port = 4;
   // Error message if creation failed
   string error_message = 5;
+  // Cloud-init ISO path materialized on the node
+  string cloud_init_path = 6;
 }
 
 // StopVMRequest specifies parameters for a graceful VM shutdown.
@@ -403,6 +413,22 @@ message ReinstallVMRequest {
   string lvm_thin_pool = 16;
   // Disk size in GB for QCOW and LVM backends (0 to keep current size)
   int32 disk_size_gb = 17;
+  // Number of vCPUs to preserve when recreating the domain
+  int32 vcpu = 18;
+  // Memory allocation in megabytes to preserve when recreating the domain
+  int32 memory_mb = 19;
+  // MAC address to preserve on the primary network interface
+  string mac_address = 20;
+  // Port speed limit in megabits per second
+  int32 port_speed_mbps = 21;
+  // Ceph monitor addresses for Ceph-backed VMs
+  repeated string ceph_monitors = 22;
+  // Ceph user for Ceph-backed VMs
+  string ceph_user = 23;
+  // Libvirt secret UUID for Ceph authentication
+  string ceph_secret_uuid = 24;
+  // Ceph pool containing VM disks
+  string ceph_pool = 25;
 }
 
 // ResizeVMRequest contains the new resource allocation for a VM.

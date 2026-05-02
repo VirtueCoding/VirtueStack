@@ -488,8 +488,11 @@ func (s *VMService) resolveCreateIdempotency(
 		return nil, "", false, nil
 	}
 	existingTask, err := s.taskRepo.GetByIDempotencyKey(ctx, req.IdempotencyKey)
-	if err != nil || existingTask == nil {
+	if errors.Is(err, sharederrors.ErrNotFound) || existingTask == nil {
 		return nil, "", false, nil
+	}
+	if err != nil {
+		return nil, "", false, fmt.Errorf("checking idempotency key: %w", err)
 	}
 	s.logger.Info("Task already exists for idempotency key, returning existing",
 		"task_id", existingTask.ID, "idempotency_key", req.IdempotencyKey)
@@ -560,7 +563,7 @@ func externalServiceWithoutTaskError(serviceID int) error {
 
 // DeleteVM deletes a VM.
 // This is an async operation that publishes a vm.delete task.
-// The VM is soft-deleted immediately, and cleanup happens asynchronously.
+// The VM remains visible as deleting until cleanup completes.
 func (s *VMService) DeleteVM(ctx context.Context, vmID, customerID string, isAdmin bool) (string, error) {
 	vm, err := s.getVMForDelete(ctx, vmID, customerID, isAdmin)
 	if err != nil {
@@ -569,48 +572,29 @@ func (s *VMService) DeleteVM(ctx context.Context, vmID, customerID string, isAdm
 	if vm.IsDeleted() {
 		return "", fmt.Errorf("VM %s already marked deleted; delete task state unknown: %w", vmID, sharederrors.ErrConflict)
 	}
-
-	nodeID := ""
-	if vm.NodeID != nil {
-		nodeID = *vm.NodeID
-	}
-	taskPayload := map[string]any{
-		"vm_id":    vm.ID,
-		"node_id":  nodeID,
-		"hostname": vm.Hostname,
+	if vm.Status == models.VMStatusDeleting {
+		return "", fmt.Errorf("VM %s deletion already in progress: %w", vmID, sharederrors.ErrConflict)
 	}
 
-	if err := s.vmRepo.SoftDelete(ctx, vm.ID); err != nil {
-		if errors.Is(err, repository.ErrNoRowsAffected) {
-			return "", fmt.Errorf("VM %s delete task state unknown after soft-delete race: %w", vm.ID, sharederrors.ErrConflict)
-		}
-		return "", fmt.Errorf("soft-deleting VM before delete task publish: %w", err)
+	if err := s.vmRepo.TransitionStatus(ctx, vm.ID, vm.Status, models.VMStatusDeleting); err != nil {
+		return "", fmt.Errorf("marking VM %s deleting: %w", vm.ID, err)
 	}
-	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMDelete, taskPayload)
+
+	taskID, err := s.taskPublisher.PublishTask(ctx, models.TaskTypeVMDelete, map[string]any{"vm_id": vm.ID})
 	if err != nil {
-		if restoreErr := s.vmRepo.RestoreSoftDelete(ctx, vm.ID, vm.Status); restoreErr != nil {
+		// The delete task was never durable, so restore the exact pre-delete status.
+		//nolint:staticcheck
+		if restoreErr := s.vmRepo.UpdateStatus(ctx, vm.ID, vm.Status); restoreErr != nil {
 			s.logger.Error("failed to restore VM after delete task publish failure",
 				"vm_id", vm.ID, "error", restoreErr)
 		}
 		return "", fmt.Errorf("publishing delete task: %w", err)
-	}
-	if s.ipamService != nil {
-		if err := s.ipamService.ReleaseIPsByVM(ctx, vm.ID); err != nil {
-			s.logger.Warn("failed to release IPs during VM deletion", "vm_id", vm.ID, "error", err)
-		}
 	}
 
 	s.logger.Info("VM deletion initiated",
 		"vm_id", vm.ID,
 		"task_id", taskID,
 		"customer_id", customerID)
-
-	s.notifyBillingHook(ctx, customerID, func(hook billing.VMLifecycleHook) error {
-		return hook.OnVMDeleted(ctx, billing.VMRef{
-			ID: vm.ID, CustomerID: customerID,
-			PlanID: vm.PlanID, Hostname: vm.Hostname,
-		})
-	})
 
 	return taskID, nil
 }

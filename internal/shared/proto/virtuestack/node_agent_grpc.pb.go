@@ -28,6 +28,8 @@ const (
 	NodeAgentService_StartVM_FullMethodName                   = "/virtuestack.nodeagent.NodeAgentService/StartVM"
 	NodeAgentService_StopVM_FullMethodName                    = "/virtuestack.nodeagent.NodeAgentService/StopVM"
 	NodeAgentService_ForceStopVM_FullMethodName               = "/virtuestack.nodeagent.NodeAgentService/ForceStopVM"
+	NodeAgentService_UndefineVM_FullMethodName                = "/virtuestack.nodeagent.NodeAgentService/UndefineVM"
+	NodeAgentService_DeleteDisk_FullMethodName                = "/virtuestack.nodeagent.NodeAgentService/DeleteDisk"
 	NodeAgentService_DeleteVM_FullMethodName                  = "/virtuestack.nodeagent.NodeAgentService/DeleteVM"
 	NodeAgentService_ReinstallVM_FullMethodName               = "/virtuestack.nodeagent.NodeAgentService/ReinstallVM"
 	NodeAgentService_ResizeVM_FullMethodName                  = "/virtuestack.nodeagent.NodeAgentService/ResizeVM"
@@ -83,8 +85,14 @@ type NodeAgentServiceClient interface {
 	// ForceStopVM immediately terminates a virtual machine (power off).
 	// Use with caution as this may cause data loss.
 	ForceStopVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error)
+	// UndefineVM removes the libvirt domain definition but keeps its disk image.
+	// This is used by migration and repair flows that must preserve storage.
+	UndefineVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error)
+	// DeleteDisk removes a virtual machine disk image from the configured storage backend.
+	// Missing disk images are treated as already deleted.
+	DeleteDisk(ctx context.Context, in *DeleteVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error)
 	// DeleteVM permanently removes a virtual machine and its disk image.
-	// The VM must be stopped before deletion.
+	// This is full cleanup: domain definition, runtime networking rules, and disk image.
 	DeleteVM(ctx context.Context, in *DeleteVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error)
 	// ReinstallVM reimages a virtual machine from a new template.
 	// All existing data on the VM will be lost.
@@ -217,6 +225,26 @@ func (c *nodeAgentServiceClient) ForceStopVM(ctx context.Context, in *VMIdentifi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VMOperationResponse)
 	err := c.cc.Invoke(ctx, NodeAgentService_ForceStopVM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeAgentServiceClient) UndefineVM(ctx context.Context, in *VMIdentifier, opts ...grpc.CallOption) (*VMOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VMOperationResponse)
+	err := c.cc.Invoke(ctx, NodeAgentService_UndefineVM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeAgentServiceClient) DeleteDisk(ctx context.Context, in *DeleteVMRequest, opts ...grpc.CallOption) (*VMOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VMOperationResponse)
+	err := c.cc.Invoke(ctx, NodeAgentService_DeleteDisk_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -600,8 +628,14 @@ type NodeAgentServiceServer interface {
 	// ForceStopVM immediately terminates a virtual machine (power off).
 	// Use with caution as this may cause data loss.
 	ForceStopVM(context.Context, *VMIdentifier) (*VMOperationResponse, error)
+	// UndefineVM removes the libvirt domain definition but keeps its disk image.
+	// This is used by migration and repair flows that must preserve storage.
+	UndefineVM(context.Context, *VMIdentifier) (*VMOperationResponse, error)
+	// DeleteDisk removes a virtual machine disk image from the configured storage backend.
+	// Missing disk images are treated as already deleted.
+	DeleteDisk(context.Context, *DeleteVMRequest) (*VMOperationResponse, error)
 	// DeleteVM permanently removes a virtual machine and its disk image.
-	// The VM must be stopped before deletion.
+	// This is full cleanup: domain definition, runtime networking rules, and disk image.
 	DeleteVM(context.Context, *DeleteVMRequest) (*VMOperationResponse, error)
 	// ReinstallVM reimages a virtual machine from a new template.
 	// All existing data on the VM will be lost.
@@ -711,6 +745,12 @@ func (UnimplementedNodeAgentServiceServer) StopVM(context.Context, *StopVMReques
 }
 func (UnimplementedNodeAgentServiceServer) ForceStopVM(context.Context, *VMIdentifier) (*VMOperationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForceStopVM not implemented")
+}
+func (UnimplementedNodeAgentServiceServer) UndefineVM(context.Context, *VMIdentifier) (*VMOperationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UndefineVM not implemented")
+}
+func (UnimplementedNodeAgentServiceServer) DeleteDisk(context.Context, *DeleteVMRequest) (*VMOperationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteDisk not implemented")
 }
 func (UnimplementedNodeAgentServiceServer) DeleteVM(context.Context, *DeleteVMRequest) (*VMOperationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteVM not implemented")
@@ -903,6 +943,42 @@ func _NodeAgentService_ForceStopVM_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeAgentServiceServer).ForceStopVM(ctx, req.(*VMIdentifier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeAgentService_UndefineVM_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIdentifier)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeAgentServiceServer).UndefineVM(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeAgentService_UndefineVM_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeAgentServiceServer).UndefineVM(ctx, req.(*VMIdentifier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeAgentService_DeleteDisk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteVMRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeAgentServiceServer).DeleteDisk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeAgentService_DeleteDisk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeAgentServiceServer).DeleteDisk(ctx, req.(*DeleteVMRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1501,6 +1577,14 @@ var NodeAgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForceStopVM",
 			Handler:    _NodeAgentService_ForceStopVM_Handler,
+		},
+		{
+			MethodName: "UndefineVM",
+			Handler:    _NodeAgentService_UndefineVM_Handler,
+		},
+		{
+			MethodName: "DeleteDisk",
+			Handler:    _NodeAgentService_DeleteDisk_Handler,
 		},
 		{
 			MethodName: "DeleteVM",
